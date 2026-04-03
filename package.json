@@ -1,0 +1,33 @@
+{
+  "name": "feishu-opencode-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint src test --ext .ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "tsx watch src/index.ts",
+    "dev:once": "tsx src/index.ts",
+    "dev:bridge": "tsx watch src/index.ts",
+    "dev:stack": ".\\start-local-stack.cmd",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.42.0",
+    "ws": "^8.18.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/ws": "^8.5.14",
+    "@typescript-eslint/eslint-plugin": "^8.26.0",
+    "@typescript-eslint/parser": "^8.26.0",
+    "eslint": "^8.57.1",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.2.4"
+  }
+}

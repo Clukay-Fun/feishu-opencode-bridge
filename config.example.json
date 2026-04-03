@@ -1,0 +1,32 @@
+{
+  "feishu": {
+    "appId": "cli_xxx",
+    "appSecret": "xxx",
+    "wsUrl": "wss://open.feishu.cn/open-apis/ws/v2",
+    "allowedOpenIds": []
+  },
+  "opencode": {
+    "baseUrl": "http://127.0.0.1:4096/",
+    "directory": "E:\\.Software\\OpenCode"
+  },
+  "storage": {
+    "dataDir": "./data",
+    "mappingsFile": "mappings.json"
+  },
+  "bridge": {
+    "queueLimit": 3,
+    "timeouts": {
+      "firstEvent": 30000,
+      "eventInterval": 120000,
+      "totalTurn": 300000
+    }
+  },
+  "logging": {
+    "dir": "./logs",
+    "level": "info",
+    "enableTranscript": true,
+    "enableConsole": true,
+    "enableColor": true,
+    "rotateDaily": true
+  }
+}

@@ -1,0 +1,65 @@
+import { z } from "zod";
+
+export const ConfigSchema = z.object({
+  feishu: z.object({
+    appId: z.string().min(1),
+    appSecret: z.string().min(1),
+    wsUrl: z.string().url().default("wss://open.feishu.cn/open-apis/ws/v2"),
+    allowedOpenIds: z.array(z.string()).default([]),
+  }),
+  opencode: z.object({
+    baseUrl: z.string().url(),
+    directory: z.string().min(1),
+  }),
+  storage: z.object({
+    dataDir: z.string().min(1).default("./data"),
+    mappingsFile: z.string().min(1).default("mappings.json"),
+  }),
+  bridge: z.object({
+    queueLimit: z.number().int().positive().default(3),
+    timeouts: z.object({
+      firstEvent: z.number().int().positive().default(30_000),
+      eventInterval: z.number().int().positive().default(120_000),
+      totalTurn: z.number().int().positive().default(300_000),
+    }).default({}),
+  }),
+  logging: z.object({
+    dir: z.string().min(1).default("./logs"),
+    level: z.enum(["debug", "info", "warn", "error"]).default("info"),
+    enableTranscript: z.boolean().default(true),
+    enableConsole: z.boolean().default(true),
+    enableColor: z.boolean().default(true),
+    rotateDaily: z.boolean().default(true),
+  }).default({}),
+});
+
+export type AppConfig = {
+  feishu: {
+    appId: string;
+    appSecret: string;
+    wsUrl: URL;
+    allowedOpenIds: Set<string>;
+  };
+  opencode: {
+    baseUrl: URL;
+    directory: string;
+  };
+  storage: {
+    dataDir: string;
+    mappingsFile: string;
+  };
+  bridge: {
+    queueLimit: number;
+    firstEventTimeoutMs: number;
+    eventGapTimeoutMs: number;
+    totalTimeoutMs: number;
+  };
+  logging: {
+    dir: string;
+    level: "debug" | "info" | "warn" | "error";
+    enableTranscript: boolean;
+    enableConsole: boolean;
+    enableColor: boolean;
+    rotateDaily: boolean;
+  };
+};
