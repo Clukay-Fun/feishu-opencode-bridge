@@ -23,7 +23,7 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
     },
     opencode: {
       baseUrl: new URL(parsed.opencode.baseUrl),
-      directory: parsed.opencode.directory,
+      directory: resolveRelative(baseDir, parsed.opencode.directory),
     },
     storage: {
       dataDir,

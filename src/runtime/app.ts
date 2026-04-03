@@ -1,7 +1,8 @@
 import crypto from "node:crypto";
 
 import { QueueRegistry } from "../bridge/queue.js";
-import { routeIncomingText } from "../bridge/router.js";
+import { type PendingInteraction, type PendingPermissionInteraction, type PendingQuestionInteraction, type PendingSessionSelectionInteraction } from "../bridge/state.js";
+import { routeIncomingText, type RoutedText } from "../bridge/router.js";
 import { transitionTurn } from "../bridge/state-machine.js";
 import { TurnWatchdog } from "../bridge/watchdog.js";
 import type { BridgeTurn } from "../bridge/turn.js";
@@ -15,8 +16,14 @@ import {
   type TurnStatusCardView,
 } from "../feishu/formatter.js";
 import { createTextPreview, type Logger, type TranscriptType } from "../logging/logger.js";
-import { OpenCodeClient, type QuestionRequest } from "../opencode/client.js";
-import { OpenCodeEventStream, getEventSessionId, type OpenCodeEvent } from "../opencode/events.js";
+import {
+  OpenCodeClient,
+  type OpenCodeMessage,
+  type OpenCodeProvidersResponse,
+  type OpenCodeSession,
+  type OpenCodeSessionStatus,
+} from "../opencode/client.js";
+import { getEventSessionId, OpenCodeEventStream, type OpenCodeEvent } from "../opencode/events.js";
 import { MappingStore, type MappingRecord } from "../store/mappings.js";
 import type { AppConfig } from "../config/schema.js";
 import { cleanAssistantReply } from "./sanitize.js";
@@ -43,7 +50,18 @@ type TurnCardState = {
   output: OutputView;
 };
 
+type StreamFlushState = {
+  flushedLength: number;
+  lastFlushedAt: number;
+  timer: NodeJS.Timeout | null;
+};
+
 const initialCardSummary = "已创建会话，等待 OpenCode 事件...";
+const FIRST_SSE_FALLBACK_MS = 5_000;
+const STREAM_FLUSH_MIN_CHARS = 120;
+const STREAM_FLUSH_INTERVAL_MS = 750;
+const PERMISSION_TTL_MS = 120_000;
+const SESSION_SELECTION_TTL_MS = 30_000;
 
 export class BridgeApp {
   private readonly queues: QueueRegistry;
@@ -52,26 +70,52 @@ export class BridgeApp {
   private readonly eventStream: OpenCodeEventStream;
   private sessionMap: MappingRecord = {};
   private readonly runningChats = new Map<string, Promise<void>>();
-  private readonly pendingQuestions = new Map<string, QuestionRequest>();
+  private readonly pendingInteractions = new Map<string, PendingInteraction>();
+  private readonly pendingInteractionTimers = new Map<string, NodeJS.Timeout>();
   private readonly turnCards = new Map<string, TurnCardState>();
+  private readonly streamFlushStates = new Map<string, StreamFlushState>();
+  private readonly sessionStatuses = new Map<string, OpenCodeSessionStatus>();
+  private globalEventUnsubscribe: (() => void) | null = null;
 
   constructor(private readonly config: AppConfig, private readonly outbound: OutboundPort, private readonly logger: Logger) {
     this.queues = new QueueRegistry(config.bridge.queueLimit, logger);
     this.mappings = new MappingStore(config.storage.dataDir, config.storage.mappingsFile);
-    this.opencode = new OpenCodeClient(config.opencode.baseUrl, config.opencode.directory);
-    this.eventStream = new OpenCodeEventStream(config.opencode.baseUrl, config.opencode.directory, logger);
+    this.opencode = new OpenCodeClient(config.opencode.baseUrl);
+    this.eventStream = new OpenCodeEventStream(config.opencode.baseUrl, logger);
   }
 
   async start(): Promise<void> {
     this.sessionMap = await this.mappings.load();
+    const health = await this.opencode.health();
+    const project = await this.opencode.getCurrentProject();
+    if (project.worktree !== this.config.opencode.directory) {
+      throw new Error(`opencode serve 当前在 ${project.worktree}，bridge 配置的是 ${this.config.opencode.directory}，请在正确目录重启 opencode serve`);
+    }
+
     await this.eventStream.start();
+    this.globalEventUnsubscribe = this.eventStream.subscribe(async (event) => {
+      await this.handleGlobalEvent(event);
+    });
+
     this.logger.log("bridge/app", "bridge started", {
       queueLimit: this.config.bridge.queueLimit,
       opencodeBaseUrl: this.config.opencode.baseUrl.toString(),
+      opencodeVersion: health.version,
+      project: project.worktree,
     });
   }
 
   async stop(): Promise<void> {
+    this.globalEventUnsubscribe?.();
+    this.globalEventUnsubscribe = null;
+    for (const timeout of this.pendingInteractionTimers.values()) {
+      clearTimeout(timeout);
+    }
+    for (const state of this.streamFlushStates.values()) {
+      if (state.timer) clearTimeout(state.timer);
+    }
+    this.pendingInteractionTimers.clear();
+    this.streamFlushStates.clear();
     await this.eventStream.stop();
   }
 
@@ -94,17 +138,22 @@ export class BridgeApp {
 
     const routed = routeIncomingText(message.text);
     if (routed.kind === "command") {
-      await this.handleCommand(message.chatId, routed.command.kind);
+      await this.handleCommand(message.chatId, routed);
       return;
     }
 
-    const pendingQuestion = this.pendingQuestions.get(message.chatId);
-    if (pendingQuestion) {
-      await this.handleQuestionReply(message.chatId, pendingQuestion, message.text);
+    const pending = this.pendingInteractions.get(message.chatId);
+    if (pending) {
+      const consumed = await this.handlePendingInteraction(message.chatId, pending, message.text);
+      if (consumed) return;
+    }
+
+    if (!await this.ensureServerAvailableForChat(message.chatId)) {
       return;
     }
 
     const queue = this.queues.get(message.chatId);
+    const existingSession = this.sessionMap[message.chatId];
     const turn: BridgeTurn = {
       turnId: crypto.randomUUID(),
       chatId: message.chatId,
@@ -112,10 +161,10 @@ export class BridgeApp {
       inboundMessageId: message.messageId,
       text: message.text,
     };
-    const existingSession = this.sessionMap[message.chatId];
-    if (existingSession) {
-      turn.sessionId = existingSession;
+    if (existingSession?.sessionId) {
+      turn.sessionId = existingSession.sessionId;
     }
+
     const result = queue.enqueue(turn);
     if (!result.accepted) {
       await this.sendPayload(message.chatId, buildQueueNoticePayload(result.notice ?? { message: "当前不可用。" }), {
@@ -156,8 +205,9 @@ export class BridgeApp {
 
   private async runTurn(chatId: string): Promise<void> {
     const queue = this.queues.get(chatId);
-    const active = queue.current();
+    const active = queue.peek();
     if (!active) return;
+
     let turn = transitionTurn(active, "running");
     queue.replaceActive(turn);
 
@@ -166,6 +216,7 @@ export class BridgeApp {
       turn = { ...turn, sessionId };
       queue.replaceActive(turn);
       this.logger.log("bridge/queue", "turn started", { turnId: turn.turnId, sessionId, chatId });
+
       const card = await this.createTurnCard(chatId, turn.turnId, sessionId);
       if (card) {
         queue.replaceActive({ ...turn, processMessageId: card.messageId });
@@ -174,8 +225,8 @@ export class BridgeApp {
       const reply = cleanAssistantReply(await this.executeTurn(chatId, turn as BridgeTurn & { sessionId: string }));
       this.logger.log("opencode/events", "reply completed", { turnId: turn.turnId, sessionId, len: reply.length });
       this.logger.logTranscript("opencode-reply", { sessionId, turnId: turn.turnId }, reply);
+      await this.flushStreamUpdate(turn.turnId, reply, true);
       await this.updateTurnCard(turn.turnId, { status: "已完成", update: `最终回复已生成（${reply.length} 字）`, target: "step" });
-      await this.updateTurnCard(turn.turnId, { update: reply, sanitize: false, target: "final" });
       queue.replaceActive(transitionTurn({ ...turn, sessionId }, "done"));
       this.logger.log("bridge/queue", "turn completed", { turnId: turn.turnId, duration: Date.now() - (turn.startedAt ?? Date.now()) });
     } catch (error) {
@@ -185,50 +236,70 @@ export class BridgeApp {
       queue.replaceActive(transitionTurn(turn, detail.includes("超时") ? "timeout" : "aborted"));
     } finally {
       this.turnCards.delete(turn.turnId);
+      this.clearPendingInteraction(chatId, false);
+      this.clearStreamFlushState(turn.turnId);
     }
   }
 
-  private async ensureSession(chatId: string): Promise<string> {
-    const existing = this.sessionMap[chatId];
-    if (existing) return existing;
-    const session = await this.opencode.createSession(`Feishu ${chatId}`);
-    this.sessionMap[chatId] = session.id;
-    await this.mappings.save(this.sessionMap);
-    return session.id;
-  }
-
   private async executeTurn(chatId: string, turn: BridgeTurn & { sessionId: string }): Promise<string> {
+    const baselineAssistant = await this.getLatestAssistantMessage(turn.sessionId);
+    const baselineAssistantId = baselineAssistant?.info.id ?? null;
+    const queue = this.queues.get(chatId);
+
     return new Promise<string>((resolve, reject) => {
       let assistantMessageId: string | null = null;
       let finalText = "";
       let settled = false;
-      let baselineAssistantId: string | null = null;
+      let fallbackTimer: NodeJS.Timeout | null = null;
+      let seenSessionEvent = false;
       const ignoredTextPartIds = new Set<string>();
+
+      const settleWithError = (error: Error): void => {
+        if (settled) return;
+        settled = true;
+        if (fallbackTimer) clearTimeout(fallbackTimer);
+        unsubscribe();
+        watchdog.clear();
+        reject(error);
+      };
+
+      const settleWithText = async (): Promise<void> => {
+        if (settled) return;
+        settled = true;
+        if (fallbackTimer) clearTimeout(fallbackTimer);
+        unsubscribe();
+        watchdog.clear();
+        try {
+          const text = await this.finalizeAssistantReply(turn.sessionId, finalText, baselineAssistantId);
+          resolve(text);
+        } catch (error) {
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      };
+
       const unsubscribe = this.eventStream.subscribe(async (event) => {
         if (getEventSessionId(event) !== turn.sessionId) return;
+        seenSessionEvent = true;
+        if (fallbackTimer) {
+          clearTimeout(fallbackTimer);
+          fallbackTimer = null;
+        }
+
         try {
           await this.handleEvent(chatId, turn, event, {
             getAssistantMessageId: () => assistantMessageId,
             setAssistantMessageId: (value) => { assistantMessageId = value; },
             ignoredTextPartIds,
-            appendFinalText: (delta) => { finalText += delta; },
-            setFinalText: (value) => { finalText = value; },
-            baselineAssistantId,
-            setBaselineAssistantId: (value) => { baselineAssistantId = value; },
-            finish: (text) => {
-              if (settled) return;
-              settled = true;
-              unsubscribe();
-              watchdog.clear();
-              resolve(text);
+            appendFinalText: async (delta) => {
+              finalText += delta;
+              await this.scheduleStreamUpdate(turn.turnId, finalText);
             },
-            fail: (error) => {
-              if (settled) return;
-              settled = true;
-              unsubscribe();
-              watchdog.clear();
-              reject(error);
+            setFinalText: async (value) => {
+              finalText = value;
+              await this.scheduleStreamUpdate(turn.turnId, finalText);
             },
+            finish: settleWithText,
+            fail: settleWithError,
             getFinalText: () => finalText,
           });
           watchdog.markEvent();
@@ -245,18 +316,31 @@ export class BridgeApp {
           totalTimeoutMs: this.config.bridge.totalTimeoutMs,
         },
         {
-          onFirstEventTimeout: () => reject(new Error("处理超时，请重试或 /new 开新会话")),
-          onEventGapTimeout: () => reject(new Error("处理超时，请重试或 /new 开新会话")),
-          onTotalTimeout: () => reject(new Error("处理超时，请重试或 /new 开新会话")),
+          onFirstEventTimeout: () => settleWithError(new Error("处理超时，请重试或 /new 开新会话")),
+          onEventGapTimeout: () => settleWithError(new Error("处理超时，请重试或 /new 开新会话")),
+          onTotalTimeout: () => settleWithError(new Error("处理超时，请重试或 /new 开新会话")),
         },
       );
+
       watchdog.start();
-      void this.opencode.latestAssistantReply(turn.sessionId)
-        .then((reply) => {
-          baselineAssistantId = reply?.id ?? null;
-          return this.opencode.postMessage(turn.sessionId, turn.text);
+      void this.opencode.promptAsync(turn.sessionId, buildPromptRequest(turn.text))
+        .then(() => {
+          queue.replaceActive(transitionTurn(turn, "awaiting-sse"));
+          void this.updateTurnCard(turn.turnId, { status: "处理中", update: "请求已发送，等待事件流...", target: "step" });
+          fallbackTimer = setTimeout(() => {
+            if (!seenSessionEvent) {
+              void this.runFirstSseFallback(turn.sessionId, baselineAssistantId, {
+                updateText: async (text) => {
+                  finalText = text;
+                  await this.scheduleStreamUpdate(turn.turnId, finalText);
+                },
+                finish: settleWithText,
+                fail: settleWithError,
+              });
+            }
+          }, FIRST_SSE_FALLBACK_MS);
         })
-        .catch(reject);
+        .catch((error) => settleWithError(error instanceof Error ? error : new Error(String(error))));
     });
   }
 
@@ -268,11 +352,9 @@ export class BridgeApp {
       getAssistantMessageId: () => string | null;
       setAssistantMessageId: (value: string | null) => void;
       ignoredTextPartIds: Set<string>;
-      appendFinalText: (delta: string) => void;
-      setFinalText: (value: string) => void;
-      baselineAssistantId: string | null;
-      setBaselineAssistantId: (value: string | null) => void;
-      finish: (text: string) => void;
+      appendFinalText: (delta: string) => Promise<void>;
+      setFinalText: (value: string) => Promise<void>;
+      finish: () => Promise<void>;
       fail: (error: Error) => void;
       getFinalText: () => string;
     },
@@ -291,7 +373,7 @@ export class BridgeApp {
       if (context.getAssistantMessageId() && messageId && messageId !== context.getAssistantMessageId()) return;
       if (partId && context.ignoredTextPartIds.has(partId)) return;
       if (readOptionalString(event.properties, "field") === "text") {
-        context.appendFinalText(readOptionalString(event.properties, "delta") ?? "");
+        await context.appendFinalText(readOptionalString(event.properties, "delta") ?? "");
       }
       return;
     }
@@ -303,15 +385,19 @@ export class BridgeApp {
       if (context.getAssistantMessageId() && messageId && messageId !== context.getAssistantMessageId()) return;
       const partType = readOptionalString(part, "type");
       const partId = readOptionalString(part, "id");
+
       if (partType === "text") {
         if (readOptionalBoolean(part, "synthetic") || readOptionalBoolean(part, "ignored")) {
           if (partId) context.ignoredTextPartIds.add(partId);
           return;
         }
         const text = readOptionalString(part, "text");
-        if (text) context.setFinalText(text);
+        if (text !== undefined) {
+          await context.setFinalText(text);
+        }
         return;
       }
+
       if (partType === "reasoning") {
         const text = readOptionalString(part, "text") ?? "";
         if (partId) {
@@ -324,6 +410,7 @@ export class BridgeApp {
         }
         return;
       }
+
       if (partType === "tool") {
         const state = readOptionalRecord(part, "state");
         const status = state ? readOptionalString(state, "status") : undefined;
@@ -340,88 +427,365 @@ export class BridgeApp {
     }
 
     if (event.type === "permission.asked") {
-      const requestId = readOptionalString(event.properties, "id");
+      const permissionId = readOptionalString(event.properties, "id");
       const permissionName = readOptionalString(event.properties, "permission") ?? "unknown";
-      await this.updateTurnCard(turn.turnId, { status: "处理中", update: `请求权限：${permissionName}`, target: "step" });
-      if (requestId) {
-        await this.opencode.replyPermission(requestId, "once");
-      }
+      if (!permissionId) return;
+      this.setPendingInteraction(chatId, {
+        kind: "permission",
+        sessionId: turn.sessionId,
+        permissionId,
+        permissionName,
+        turnId: turn.turnId,
+        expiresAt: Date.now() + PERMISSION_TTL_MS,
+      });
+      await this.updateTurnCard(turn.turnId, {
+        status: "等待确认",
+        update: `请求权限：${permissionName}，请回复 /allow once、/allow always 或 /deny`,
+        target: "step",
+      });
+      await this.sendPayload(chatId, buildPostMarkdownPayload(`OpenCode 请求权限 \`${escapeMarkdownText(permissionName)}\`，请回复 \`/allow once\`、\`/allow always\` 或 \`/deny\`。`), {
+        event: "final message sent",
+        transcriptType: "outbound-final",
+        textPreview: `权限请求：${permissionName}`,
+        len: permissionName.length + 16,
+      });
       return;
     }
 
     if (event.type === "question.asked") {
       const request = toQuestionRequest(event.properties, turn.sessionId);
       if (!request) return;
-      this.pendingQuestions.set(chatId, request);
-      await this.updateTurnCard(turn.turnId, { status: "等待回答", update: formatQuestionPrompt(request), target: "step" });
+      this.setPendingInteraction(chatId, {
+        kind: "question",
+        requestId: request.id,
+        sessionId: request.sessionId,
+        questions: request.questions,
+      });
+      await this.updateTurnCard(turn.turnId, { status: "等待回答", update: formatQuestionPrompt(request.questions), target: "step" });
+      return;
+    }
+
+    if (event.type === "session.status") {
+      const status = readOptionalRecord(event.properties, "status");
+      if (status && readOptionalString(status, "type") === "idle") {
+        await context.finish();
+      }
       return;
     }
 
     if (event.type === "session.idle") {
-      const text = context.getFinalText().trim() || await this.opencode.latestAssistantTextSince(turn.sessionId, context.baselineAssistantId);
-      if (!text) {
-        context.fail(new Error("OpenCode 未返回文本回复。"));
+      await context.finish();
+    }
+  }
+
+  private async handleCommand(chatId: string, routed: Extract<RoutedText, { kind: "command" }>): Promise<void> {
+    const { command } = routed;
+    if (command.kind === "new") {
+      const session = await this.opencode.createSession(`Feishu ${chatId}`);
+      await this.bindSession(chatId, session.id);
+      await this.sendMarkdown(chatId, "已创建并绑定新会话，下一条消息将继续在这个 session 中处理。");
+      return;
+    }
+
+    if (command.kind === "status") {
+      try {
+        const statuses = await this.opencode.getSessionStatuses();
+        for (const [sessionId, status] of Object.entries(statuses)) {
+          this.sessionStatuses.set(sessionId, status);
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        this.logger.log("bridge/status", "refresh status failed", { detail }, "warn");
+      }
+
+      const queue = this.queues.get(chatId);
+      const active = queue.peek();
+      const binding = this.sessionMap[chatId];
+      const status = binding ? this.sessionStatuses.get(binding.sessionId)?.type ?? "unknown" : "unbound";
+      const message = [
+        `事件流状态：${this.eventStream.getConnectionState()}`,
+        `当前会话：${binding ? `\`${binding.sessionId}\`` : "未绑定"}`,
+        `Session 状态：${status}`,
+        `队列状态：${active ? `处理中 ${createTextPreview(active.text)}` : "空闲"}`,
+        `排队数量：${queue.pendingCount()}`,
+      ].join("\n");
+      await this.sendMarkdown(chatId, message);
+      return;
+    }
+
+    if (command.kind === "abort") {
+      const binding = this.sessionMap[chatId];
+      if (binding) {
+        await this.opencode.abort(binding.sessionId);
+      }
+      await this.sendMarkdown(chatId, "已请求中止当前任务。");
+      return;
+    }
+
+    if (command.kind === "models") {
+      const providers = await this.opencode.listProviders();
+      await this.sendMarkdown(chatId, formatProviders(providers));
+      return;
+    }
+
+    if (command.kind === "sessions") {
+      const sessions = [...await this.opencode.listSessions()]
+        .sort((a, b) => getSessionUpdatedAt(b) - getSessionUpdatedAt(a))
+        .slice(0, 10);
+      if (sessions.length === 0) {
+        await this.sendMarkdown(chatId, "当前没有可切换的会话。");
         return;
       }
-      context.finish(text);
-    }
-  }
 
-  private async handleCommand(chatId: string, kind: "new" | "status" | "abort"): Promise<void> {
-    if (kind === "new") {
-      delete this.sessionMap[chatId];
-      await this.mappings.save(this.sessionMap);
-      await this.sendPayload(chatId, buildPostMarkdownPayload("已清空当前会话，下一条消息会创建新会话。"), {
-        event: "final message sent",
-        transcriptType: "outbound-final",
-        textPreview: "已清空当前会话，下一条消息会创建新会话。",
-        len: 19,
+      const options = sessions.map((session, index) => ({
+        index: index + 1,
+        sessionId: session.id,
+        title: session.title?.trim() || session.slug || session.id,
+      }));
+      this.setPendingInteraction(chatId, {
+        kind: "session-select",
+        options,
+        expiresAt: Date.now() + SESSION_SELECTION_TTL_MS,
       });
+      await this.sendMarkdown(chatId, formatSessionList(options));
       return;
     }
 
-    if (kind === "status") {
-      const queue = this.queues.get(chatId);
-      const active = queue.current();
-      const message = active ? `当前处理中：${createTextPreview(active.text)}` : "当前没有进行中的任务。";
-      await this.sendPayload(chatId, buildPostMarkdownPayload(message), {
-        event: "final message sent",
-        transcriptType: "outbound-final",
-        textPreview: message,
-        len: message.length,
-      });
+    if (command.kind === "sessions-select") {
+      const pending = this.pendingInteractions.get(chatId);
+      if (!pending || pending.kind !== "session-select" || pending.expiresAt <= Date.now()) {
+        this.clearPendingInteraction(chatId, false);
+        await this.sendMarkdown(chatId, "会话列表已过期，请先重新执行 `/sessions`。");
+        return;
+      }
+
+      const match = pending.options.find((option) => option.index === command.index);
+      if (!match) {
+        await this.sendMarkdown(chatId, "无效的会话编号，请重新执行 `/sessions` 查看列表。");
+        return;
+      }
+
+      await this.bindSession(chatId, match.sessionId);
+      this.clearPendingInteraction(chatId, false);
+      await this.sendMarkdown(chatId, `已切换到会话 \`${match.sessionId}\`。`);
       return;
     }
 
-    const sessionId = this.sessionMap[chatId];
-    if (sessionId) {
-      await this.opencode.abort(sessionId);
+    if (command.kind === "allow" || command.kind === "deny") {
+      const pending = this.pendingInteractions.get(chatId);
+      if (!pending || pending.kind !== "permission") {
+        await this.sendMarkdown(chatId, "当前没有待确认的权限请求。");
+        return;
+      }
+
+      const response = command.kind === "deny" ? "reject" : command.policy;
+      const remember = command.kind === "allow" && command.policy === "always";
+      await this.opencode.replyPermission(pending.sessionId, pending.permissionId, response, remember);
+      this.clearPendingInteraction(chatId, false);
+      await this.updateTurnCard(pending.turnId, { status: "处理中", update: `已处理权限请求：${pending.permissionName}`, target: "step" });
+      await this.sendMarkdown(chatId, command.kind === "deny" ? "已拒绝权限请求。" : "已确认权限请求。");
+      return;
     }
-    await this.sendPayload(chatId, buildPostMarkdownPayload("已请求中止当前任务。"), {
-      event: "final message sent",
-      transcriptType: "outbound-final",
-      textPreview: "已请求中止当前任务。",
-      len: 10,
+
+    const sessionId = await this.ensureSession(chatId);
+    const result = await this.opencode.runCommand(sessionId, {
+      command: command.name,
+      arguments: command.arguments,
     });
+    const text = extractAssistantText(result) || "命令已执行。";
+    await this.sendMarkdown(chatId, text);
   }
 
-  private async handleQuestionReply(chatId: string, request: QuestionRequest, text: string): Promise<void> {
+  private async handlePendingInteraction(chatId: string, pending: PendingInteraction, text: string): Promise<boolean> {
+    if (pending.kind === "question") {
+      try {
+        await this.opencode.replyQuestion(pending.requestId, [text]);
+        this.clearPendingInteraction(chatId, false);
+        const currentTurnId = this.queues.get(chatId).peek()?.turnId;
+        if (currentTurnId) {
+          await this.updateTurnCard(currentTurnId, { status: "处理中", update: "已收到你的回答，继续处理中...", target: "step" });
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        await this.sendMarkdown(chatId, `回答问题失败：${escapeMarkdownText(detail)}`);
+      }
+      return true;
+    }
+
+    if (pending.kind === "permission") {
+      await this.sendMarkdown(chatId, "当前有待确认的权限请求，请先回复 `/allow once`、`/allow always` 或 `/deny`。");
+      return true;
+    }
+
+    return false;
+  }
+
+  private async ensureSession(chatId: string): Promise<string> {
+    const existing = this.sessionMap[chatId];
+    if (existing) {
+      await this.touchSession(chatId, existing.sessionId);
+      return existing.sessionId;
+    }
+
+    const session = await this.opencode.createSession(`Feishu ${chatId}`);
+    await this.bindSession(chatId, session.id);
+    return session.id;
+  }
+
+  private async bindSession(chatId: string, sessionId: string): Promise<void> {
+    this.sessionMap[chatId] = {
+      sessionId,
+      lastUsedAt: Date.now(),
+    };
+    await this.mappings.save(this.sessionMap);
+  }
+
+  private async touchSession(chatId: string, sessionId: string): Promise<void> {
+    this.sessionMap[chatId] = {
+      sessionId,
+      lastUsedAt: Date.now(),
+    };
+    await this.mappings.save(this.sessionMap);
+  }
+
+  private async ensureServerAvailableForChat(chatId: string): Promise<boolean> {
+    if (this.eventStream.getConnectionState() === "connected") {
+      return true;
+    }
+
     try {
-      await this.opencode.replyQuestion(request.id, [text]);
-      this.pendingQuestions.delete(chatId);
-      const currentTurnId = this.queues.get(chatId).current()?.turnId;
-      if (currentTurnId) {
-        await this.updateTurnCard(currentTurnId, { status: "处理中", update: "已收到你的回答，继续处理中...", target: "step" });
+      await this.opencode.health();
+      return true;
+    } catch {
+      await this.sendMarkdown(chatId, "OpenCode 服务不可用，请先确认 `opencode serve` 正在运行。");
+      return false;
+    }
+  }
+
+  private async handleGlobalEvent(event: OpenCodeEvent): Promise<void> {
+    if (event.type === "session.status") {
+      const sessionId = getEventSessionId(event);
+      const status = readOptionalRecord(event.properties, "status");
+      if (sessionId && status) {
+        this.sessionStatuses.set(sessionId, status as OpenCodeSessionStatus);
+      }
+      return;
+    }
+
+    if (event.type === "session.idle") {
+      const sessionId = getEventSessionId(event);
+      if (sessionId) {
+        this.sessionStatuses.set(sessionId, { type: "idle" });
+      }
+    }
+  }
+
+  private async runFirstSseFallback(
+    sessionId: string,
+    baselineAssistantId: string | null,
+    handlers: {
+      updateText: (text: string) => Promise<void>;
+      finish: () => Promise<void>;
+      fail: (error: Error) => void;
+    },
+  ): Promise<void> {
+    try {
+      const latestAssistant = await this.getLatestAssistantMessage(sessionId, baselineAssistantId);
+      if (!latestAssistant) {
+        return;
+      }
+
+      const text = extractAssistantText(latestAssistant);
+      if (!text) {
+        return;
+      }
+
+      await handlers.updateText(text);
+      if (isCompletedMessage(latestAssistant)) {
+        await handlers.finish();
       }
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      await this.sendPayload(chatId, buildPostMarkdownPayload(`回答问题失败：${escapeMarkdownText(detail)}`), {
-        event: "final message sent",
-        transcriptType: "outbound-final",
-        textPreview: detail,
-        len: detail.length,
-      });
+      handlers.fail(error instanceof Error ? error : new Error(String(error)));
     }
+  }
+
+  private async finalizeAssistantReply(sessionId: string, currentText: string, baselineAssistantId: string | null): Promise<string> {
+    const normalizedCurrent = cleanAssistantReply(currentText);
+    if (normalizedCurrent) {
+      return normalizedCurrent;
+    }
+
+    const latestAssistant = await this.getLatestAssistantMessage(sessionId, baselineAssistantId);
+    const text = cleanAssistantReply(extractAssistantText(latestAssistant));
+    if (!text) {
+      throw new Error("OpenCode 未返回文本回复。");
+    }
+    return text;
+  }
+
+  private async getLatestAssistantMessage(sessionId: string, baselineAssistantId?: string | null): Promise<OpenCodeMessage | null> {
+    const messages = await this.opencode.getSessionMessages(sessionId, 50);
+    const baselineIndex = baselineAssistantId
+      ? messages.findIndex((message) => message.info.id === baselineAssistantId)
+      : -1;
+    const tail = baselineIndex >= 0 ? messages.slice(baselineIndex + 1) : messages;
+    return [...tail].reverse().find((message) => message.info.role === "assistant") ?? null;
+  }
+
+  private setPendingInteraction(chatId: string, interaction: PendingInteraction): void {
+    this.clearPendingInteraction(chatId, false);
+    this.pendingInteractions.set(chatId, interaction);
+
+    if (interaction.kind === "permission") {
+      const timer = setTimeout(() => {
+        void this.handlePermissionTimeout(chatId, interaction);
+      }, Math.max(0, interaction.expiresAt - Date.now()));
+      this.pendingInteractionTimers.set(chatId, timer);
+      return;
+    }
+
+    if (interaction.kind === "session-select") {
+      const timer = setTimeout(() => {
+        this.clearPendingInteraction(chatId, false);
+      }, Math.max(0, interaction.expiresAt - Date.now()));
+      this.pendingInteractionTimers.set(chatId, timer);
+    }
+  }
+
+  private clearPendingInteraction(chatId: string, keepNonExpiring: boolean): void {
+    const timeout = this.pendingInteractionTimers.get(chatId);
+    if (timeout) {
+      clearTimeout(timeout);
+      this.pendingInteractionTimers.delete(chatId);
+    }
+
+    if (keepNonExpiring) {
+      const current = this.pendingInteractions.get(chatId);
+      if (current?.kind === "question") {
+        return;
+      }
+    }
+
+    this.pendingInteractions.delete(chatId);
+  }
+
+  private async handlePermissionTimeout(chatId: string, pending: PendingPermissionInteraction): Promise<void> {
+    const current = this.pendingInteractions.get(chatId);
+    if (!current || current.kind !== "permission" || current.permissionId !== pending.permissionId) {
+      return;
+    }
+
+    try {
+      await this.opencode.replyPermission(current.sessionId, current.permissionId, "reject", false);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.log("bridge/permission", "auto deny failed", { chatId, permissionId: current.permissionId, detail }, "warn");
+    } finally {
+      this.clearPendingInteraction(chatId, false);
+    }
+
+    await this.updateTurnCard(current.turnId, { status: "处理中", update: "权限请求已超时，已默认拒绝", target: "step" });
+    await this.sendMarkdown(chatId, "权限请求已超时，已默认拒绝。");
   }
 
   private async createTurnCard(chatId: string, turnId: string, sessionId: string): Promise<TurnCardState | null> {
@@ -450,6 +814,65 @@ export class BridgeApp {
       this.logger.log("feishu/reply", "process card send failed", { chatId, turnId, detail }, "warn");
       return null;
     }
+  }
+
+  private async scheduleStreamUpdate(turnId: string, text: string): Promise<void> {
+    const card = this.turnCards.get(turnId);
+    if (!card) return;
+
+    const state = this.streamFlushStates.get(turnId) ?? {
+      flushedLength: 0,
+      lastFlushedAt: 0,
+      timer: null,
+    };
+    this.streamFlushStates.set(turnId, state);
+
+    const deltaLength = Math.max(0, text.length - state.flushedLength);
+    const elapsed = Date.now() - state.lastFlushedAt;
+    if (deltaLength >= STREAM_FLUSH_MIN_CHARS || elapsed >= STREAM_FLUSH_INTERVAL_MS) {
+      await this.flushStreamUpdate(turnId, text, false);
+      return;
+    }
+
+    if (state.timer) {
+      return;
+    }
+
+    const delay = Math.max(0, STREAM_FLUSH_INTERVAL_MS - elapsed);
+    state.timer = setTimeout(() => {
+      state.timer = null;
+      void this.flushStreamUpdate(turnId, text, false);
+    }, delay);
+  }
+
+  private async flushStreamUpdate(turnId: string, text: string, force: boolean): Promise<void> {
+    const state = this.streamFlushStates.get(turnId);
+    if (state?.timer) {
+      clearTimeout(state.timer);
+      state.timer = null;
+    }
+
+    await this.updateTurnCard(turnId, { update: text, sanitize: false, target: "final" });
+    const nextState = state ?? {
+      flushedLength: 0,
+      lastFlushedAt: 0,
+      timer: null,
+    };
+    nextState.flushedLength = text.length;
+    nextState.lastFlushedAt = Date.now();
+    this.streamFlushStates.set(turnId, nextState);
+
+    if (force) {
+      this.clearStreamFlushState(turnId);
+    }
+  }
+
+  private clearStreamFlushState(turnId: string): void {
+    const state = this.streamFlushStates.get(turnId);
+    if (state?.timer) {
+      clearTimeout(state.timer);
+    }
+    this.streamFlushStates.delete(turnId);
   }
 
   private async updateTurnCard(turnId: string, update: { status?: string; update?: string; sanitize?: boolean; target?: "step" | "tool" | "final"; toolKey?: string }): Promise<void> {
@@ -495,6 +918,15 @@ export class BridgeApp {
     };
   }
 
+  private async sendMarkdown(chatId: string, markdown: string): Promise<void> {
+    await this.sendPayload(chatId, buildPostMarkdownPayload(markdown), {
+      event: "final message sent",
+      transcriptType: "outbound-final",
+      textPreview: createTextPreview(markdown),
+      len: markdown.length,
+    });
+  }
+
   private async sendPayload(chatId: string, payload: FeishuPostPayload, options: { event: string; transcriptType: TranscriptType; textPreview: string; len: number }): Promise<{ messageId: string }> {
     const result = await this.outbound.sendMessage(chatId, payload);
     this.logger.log("feishu/reply", options.event, { chatId, messageId: result.messageId, textPreview: options.textPreview, len: options.len });
@@ -503,7 +935,13 @@ export class BridgeApp {
   }
 }
 
-function toQuestionRequest(properties: Record<string, unknown>, sessionId: string): QuestionRequest | null {
+function buildPromptRequest(text: string): { parts: Array<{ type: "text"; text: string }> } {
+  return {
+    parts: [{ type: "text", text }],
+  };
+}
+
+function toQuestionRequest(properties: Record<string, unknown>, sessionId: string): { id: string; sessionId: string; questions: Array<{ header: string; question: string }> } | null {
   const requestId = readOptionalString(properties, "id");
   const rawQuestions = properties.questions;
   if (!requestId || !Array.isArray(rawQuestions)) return null;
@@ -519,8 +957,50 @@ function toQuestionRequest(properties: Record<string, unknown>, sessionId: strin
   return { id: requestId, sessionId, questions };
 }
 
-function formatQuestionPrompt(request: QuestionRequest): string {
-  return ["❓ OpenCode 需要你回答：", ...request.questions.map((question, index) => `${index + 1}. ${escapeMarkdownText(question.header)}\n${escapeMarkdownText(question.question)}`)].join("\n\n");
+function formatQuestionPrompt(questions: PendingQuestionInteraction["questions"]): string {
+  return ["OpenCode 需要你回答：", ...questions.map((question, index) => `${index + 1}. ${escapeMarkdownText(question.header)}\n${escapeMarkdownText(question.question)}`)].join("\n\n");
+}
+
+function formatProviders(providers: OpenCodeProvidersResponse): string {
+  const lines = ["可用模型提供方："];
+  const defaults = providers.default;
+  for (const provider of providers.providers) {
+    const id = typeof provider.id === "string" ? provider.id : typeof provider.providerID === "string" ? provider.providerID : "unknown";
+    const name = typeof provider.name === "string" ? provider.name : id;
+    const model = defaults[id];
+    lines.push(`- ${name}${model ? `：默认 \`${model}\`` : ""}`);
+  }
+  if (lines.length === 1) {
+    lines.push("- 当前没有 provider 信息");
+  }
+  return lines.join("\n");
+}
+
+function formatSessionList(options: PendingSessionSelectionInteraction["options"]): string {
+  return [
+    "最近会话：",
+    ...options.map((option) => `${option.index}. ${escapeMarkdownText(option.title)}\n   \`${option.sessionId}\``),
+    "",
+    "30 秒内可用 `/sessions <编号>` 切换。",
+  ].join("\n");
+}
+
+function getSessionUpdatedAt(session: OpenCodeSession): number {
+  return session.time?.updated ?? session.time?.created ?? 0;
+}
+
+function extractAssistantText(message: OpenCodeMessage | null): string {
+  if (!message) return "";
+  return message.parts
+    .filter((part) => part.type === "text" && typeof part.text === "string")
+    .map((part) => part.text ?? "")
+    .join("")
+    .trim();
+}
+
+function isCompletedMessage(message: OpenCodeMessage): boolean {
+  const time = isRecord(message.info.time) ? message.info.time : null;
+  return typeof message.info.finish === "string" || typeof time?.completed === "number";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

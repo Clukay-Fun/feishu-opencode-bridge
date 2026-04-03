@@ -7,7 +7,7 @@ export type BridgeTurn = {
   sessionId?: string;
   processMessageId?: string;
   finalMessageId?: string;
-  state?: "queued" | "running" | "done" | "timeout" | "aborted";
+  state?: "queued" | "running" | "awaiting-sse" | "done" | "timeout" | "aborted";
   startedAt?: number;
 };
 
