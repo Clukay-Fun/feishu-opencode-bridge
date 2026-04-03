@@ -1,20 +1,73 @@
 export type RoutedText =
-  | { kind: "command"; command: { kind: "new" | "status" | "abort" } }
+  | {
+    kind: "command";
+    command:
+      | { kind: "new" }
+      | { kind: "status" }
+      | { kind: "abort" }
+      | { kind: "models" }
+      | { kind: "sessions" }
+      | { kind: "sessions-select"; index: number }
+      | { kind: "allow"; policy: "once" | "always" }
+      | { kind: "deny" }
+      | { kind: "passthrough"; name: string; arguments: string[] };
+  }
   | { kind: "message"; text: string };
 
 export function routeIncomingText(text: string): RoutedText {
   const normalized = text.trim();
-  if (normalized === "/new") {
+  if (!normalized.startsWith("/")) {
+    return { kind: "message", text };
+  }
+
+  const parts = normalized.split(/\s+/);
+  const rawCommand = parts[0]?.slice(1) ?? "";
+  const args = parts.slice(1);
+
+  if (rawCommand === "new" && args.length === 0) {
     return { kind: "command", command: { kind: "new" } };
   }
 
-  if (normalized === "/status") {
+  if (rawCommand === "status" && args.length === 0) {
     return { kind: "command", command: { kind: "status" } };
   }
 
-  if (normalized === "/abort") {
+  if (rawCommand === "abort" && args.length === 0) {
     return { kind: "command", command: { kind: "abort" } };
   }
 
-  return { kind: "message", text };
+  if (rawCommand === "models" && args.length === 0) {
+    return { kind: "command", command: { kind: "models" } };
+  }
+
+  if (rawCommand === "sessions" && args.length === 0) {
+    return { kind: "command", command: { kind: "sessions" } };
+  }
+
+  if (rawCommand === "sessions" && args.length === 1 && /^\d+$/.test(args[0] ?? "")) {
+    return {
+      kind: "command",
+      command: { kind: "sessions-select", index: Number(args[0]) },
+    };
+  }
+
+  if (rawCommand === "allow" && (args[0] === "once" || args[0] === "always") && args.length === 1) {
+    return {
+      kind: "command",
+      command: { kind: "allow", policy: args[0] },
+    };
+  }
+
+  if (rawCommand === "deny" && args.length === 0) {
+    return { kind: "command", command: { kind: "deny" } };
+  }
+
+  return {
+    kind: "command",
+    command: {
+      kind: "passthrough",
+      name: rawCommand,
+      arguments: args,
+    },
+  };
 }

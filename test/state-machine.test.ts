@@ -13,4 +13,10 @@ describe("transitionTurn", () => {
     const turn = transitionTurn({ turnId: "1", chatId: "c", senderOpenId: "u", inboundMessageId: "m", text: "hi", startedAt: 1 }, "running");
     expect(turn.startedAt).toBe(1);
   });
+
+  it("keeps startedAt when transitioning to awaiting-sse", () => {
+    const turn = transitionTurn({ turnId: "1", chatId: "c", senderOpenId: "u", inboundMessageId: "m", text: "hi", startedAt: 1 }, "awaiting-sse");
+    expect(turn.state).toBe("awaiting-sse");
+    expect(turn.startedAt).toBe(1);
+  });
 });

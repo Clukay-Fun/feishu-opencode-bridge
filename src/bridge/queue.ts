@@ -42,6 +42,14 @@ class ChatQueue {
     return this.active;
   }
 
+  peek(): BridgeTurn | null {
+    return this.active;
+  }
+
+  pendingCount(): number {
+    return this.pending.length;
+  }
+
   replaceActive(turn: BridgeTurn): void {
     this.active = turn;
   }
