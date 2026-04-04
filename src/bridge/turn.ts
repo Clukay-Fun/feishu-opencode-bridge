@@ -1,6 +1,9 @@
 export type BridgeTurn = {
   turnId: string;
   chatId: string;
+  conversationKey: string;
+  threadKey: string;
+  chatType?: string;
   senderOpenId: string;
   inboundMessageId: string;
   text: string;

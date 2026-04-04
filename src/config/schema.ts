@@ -4,8 +4,21 @@ export const ConfigSchema = z.object({
   feishu: z.object({
     appId: z.string().min(1),
     appSecret: z.string().min(1),
+    botOpenId: z.string().min(1).optional(),
+    botOpenIds: z.array(z.string().min(1)).default([]),
+    botMentionNames: z.array(z.string().min(1)).default([]),
+    selfBotOpenId: z.string().min(1).optional(),
+    selfBotOpenIds: z.array(z.string().min(1)).default([]),
     wsUrl: z.string().url().default("wss://open.feishu.cn/open-apis/ws/v2"),
     allowedOpenIds: z.array(z.string()).default([]),
+    behavior: z.object({
+      enableP2p: z.boolean().default(true),
+      enableGroup: z.boolean().default(true),
+      requireBotMentionInGroup: z.boolean().default(true),
+      strictBotMention: z.boolean().default(true),
+      ignoreNonUserSenders: z.boolean().default(true),
+      replyInThread: z.boolean().default(true),
+    }).default({}),
   }),
   opencode: z.object({
     baseUrl: z.string().url(),
@@ -37,8 +50,21 @@ export type AppConfig = {
   feishu: {
     appId: string;
     appSecret: string;
+    botOpenId?: string | undefined;
+    botOpenIds: Set<string>;
+    botMentionNames: Set<string>;
+    selfBotOpenId?: string | undefined;
+    selfBotOpenIds: Set<string>;
     wsUrl: URL;
     allowedOpenIds: Set<string>;
+    behavior: {
+      enableP2p: boolean;
+      enableGroup: boolean;
+      requireBotMentionInGroup: boolean;
+      strictBotMention: boolean;
+      ignoreNonUserSenders: boolean;
+      replyInThread: boolean;
+    };
   };
   opencode: {
     baseUrl: URL;

@@ -20,6 +20,23 @@ export class FeishuApiClient {
     return { messageId: body.data.message_id };
   }
 
+  async replyMessage(messageId: string, payload: FeishuPostPayload): Promise<{ messageId: string }> {
+    const token = await this.fetchTenantToken();
+    const response = await fetch(`https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/reply`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    const body = (await response.json()) as { code: number; msg?: string; data?: { message_id?: string } };
+    if (!response.ok || body.code !== 0 || !body.data?.message_id) {
+      throw new Error(`Feishu replyMessage failed: ${body.msg ?? response.statusText}`);
+    }
+    return { messageId: body.data.message_id };
+  }
+
   async updateMessage(messageId: string, payload: FeishuPostPayload): Promise<{ messageId: string }> {
     const token = await this.fetchTenantToken();
     const response = await fetch(`https://open.feishu.cn/open-apis/im/v1/messages/${messageId}`, {
