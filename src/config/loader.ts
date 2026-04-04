@@ -18,8 +18,21 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
     feishu: {
       appId: parsed.feishu.appId,
       appSecret: parsed.feishu.appSecret,
+      botOpenId: parsed.feishu.botOpenId,
+      botOpenIds: mergeBotOpenIds(parsed.feishu.botOpenId, parsed.feishu.botOpenIds),
+      botMentionNames: normalizeMentionNames(parsed.feishu.botMentionNames),
+      selfBotOpenId: parsed.feishu.selfBotOpenId,
+      selfBotOpenIds: mergeSelfBotOpenIds(parsed.feishu),
       wsUrl: new URL(parsed.feishu.wsUrl),
       allowedOpenIds: new Set(parsed.feishu.allowedOpenIds),
+      behavior: {
+        enableP2p: parsed.feishu.behavior.enableP2p,
+        enableGroup: parsed.feishu.behavior.enableGroup,
+        requireBotMentionInGroup: parsed.feishu.behavior.requireBotMentionInGroup,
+        strictBotMention: parsed.feishu.behavior.strictBotMention,
+        ignoreNonUserSenders: parsed.feishu.behavior.ignoreNonUserSenders,
+        replyInThread: parsed.feishu.behavior.replyInThread,
+      },
     },
     opencode: {
       baseUrl: new URL(parsed.opencode.baseUrl),
@@ -48,4 +61,26 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
 
 function resolveRelative(baseDir: string, value: string): string {
   return path.isAbsolute(value) ? value : path.resolve(baseDir, value);
+}
+
+function mergeBotOpenIds(botOpenId: string | undefined, botOpenIds: string[]): Set<string> {
+  const ids = new Set(botOpenIds);
+  if (botOpenId) {
+    ids.add(botOpenId);
+  }
+  return ids;
+}
+
+function mergeSelfBotOpenIds(feishu: {
+  botOpenId?: string | undefined;
+  botOpenIds: string[];
+  selfBotOpenId?: string | undefined;
+  selfBotOpenIds: string[];
+}): Set<string> {
+  const selfIds = mergeBotOpenIds(feishu.selfBotOpenId, feishu.selfBotOpenIds);
+  return selfIds.size > 0 ? selfIds : mergeBotOpenIds(feishu.botOpenId, feishu.botOpenIds);
+}
+
+function normalizeMentionNames(values: string[]): Set<string> {
+  return new Set(values.map((value) => value.trim().toLowerCase()).filter((value) => value.length > 0));
 }

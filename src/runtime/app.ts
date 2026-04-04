@@ -30,13 +30,21 @@ import { cleanAssistantReply } from "./sanitize.js";
 
 export type IncomingChatMessage = {
   chatId: string;
+  chatType: string;
   senderOpenId: string;
   messageId: string;
-  text: string;
+  messageType: string;
+  rawContent: string;
+  plainText: string;
+  rootId?: string | undefined;
+  parentId?: string | undefined;
+  threadKey: string;
+  conversationKey: string;
 };
 
 type OutboundPort = {
   sendMessage(chatId: string, payload: FeishuPostPayload): Promise<{ messageId: string }>;
+  replyMessage(messageId: string, payload: FeishuPostPayload): Promise<{ messageId: string }>;
   updateMessage(messageId: string, payload: FeishuPostPayload): Promise<{ messageId: string }>;
 };
 
@@ -79,7 +87,7 @@ export class BridgeApp {
 
   constructor(private readonly config: AppConfig, private readonly outbound: OutboundPort, private readonly logger: Logger) {
     this.queues = new QueueRegistry(config.bridge.queueLimit, logger);
-    this.mappings = new MappingStore(config.storage.dataDir, config.storage.mappingsFile);
+    this.mappings = new MappingStore(config.storage.dataDir, config.storage.mappingsFile, 200, logger);
     this.opencode = new OpenCodeClient(config.opencode.baseUrl);
     this.eventStream = new OpenCodeEventStream(config.opencode.baseUrl, logger);
   }
@@ -126,40 +134,47 @@ export class BridgeApp {
         transcriptType: "outbound-final",
         textPreview: "当前账号未加入白名单。",
         len: 11,
-      });
+      }, { replyToMessageId: message.messageId });
       return;
     }
 
     this.logger.logTranscript("inbound", {
       chatId: message.chatId,
+      chatType: message.chatType,
+      conversationKey: message.conversationKey,
+      threadKey: message.threadKey,
       senderId: message.senderOpenId,
       messageId: message.messageId,
-    }, message.text);
+      messageType: message.messageType,
+    }, message.plainText);
 
-    const routed = routeIncomingText(message.text);
+    const routed = routeIncomingText(message.plainText);
     if (routed.kind === "command") {
-      await this.handleCommand(message.chatId, routed);
+      await this.handleCommand(message, routed);
       return;
     }
 
-    const pending = this.pendingInteractions.get(message.chatId);
+    const pending = this.pendingInteractions.get(message.conversationKey);
     if (pending) {
-      const consumed = await this.handlePendingInteraction(message.chatId, pending, message.text);
+      const consumed = await this.handlePendingInteraction(message, pending);
       if (consumed) return;
     }
 
-    if (!await this.ensureServerAvailableForChat(message.chatId)) {
+    if (!await this.ensureServerAvailableForMessage(message)) {
       return;
     }
 
-    const queue = this.queues.get(message.chatId);
-    const existingSession = this.sessionMap[message.chatId];
+    const queue = this.queues.get(message.conversationKey);
+    const existingSession = this.sessionMap[message.conversationKey];
     const turn: BridgeTurn = {
       turnId: crypto.randomUUID(),
       chatId: message.chatId,
+      conversationKey: message.conversationKey,
+      threadKey: message.threadKey,
+      chatType: message.chatType,
       senderOpenId: message.senderOpenId,
       inboundMessageId: message.messageId,
-      text: message.text,
+      text: toOpencodePromptText(message),
     };
     if (existingSession?.sessionId) {
       turn.sessionId = existingSession.sessionId;
@@ -172,7 +187,7 @@ export class BridgeApp {
         transcriptType: "outbound-final",
         textPreview: result.notice?.message ?? "当前不可用。",
         len: (result.notice?.message ?? "当前不可用。").length,
-      });
+      }, { replyToMessageId: message.messageId });
       return;
     }
 
@@ -182,29 +197,29 @@ export class BridgeApp {
         transcriptType: "outbound-final",
         textPreview: createTextPreview(result.notice.message),
         len: result.notice.message.length,
-      });
+      }, { replyToMessageId: message.messageId });
       return;
     }
 
-    if (!this.runningChats.has(message.chatId)) {
-      const runner = this.processChat(message.chatId).finally(() => {
-        this.runningChats.delete(message.chatId);
+    if (!this.runningChats.has(message.conversationKey)) {
+      const runner = this.processChat(message.conversationKey).finally(() => {
+        this.runningChats.delete(message.conversationKey);
       });
-      this.runningChats.set(message.chatId, runner);
+      this.runningChats.set(message.conversationKey, runner);
       await runner;
     }
   }
 
-  private async processChat(chatId: string): Promise<void> {
-    const queue = this.queues.get(chatId);
+  private async processChat(conversationKey: string): Promise<void> {
+    const queue = this.queues.get(conversationKey);
     while (queue.current()) {
-      await this.runTurn(chatId);
+      await this.runTurn(conversationKey);
       queue.finishActive();
     }
   }
 
-  private async runTurn(chatId: string): Promise<void> {
-    const queue = this.queues.get(chatId);
+  private async runTurn(conversationKey: string): Promise<void> {
+    const queue = this.queues.get(conversationKey);
     const active = queue.peek();
     if (!active) return;
 
@@ -212,17 +227,17 @@ export class BridgeApp {
     queue.replaceActive(turn);
 
     try {
-      const sessionId = turn.sessionId ?? await this.ensureSession(chatId);
+      const sessionId = turn.sessionId ?? await this.ensureSession(turn);
       turn = { ...turn, sessionId };
       queue.replaceActive(turn);
-      this.logger.log("bridge/queue", "turn started", { turnId: turn.turnId, sessionId, chatId });
+      this.logger.log("bridge/queue", "turn started", { turnId: turn.turnId, sessionId, chatId: turn.chatId, conversationKey });
 
-      const card = await this.createTurnCard(chatId, turn.turnId, sessionId);
+      const card = await this.createTurnCard(turn.chatId, turn.turnId, sessionId, turn.inboundMessageId);
       if (card) {
         queue.replaceActive({ ...turn, processMessageId: card.messageId });
       }
 
-      const reply = cleanAssistantReply(await this.executeTurn(chatId, turn as BridgeTurn & { sessionId: string }));
+      const reply = cleanAssistantReply(await this.executeTurn(conversationKey, turn as BridgeTurn & { sessionId: string }));
       this.logger.log("opencode/events", "reply completed", { turnId: turn.turnId, sessionId, len: reply.length });
       this.logger.logTranscript("opencode-reply", { sessionId, turnId: turn.turnId }, reply);
       await this.flushStreamUpdate(turn.turnId, reply, true);
@@ -231,20 +246,21 @@ export class BridgeApp {
       this.logger.log("bridge/queue", "turn completed", { turnId: turn.turnId, duration: Date.now() - (turn.startedAt ?? Date.now()) });
     } catch (error) {
       const detail = cleanAssistantReply(error instanceof Error ? error.message : String(error));
-      this.logger.log("bridge/queue", "run turn failed", { chatId, turnId: turn.turnId, detail }, "error");
+      this.logger.log("bridge/queue", "run turn failed", { chatId: turn.chatId, conversationKey, turnId: turn.turnId, detail }, "error");
       await this.updateTurnCard(turn.turnId, { status: detail.includes("超时") ? "已超时" : "处理失败", update: detail, target: "step" });
       queue.replaceActive(transitionTurn(turn, detail.includes("超时") ? "timeout" : "aborted"));
     } finally {
       this.turnCards.delete(turn.turnId);
-      this.clearPendingInteraction(chatId, false);
+      this.clearPendingInteraction(conversationKey, false);
       this.clearStreamFlushState(turn.turnId);
     }
   }
 
-  private async executeTurn(chatId: string, turn: BridgeTurn & { sessionId: string }): Promise<string> {
+  private async executeTurn(conversationKey: string, turn: BridgeTurn & { sessionId: string }): Promise<string> {
     const baselineAssistant = await this.getLatestAssistantMessage(turn.sessionId);
     const baselineAssistantId = baselineAssistant?.info.id ?? null;
-    const queue = this.queues.get(chatId);
+    const baselineAssistantTimestamp = getMessageTimestamp(baselineAssistant);
+    const queue = this.queues.get(conversationKey);
 
     return new Promise<string>((resolve, reject) => {
       let assistantMessageId: string | null = null;
@@ -270,7 +286,11 @@ export class BridgeApp {
         unsubscribe();
         watchdog.clear();
         try {
-          const text = await this.finalizeAssistantReply(turn.sessionId, finalText, baselineAssistantId);
+          const text = await this.finalizeAssistantReply(turn.sessionId, finalText, {
+            baselineAssistantId,
+            baselineAssistantTimestamp,
+            assistantMessageId,
+          });
           resolve(text);
         } catch (error) {
           reject(error instanceof Error ? error : new Error(String(error)));
@@ -286,7 +306,7 @@ export class BridgeApp {
         }
 
         try {
-          await this.handleEvent(chatId, turn, event, {
+          await this.handleEvent(turn, event, {
             getAssistantMessageId: () => assistantMessageId,
             setAssistantMessageId: (value) => { assistantMessageId = value; },
             ignoredTextPartIds,
@@ -305,7 +325,7 @@ export class BridgeApp {
           watchdog.markEvent();
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
-          this.logger.log("opencode/events", "event listener failed", { chatId, sessionId: turn.sessionId, detail, type: event.type }, "warn");
+          this.logger.log("opencode/events", "event listener failed", { chatId: turn.chatId, conversationKey, sessionId: turn.sessionId, detail, type: event.type }, "warn");
         }
       });
 
@@ -329,7 +349,11 @@ export class BridgeApp {
           void this.updateTurnCard(turn.turnId, { status: "处理中", update: "请求已发送，等待事件流...", target: "step" });
           fallbackTimer = setTimeout(() => {
             if (!seenSessionEvent) {
-              void this.runFirstSseFallback(turn.sessionId, baselineAssistantId, {
+              void this.runFirstSseFallback(turn.sessionId, {
+                baselineAssistantId,
+                baselineAssistantTimestamp,
+                assistantMessageId: () => assistantMessageId,
+              }, {
                 updateText: async (text) => {
                   finalText = text;
                   await this.scheduleStreamUpdate(turn.turnId, finalText);
@@ -345,7 +369,6 @@ export class BridgeApp {
   }
 
   private async handleEvent(
-    chatId: string,
     turn: BridgeTurn & { sessionId: string },
     event: OpenCodeEvent,
     context: {
@@ -430,8 +453,10 @@ export class BridgeApp {
       const permissionId = readOptionalString(event.properties, "id");
       const permissionName = readOptionalString(event.properties, "permission") ?? "unknown";
       if (!permissionId) return;
-      this.setPendingInteraction(chatId, {
+      this.setPendingInteraction(turn.conversationKey, {
         kind: "permission",
+        chatId: turn.chatId,
+        replyToMessageId: turn.inboundMessageId,
         sessionId: turn.sessionId,
         permissionId,
         permissionName,
@@ -443,19 +468,19 @@ export class BridgeApp {
         update: `请求权限：${permissionName}，请回复 /allow once、/allow always 或 /deny`,
         target: "step",
       });
-      await this.sendPayload(chatId, buildPostMarkdownPayload(`OpenCode 请求权限 \`${escapeMarkdownText(permissionName)}\`，请回复 \`/allow once\`、\`/allow always\` 或 \`/deny\`。`), {
+      await this.sendPayload(turn.chatId, buildPostMarkdownPayload(`OpenCode 请求权限 \`${escapeMarkdownText(permissionName)}\`，请回复 \`/allow once\`、\`/allow always\` 或 \`/deny\`。`), {
         event: "final message sent",
         transcriptType: "outbound-final",
         textPreview: `权限请求：${permissionName}`,
         len: permissionName.length + 16,
-      });
+      }, { replyToMessageId: turn.inboundMessageId });
       return;
     }
 
     if (event.type === "question.asked") {
       const request = toQuestionRequest(event.properties, turn.sessionId);
       if (!request) return;
-      this.setPendingInteraction(chatId, {
+      this.setPendingInteraction(turn.conversationKey, {
         kind: "question",
         requestId: request.id,
         sessionId: request.sessionId,
@@ -478,12 +503,15 @@ export class BridgeApp {
     }
   }
 
-  private async handleCommand(chatId: string, routed: Extract<RoutedText, { kind: "command" }>): Promise<void> {
+  private async handleCommand(
+    message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "threadKey">,
+    routed: Extract<RoutedText, { kind: "command" }>,
+  ): Promise<void> {
     const { command } = routed;
     if (command.kind === "new") {
-      const session = await this.opencode.createSession(`Feishu ${chatId}`);
-      await this.bindSession(chatId, session.id);
-      await this.sendMarkdown(chatId, "已创建并绑定新会话，下一条消息将继续在这个 session 中处理。");
+      const session = await this.opencode.createSession(buildSessionTitle(message.chatId, message.chatType, message.threadKey));
+      await this.bindSession(message.conversationKey, session.id);
+      await this.sendMarkdown(message.chatId, "已创建并绑定新会话，下一条消息将继续在这个 session 中处理。", message.messageId);
       return;
     }
 
@@ -498,33 +526,33 @@ export class BridgeApp {
         this.logger.log("bridge/status", "refresh status failed", { detail }, "warn");
       }
 
-      const queue = this.queues.get(chatId);
+      const queue = this.queues.get(message.conversationKey);
       const active = queue.peek();
-      const binding = this.sessionMap[chatId];
+      const binding = this.sessionMap[message.conversationKey];
       const status = binding ? this.sessionStatuses.get(binding.sessionId)?.type ?? "unknown" : "unbound";
-      const message = [
+      const statusText = [
         `事件流状态：${this.eventStream.getConnectionState()}`,
         `当前会话：${binding ? `\`${binding.sessionId}\`` : "未绑定"}`,
         `Session 状态：${status}`,
         `队列状态：${active ? `处理中 ${createTextPreview(active.text)}` : "空闲"}`,
         `排队数量：${queue.pendingCount()}`,
       ].join("\n");
-      await this.sendMarkdown(chatId, message);
+      await this.sendMarkdown(message.chatId, statusText, message.messageId);
       return;
     }
 
     if (command.kind === "abort") {
-      const binding = this.sessionMap[chatId];
+      const binding = this.sessionMap[message.conversationKey];
       if (binding) {
         await this.opencode.abort(binding.sessionId);
       }
-      await this.sendMarkdown(chatId, "已请求中止当前任务。");
+      await this.sendMarkdown(message.chatId, "已请求中止当前任务。", message.messageId);
       return;
     }
 
     if (command.kind === "models") {
       const providers = await this.opencode.listProviders();
-      await this.sendMarkdown(chatId, formatProviders(providers));
+      await this.sendMarkdown(message.chatId, formatProviders(providers), message.messageId);
       return;
     }
 
@@ -533,7 +561,7 @@ export class BridgeApp {
         .sort((a, b) => getSessionUpdatedAt(b) - getSessionUpdatedAt(a))
         .slice(0, 10);
       if (sessions.length === 0) {
-        await this.sendMarkdown(chatId, "当前没有可切换的会话。");
+        await this.sendMarkdown(message.chatId, "当前没有可切换的会话。", message.messageId);
         return;
       }
 
@@ -542,113 +570,113 @@ export class BridgeApp {
         sessionId: session.id,
         title: session.title?.trim() || session.slug || session.id,
       }));
-      this.setPendingInteraction(chatId, {
+      this.setPendingInteraction(message.conversationKey, {
         kind: "session-select",
         options,
         expiresAt: Date.now() + SESSION_SELECTION_TTL_MS,
       });
-      await this.sendMarkdown(chatId, formatSessionList(options));
+      await this.sendMarkdown(message.chatId, formatSessionList(options), message.messageId);
       return;
     }
 
     if (command.kind === "sessions-select") {
-      const pending = this.pendingInteractions.get(chatId);
+      const pending = this.pendingInteractions.get(message.conversationKey);
       if (!pending || pending.kind !== "session-select" || pending.expiresAt <= Date.now()) {
-        this.clearPendingInteraction(chatId, false);
-        await this.sendMarkdown(chatId, "会话列表已过期，请先重新执行 `/sessions`。");
+        this.clearPendingInteraction(message.conversationKey, false);
+        await this.sendMarkdown(message.chatId, "会话列表已过期，请先重新执行 `/sessions`。", message.messageId);
         return;
       }
 
       const match = pending.options.find((option) => option.index === command.index);
       if (!match) {
-        await this.sendMarkdown(chatId, "无效的会话编号，请重新执行 `/sessions` 查看列表。");
+        await this.sendMarkdown(message.chatId, "无效的会话编号，请重新执行 `/sessions` 查看列表。", message.messageId);
         return;
       }
 
-      await this.bindSession(chatId, match.sessionId);
-      this.clearPendingInteraction(chatId, false);
-      await this.sendMarkdown(chatId, `已切换到会话 \`${match.sessionId}\`。`);
+      await this.bindSession(message.conversationKey, match.sessionId);
+      this.clearPendingInteraction(message.conversationKey, false);
+      await this.sendMarkdown(message.chatId, `已切换到会话 \`${match.sessionId}\`。`, message.messageId);
       return;
     }
 
     if (command.kind === "allow" || command.kind === "deny") {
-      const pending = this.pendingInteractions.get(chatId);
+      const pending = this.pendingInteractions.get(message.conversationKey);
       if (!pending || pending.kind !== "permission") {
-        await this.sendMarkdown(chatId, "当前没有待确认的权限请求。");
+        await this.sendMarkdown(message.chatId, "当前没有待确认的权限请求。", message.messageId);
         return;
       }
 
       const response = command.kind === "deny" ? "reject" : command.policy;
       const remember = command.kind === "allow" && command.policy === "always";
       await this.opencode.replyPermission(pending.sessionId, pending.permissionId, response, remember);
-      this.clearPendingInteraction(chatId, false);
+      this.clearPendingInteraction(message.conversationKey, false);
       await this.updateTurnCard(pending.turnId, { status: "处理中", update: `已处理权限请求：${pending.permissionName}`, target: "step" });
-      await this.sendMarkdown(chatId, command.kind === "deny" ? "已拒绝权限请求。" : "已确认权限请求。");
+      await this.sendMarkdown(message.chatId, command.kind === "deny" ? "已拒绝权限请求。" : "已确认权限请求。", message.messageId);
       return;
     }
 
-    const sessionId = await this.ensureSession(chatId);
+    const sessionId = await this.ensureSession(message);
     const result = await this.opencode.runCommand(sessionId, {
       command: command.name,
       arguments: command.arguments,
     });
     const text = extractAssistantText(result) || "命令已执行。";
-    await this.sendMarkdown(chatId, text);
+    await this.sendMarkdown(message.chatId, text, message.messageId);
   }
 
-  private async handlePendingInteraction(chatId: string, pending: PendingInteraction, text: string): Promise<boolean> {
+  private async handlePendingInteraction(message: IncomingChatMessage, pending: PendingInteraction): Promise<boolean> {
     if (pending.kind === "question") {
       try {
-        await this.opencode.replyQuestion(pending.requestId, [text]);
-        this.clearPendingInteraction(chatId, false);
-        const currentTurnId = this.queues.get(chatId).peek()?.turnId;
+        await this.opencode.replyQuestion(pending.requestId, [message.plainText]);
+        this.clearPendingInteraction(message.conversationKey, false);
+        const currentTurnId = this.queues.get(message.conversationKey).peek()?.turnId;
         if (currentTurnId) {
           await this.updateTurnCard(currentTurnId, { status: "处理中", update: "已收到你的回答，继续处理中...", target: "step" });
         }
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
-        await this.sendMarkdown(chatId, `回答问题失败：${escapeMarkdownText(detail)}`);
+        await this.sendMarkdown(message.chatId, `回答问题失败：${escapeMarkdownText(detail)}`, message.messageId);
       }
       return true;
     }
 
     if (pending.kind === "permission") {
-      await this.sendMarkdown(chatId, "当前有待确认的权限请求，请先回复 `/allow once`、`/allow always` 或 `/deny`。");
+      await this.sendMarkdown(message.chatId, "当前有待确认的权限请求，请先回复 `/allow once`、`/allow always` 或 `/deny`。", message.messageId);
       return true;
     }
 
     return false;
   }
 
-  private async ensureSession(chatId: string): Promise<string> {
-    const existing = this.sessionMap[chatId];
+  private async ensureSession(source: Pick<BridgeTurn, "chatId" | "chatType" | "conversationKey" | "threadKey">): Promise<string> {
+    const existing = this.sessionMap[source.conversationKey];
     if (existing) {
-      await this.touchSession(chatId, existing.sessionId);
+      await this.touchSession(source.conversationKey, existing.sessionId);
       return existing.sessionId;
     }
 
-    const session = await this.opencode.createSession(`Feishu ${chatId}`);
-    await this.bindSession(chatId, session.id);
+    const session = await this.opencode.createSession(buildSessionTitle(source.chatId, source.chatType, source.threadKey));
+    await this.bindSession(source.conversationKey, session.id);
     return session.id;
   }
 
-  private async bindSession(chatId: string, sessionId: string): Promise<void> {
-    this.sessionMap[chatId] = {
+  private async bindSession(conversationKey: string, sessionId: string): Promise<void> {
+    this.sessionMap[conversationKey] = {
       sessionId,
       lastUsedAt: Date.now(),
     };
     await this.mappings.save(this.sessionMap);
   }
 
-  private async touchSession(chatId: string, sessionId: string): Promise<void> {
-    this.sessionMap[chatId] = {
+  private async touchSession(conversationKey: string, sessionId: string): Promise<void> {
+    this.sessionMap[conversationKey] = {
       sessionId,
       lastUsedAt: Date.now(),
     };
     await this.mappings.save(this.sessionMap);
   }
 
-  private async ensureServerAvailableForChat(chatId: string): Promise<boolean> {
+  private async ensureServerAvailableForMessage(message: Pick<IncomingChatMessage, "chatId" | "messageId">): Promise<boolean> {
     if (this.eventStream.getConnectionState() === "connected") {
       return true;
     }
@@ -657,7 +685,7 @@ export class BridgeApp {
       await this.opencode.health();
       return true;
     } catch {
-      await this.sendMarkdown(chatId, "OpenCode 服务不可用，请先确认 `opencode serve` 正在运行。");
+      await this.sendMarkdown(message.chatId, "OpenCode 服务不可用，请先确认 `opencode serve` 正在运行。", message.messageId);
       return false;
     }
   }
@@ -682,7 +710,11 @@ export class BridgeApp {
 
   private async runFirstSseFallback(
     sessionId: string,
-    baselineAssistantId: string | null,
+    baseline: {
+      baselineAssistantId: string | null;
+      baselineAssistantTimestamp: number | null;
+      assistantMessageId: () => string | null;
+    },
     handlers: {
       updateText: (text: string) => Promise<void>;
       finish: () => Promise<void>;
@@ -690,7 +722,7 @@ export class BridgeApp {
     },
   ): Promise<void> {
     try {
-      const latestAssistant = await this.getLatestAssistantMessage(sessionId, baselineAssistantId);
+      const latestAssistant = await this.resolveAssistantMessage(sessionId, baseline);
       if (!latestAssistant) {
         return;
       }
@@ -709,13 +741,25 @@ export class BridgeApp {
     }
   }
 
-  private async finalizeAssistantReply(sessionId: string, currentText: string, baselineAssistantId: string | null): Promise<string> {
+  private async finalizeAssistantReply(
+    sessionId: string,
+    currentText: string,
+    baseline: {
+      baselineAssistantId: string | null;
+      baselineAssistantTimestamp: number | null;
+      assistantMessageId: string | null;
+    },
+  ): Promise<string> {
     const normalizedCurrent = cleanAssistantReply(currentText);
     if (normalizedCurrent) {
       return normalizedCurrent;
     }
 
-    const latestAssistant = await this.getLatestAssistantMessage(sessionId, baselineAssistantId);
+    const latestAssistant = await this.resolveAssistantMessage(sessionId, {
+      baselineAssistantId: baseline.baselineAssistantId,
+      baselineAssistantTimestamp: baseline.baselineAssistantTimestamp,
+      assistantMessageId: () => baseline.assistantMessageId,
+    });
     const text = cleanAssistantReply(extractAssistantText(latestAssistant));
     if (!text) {
       throw new Error("OpenCode 未返回文本回复。");
@@ -723,54 +767,85 @@ export class BridgeApp {
     return text;
   }
 
-  private async getLatestAssistantMessage(sessionId: string, baselineAssistantId?: string | null): Promise<OpenCodeMessage | null> {
-    const messages = await this.opencode.getSessionMessages(sessionId, 50);
-    const baselineIndex = baselineAssistantId
-      ? messages.findIndex((message) => message.info.id === baselineAssistantId)
-      : -1;
-    const tail = baselineIndex >= 0 ? messages.slice(baselineIndex + 1) : messages;
-    return [...tail].reverse().find((message) => message.info.role === "assistant") ?? null;
+  private async resolveAssistantMessage(
+    sessionId: string,
+    baseline: {
+      baselineAssistantId: string | null;
+      baselineAssistantTimestamp: number | null;
+      assistantMessageId: () => string | null;
+    },
+  ): Promise<OpenCodeMessage | null> {
+    const targetAssistantId = baseline.assistantMessageId();
+    if (targetAssistantId) {
+      const exactMessage = await this.getAssistantMessageById(sessionId, targetAssistantId);
+      if (exactMessage) {
+        return exactMessage;
+      }
+    }
+
+    return this.getLatestAssistantMessage(sessionId, {
+      afterAssistantId: baseline.baselineAssistantId,
+      afterTimestamp: baseline.baselineAssistantTimestamp,
+    });
   }
 
-  private setPendingInteraction(chatId: string, interaction: PendingInteraction): void {
-    this.clearPendingInteraction(chatId, false);
-    this.pendingInteractions.set(chatId, interaction);
+  private async getLatestAssistantMessage(
+    sessionId: string,
+    options?: {
+      afterAssistantId?: string | null;
+      afterTimestamp?: number | null;
+    },
+  ): Promise<OpenCodeMessage | null> {
+    const messages = await this.opencode.getSessionMessages(sessionId, 200);
+    return [...messages]
+      .reverse()
+      .find((message) => isAssistantMessageAfterBaseline(message, options)) ?? null;
+  }
+
+  private async getAssistantMessageById(sessionId: string, messageId: string): Promise<OpenCodeMessage | null> {
+    const messages = await this.opencode.getSessionMessages(sessionId, 200);
+    return messages.find((message) => message.info.id === messageId && message.info.role === "assistant") ?? null;
+  }
+
+  private setPendingInteraction(conversationKey: string, interaction: PendingInteraction): void {
+    this.clearPendingInteraction(conversationKey, false);
+    this.pendingInteractions.set(conversationKey, interaction);
 
     if (interaction.kind === "permission") {
       const timer = setTimeout(() => {
-        void this.handlePermissionTimeout(chatId, interaction);
+        void this.handlePermissionTimeout(conversationKey, interaction);
       }, Math.max(0, interaction.expiresAt - Date.now()));
-      this.pendingInteractionTimers.set(chatId, timer);
+      this.pendingInteractionTimers.set(conversationKey, timer);
       return;
     }
 
     if (interaction.kind === "session-select") {
       const timer = setTimeout(() => {
-        this.clearPendingInteraction(chatId, false);
+        this.clearPendingInteraction(conversationKey, false);
       }, Math.max(0, interaction.expiresAt - Date.now()));
-      this.pendingInteractionTimers.set(chatId, timer);
+      this.pendingInteractionTimers.set(conversationKey, timer);
     }
   }
 
-  private clearPendingInteraction(chatId: string, keepNonExpiring: boolean): void {
-    const timeout = this.pendingInteractionTimers.get(chatId);
+  private clearPendingInteraction(conversationKey: string, keepNonExpiring: boolean): void {
+    const timeout = this.pendingInteractionTimers.get(conversationKey);
     if (timeout) {
       clearTimeout(timeout);
-      this.pendingInteractionTimers.delete(chatId);
+      this.pendingInteractionTimers.delete(conversationKey);
     }
 
     if (keepNonExpiring) {
-      const current = this.pendingInteractions.get(chatId);
+      const current = this.pendingInteractions.get(conversationKey);
       if (current?.kind === "question") {
         return;
       }
     }
 
-    this.pendingInteractions.delete(chatId);
+    this.pendingInteractions.delete(conversationKey);
   }
 
-  private async handlePermissionTimeout(chatId: string, pending: PendingPermissionInteraction): Promise<void> {
-    const current = this.pendingInteractions.get(chatId);
+  private async handlePermissionTimeout(conversationKey: string, pending: PendingPermissionInteraction): Promise<void> {
+    const current = this.pendingInteractions.get(conversationKey);
     if (!current || current.kind !== "permission" || current.permissionId !== pending.permissionId) {
       return;
     }
@@ -779,16 +854,16 @@ export class BridgeApp {
       await this.opencode.replyPermission(current.sessionId, current.permissionId, "reject", false);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      this.logger.log("bridge/permission", "auto deny failed", { chatId, permissionId: current.permissionId, detail }, "warn");
+      this.logger.log("bridge/permission", "auto deny failed", { chatId: current.chatId, conversationKey, permissionId: current.permissionId, detail }, "warn");
     } finally {
-      this.clearPendingInteraction(chatId, false);
+      this.clearPendingInteraction(conversationKey, false);
     }
 
     await this.updateTurnCard(current.turnId, { status: "处理中", update: "权限请求已超时，已默认拒绝", target: "step" });
-    await this.sendMarkdown(chatId, "权限请求已超时，已默认拒绝。");
+    await this.sendMarkdown(current.chatId, "权限请求已超时，已默认拒绝。", current.replyToMessageId);
   }
 
-  private async createTurnCard(chatId: string, turnId: string, sessionId: string): Promise<TurnCardState | null> {
+  private async createTurnCard(chatId: string, turnId: string, sessionId: string, replyToMessageId: string): Promise<TurnCardState | null> {
     const state: TurnCardState = {
       messageId: "",
       status: "处理中",
@@ -805,7 +880,7 @@ export class BridgeApp {
         transcriptType: "outbound-process",
         textPreview: initialCardSummary,
         len: initialCardSummary.length,
-      });
+      }, { replyToMessageId });
       state.messageId = result.messageId;
       this.turnCards.set(turnId, state);
       return state;
@@ -918,17 +993,25 @@ export class BridgeApp {
     };
   }
 
-  private async sendMarkdown(chatId: string, markdown: string): Promise<void> {
+  private async sendMarkdown(chatId: string, markdown: string, replyToMessageId?: string): Promise<void> {
     await this.sendPayload(chatId, buildPostMarkdownPayload(markdown), {
       event: "final message sent",
       transcriptType: "outbound-final",
       textPreview: createTextPreview(markdown),
       len: markdown.length,
-    });
+    }, replyToMessageId ? { replyToMessageId } : undefined);
   }
 
-  private async sendPayload(chatId: string, payload: FeishuPostPayload, options: { event: string; transcriptType: TranscriptType; textPreview: string; len: number }): Promise<{ messageId: string }> {
-    const result = await this.outbound.sendMessage(chatId, payload);
+  private async sendPayload(
+    chatId: string,
+    payload: FeishuPostPayload,
+    options: { event: string; transcriptType: TranscriptType; textPreview: string; len: number },
+    delivery?: { replyToMessageId: string },
+  ): Promise<{ messageId: string }> {
+    const shouldReplyInThread = this.config.feishu.behavior.replyInThread;
+    const result = shouldReplyInThread && delivery?.replyToMessageId
+      ? await this.outbound.replyMessage(delivery.replyToMessageId, payload)
+      : await this.outbound.sendMessage(chatId, payload);
     this.logger.log("feishu/reply", options.event, { chatId, messageId: result.messageId, textPreview: options.textPreview, len: options.len });
     this.logger.logTranscript(options.transcriptType, { chatId, messageId: result.messageId }, prettyPrintPayload(payload));
     return result;
@@ -939,6 +1022,22 @@ function buildPromptRequest(text: string): { parts: Array<{ type: "text"; text: 
   return {
     parts: [{ type: "text", text }],
   };
+}
+
+export function toOpencodePromptText(message: Pick<IncomingChatMessage, "chatType" | "senderOpenId" | "plainText">): string {
+  if (message.chatType === "p2p") {
+    return message.plainText;
+  }
+
+  return `[群聊消息][发送者 ${message.senderOpenId}]\n${message.plainText}`;
+}
+
+function buildSessionTitle(chatId: string, chatType: string | undefined, threadKey?: string): string {
+  if (chatType === "p2p" || !chatType) {
+    return `Feishu ${chatId}`;
+  }
+
+  return threadKey ? `Feishu ${chatType} ${chatId} ${threadKey}` : `Feishu ${chatType} ${chatId}`;
 }
 
 function toQuestionRequest(properties: Record<string, unknown>, sessionId: string): { id: string; sessionId: string; questions: Array<{ header: string; question: string }> } | null {
@@ -1001,6 +1100,46 @@ function extractAssistantText(message: OpenCodeMessage | null): string {
 function isCompletedMessage(message: OpenCodeMessage): boolean {
   const time = isRecord(message.info.time) ? message.info.time : null;
   return typeof message.info.finish === "string" || typeof time?.completed === "number";
+}
+
+function isAssistantMessageAfterBaseline(
+  message: OpenCodeMessage,
+  options?: {
+    afterAssistantId?: string | null;
+    afterTimestamp?: number | null;
+  },
+): boolean {
+  if (message.info.role !== "assistant") {
+    return false;
+  }
+
+  if (options?.afterAssistantId && message.info.id === options.afterAssistantId) {
+    return false;
+  }
+
+  const baselineTimestamp = options?.afterTimestamp ?? null;
+  const messageTimestamp = getMessageTimestamp(message);
+  if (baselineTimestamp !== null && messageTimestamp !== null && messageTimestamp <= baselineTimestamp) {
+    return false;
+  }
+
+  return true;
+}
+
+function getMessageTimestamp(message: OpenCodeMessage | null): number | null {
+  if (!message || !isRecord(message.info.time)) {
+    return null;
+  }
+
+  const time = message.info.time;
+  const candidates = [time.updated, time.completed, time.created];
+  for (const candidate of candidates) {
+    if (typeof candidate === "number" && Number.isFinite(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

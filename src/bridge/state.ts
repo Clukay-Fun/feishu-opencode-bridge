@@ -7,6 +7,8 @@ export type PendingQuestionInteraction = {
 
 export type PendingPermissionInteraction = {
   kind: "permission";
+  chatId: string;
+  replyToMessageId: string;
   sessionId: string;
   permissionId: string;
   permissionName: string;

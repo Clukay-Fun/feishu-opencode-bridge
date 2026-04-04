@@ -3,3 +3,4 @@ dist/
 logs/
 data/
 config.json
+.DS_Store

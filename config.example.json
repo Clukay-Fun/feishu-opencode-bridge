@@ -2,8 +2,21 @@
   "feishu": {
     "appId": "cli_xxx",
     "appSecret": "xxx",
+    "botOpenId": "ou_xxx",
+    "botOpenIds": ["ou_xxx", "ou_yyy"],
+    "botMentionNames": ["opencode", "open code"],
+    "selfBotOpenId": "ou_xxx",
+    "selfBotOpenIds": ["ou_xxx"],
     "wsUrl": "wss://open.feishu.cn/open-apis/ws/v2",
-    "allowedOpenIds": []
+    "allowedOpenIds": [],
+    "behavior": {
+      "enableP2p": true,
+      "enableGroup": true,
+      "requireBotMentionInGroup": true,
+      "strictBotMention": true,
+      "ignoreNonUserSenders": true,
+      "replyInThread": true
+    }
   },
   "opencode": {
     "baseUrl": "http://127.0.0.1:4096/",
