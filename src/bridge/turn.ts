@@ -6,6 +6,7 @@ export type BridgeTurn = {
   chatType?: string;
   senderOpenId: string;
   inboundMessageId: string;
+  plainText: string;
   text: string;
   sessionId?: string;
   processMessageId?: string;

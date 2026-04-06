@@ -44,6 +44,14 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
     },
     bridge: {
       queueLimit: parsed.bridge.queueLimit,
+      sessionModes: {
+        p2p: parsed.bridge.sessions.p2pMode,
+        group: parsed.bridge.sessions.groupMode,
+        topicGroup: parsed.bridge.sessions.topicGroupMode,
+      },
+      maxSessionsPerWindow: parsed.bridge.sessions.maxSessionsPerWindow,
+      sessionListLimit: parsed.bridge.sessions.listLimit,
+      injectSystemState: parsed.bridge.sessions.injectSystemState,
       firstEventTimeoutMs: parsed.bridge.timeouts.firstEvent,
       eventGapTimeoutMs: parsed.bridge.timeouts.eventInterval,
       totalTimeoutMs: parsed.bridge.timeouts.totalTurn,

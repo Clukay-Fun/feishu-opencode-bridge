@@ -11,6 +11,7 @@ function makeTurn(overrides: Partial<BridgeTurn> = {}): BridgeTurn {
     threadKey: "thread",
     senderOpenId: "u",
     inboundMessageId: "m",
+    plainText: "hi",
     text: "hi",
     ...overrides,
   };

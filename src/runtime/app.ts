@@ -24,9 +24,20 @@ import {
   type OpenCodeSessionStatus,
 } from "../opencode/client.js";
 import { getEventSessionId, OpenCodeEventStream, type OpenCodeEvent } from "../opencode/events.js";
-import { MappingStore, type MappingRecord } from "../store/mappings.js";
+import { MappingStore, type MappingRecord, type SessionBindingRecord, type SessionMode, type SessionWindowRecord } from "../store/mappings.js";
 import type { AppConfig } from "../config/schema.js";
 import { cleanAssistantReply } from "./sanitize.js";
+import {
+  addSession,
+  createSessionEntry,
+  getActiveSession,
+  getVisibleSessions,
+  normalizeSessionWindowRecord,
+  removeSession,
+  resolveSessionMode,
+  setActiveSession,
+  updateSessionLabel,
+} from "./session-windows.js";
 
 export type IncomingChatMessage = {
   chatId: string;
@@ -99,6 +110,7 @@ export class BridgeApp {
     if (project.worktree !== this.config.opencode.directory) {
       throw new Error(`opencode serve 当前在 ${project.worktree}，bridge 配置的是 ${this.config.opencode.directory}，请在正确目录重启 opencode serve`);
     }
+    await this.syncStoredSessionLabels();
 
     await this.eventStream.start();
     this.globalEventUnsubscribe = this.eventStream.subscribe(async (event) => {
@@ -165,7 +177,6 @@ export class BridgeApp {
     }
 
     const queue = this.queues.get(message.conversationKey);
-    const existingSession = this.sessionMap[message.conversationKey];
     const turn: BridgeTurn = {
       turnId: crypto.randomUUID(),
       chatId: message.chatId,
@@ -174,11 +185,9 @@ export class BridgeApp {
       chatType: message.chatType,
       senderOpenId: message.senderOpenId,
       inboundMessageId: message.messageId,
+      plainText: message.plainText,
       text: toOpencodePromptText(message),
     };
-    if (existingSession?.sessionId) {
-      turn.sessionId = existingSession.sessionId;
-    }
 
     const result = queue.enqueue(turn);
     if (!result.accepted) {
@@ -240,6 +249,7 @@ export class BridgeApp {
       const reply = cleanAssistantReply(await this.executeTurn(conversationKey, turn as BridgeTurn & { sessionId: string }));
       this.logger.log("opencode/events", "reply completed", { turnId: turn.turnId, sessionId, len: reply.length });
       this.logger.logTranscript("opencode-reply", { sessionId, turnId: turn.turnId }, reply);
+      await this.maybeUpdateSessionLabel(turn as BridgeTurn & { sessionId: string });
       await this.flushStreamUpdate(turn.turnId, reply, true);
       await this.updateTurnCard(turn.turnId, { status: "已完成", update: `最终回复已生成（${reply.length} 字）`, target: "step" });
       queue.replaceActive(transitionTurn({ ...turn, sessionId }, "done"));
@@ -343,7 +353,10 @@ export class BridgeApp {
       );
 
       watchdog.start();
-      void this.opencode.promptAsync(turn.sessionId, buildPromptRequest(turn.text))
+      const systemPrompt = this.config.bridge.injectSystemState
+        ? buildBridgeSystemPrompt(turn, this.getSessionWindow(turn.conversationKey, turn.chatType))
+        : undefined;
+      void this.opencode.promptAsync(turn.sessionId, buildPromptRequest(turn.text, systemPrompt))
         .then(() => {
           queue.replaceActive(transitionTurn(turn, "awaiting-sse"));
           void this.updateTurnCard(turn.turnId, { status: "处理中", update: "请求已发送，等待事件流...", target: "step" });
@@ -509,9 +522,8 @@ export class BridgeApp {
   ): Promise<void> {
     const { command } = routed;
     if (command.kind === "new") {
-      const session = await this.opencode.createSession(buildSessionTitle(message.chatId, message.chatType, message.threadKey));
-      await this.bindSession(message.conversationKey, session.id);
-      await this.sendMarkdown(message.chatId, "已创建并绑定新会话，下一条消息将继续在这个 session 中处理。", message.messageId);
+      const entry = await this.createAndBindSession(message);
+      await this.sendMarkdown(message.chatId, `已创建并切换到新会话 \`${entry.sessionId}\`。`, message.messageId);
       return;
     }
 
@@ -528,23 +540,27 @@ export class BridgeApp {
 
       const queue = this.queues.get(message.conversationKey);
       const active = queue.peek();
-      const binding = this.sessionMap[message.conversationKey];
-      const status = binding ? this.sessionStatuses.get(binding.sessionId)?.type ?? "unknown" : "unbound";
+      const window = this.getSessionWindow(message.conversationKey, message.chatType);
+      const currentSession = getActiveSession(window);
+      const status = currentSession ? this.sessionStatuses.get(currentSession.sessionId)?.type ?? "unknown" : "unbound";
       const statusText = [
         `事件流状态：${this.eventStream.getConnectionState()}`,
-        `当前会话：${binding ? `\`${binding.sessionId}\`` : "未绑定"}`,
+        `会话模式：${window.mode}`,
+        `当前会话：${currentSession ? `${escapeMarkdownText(currentSession.label)} \`${currentSession.sessionId}\`` : "未绑定"}`,
         `Session 状态：${status}`,
         `队列状态：${active ? `处理中 ${createTextPreview(active.text)}` : "空闲"}`,
         `排队数量：${queue.pendingCount()}`,
+        `窗口会话数：${window.sessions.length}`,
       ].join("\n");
       await this.sendMarkdown(message.chatId, statusText, message.messageId);
       return;
     }
 
     if (command.kind === "abort") {
-      const binding = this.sessionMap[message.conversationKey];
-      if (binding) {
-        await this.opencode.abort(binding.sessionId);
+      const window = this.getSessionWindow(message.conversationKey, message.chatType);
+      const currentSession = getActiveSession(window);
+      if (currentSession) {
+        await this.opencode.abort(currentSession.sessionId);
       }
       await this.sendMarkdown(message.chatId, "已请求中止当前任务。", message.messageId);
       return;
@@ -557,18 +573,27 @@ export class BridgeApp {
     }
 
     if (command.kind === "sessions") {
-      const sessions = [...await this.opencode.listSessions()]
-        .sort((a, b) => getSessionUpdatedAt(b) - getSessionUpdatedAt(a))
-        .slice(0, 10);
-      if (sessions.length === 0) {
-        await this.sendMarkdown(message.chatId, "当前没有可切换的会话。", message.messageId);
+      const window = this.getSessionWindow(message.conversationKey, message.chatType);
+      const currentSession = getActiveSession(window);
+      if (window.mode === "single") {
+        const text = currentSession
+          ? formatSingleSessionStatus(window.mode, currentSession)
+          : "当前窗口为单会话模式，暂未绑定会话。";
+        await this.sendMarkdown(message.chatId, text, message.messageId);
         return;
       }
 
-      const options = sessions.map((session, index) => ({
+      const visibleSessions = getVisibleSessions(window).slice(0, this.config.bridge.sessionListLimit);
+      if (visibleSessions.length === 0) {
+        await this.sendMarkdown(message.chatId, "当前窗口暂无可切换的会话。", message.messageId);
+        return;
+      }
+
+      const options = visibleSessions.map((session, index) => ({
         index: index + 1,
-        sessionId: session.id,
-        title: session.title?.trim() || session.slug || session.id,
+        sessionId: session.sessionId,
+        title: session.label,
+        current: session.sessionId === currentSession?.sessionId,
       }));
       this.setPendingInteraction(message.conversationKey, {
         kind: "session-select",
@@ -580,6 +605,12 @@ export class BridgeApp {
     }
 
     if (command.kind === "sessions-select") {
+      const window = this.getSessionWindow(message.conversationKey, message.chatType);
+      if (window.mode === "single") {
+        await this.sendMarkdown(message.chatId, "当前窗口为单会话模式，不支持切换。", message.messageId);
+        return;
+      }
+
       const pending = this.pendingInteractions.get(message.conversationKey);
       if (!pending || pending.kind !== "session-select" || pending.expiresAt <= Date.now()) {
         this.clearPendingInteraction(message.conversationKey, false);
@@ -593,9 +624,22 @@ export class BridgeApp {
         return;
       }
 
-      await this.bindSession(message.conversationKey, match.sessionId);
+      const openCodeSessions = await this.listOpenCodeSessionsById();
+      if (!openCodeSessions.has(match.sessionId)) {
+        const nextWindow = removeSession(window, match.sessionId, this.config.bridge.maxSessionsPerWindow);
+        await this.saveSessionWindow(message.conversationKey, nextWindow);
+        this.clearPendingInteraction(message.conversationKey, false);
+        await this.sendMarkdown(message.chatId, "目标会话已失效，已从当前窗口列表移除，请重新执行 `/sessions`。", message.messageId);
+        return;
+      }
+
+      let nextWindow = setActiveSession(window, match.sessionId, Date.now(), this.config.bridge.maxSessionsPerWindow);
+      const sessionMeta = openCodeSessions.get(match.sessionId);
+      const fallbackLabel = resolveDisplayLabel(sessionMeta, match.title, match.sessionId);
+      nextWindow = updateSessionLabel(nextWindow, match.sessionId, fallbackLabel, this.config.bridge.maxSessionsPerWindow);
+      await this.saveSessionWindow(message.conversationKey, nextWindow);
       this.clearPendingInteraction(message.conversationKey, false);
-      await this.sendMarkdown(message.chatId, `已切换到会话 \`${match.sessionId}\`。`, message.messageId);
+      await this.sendMarkdown(message.chatId, `已切换到会话 ${escapeMarkdownText(fallbackLabel)} \`${match.sessionId}\`。`, message.messageId);
       return;
     }
 
@@ -649,31 +693,27 @@ export class BridgeApp {
   }
 
   private async ensureSession(source: Pick<BridgeTurn, "chatId" | "chatType" | "conversationKey" | "threadKey">): Promise<string> {
-    const existing = this.sessionMap[source.conversationKey];
-    if (existing) {
-      await this.touchSession(source.conversationKey, existing.sessionId);
-      return existing.sessionId;
+    const openCodeSessions = await this.listOpenCodeSessionsById();
+    let window = this.getSessionWindow(source.conversationKey, source.chatType);
+    let currentSession = getActiveSession(window);
+
+    while (currentSession) {
+      if (openCodeSessions.has(currentSession.sessionId)) {
+        let nextWindow = setActiveSession(window, currentSession.sessionId, Date.now(), this.config.bridge.maxSessionsPerWindow);
+        const sessionMeta = openCodeSessions.get(currentSession.sessionId);
+        const fallbackLabel = resolveDisplayLabel(sessionMeta, currentSession.label, currentSession.sessionId);
+        nextWindow = updateSessionLabel(nextWindow, currentSession.sessionId, fallbackLabel, this.config.bridge.maxSessionsPerWindow);
+        await this.saveSessionWindow(source.conversationKey, nextWindow);
+        return currentSession.sessionId;
+      }
+
+      window = removeSession(window, currentSession.sessionId, this.config.bridge.maxSessionsPerWindow);
+      await this.saveSessionWindow(source.conversationKey, window);
+      currentSession = getActiveSession(window);
     }
 
-    const session = await this.opencode.createSession(buildSessionTitle(source.chatId, source.chatType, source.threadKey));
-    await this.bindSession(source.conversationKey, session.id);
-    return session.id;
-  }
-
-  private async bindSession(conversationKey: string, sessionId: string): Promise<void> {
-    this.sessionMap[conversationKey] = {
-      sessionId,
-      lastUsedAt: Date.now(),
-    };
-    await this.mappings.save(this.sessionMap);
-  }
-
-  private async touchSession(conversationKey: string, sessionId: string): Promise<void> {
-    this.sessionMap[conversationKey] = {
-      sessionId,
-      lastUsedAt: Date.now(),
-    };
-    await this.mappings.save(this.sessionMap);
+    const entry = await this.createAndBindSession(source);
+    return entry.sessionId;
   }
 
   private async ensureServerAvailableForMessage(message: Pick<IncomingChatMessage, "chatId" | "messageId">): Promise<boolean> {
@@ -805,6 +845,77 @@ export class BridgeApp {
   private async getAssistantMessageById(sessionId: string, messageId: string): Promise<OpenCodeMessage | null> {
     const messages = await this.opencode.getSessionMessages(sessionId, 200);
     return messages.find((message) => message.info.id === messageId && message.info.role === "assistant") ?? null;
+  }
+
+  private getSessionWindow(conversationKey: string, chatType?: string): SessionWindowRecord {
+    const mode = resolveSessionMode(chatType, this.config.bridge.sessionModes);
+    return normalizeSessionWindowRecord(this.sessionMap[conversationKey], mode, this.config.bridge.maxSessionsPerWindow);
+  }
+
+  private async saveSessionWindow(conversationKey: string, window: SessionWindowRecord): Promise<void> {
+    if (window.sessions.length === 0) {
+      delete this.sessionMap[conversationKey];
+    } else {
+      this.sessionMap[conversationKey] = window;
+    }
+    await this.mappings.save(this.sessionMap);
+  }
+
+  private async createAndBindSession(
+    source: Pick<BridgeTurn, "chatId" | "chatType" | "conversationKey" | "threadKey">,
+  ): Promise<SessionBindingRecord> {
+    const session = await this.opencode.createSession(buildSessionTitle(source.chatId, source.chatType, source.threadKey));
+    const entry = createSessionEntry(session.id, Date.now(), "新会话");
+    const window = this.getSessionWindow(source.conversationKey, source.chatType);
+    const nextWindow = addSession(window, entry, this.config.bridge.maxSessionsPerWindow);
+    await this.saveSessionWindow(source.conversationKey, nextWindow);
+    return entry;
+  }
+
+  private async maybeUpdateSessionLabel(turn: BridgeTurn & { sessionId: string }): Promise<void> {
+    const window = this.getSessionWindow(turn.conversationKey, turn.chatType);
+    const currentSession = window.sessions.find((session) => session.sessionId === turn.sessionId);
+    if (!currentSession || currentSession.label !== "新会话") {
+      return;
+    }
+
+    const nextLabel = summarizeSessionLabel(turn.plainText) || currentSession.label;
+    if (nextLabel === currentSession.label) {
+      return;
+    }
+
+    const nextWindow = updateSessionLabel(window, turn.sessionId, nextLabel, this.config.bridge.maxSessionsPerWindow);
+    await this.saveSessionWindow(turn.conversationKey, nextWindow);
+  }
+
+  private async listOpenCodeSessionsById(): Promise<Map<string, OpenCodeSession>> {
+    const sessions = await this.opencode.listSessions();
+    return new Map(sessions.map((session) => [session.id, session]));
+  }
+
+  private async syncStoredSessionLabels(): Promise<void> {
+    const sessionsById = await this.listOpenCodeSessionsById();
+    let changed = false;
+
+    for (const [conversationKey, window] of Object.entries(this.sessionMap)) {
+      let nextWindow = normalizeSessionWindowRecord(window, window.mode, this.config.bridge.maxSessionsPerWindow);
+      for (const session of nextWindow.sessions) {
+        if (!shouldHydrateLabelFromSessionMeta(session.label, session.sessionId)) {
+          continue;
+        }
+        const nextLabel = resolveDisplayLabel(sessionsById.get(session.sessionId), session.label, session.sessionId);
+        if (nextLabel === session.label) {
+          continue;
+        }
+        nextWindow = updateSessionLabel(nextWindow, session.sessionId, nextLabel, this.config.bridge.maxSessionsPerWindow);
+        changed = true;
+      }
+      this.sessionMap[conversationKey] = nextWindow;
+    }
+
+    if (changed) {
+      await this.mappings.save(this.sessionMap);
+    }
   }
 
   private setPendingInteraction(conversationKey: string, interaction: PendingInteraction): void {
@@ -1018,10 +1129,15 @@ export class BridgeApp {
   }
 }
 
-function buildPromptRequest(text: string): { parts: Array<{ type: "text"; text: string }> } {
-  return {
-    parts: [{ type: "text", text }],
-  };
+export function buildPromptRequest(text: string, system?: string): { system?: string; parts: Array<{ type: "text"; text: string }> } {
+  return system
+    ? {
+      system,
+      parts: [{ type: "text", text }],
+    }
+    : {
+      parts: [{ type: "text", text }],
+    };
 }
 
 export function toOpencodePromptText(message: Pick<IncomingChatMessage, "chatType" | "senderOpenId" | "plainText">): string {
@@ -1077,15 +1193,63 @@ function formatProviders(providers: OpenCodeProvidersResponse): string {
 
 function formatSessionList(options: PendingSessionSelectionInteraction["options"]): string {
   return [
-    "最近会话：",
-    ...options.map((option) => `${option.index}. ${escapeMarkdownText(option.title)}\n   \`${option.sessionId}\``),
+    "当前窗口会话：",
+    ...options.map((option) => `${option.index}. ${escapeMarkdownText(option.title)}${option.current ? " ← 当前" : ""}\n   \`${option.sessionId}\``),
     "",
-    "30 秒内可用 `/sessions <编号>` 切换。",
+    "30 秒内可用 `/switch <编号>` 或 `/sessions <编号>` 切换。",
   ].join("\n");
 }
 
-function getSessionUpdatedAt(session: OpenCodeSession): number {
-  return session.time?.updated ?? session.time?.created ?? 0;
+function formatSingleSessionStatus(mode: SessionMode, session: SessionBindingRecord): string {
+  return [
+    `当前窗口为${mode}会话模式。`,
+    `当前会话：${escapeMarkdownText(session.label)}`,
+    `Session ID：\`${session.sessionId}\``,
+  ].join("\n");
+}
+
+export function buildBridgeSystemPrompt(
+  turn: Pick<BridgeTurn, "chatType" | "conversationKey" | "senderOpenId" | "sessionId">,
+  window: SessionWindowRecord,
+): string {
+  const visibleSessions = getVisibleSessions(window);
+  const lines = [
+    "[Bridge State]",
+    `windowType: ${turn.chatType ?? "p2p"}`,
+    `conversationKey: ${turn.conversationKey}`,
+    `sessionMode: ${window.mode}`,
+    `activeSessionId: ${window.activeSessionId ?? "none"}`,
+    "visibleSessions:",
+    ...(visibleSessions.length > 0
+      ? visibleSessions.map((session) => `- ${session.sessionId === turn.sessionId ? "*" : " "} ${session.label} (${session.sessionId})`)
+      : ["- none"]),
+    `senderOpenId: ${turn.senderOpenId}`,
+    "rules:",
+    "- Bridge owns /new /sessions /switch /status and all runtime progress or reply messages.",
+    "- Do not pretend to switch, create, close, or rename bridge sessions yourself.",
+    "- Use lark-cli only when the user explicitly asks to operate on Feishu or Lark resources.",
+  ];
+  return lines.join("\n");
+}
+
+export function resolveDisplayLabel(session: OpenCodeSession | undefined, currentLabel: string, sessionId: string): string {
+  if (!shouldHydrateLabelFromSessionMeta(currentLabel, sessionId)) {
+    return currentLabel;
+  }
+
+  return session?.title?.trim() || session?.slug?.trim() || currentLabel || sessionId;
+}
+
+function shouldHydrateLabelFromSessionMeta(currentLabel: string, sessionId: string): boolean {
+  return currentLabel === sessionId;
+}
+
+function summarizeSessionLabel(plainText: string): string {
+  const normalized = plainText.trim().replace(/\s+/g, " ");
+  if (!normalized) {
+    return "";
+  }
+  return normalized.slice(0, 20);
 }
 
 function extractAssistantText(message: OpenCodeMessage | null): string {

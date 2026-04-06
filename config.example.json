@@ -28,6 +28,14 @@
   },
   "bridge": {
     "queueLimit": 3,
+    "sessions": {
+      "p2pMode": "multi",
+      "groupMode": "single",
+      "topicGroupMode": "single",
+      "maxSessionsPerWindow": 20,
+      "listLimit": 10,
+      "injectSystemState": true
+    },
     "timeouts": {
       "firstEvent": 30000,
       "eventInterval": 120000,

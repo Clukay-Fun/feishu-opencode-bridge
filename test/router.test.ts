@@ -14,6 +14,13 @@ describe("routeIncomingText", () => {
     });
   });
 
+  it("routes /switch <index> to session selection", () => {
+    expect(routeIncomingText("/switch 2")).toEqual({
+      kind: "command",
+      command: { kind: "sessions-select", index: 2 },
+    });
+  });
+
   it("routes permission commands", () => {
     expect(routeIncomingText("/allow once")).toEqual({
       kind: "command",

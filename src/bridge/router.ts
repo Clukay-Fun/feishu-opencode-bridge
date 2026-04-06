@@ -51,6 +51,13 @@ export function routeIncomingText(text: string): RoutedText {
     };
   }
 
+  if (rawCommand === "switch" && args.length === 1 && /^\d+$/.test(args[0] ?? "")) {
+    return {
+      kind: "command",
+      command: { kind: "sessions-select", index: Number(args[0]) },
+    };
+  }
+
   if (rawCommand === "allow" && (args[0] === "once" || args[0] === "always") && args.length === 1) {
     return {
       kind: "command",

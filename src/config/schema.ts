@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+const SessionModeSchema = z.enum(["single", "multi"]);
+
 export const ConfigSchema = z.object({
   feishu: z.object({
     appId: z.string().min(1),
@@ -30,6 +32,14 @@ export const ConfigSchema = z.object({
   }),
   bridge: z.object({
     queueLimit: z.number().int().positive().default(3),
+    sessions: z.object({
+      p2pMode: SessionModeSchema.default("multi"),
+      groupMode: SessionModeSchema.default("single"),
+      topicGroupMode: SessionModeSchema.default("single"),
+      maxSessionsPerWindow: z.number().int().positive().default(20),
+      listLimit: z.number().int().positive().default(10),
+      injectSystemState: z.boolean().default(true),
+    }).default({}),
     timeouts: z.object({
       firstEvent: z.number().int().positive().default(30_000),
       eventInterval: z.number().int().positive().default(120_000),
@@ -76,6 +86,14 @@ export type AppConfig = {
   };
   bridge: {
     queueLimit: number;
+    sessionModes: {
+      p2p: "single" | "multi";
+      group: "single" | "multi";
+      topicGroup: "single" | "multi";
+    };
+    maxSessionsPerWindow: number;
+    sessionListLimit: number;
+    injectSystemState: boolean;
     firstEventTimeoutMs: number;
     eventGapTimeoutMs: number;
     totalTimeoutMs: number;
