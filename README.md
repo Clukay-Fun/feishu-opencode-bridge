@@ -7,7 +7,7 @@ It listens to Feishu message events over WebSocket, maps each conversation to an
 ## Features
 
 - Supports Feishu `p2p`, `group`, and `topic_group` chats
-- Uses one OpenCode session per conversation
+- Uses per-window session registries with configurable `single` or `multi` mode
 - Uses thread-aware isolation for group chats
 - Supports OpenCode `prompt_async`, command routing, abort, status, models, permissions, and session switching
 - Streams progress into a Feishu interactive card and updates the same message in place
@@ -92,6 +92,14 @@ Copy the example config and fill in your real values:
   },
   "bridge": {
     "queueLimit": 3,
+    "sessions": {
+      "p2pMode": "multi",
+      "groupMode": "single",
+      "topicGroupMode": "single",
+      "maxSessionsPerWindow": 20,
+      "listLimit": 10,
+      "injectSystemState": true
+    },
     "timeouts": {
       "firstEvent": 30000,
       "eventInterval": 120000,
@@ -127,6 +135,13 @@ Copy the example config and fill in your real values:
 When `requireBotMentionInGroup=true`, group messages are handled only when they match your configured bot identity rules.
 
 When `strictBotMention=true`, the bridge only accepts messages that explicitly mention one of the configured bot identities.
+
+### Session modes
+
+- `p2pMode`, `groupMode`, and `topicGroupMode` control whether a window behaves as `single` or `multi` session mode.
+- `single` keeps exactly one active session in the window. `/new` replaces it. `/switch` and `/sessions <index>` are rejected.
+- `multi` keeps multiple sessions per window, shows them through `/sessions`, and allows switching with `/switch <index>` or `/sessions <index>`.
+- `injectSystemState=true` adds bridge-owned window and session state into the OpenCode `system` field without polluting the user message text.
 
 ## OpenCode auth
 
@@ -169,6 +184,7 @@ Supported slash commands:
 - `/abort`
 - `/models`
 - `/sessions`
+- `/switch <index>`
 - `/sessions <index>`
 - `/allow once`
 - `/allow always`

@@ -7,7 +7,7 @@ Feishu OpenCode Bridge 是一个独立运行的 TypeScript 服务，用来把飞
 ## 功能特性
 
 - 支持飞书 `p2p`、`group`、`topic_group` 三类会话
-- 一个飞书对话绑定一个 OpenCode session
+- 按窗口维护 OpenCode session registry，并支持 `single` / `multi` 两种会话模式
 - 群聊按线程隔离上下文
 - 支持 OpenCode `prompt_async`、命令转发、中止、状态、模型、权限请求、session 切换
 - 使用飞书交互卡片承载过程消息，并持续更新同一条回复
@@ -92,6 +92,14 @@ npm install
   },
   "bridge": {
     "queueLimit": 3,
+    "sessions": {
+      "p2pMode": "multi",
+      "groupMode": "single",
+      "topicGroupMode": "single",
+      "maxSessionsPerWindow": 20,
+      "listLimit": 10,
+      "injectSystemState": true
+    },
     "timeouts": {
       "firstEvent": 30000,
       "eventInterval": 120000,
@@ -127,6 +135,13 @@ npm install
 当 `requireBotMentionInGroup=true` 时，群聊消息只有命中机器人匹配规则才会处理。
 
 当 `strictBotMention=true` 时，只接受明确命中已配置机器人身份的消息。
+
+### 会话模式
+
+- `p2pMode`、`groupMode`、`topicGroupMode` 用来控制窗口采用 `single` 还是 `multi` 模式。
+- `single` 模式下，窗口内始终只有 1 个 active session。`/new` 会替换它，`/switch` 和 `/sessions <编号>` 会被拒绝。
+- `multi` 模式下，窗口内可保留多个 session，可通过 `/sessions` 查看，并用 `/switch <编号>` 或 `/sessions <编号>` 切换。
+- `injectSystemState=true` 会把 bridge 的窗口和会话状态写进 OpenCode 的 `system` 字段，不污染用户正文。
 
 ## OpenCode 鉴权
 
@@ -167,6 +182,7 @@ npm run dev:once
 - `/abort`
 - `/models`
 - `/sessions`
+- `/switch <编号>`
 - `/sessions <编号>`
 - `/allow once`
 - `/allow always`

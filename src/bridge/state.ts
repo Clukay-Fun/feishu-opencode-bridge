@@ -18,7 +18,7 @@ export type PendingPermissionInteraction = {
 
 export type PendingSessionSelectionInteraction = {
   kind: "session-select";
-  options: Array<{ index: number; sessionId: string; title: string }>;
+  options: Array<{ index: number; sessionId: string; title: string; current?: boolean }>;
   expiresAt: number;
 };
 
