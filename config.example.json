@@ -42,6 +42,15 @@
       "totalTurn": 300000
     }
   },
+  "memory": {
+    "enabled": false,
+    "dbPath": "./data/memory.db",
+    "maxMemoriesPerUser": 500,
+    "searchLimit": 5,
+    "extractQueueLimit": 100,
+    "sourcePreviewLength": 50,
+    "shutdownDrainTimeoutMs": 5000
+  },
   "logging": {
     "dir": "./logs",
     "level": "info",

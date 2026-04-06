@@ -46,6 +46,15 @@ export const ConfigSchema = z.object({
       totalTurn: z.number().int().positive().default(300_000),
     }).default({}),
   }),
+  memory: z.object({
+    enabled: z.boolean().default(false),
+    dbPath: z.string().min(1).default("./data/memory.db"),
+    maxMemoriesPerUser: z.number().int().positive().default(500),
+    searchLimit: z.number().int().positive().default(5),
+    extractQueueLimit: z.number().int().positive().default(100),
+    sourcePreviewLength: z.number().int().positive().default(50),
+    shutdownDrainTimeoutMs: z.number().int().positive().default(5_000),
+  }).default({}),
   logging: z.object({
     dir: z.string().min(1).default("./logs"),
     level: z.enum(["debug", "info", "warn", "error"]).default("info"),
@@ -97,6 +106,15 @@ export type AppConfig = {
     firstEventTimeoutMs: number;
     eventGapTimeoutMs: number;
     totalTimeoutMs: number;
+  };
+  memory: {
+    enabled: boolean;
+    dbPath: string;
+    maxMemoriesPerUser: number;
+    searchLimit: number;
+    extractQueueLimit: number;
+    sourcePreviewLength: number;
+    shutdownDrainTimeoutMs: number;
   };
   logging: {
     dir: string;

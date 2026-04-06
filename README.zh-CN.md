@@ -10,6 +10,7 @@ Feishu OpenCode Bridge 是一个独立运行的 TypeScript 服务，用来把飞
 - 按窗口维护 OpenCode session registry，并支持 `single` / `multi` 两种会话模式
 - 群聊按线程隔离上下文
 - 支持 OpenCode `prompt_async`、命令转发、中止、状态、模型、权限请求、session 切换
+- 支持可选的长期用户记忆召回，按 `senderOpenId` 归档
 - 使用飞书交互卡片承载过程消息，并持续更新同一条回复
 - 群聊 `@` 规则支持通过配置控制严格或宽松模式
 - 支持多个机器人身份，以及“触发身份”和“自身身份”分离
@@ -106,6 +107,15 @@ npm install
       "totalTurn": 300000
     }
   },
+  "memory": {
+    "enabled": false,
+    "dbPath": "./data/memory.db",
+    "maxMemoriesPerUser": 500,
+    "searchLimit": 5,
+    "extractQueueLimit": 100,
+    "sourcePreviewLength": 50,
+    "shutdownDrainTimeoutMs": 5000
+  },
   "logging": {
     "dir": "./logs",
     "level": "info",
@@ -142,6 +152,13 @@ npm install
 - `single` 模式下，窗口内始终只有 1 个 active session。`/new` 会替换它，`/switch` 和 `/sessions <编号>` 会被拒绝。
 - `multi` 模式下，窗口内可保留多个 session，可通过 `/sessions` 查看，并用 `/switch <编号>` 或 `/sessions <编号>` 切换。
 - `injectSystemState=true` 会把 bridge 的窗口和会话状态写进 OpenCode 的 `system` 字段，不污染用户正文。
+
+### 记忆模块
+
+- `memory.enabled=true` 后，会按 `senderOpenId` 维护长期事实记忆。
+- recall 会以独立的 `[Memory Recall]` system 块注入到 OpenCode。
+- learn 在 turn 成功完成后异步执行，不阻塞也不影响主回复链路。
+- SQLite 存储路径由 `memory.dbPath` 控制。
 
 ## OpenCode 鉴权
 

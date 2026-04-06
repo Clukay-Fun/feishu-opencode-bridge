@@ -10,6 +10,7 @@ It listens to Feishu message events over WebSocket, maps each conversation to an
 - Uses per-window session registries with configurable `single` or `multi` mode
 - Uses thread-aware isolation for group chats
 - Supports OpenCode `prompt_async`, command routing, abort, status, models, permissions, and session switching
+- Supports optional long-term user memory recall keyed by `senderOpenId`
 - Streams progress into a Feishu interactive card and updates the same message in place
 - Supports strict or relaxed group mention matching through config
 - Supports multiple bot identities and separate self-bot identities
@@ -106,6 +107,15 @@ Copy the example config and fill in your real values:
       "totalTurn": 300000
     }
   },
+  "memory": {
+    "enabled": false,
+    "dbPath": "./data/memory.db",
+    "maxMemoriesPerUser": 500,
+    "searchLimit": 5,
+    "extractQueueLimit": 100,
+    "sourcePreviewLength": 50,
+    "shutdownDrainTimeoutMs": 5000
+  },
   "logging": {
     "dir": "./logs",
     "level": "info",
@@ -142,6 +152,13 @@ When `strictBotMention=true`, the bridge only accepts messages that explicitly m
 - `single` keeps exactly one active session in the window. `/new` replaces it. `/switch` and `/sessions <index>` are rejected.
 - `multi` keeps multiple sessions per window, shows them through `/sessions`, and allows switching with `/switch <index>` or `/sessions <index>`.
 - `injectSystemState=true` adds bridge-owned window and session state into the OpenCode `system` field without polluting the user message text.
+
+### Memory
+
+- `memory.enabled=true` turns on long-term fact memory keyed by `senderOpenId`.
+- Recall is injected into OpenCode through a separate `[Memory Recall]` system block.
+- Learn runs asynchronously after a successful turn and does not block or fail the main reply path.
+- The SQLite database path is controlled by `memory.dbPath`.
 
 ## OpenCode auth
 
