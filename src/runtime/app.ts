@@ -50,6 +50,7 @@ import {
   setActiveSession,
   updateSessionLabel,
 } from "./session-windows.js";
+import { appendSystemBlock, MemoryService } from "../memory/index.js";
 
 export type IncomingChatMessage = {
   chatId: string;
@@ -122,6 +123,7 @@ export class BridgeApp {
   private readonly sessionStatuses = new Map<string, OpenCodeSessionStatus>();
   private readonly permissionInteractions = new Map<string, PendingPermissionInteraction>();
   private readonly permissionProcessing = new Set<string>();
+  private readonly memory: MemoryService | null;
   private globalEventUnsubscribe: (() => void) | null = null;
 
   constructor(
@@ -134,6 +136,7 @@ export class BridgeApp {
     this.mappings = new MappingStore(config.storage.dataDir, config.storage.mappingsFile, 200, logger);
     this.opencode = new OpenCodeClient(config.opencode.baseUrl);
     this.eventStream = new OpenCodeEventStream(config.opencode.baseUrl, logger);
+    this.memory = config.memory.enabled ? new MemoryService(config.memory, this.opencode, logger) : null;
   }
 
   async start(): Promise<void> {
@@ -169,6 +172,10 @@ export class BridgeApp {
     }
     this.pendingInteractionTimers.clear();
     this.streamFlushStates.clear();
+    if (this.memory) {
+      await this.memory.drain(this.config.memory.shutdownDrainTimeoutMs);
+      this.memory.close();
+    }
     await this.eventStream.stop();
   }
 
@@ -363,6 +370,9 @@ export class BridgeApp {
       this.logger.log("opencode/events", "reply completed", { turnId: turn.turnId, sessionId, len: reply.length });
       this.logger.logTranscript("opencode-reply", { sessionId, turnId: turn.turnId }, reply);
       await this.maybeUpdateSessionLabel(turn as BridgeTurn & { sessionId: string });
+      if (this.memory && reply) {
+        this.memory.enqueueLearn(turn.senderOpenId, turn.plainText, reply);
+      }
       await this.flushStreamUpdate(turn.turnId, reply, true);
       await this.updateTurnCard(turn.turnId, { status: "已完成", update: `最终回复已生成（${reply.length} 字）`, target: "step" });
       queue.replaceActive(transitionTurn({ ...turn, sessionId }, "done"));
@@ -475,7 +485,11 @@ export class BridgeApp {
       const systemPrompt = this.config.bridge.injectSystemState
         ? buildBridgeSystemPrompt(turn, this.getSessionWindow(turn.conversationKey, turn.chatType))
         : undefined;
-      void this.opencode.promptAsync(turn.sessionId, buildPromptRequest(turn.text, systemPrompt))
+      const recallBlock = this.memory
+        ? this.memory.buildRecallBlock(turn.senderOpenId, turn.plainText)
+        : "";
+      const enrichedSystemPrompt = appendSystemBlock(systemPrompt, recallBlock);
+      void this.opencode.promptAsync(turn.sessionId, buildPromptRequest(turn.text, enrichedSystemPrompt))
         .then(() => {
           queue.replaceActive(transitionTurn(turn, "awaiting-sse"));
           void this.updateTurnCard(turn.turnId, { status: "处理中", update: "请求已发送，等待事件流...", target: "step" });
