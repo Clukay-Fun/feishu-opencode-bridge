@@ -11,6 +11,19 @@ export type MemoryRow = {
   accessedAt: number;
 };
 
+export type MemoryFactRecord = {
+  id: number;
+  fact: string;
+  createdAt: number;
+  accessedAt: number;
+};
+
+type MemoryEmbeddingCandidate = {
+  id: number;
+  fact: string;
+  embedding: number[];
+};
+
 export class MemoryDb {
   private readonly db: Database.Database;
 
@@ -25,37 +38,176 @@ export class MemoryDb {
   }
 
   add(userId: string, facts: string[], sourceMessage: string): { saved: number } {
-    const normalizedFacts = dedupeFacts(facts);
+    const ids = this.saveFacts(
+      userId,
+      facts.map((fact) => ({ fact, sourceMessage })),
+    );
+    return { saved: ids.length };
+  }
+
+  saveFacts(userId: string, facts: Array<{ fact: string; sourceMessage: string }>): number[] {
+    const normalizedFacts = dedupeFactEntries(facts, this.sourcePreviewLength);
     if (normalizedFacts.length === 0) {
-      return { saved: 0 };
+      return [];
     }
 
     const now = Date.now();
-    const sourcePreview = truncateSourcePreview(sourceMessage, this.sourcePreviewLength);
+    const ids: number[] = [];
     const insert = this.db.prepare(`
-      INSERT OR IGNORE INTO memories (user_id, fact, source_message, created_at, accessed_at)
-      VALUES (@userId, @fact, @sourceMessage, @now, @now)
+      INSERT OR IGNORE INTO memories (
+        user_id,
+        fact,
+        source_message,
+        created_at,
+        accessed_at,
+        embedding_model,
+        embedding_json
+      )
+      VALUES (
+        @userId,
+        @fact,
+        @sourceMessage,
+        @now,
+        @now,
+        NULL,
+        NULL
+      )
     `);
-    const touch = this.db.prepare(`
+    const selectId = this.db.prepare(`
+      SELECT id
+      FROM memories
+      WHERE user_id = @userId AND fact = @fact
+    `);
+    const touchExisting = this.db.prepare(`
       UPDATE memories
       SET accessed_at = @now
       WHERE user_id = @userId AND fact = @fact
     `);
-    const transaction = this.db.transaction((rows: string[]) => {
-      let saved = 0;
-      for (const fact of rows) {
-        const result = insert.run({ userId, fact, sourceMessage: sourcePreview, now });
-        if (result.changes > 0) {
-          saved += 1;
-          continue;
+    const transaction = this.db.transaction((rows: Array<{ fact: string; sourceMessage: string }>) => {
+      for (const row of rows) {
+        const insertResult = insert.run({
+          userId,
+          fact: row.fact,
+          sourceMessage: row.sourceMessage,
+          now,
+        });
+        if (insertResult.changes === 0) {
+          touchExisting.run({ userId, fact: row.fact, now });
         }
-        touch.run({ userId, fact, now });
+        const record = selectId.get({ userId, fact: row.fact }) as { id: number } | undefined;
+        if (record) {
+          ids.push(record.id);
+        }
       }
       this.evict(userId);
-      return { saved };
     });
 
-    return transaction(normalizedFacts);
+    transaction(normalizedFacts);
+    return ids;
+  }
+
+  updateEmbedding(id: number, embedding: number[], model: string): void {
+    this.db.prepare(`
+      UPDATE memories
+      SET embedding_model = @model,
+          embedding_json = @embedding
+      WHERE id = @id
+    `).run({
+      id,
+      model,
+      embedding: JSON.stringify(embedding),
+    });
+  }
+
+  listEmbeddingCandidates(userId: string, model: string): MemoryEmbeddingCandidate[] {
+    const rows = this.db.prepare(`
+      SELECT id, fact, embedding_json
+      FROM memories
+      WHERE user_id = @userId
+        AND embedding_model = @model
+        AND embedding_json IS NOT NULL
+      ORDER BY accessed_at DESC, id DESC
+    `).all({ userId, model }) as Array<{
+      id: number;
+      fact: string;
+      embedding_json: string | null;
+    }>;
+
+    return rows.flatMap((row) => {
+      if (!row.embedding_json) {
+        return [];
+      }
+      try {
+        const embedding = JSON.parse(row.embedding_json) as unknown;
+        if (!Array.isArray(embedding) || embedding.some((value) => typeof value !== "number")) {
+          return [];
+        }
+        return [{ id: row.id, fact: row.fact, embedding: embedding as number[] }];
+      } catch {
+        return [];
+      }
+    });
+  }
+
+  listRecent(userId: string, limit: number): MemoryFactRecord[] {
+    return this.db.prepare(`
+      SELECT id, fact, created_at, accessed_at
+      FROM memories
+      WHERE user_id = @userId
+      ORDER BY accessed_at DESC, id DESC
+      LIMIT @limit
+    `).all({ userId, limit }) as MemoryFactRecord[];
+  }
+
+  touch(ids: number[]): void {
+    if (ids.length === 0) {
+      return;
+    }
+    const now = Date.now();
+    this.db.prepare(`
+      UPDATE memories
+      SET accessed_at = ${now}
+      WHERE id IN (${ids.map(() => "?").join(",")})
+    `).run(...ids);
+  }
+
+  listUsers(): string[] {
+    const rows = this.db.prepare(`
+      SELECT DISTINCT user_id
+      FROM memories
+      ORDER BY user_id ASC
+    `).all() as Array<{ user_id: string }>;
+    return rows.map((row) => row.user_id);
+  }
+
+  listFactsForUser(userId: string): MemoryFactRecord[] {
+    return this.db.prepare(`
+      SELECT id, fact, created_at, accessed_at
+      FROM memories
+      WHERE user_id = @userId
+      ORDER BY accessed_at DESC, id DESC
+    `).all({ userId }) as MemoryFactRecord[];
+  }
+
+  getObsidianLastSyncedAt(): number | null {
+    const row = this.db.prepare(`
+      SELECT value
+      FROM metadata
+      WHERE key = 'obsidian_last_synced_at'
+    `).get() as { value: string } | undefined;
+    if (!row) {
+      return null;
+    }
+    const value = Number(row.value);
+    return Number.isFinite(value) ? value : null;
+  }
+
+  setObsidianLastSyncedAt(timestamp: number): void {
+    this.db.prepare(`
+      INSERT INTO metadata (key, value)
+      VALUES ('obsidian_last_synced_at', @value)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run({ value: String(timestamp) });
   }
 
   search(userId: string, query: string, limit: number): string[] {
@@ -74,16 +226,7 @@ export class MemoryDb {
       LIMIT @limit
     `).all({ query: sanitizedQuery, userId, limit }) as Array<{ id: number; fact: string }>;
 
-    if (rows.length > 0) {
-      const now = Date.now();
-      const ids = rows.map((row) => row.id);
-      this.db.prepare(`
-        UPDATE memories
-        SET accessed_at = ${now}
-        WHERE id IN (${ids.map(() => "?").join(",")})
-      `).run(...ids);
-    }
-
+    this.touch(rows.map((row) => row.id));
     return rows.map((row) => row.fact);
   }
 
@@ -100,6 +243,11 @@ export class MemoryDb {
         source_message TEXT NOT NULL,
         created_at INTEGER NOT NULL,
         accessed_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
       );
 
       CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_user_fact
@@ -127,6 +275,15 @@ export class MemoryDb {
         INSERT INTO memories_fts(memories_fts, rowid, fact) VALUES ('delete', old.id, old.fact);
       END;
     `);
+
+    const columns = this.db.prepare("PRAGMA table_info(memories)").all() as Array<{ name: string }>;
+    const columnNames = new Set(columns.map((column) => column.name));
+    if (!columnNames.has("embedding_model")) {
+      this.db.exec("ALTER TABLE memories ADD COLUMN embedding_model TEXT");
+    }
+    if (!columnNames.has("embedding_json")) {
+      this.db.exec("ALTER TABLE memories ADD COLUMN embedding_json TEXT");
+    }
   }
 
   private evict(userId: string): void {
@@ -168,15 +325,22 @@ function truncateSourcePreview(text: string, maxLength: number): string {
   return normalized.length > maxLength ? normalized.slice(0, maxLength) : normalized;
 }
 
-function dedupeFacts(facts: string[]): string[] {
+function dedupeFactEntries(
+  facts: Array<{ fact: string; sourceMessage: string }>,
+  sourcePreviewLength: number,
+): Array<{ fact: string; sourceMessage: string }> {
   const seen = new Set<string>();
-  const result: string[] = [];
-  for (const fact of facts.map((fact) => fact.trim()).filter(Boolean)) {
-    if (seen.has(fact)) {
+  const result: Array<{ fact: string; sourceMessage: string }> = [];
+  for (const item of facts) {
+    const fact = item.fact.trim();
+    if (!fact || seen.has(fact)) {
       continue;
     }
     seen.add(fact);
-    result.push(fact);
+    result.push({
+      fact,
+      sourceMessage: truncateSourcePreview(item.sourceMessage, sourcePreviewLength),
+    });
   }
   return result;
 }

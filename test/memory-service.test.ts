@@ -25,6 +25,13 @@ function makeConfig(dbPath: string, overrides: Partial<{
     extractQueueLimit: overrides.extractQueueLimit ?? 10,
     sourcePreviewLength: overrides.sourcePreviewLength ?? 50,
     shutdownDrainTimeoutMs: overrides.shutdownDrainTimeoutMs ?? 1_000,
+    retriever: "recent" as const,
+    embeddingSimilarityThreshold: 0.75,
+    obsidian: {
+      enabled: false,
+      syncCron: "0 2 * * *",
+      enableWikiLinks: false,
+    },
   };
 }
 
@@ -67,9 +74,9 @@ describe("MemoryService", () => {
     await service.drain(1_000);
 
     expect(events).toEqual(["start:first", "end:first", "start:second", "end:second"]);
-    expect(service.buildRecallBlock("u1", "second")).toContain("用户记录 second");
+    await expect(service.buildRecallBlock("u1", "second")).resolves.toContain("用户记录 second");
 
-    service.close();
+    await service.stop();
   });
 
   it("drops new learn tasks when the queue is full", async () => {
@@ -95,9 +102,9 @@ describe("MemoryService", () => {
     await service.drain(1_000);
 
     expect(seen).toEqual(["first", "second"]);
-    expect(service.buildRecallBlock("u1", "third")).not.toContain("用户记录 third");
+    await expect(service.buildRecallBlock("u1", "third")).resolves.not.toContain("用户记录 third");
 
-    service.close();
+    await service.stop();
   });
 });
 

@@ -27,7 +27,7 @@ It is a bridge layer that gives OpenCode a stable runtime surface inside Feishu:
 - True permission buttons with text-command fallback
 - Group whitelist binding with `/who` and `/leave`
 - `single` and `multi` session modes per window type
-- Optional long-term user memory recall keyed by `senderOpenId`
+- Optional long-term memory recall, embedding-based retrieval, and Obsidian profile sync
 - Slash command passthrough to OpenCode for commands the bridge does not own
 - Startup preflight for Feishu auth, OpenCode health, providers, and callback config
 - JSON-backed stores for session mappings and group bindings
