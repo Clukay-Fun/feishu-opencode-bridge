@@ -269,6 +269,10 @@ async function inspectIncomingMessageForDispatch(
     return parsed;
   }
 
+  if (!options.requireBotMentionInGroup) {
+    return parsed;
+  }
+
   const routed = routeIncomingText(parsed.incoming.plainText);
   const hasBotMention = resolveMentionMatch(parsed, options);
   const isBound = whitelist.isBound(parsed.incoming.chatId, parsed.incoming.senderOpenId);

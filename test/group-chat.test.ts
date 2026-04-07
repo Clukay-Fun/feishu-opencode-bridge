@@ -532,6 +532,35 @@ describe("group chat support", () => {
     }), "warn");
   });
 
+  it("preserves permissive group mode when requireBotMentionInGroup is false", async () => {
+    const handler = vi.fn(async () => {});
+    const client = new FeishuWsClient(
+      "app",
+      "secret",
+      makeOptions({ requireBotMentionInGroup: false }),
+      handler,
+      { log() {} },
+      createWhitelist(),
+    );
+
+    await (client as unknown as { handleEvent(payload: unknown): Promise<void> }).handleEvent({
+      message: {
+        chat_id: "oc_group_loose_1",
+        chat_type: "group",
+        message_id: "om_loose_1",
+        message_type: "text",
+        content: JSON.stringify({ text: "不带 @ 也应该继续通过" }),
+      },
+      sender: { sender_id: { open_id: "ou_123" } },
+    });
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({
+      chatId: "oc_group_loose_1",
+      plainText: "不带 @ 也应该继续通过",
+    }));
+  });
+
   it("allows slash commands with @bot without auto-binding the sender", async () => {
     const handler = vi.fn(async () => {});
     const whitelist = createWhitelist();
