@@ -9,3 +9,5 @@
 - For GitHub pull requests, use Chinese titles and descriptions by default.
 - Preferred PR title format: `[codex] <动词><变更主题>`.
 - Preferred PR body sections: `变更内容`, `变更原因`, `影响`, `验证`.
+- Keep updating the same branch and PR while the related feature line is still open and unmerged.
+- Once a PR has been merged into `main`, do not reopen or reuse it for follow-up work; create a new branch and a new PR instead.
