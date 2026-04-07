@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { MemoryService, appendSystemBlock, formatRecallBlock } from "../src/memory/index.js";
 import type { MemoryExtractor } from "../src/memory/extractor.js";
+import { MemoryDb } from "../src/memory/db.js";
 import { OpenCodeClient } from "../src/opencode/client.js";
 
 const logger = { log() {}, logTranscript() {} };
@@ -103,6 +104,65 @@ describe("MemoryService", () => {
 
     expect(seen).toEqual(["first", "second"]);
     await expect(service.buildRecallBlock("u1", "third")).resolves.not.toContain("用户记录 third");
+
+    await service.stop();
+  });
+
+  it("drains queued learn tasks before shutdown closes the db", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-memory-service-"));
+    const dbPath = path.join(dir, "memory.db");
+    const extractor: MemoryExtractor = {
+      async extract(userMessage) {
+        await sleep(10);
+        return [`用户记录 ${userMessage}`];
+      },
+    };
+    const service = new MemoryService(
+      makeConfig(dbPath),
+      new OpenCodeClient(new URL("http://127.0.0.1:4096/")),
+      logger as any,
+      extractor,
+    );
+
+    service.enqueueLearn("u1", "pending", "reply");
+    await service.stop();
+
+    const db = new MemoryDb(dbPath, 10, 50);
+    expect(db.search("u1", "pending", 5)).toContain("用户记录 pending");
+    db.close();
+  });
+
+  it("updates embeddings against the deduped fact list", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-memory-service-"));
+    const dbPath = path.join(dir, "memory.db");
+    const extractor: MemoryExtractor = {
+      async extract() {
+        return ["重复事实", "重复事实", "唯一事实"];
+      },
+    };
+    const service = new MemoryService(
+      makeConfig(dbPath, {
+      }),
+      new OpenCodeClient(new URL("http://127.0.0.1:4096/")),
+      logger as any,
+      extractor,
+    );
+    (service as any).embeddingClient = {
+      model: "model-a",
+      async embed(text: string) {
+        return text === "重复事实" ? [1, 0] : [0, 1];
+      },
+    };
+
+    service.enqueueLearn("u1", "message", "reply");
+    await service.drain(1_000);
+
+    const candidates = (service as any).db.listEmbeddingCandidates("u1", "model-a");
+    expect(candidates).toHaveLength(2);
+    expect(candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ fact: "重复事实", embedding: [1, 0] }),
+      expect.objectContaining({ fact: "唯一事实", embedding: [0, 1] }),
+    ]));
 
     await service.stop();
   });

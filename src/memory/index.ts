@@ -29,6 +29,7 @@ export class MemoryService {
   private readonly queue: LearnTask[] = [];
   private readonly idleWaiters = new Set<() => void>();
   private processing = false;
+  private accepting = true;
   private closed = false;
 
   constructor(
@@ -69,8 +70,9 @@ export class MemoryService {
   }
 
   async stop(): Promise<void> {
-    this.closed = true;
+    this.accepting = false;
     await this.drain(this.config.shutdownDrainTimeoutMs);
+    this.closed = true;
     await this.obsidianSync?.stop();
     this.db.close();
   }
@@ -86,7 +88,7 @@ export class MemoryService {
   }
 
   enqueueLearn(userId: string, userMessage: string, assistantMessage: string): void {
-    if (this.closed) {
+    if (!this.accepting) {
       this.logger.log("memory/learn", "dropped", { userId, reason: "closed" }, "warn");
       return;
     }
@@ -140,16 +142,17 @@ export class MemoryService {
       }
 
       try {
-        const facts = await this.extractor.extract(task.userMessage, task.assistantMessage);
+        const extractedFacts = await this.extractor.extract(task.userMessage, task.assistantMessage);
+        const normalizedFacts = dedupeFacts(extractedFacts);
         if (this.closed) {
-          this.logger.log("memory/learn", "dropped", { userId: task.userId, reason: "closing" }, "warn");
+          this.logger.log("memory/learn", "dropped", { userId: task.userId, reason: "closed" }, "warn");
           continue;
         }
         const ids = this.db.saveFacts(
           task.userId,
-          facts.map((fact) => ({ fact, sourceMessage: task.userMessage })),
+          normalizedFacts.map((fact) => ({ fact, sourceMessage: task.userMessage })),
         );
-        await this.updateEmbeddings(ids, facts);
+        await this.updateEmbeddings(ids, normalizedFacts);
         this.logger.log("memory/learn", "saved", { userId: task.userId, facts: ids.length });
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
@@ -216,4 +219,17 @@ export function appendSystemBlock(systemPrompt: string | undefined, block: strin
 function createSourcePreview(text: string, maxLength: number): string {
   const normalized = text.replace(/\s+/g, " ").trim();
   return normalized.length > maxLength ? normalized.slice(0, maxLength) : normalized;
+}
+
+function dedupeFacts(facts: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const fact of facts.map((value) => value.trim()).filter(Boolean)) {
+    if (seen.has(fact)) {
+      continue;
+    }
+    seen.add(fact);
+    result.push(fact);
+  }
+  return result;
 }
