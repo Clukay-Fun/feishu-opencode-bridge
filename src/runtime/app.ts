@@ -16,6 +16,7 @@ import {
   type TurnStatusCardView,
 } from "../feishu/formatter.js";
 import { createTextPreview, type Logger, type TranscriptType } from "../logging/logger.js";
+import { MemoryService } from "../memory/index.js";
 import {
   OpenCodeClient,
   type OpenCodeMessage,
@@ -38,7 +39,6 @@ import {
   setActiveSession,
   updateSessionLabel,
 } from "./session-windows.js";
-import { appendSystemBlock, MemoryService } from "../memory/index.js";
 
 export type IncomingChatMessage = {
   chatId: string;
@@ -114,6 +114,7 @@ export class BridgeApp {
       throw new Error(`opencode serve 当前在 ${project.worktree}，bridge 配置的是 ${this.config.opencode.directory}，请在正确目录重启 opencode serve`);
     }
     await this.syncStoredSessionLabels();
+    await this.memory?.start();
 
     await this.eventStream.start();
     this.globalEventUnsubscribe = this.eventStream.subscribe(async (event) => {
@@ -139,10 +140,7 @@ export class BridgeApp {
     }
     this.pendingInteractionTimers.clear();
     this.streamFlushStates.clear();
-    if (this.memory) {
-      await this.memory.drain(this.config.memory.shutdownDrainTimeoutMs);
-      this.memory.close();
-    }
+    await this.memory?.stop();
     await this.eventStream.stop();
   }
 
@@ -257,8 +255,8 @@ export class BridgeApp {
       this.logger.log("opencode/events", "reply completed", { turnId: turn.turnId, sessionId, len: reply.length });
       this.logger.logTranscript("opencode-reply", { sessionId, turnId: turn.turnId }, reply);
       await this.maybeUpdateSessionLabel(turn as BridgeTurn & { sessionId: string });
-      if (this.memory && reply) {
-        this.memory.enqueueLearn(turn.senderOpenId, turn.plainText, reply);
+      if (reply) {
+        this.memory?.enqueueLearn(turn.senderOpenId, turn.plainText, reply);
       }
       await this.flushStreamUpdate(turn.turnId, reply, true);
       await this.updateTurnCard(turn.turnId, { status: "已完成", update: `最终回复已生成（${reply.length} 字）`, target: "step" });
@@ -281,6 +279,13 @@ export class BridgeApp {
     const baselineAssistantId = baselineAssistant?.info.id ?? null;
     const baselineAssistantTimestamp = getMessageTimestamp(baselineAssistant);
     const queue = this.queues.get(conversationKey);
+    const bridgeSystemPrompt = this.config.bridge.injectSystemState
+      ? buildBridgeSystemPrompt(turn, this.getSessionWindow(turn.conversationKey, turn.chatType))
+      : undefined;
+    const memoryRecall = this.memory
+      ? await this.memory.buildRecallBlock(turn.senderOpenId, turn.plainText)
+      : "";
+    const systemPrompt = composeSystemPrompt(bridgeSystemPrompt, memoryRecall);
 
     return new Promise<string>((resolve, reject) => {
       let assistantMessageId: string | null = null;
@@ -363,14 +368,7 @@ export class BridgeApp {
       );
 
       watchdog.start();
-      const systemPrompt = this.config.bridge.injectSystemState
-        ? buildBridgeSystemPrompt(turn, this.getSessionWindow(turn.conversationKey, turn.chatType))
-        : undefined;
-      const recallBlock = this.memory
-        ? this.memory.buildRecallBlock(turn.senderOpenId, turn.plainText)
-        : "";
-      const enrichedSystemPrompt = appendSystemBlock(systemPrompt, recallBlock);
-      void this.opencode.promptAsync(turn.sessionId, buildPromptRequest(turn.text, enrichedSystemPrompt))
+      void this.opencode.promptAsync(turn.sessionId, buildPromptRequest(turn.text, systemPrompt))
         .then(() => {
           queue.replaceActive(transitionTurn(turn, "awaiting-sse"));
           void this.updateTurnCard(turn.turnId, { status: "处理中", update: "请求已发送，等待事件流...", target: "step" });
@@ -1152,6 +1150,16 @@ export function buildPromptRequest(text: string, system?: string): { system?: st
     : {
       parts: [{ type: "text", text }],
     };
+}
+
+export function composeSystemPrompt(...sections: Array<string | undefined>): string | undefined {
+  const normalized = sections
+    .map((section) => section?.trim())
+    .filter((section): section is string => Boolean(section));
+  if (normalized.length === 0) {
+    return undefined;
+  }
+  return normalized.join("\n\n");
 }
 
 export function toOpencodePromptText(message: Pick<IncomingChatMessage, "chatType" | "senderOpenId" | "plainText">): string {

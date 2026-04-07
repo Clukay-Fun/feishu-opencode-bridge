@@ -11,7 +11,6 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
   const baseDir = path.dirname(resolvedConfigPath);
   const dataDir = resolveRelative(baseDir, parsed.storage.dataDir);
   const loggingDir = resolveRelative(baseDir, parsed.logging.dir);
-  const memoryDbPath = resolveRelative(baseDir, parsed.memory.dbPath);
   await mkdir(dataDir, { recursive: true });
   await mkdir(loggingDir, { recursive: true });
 
@@ -57,15 +56,6 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
       eventGapTimeoutMs: parsed.bridge.timeouts.eventInterval,
       totalTimeoutMs: parsed.bridge.timeouts.totalTurn,
     },
-    memory: {
-      enabled: parsed.memory.enabled,
-      dbPath: memoryDbPath,
-      maxMemoriesPerUser: parsed.memory.maxMemoriesPerUser,
-      searchLimit: parsed.memory.searchLimit,
-      extractQueueLimit: parsed.memory.extractQueueLimit,
-      sourcePreviewLength: parsed.memory.sourcePreviewLength,
-      shutdownDrainTimeoutMs: parsed.memory.shutdownDrainTimeoutMs,
-    },
     logging: {
       dir: loggingDir,
       level: parsed.logging.level,
@@ -73,6 +63,32 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
       enableConsole: parsed.logging.enableConsole,
       enableColor: parsed.logging.enableColor,
       rotateDaily: parsed.logging.rotateDaily,
+    },
+    memory: {
+      enabled: parsed.memory.enabled,
+      dbPath: resolveRelative(baseDir, parsed.memory.dbPath ?? path.join(dataDir, "memory.db")),
+      maxMemoriesPerUser: parsed.memory.maxMemoriesPerUser,
+      searchLimit: parsed.memory.searchLimit,
+      extractQueueLimit: parsed.memory.extractQueueLimit,
+      sourcePreviewLength: parsed.memory.sourcePreviewLength,
+      shutdownDrainTimeoutMs: parsed.memory.shutdownDrainTimeoutMs,
+      retriever: parsed.memory.retriever,
+      embeddingProvider: parsed.memory.embeddingProvider
+        ? {
+          baseUrl: new URL(parsed.memory.embeddingProvider.baseUrl),
+          apiKey: parsed.memory.embeddingProvider.apiKey,
+          model: parsed.memory.embeddingProvider.model,
+        }
+        : undefined,
+      embeddingSimilarityThreshold: parsed.memory.embeddingSimilarityThreshold,
+      obsidian: {
+        enabled: parsed.memory.obsidian.enabled,
+        vaultPath: parsed.memory.obsidian.vaultPath
+          ? resolveRelative(baseDir, parsed.memory.obsidian.vaultPath)
+          : undefined,
+        syncCron: parsed.memory.obsidian.syncCron,
+        enableWikiLinks: parsed.memory.obsidian.enableWikiLinks,
+      },
     },
   };
 }

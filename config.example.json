@@ -49,7 +49,20 @@
     "searchLimit": 5,
     "extractQueueLimit": 100,
     "sourcePreviewLength": 50,
-    "shutdownDrainTimeoutMs": 5000
+    "shutdownDrainTimeoutMs": 5000,
+    "retriever": "recent",
+    "embeddingSimilarityThreshold": 0.75,
+    "embeddingProvider": {
+      "baseUrl": "https://api.openai.com/v1/",
+      "apiKey": "sk-xxx",
+      "model": "text-embedding-3-small"
+    },
+    "obsidian": {
+      "enabled": false,
+      "vaultPath": "/absolute/path/to/vault",
+      "syncCron": "0 2 * * *",
+      "enableWikiLinks": false
+    }
   },
   "logging": {
     "dir": "./logs",

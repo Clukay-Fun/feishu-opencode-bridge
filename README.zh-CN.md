@@ -10,7 +10,7 @@ Feishu OpenCode Bridge 是一个独立运行的 TypeScript 服务，用来把飞
 - 按窗口维护 OpenCode session registry，并支持 `single` / `multi` 两种会话模式
 - 群聊按线程隔离上下文
 - 支持 OpenCode `prompt_async`、命令转发、中止、状态、模型、权限请求、session 切换
-- 支持可选的长期用户记忆召回，按 `senderOpenId` 归档
+- 支持可选的长期记忆召回、embedding 检索，以及 Obsidian 用户画像同步
 - 使用飞书交互卡片承载过程消息，并持续更新同一条回复
 - 群聊 `@` 规则支持通过配置控制严格或宽松模式
 - 支持多个机器人身份，以及“触发身份”和“自身身份”分离
@@ -114,7 +114,20 @@ npm install
     "searchLimit": 5,
     "extractQueueLimit": 100,
     "sourcePreviewLength": 50,
-    "shutdownDrainTimeoutMs": 5000
+    "shutdownDrainTimeoutMs": 5000,
+    "retriever": "recent",
+    "embeddingSimilarityThreshold": 0.75,
+    "embeddingProvider": {
+      "baseUrl": "https://api.openai.com/v1/",
+      "apiKey": "sk-xxx",
+      "model": "text-embedding-3-small"
+    },
+    "obsidian": {
+      "enabled": false,
+      "vaultPath": "/absolute/path/to/vault",
+      "syncCron": "0 2 * * *",
+      "enableWikiLinks": false
+    }
   },
   "logging": {
     "dir": "./logs",
@@ -155,10 +168,10 @@ npm install
 
 ### 记忆模块
 
-- `memory.enabled=true` 后，会按 `senderOpenId` 维护长期事实记忆。
-- recall 会以独立的 `[Memory Recall]` system 块注入到 OpenCode。
-- learn 在 turn 成功完成后异步执行，不阻塞也不影响主回复链路。
-- SQLite 存储路径由 `memory.dbPath` 控制。
+- `memory.enabled=true` 后，会按 `senderOpenId` 维度记录长期用户事实。
+- `retriever="recent"` 会优先召回最近访问的记忆，作为 recall 兜底。
+- `retriever="embedding"` 会调用 OpenAI-compatible embedding API 做相似度检索，命中为空时自动回退到 recent。
+- `obsidian.enabled=true` 时，会按 `syncCron` 定时写 `${vaultPath}/memory/<userId>/profile.md`，启动时也会做一次补偿同步。
 
 ## OpenCode 鉴权
 

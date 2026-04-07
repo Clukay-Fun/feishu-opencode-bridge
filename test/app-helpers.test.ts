@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildBridgeSystemPrompt, buildPromptRequest, resolveDisplayLabel } from "../src/runtime/app.js";
+import { buildBridgeSystemPrompt, buildPromptRequest, composeSystemPrompt, resolveDisplayLabel } from "../src/runtime/app.js";
 
 describe("runtime prompt helpers", () => {
   it("adds system state when provided", () => {
@@ -8,6 +8,12 @@ describe("runtime prompt helpers", () => {
       system: "state",
       parts: [{ type: "text", text: "hello" }],
     });
+  });
+
+  it("joins bridge state and memory recall without touching user text", () => {
+    expect(composeSystemPrompt("[Bridge State]\nwindowType: p2p", "[Memory Recall]\n- 用户喜欢 TypeScript")).toBe(
+      "[Bridge State]\nwindowType: p2p\n\n[Memory Recall]\n- 用户喜欢 TypeScript",
+    );
   });
 
   it("builds bridge system state from the current window", () => {

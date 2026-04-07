@@ -10,7 +10,7 @@ It listens to Feishu message events over WebSocket, maps each conversation to an
 - Uses per-window session registries with configurable `single` or `multi` mode
 - Uses thread-aware isolation for group chats
 - Supports OpenCode `prompt_async`, command routing, abort, status, models, permissions, and session switching
-- Supports optional long-term user memory recall keyed by `senderOpenId`
+- Supports optional long-term memory recall, embedding-based retrieval, and Obsidian profile sync
 - Streams progress into a Feishu interactive card and updates the same message in place
 - Supports strict or relaxed group mention matching through config
 - Supports multiple bot identities and separate self-bot identities
@@ -114,7 +114,20 @@ Copy the example config and fill in your real values:
     "searchLimit": 5,
     "extractQueueLimit": 100,
     "sourcePreviewLength": 50,
-    "shutdownDrainTimeoutMs": 5000
+    "shutdownDrainTimeoutMs": 5000,
+    "retriever": "recent",
+    "embeddingSimilarityThreshold": 0.75,
+    "embeddingProvider": {
+      "baseUrl": "https://api.openai.com/v1/",
+      "apiKey": "sk-xxx",
+      "model": "text-embedding-3-small"
+    },
+    "obsidian": {
+      "enabled": false,
+      "vaultPath": "/absolute/path/to/vault",
+      "syncCron": "0 2 * * *",
+      "enableWikiLinks": false
+    }
   },
   "logging": {
     "dir": "./logs",
@@ -155,10 +168,10 @@ When `strictBotMention=true`, the bridge only accepts messages that explicitly m
 
 ### Memory
 
-- `memory.enabled=true` turns on long-term fact memory keyed by `senderOpenId`.
-- Recall is injected into OpenCode through a separate `[Memory Recall]` system block.
-- Learn runs asynchronously after a successful turn and does not block or fail the main reply path.
-- The SQLite database path is controlled by `memory.dbPath`.
+- `memory.enabled=true` turns on long-term user memory keyed by `senderOpenId`.
+- `retriever="recent"` always recalls the user's most recently accessed facts.
+- `retriever="embedding"` uses the configured OpenAI-compatible embeddings API and falls back to recent recall when no vector match is found.
+- `obsidian.enabled=true` writes `${vaultPath}/memory/<userId>/profile.md` on the configured cron schedule and also runs a startup catch-up sync when needed.
 
 ## OpenCode auth
 
