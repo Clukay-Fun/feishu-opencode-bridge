@@ -17,6 +17,7 @@ vi.mock("@larksuiteoapi/node-sdk", () => {
 
 import { FeishuWsClient, buildConversationKey, computeThreadKey, createFeishuIngressOptions, normalizeIncomingMessage } from "../src/feishu/ws.js";
 import { toOpencodePromptText } from "../src/runtime/app.js";
+import type { ChatWhitelist } from "../src/store/whitelist.js";
 
 function makeOptions(overrides?: Partial<ReturnType<typeof createFeishuIngressOptions>>) {
   return {
@@ -40,6 +41,31 @@ function makeOptions(overrides?: Partial<ReturnType<typeof createFeishuIngressOp
       },
     }),
     ...overrides,
+  };
+}
+
+function createWhitelist(): ChatWhitelist & { bindings: Map<string, Set<string>> } {
+  const bindings = new Map<string, Set<string>>();
+  return {
+    bindings,
+    isBound(chatId, senderOpenId) {
+      return bindings.get(chatId)?.has(senderOpenId) ?? false;
+    },
+    async bind(chatId, senderOpenId) {
+      const members = bindings.get(chatId) ?? new Set<string>();
+      members.add(senderOpenId);
+      bindings.set(chatId, members);
+    },
+    async unbind(chatId, senderOpenId) {
+      const members = bindings.get(chatId);
+      if (!members?.has(senderOpenId)) return false;
+      members.delete(senderOpenId);
+      if (members.size === 0) bindings.delete(chatId);
+      return true;
+    },
+    count(chatId) {
+      return bindings.get(chatId)?.size ?? 0;
+    },
   };
 }
 
@@ -448,5 +474,119 @@ describe("group chat support", () => {
     await (client as unknown as { handleEvent(payload: unknown): Promise<void> }).handleEvent(payload);
 
     expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("binds a sender after an @bot message and then allows non-mentioned follow-ups", async () => {
+    const handler = vi.fn(async () => {});
+    const logger = { log: vi.fn() };
+    const whitelist = createWhitelist();
+    const client = new FeishuWsClient("app", "secret", makeOptions(), handler, logger, whitelist);
+
+    await (client as unknown as { handleEvent(payload: unknown): Promise<void> }).handleEvent({
+      message: {
+        chat_id: "oc_group_bind_1",
+        chat_type: "group",
+        message_id: "om_bind_1",
+        message_type: "text",
+        content: JSON.stringify({ text: '<at user_id="ou_bot">机器人</at> 帮我分析一下' }),
+        mentions: [{ id: { open_id: "ou_bot" }, name: "机器人" }],
+      },
+      sender: { sender_id: { open_id: "ou_123" } },
+    });
+
+    await (client as unknown as { handleEvent(payload: unknown): Promise<void> }).handleEvent({
+      message: {
+        chat_id: "oc_group_bind_1",
+        chat_type: "group",
+        message_id: "om_bind_2",
+        message_type: "text",
+        content: JSON.stringify({ text: "继续刚才的话题" }),
+      },
+      sender: { sender_id: { open_id: "ou_123" } },
+    });
+
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(whitelist.isBound("oc_group_bind_1", "ou_123")).toBe(true);
+  });
+
+  it("skips unbound non-mentioned group messages with not-whitelisted", async () => {
+    const handler = vi.fn(async () => {});
+    const logger = { log: vi.fn() };
+    const client = new FeishuWsClient("app", "secret", makeOptions(), handler, logger, createWhitelist());
+
+    await (client as unknown as { handleEvent(payload: unknown): Promise<void> }).handleEvent({
+      message: {
+        chat_id: "oc_group_skip_1",
+        chat_type: "group",
+        message_id: "om_skip_1",
+        message_type: "text",
+        content: JSON.stringify({ text: "这条不该触发" }),
+      },
+      sender: { sender_id: { open_id: "ou_123" } },
+    });
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(logger.log).toHaveBeenCalledWith("feishu/ws", "message skipped", expect.objectContaining({
+      reason: "not-whitelisted",
+      chatId: "oc_group_skip_1",
+    }), "warn");
+  });
+
+  it("allows slash commands with @bot without auto-binding the sender", async () => {
+    const handler = vi.fn(async () => {});
+    const whitelist = createWhitelist();
+    const client = new FeishuWsClient("app", "secret", makeOptions(), handler, { log() {} }, whitelist);
+
+    await (client as unknown as { handleEvent(payload: unknown): Promise<void> }).handleEvent({
+      message: {
+        chat_id: "oc_group_cmd_1",
+        chat_type: "group",
+        message_id: "om_cmd_1",
+        message_type: "text",
+        content: JSON.stringify({ text: '<at user_id="ou_bot">机器人</at> /status' }),
+        mentions: [{ id: { open_id: "ou_bot" }, name: "机器人" }],
+      },
+      sender: { sender_id: { open_id: "ou_123" } },
+    });
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({ plainText: "/status" }));
+    expect(whitelist.isBound("oc_group_cmd_1", "ou_123")).toBe(false);
+  });
+
+  it("shares the same whitelist across group and topic_group windows", async () => {
+    const handler = vi.fn(async () => {});
+    const whitelist = createWhitelist();
+    const client = new FeishuWsClient("app", "secret", makeOptions(), handler, { log() {} }, whitelist);
+
+    await (client as unknown as { handleEvent(payload: unknown): Promise<void> }).handleEvent({
+      message: {
+        chat_id: "oc_group_shared_1",
+        chat_type: "group",
+        message_id: "om_shared_1",
+        message_type: "text",
+        content: JSON.stringify({ text: '<at user_id="ou_bot">机器人</at> 帮我看一下' }),
+        mentions: [{ id: { open_id: "ou_bot" }, name: "机器人" }],
+      },
+      sender: { sender_id: { open_id: "ou_123" } },
+    });
+
+    await (client as unknown as { handleEvent(payload: unknown): Promise<void> }).handleEvent({
+      message: {
+        chat_id: "oc_group_shared_1",
+        chat_type: "topic_group",
+        message_id: "om_shared_2",
+        root_id: "om_root_1",
+        message_type: "text",
+        content: JSON.stringify({ text: "话题里继续说" }),
+      },
+      sender: { sender_id: { open_id: "ou_123" } },
+    });
+
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(handler).toHaveBeenLastCalledWith(expect.objectContaining({
+      chatType: "topic_group",
+      conversationKey: "oc_group_shared_1:om_root_1",
+    }));
   });
 });

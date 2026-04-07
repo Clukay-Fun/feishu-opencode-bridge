@@ -26,6 +26,9 @@
     "dataDir": "./data",
     "mappingsFile": "mappings.json"
   },
+  "whitelist": {
+    "storePath": "whitelist.json"
+  },
   "bridge": {
     "queueLimit": 3,
     "sessions": {

@@ -25,6 +25,7 @@ import {
 } from "../opencode/client.js";
 import { getEventSessionId, OpenCodeEventStream, type OpenCodeEvent } from "../opencode/events.js";
 import { MappingStore, type MappingRecord, type SessionBindingRecord, type SessionMode, type SessionWindowRecord } from "../store/mappings.js";
+import type { ChatWhitelist } from "../store/whitelist.js";
 import type { AppConfig } from "../config/schema.js";
 import { cleanAssistantReply } from "./sanitize.js";
 import {
@@ -81,6 +82,12 @@ const STREAM_FLUSH_MIN_CHARS = 120;
 const STREAM_FLUSH_INTERVAL_MS = 750;
 const PERMISSION_TTL_MS = 120_000;
 const SESSION_SELECTION_TTL_MS = 30_000;
+const NOOP_WHITELIST: ChatWhitelist = {
+  isBound: () => false,
+  bind: async () => {},
+  unbind: async () => false,
+  count: () => 0,
+};
 
 export class BridgeApp {
   private readonly queues: QueueRegistry;
@@ -96,7 +103,12 @@ export class BridgeApp {
   private readonly sessionStatuses = new Map<string, OpenCodeSessionStatus>();
   private globalEventUnsubscribe: (() => void) | null = null;
 
-  constructor(private readonly config: AppConfig, private readonly outbound: OutboundPort, private readonly logger: Logger) {
+  constructor(
+    private readonly config: AppConfig,
+    private readonly outbound: OutboundPort,
+    private readonly logger: Logger,
+    private readonly whitelist: ChatWhitelist = NOOP_WHITELIST,
+  ) {
     this.queues = new QueueRegistry(config.bridge.queueLimit, logger);
     this.mappings = new MappingStore(config.storage.dataDir, config.storage.mappingsFile, 200, logger);
     this.opencode = new OpenCodeClient(config.opencode.baseUrl);
@@ -517,7 +529,7 @@ export class BridgeApp {
   }
 
   private async handleCommand(
-    message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "threadKey">,
+    message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "threadKey" | "senderOpenId">,
     routed: Extract<RoutedText, { kind: "command" }>,
   ): Promise<void> {
     const { command } = routed;
@@ -569,6 +581,39 @@ export class BridgeApp {
     if (command.kind === "models") {
       const providers = await this.opencode.listProviders();
       await this.sendMarkdown(message.chatId, formatProviders(providers), message.messageId);
+      return;
+    }
+
+    if (command.kind === "leave") {
+      if (!supportsGroupWhitelistCommands(message.chatType)) {
+        await this.sendMarkdown(message.chatId, "该命令仅支持群聊使用。", message.messageId);
+        return;
+      }
+
+      const removed = await this.whitelist.unbind(message.chatId, message.senderOpenId);
+      await this.sendMarkdown(
+        message.chatId,
+        removed ? "已解除绑定，后续消息不再响应。" : "当前群里你尚未绑定，无需解除。",
+        message.messageId,
+      );
+      return;
+    }
+
+    if (command.kind === "who") {
+      if (!supportsGroupWhitelistCommands(message.chatType)) {
+        await this.sendMarkdown(message.chatId, "该命令仅支持群聊使用。", message.messageId);
+        return;
+      }
+
+      const count = this.whitelist.count(message.chatId);
+      const isBound = this.whitelist.isBound(message.chatId, message.senderOpenId);
+      await this.sendMarkdown(
+        message.chatId,
+        isBound
+          ? `当前群已绑定 ${count} 人，你已绑定 ✓`
+          : `当前群已绑定 ${count} 人，你未绑定（发送任意消息并 @ bot 即可绑定）`,
+        message.messageId,
+      );
       return;
     }
 
@@ -1206,6 +1251,10 @@ function formatSingleSessionStatus(mode: SessionMode, session: SessionBindingRec
     `当前会话：${escapeMarkdownText(session.label)}`,
     `Session ID：\`${session.sessionId}\``,
   ].join("\n");
+}
+
+function supportsGroupWhitelistCommands(chatType: string): boolean {
+  return chatType === "group" || chatType === "topic_group";
 }
 
 export function buildBridgeSystemPrompt(

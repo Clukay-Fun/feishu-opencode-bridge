@@ -6,6 +6,8 @@ export type RoutedText =
       | { kind: "status" }
       | { kind: "abort" }
       | { kind: "models" }
+      | { kind: "leave" }
+      | { kind: "who" }
       | { kind: "sessions" }
       | { kind: "sessions-select"; index: number }
       | { kind: "allow"; policy: "once" | "always" }
@@ -15,7 +17,7 @@ export type RoutedText =
   | { kind: "message"; text: string };
 
 export function routeIncomingText(text: string): RoutedText {
-  const normalized = text.trim();
+  const normalized = normalizeCommandCandidate(text);
   if (!normalized.startsWith("/")) {
     return { kind: "message", text };
   }
@@ -38,6 +40,14 @@ export function routeIncomingText(text: string): RoutedText {
 
   if (rawCommand === "models" && args.length === 0) {
     return { kind: "command", command: { kind: "models" } };
+  }
+
+  if (rawCommand === "leave" && args.length === 0) {
+    return { kind: "command", command: { kind: "leave" } };
+  }
+
+  if (rawCommand === "who" && args.length === 0) {
+    return { kind: "command", command: { kind: "who" } };
   }
 
   if (rawCommand === "sessions" && args.length === 0) {
@@ -77,4 +87,18 @@ export function routeIncomingText(text: string): RoutedText {
       arguments: args,
     },
   };
+}
+
+function normalizeCommandCandidate(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.startsWith("/")) {
+    return trimmed;
+  }
+
+  const mentionWrapped = trimmed.match(/^@(.+)\s+(\/\S[\s\S]*)$/);
+  if (!mentionWrapped) {
+    return trimmed;
+  }
+
+  return mentionWrapped[2]?.trim() ?? trimmed;
 }

@@ -30,6 +30,9 @@ export const ConfigSchema = z.object({
     dataDir: z.string().min(1).default("./data"),
     mappingsFile: z.string().min(1).default("mappings.json"),
   }),
+  whitelist: z.object({
+    storePath: z.string().min(1).default("whitelist.json"),
+  }).default({}),
   bridge: z.object({
     queueLimit: z.number().int().positive().default(3),
     sessions: z.object({
@@ -83,6 +86,9 @@ export type AppConfig = {
   storage: {
     dataDir: string;
     mappingsFile: string;
+  };
+  whitelist: {
+    storePath: string;
   };
   bridge: {
     queueLimit: number;

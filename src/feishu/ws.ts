@@ -1,7 +1,9 @@
 import * as lark from "@larksuiteoapi/node-sdk";
 
+import { routeIncomingText } from "../bridge/router.js";
 import type { AppConfig } from "../config/schema.js";
 import type { IncomingChatMessage } from "../runtime/app.js";
+import type { ChatWhitelist } from "../store/whitelist.js";
 
 type MessageHandler = (message: IncomingChatMessage) => Promise<void>;
 
@@ -65,6 +67,8 @@ type IncomingMessageInspection =
   | {
     accepted: true;
     incoming: IncomingChatMessage;
+    hasAnyMention: boolean;
+    hasExactBotMention: boolean;
     fields?: Record<string, unknown>;
   }
   | {
@@ -76,12 +80,19 @@ type IncomingMessageInspection =
       | "self-bot-sender"
       | "malformed-message"
       | "group-mention-mismatch"
+      | "not-whitelisted"
       | "empty-plain-text";
     fields?: Record<string, unknown>;
   };
 
 const SUPPORTED_MESSAGE_TYPES = new Set(["text", "post"]);
 const RECENT_MESSAGE_TTL_MS = 24 * 60 * 60 * 1000;
+const NOOP_WHITELIST: ChatWhitelist = {
+  isBound: () => false,
+  bind: async () => {},
+  unbind: async () => false,
+  count: () => 0,
+};
 
 type FeishuIngressOptions = {
   botOpenIds: Set<string>;
@@ -105,6 +116,7 @@ export class FeishuWsClient {
     private readonly options: FeishuIngressOptions,
     private readonly handler: MessageHandler,
     private readonly logger: LoggerLike,
+    private readonly whitelist: ChatWhitelist = NOOP_WHITELIST,
   ) {
     this.dispatcher = new lark.EventDispatcher({}).register({
       "im.message.receive_v1": async (data: unknown) => {
@@ -138,7 +150,7 @@ export class FeishuWsClient {
       return;
     }
 
-    const inspection = inspectIncomingMessage(payload, this.options);
+    const inspection = await inspectIncomingMessageForDispatch(payload, this.options, this.whitelist);
     if (!inspection.accepted) {
       this.logger.log("feishu/ws", "message skipped", { reason: inspection.reason, ...(inspection.fields ?? {}) }, "warn");
       return;
@@ -157,6 +169,25 @@ export class FeishuWsClient {
       len: incoming.plainText.length,
       ...(inspection.fields ?? {}),
     });
+
+    const routed = routeIncomingText(incoming.plainText);
+    if (
+      incoming.chatType !== "p2p"
+      && routed.kind === "message"
+      && resolveMentionMatch(inspection, this.options)
+    ) {
+      try {
+        await this.whitelist.bind(incoming.chatId, incoming.senderOpenId);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        this.logger.log("store/whitelist", "bind failed", {
+          chatId: incoming.chatId,
+          senderOpenId: incoming.senderOpenId,
+          detail,
+        }, "warn");
+      }
+    }
+
     await this.handler(incoming);
   }
 
@@ -205,6 +236,106 @@ export function normalizeIncomingMessage(payload: FeishuReceiveEvent, options: F
 }
 
 function inspectIncomingMessage(payload: FeishuReceiveEvent, options: FeishuIngressOptions): IncomingMessageInspection {
+  const parsed = parseIncomingMessage(payload, options);
+    if (!parsed.accepted) {
+      return parsed;
+    }
+
+  if (parsed.incoming.chatType !== "p2p" && options.requireBotMentionInGroup) {
+    const mentionMatched = resolveMentionMatch(parsed, options);
+    if (!mentionMatched) {
+      return {
+        accepted: false,
+        reason: "group-mention-mismatch",
+        ...(parsed.fields ? { fields: parsed.fields } : {}),
+      };
+    }
+  }
+
+  return parsed;
+}
+
+async function inspectIncomingMessageForDispatch(
+  payload: FeishuReceiveEvent,
+  options: FeishuIngressOptions,
+  whitelist: ChatWhitelist,
+): Promise<IncomingMessageInspection> {
+  const parsed = parseIncomingMessage(payload, options);
+  if (!parsed.accepted) {
+    return parsed;
+  }
+
+  if (parsed.incoming.chatType === "p2p") {
+    return parsed;
+  }
+
+  const routed = routeIncomingText(parsed.incoming.plainText);
+  const hasBotMention = resolveMentionMatch(parsed, options);
+  const isBound = whitelist.isBound(parsed.incoming.chatId, parsed.incoming.senderOpenId);
+
+  if (routed.kind === "command") {
+    if (hasBotMention || isBound) {
+      return {
+        ...parsed,
+        fields: {
+          ...(parsed.fields ?? {}),
+          whitelistMatched: isBound,
+          whitelistSize: whitelist.count(parsed.incoming.chatId),
+        },
+      };
+    }
+
+    return {
+      accepted: false,
+      reason: parsed.hasAnyMention ? "group-mention-mismatch" : "not-whitelisted",
+      fields: {
+        ...(parsed.fields ?? {}),
+        chatId: parsed.incoming.chatId,
+        chatType: parsed.incoming.chatType,
+        messageId: parsed.incoming.messageId,
+        senderOpenId: parsed.incoming.senderOpenId,
+        whitelistChatId: parsed.incoming.chatId,
+      },
+    };
+  }
+
+  if (hasBotMention) {
+    return {
+      ...parsed,
+      fields: {
+        ...(parsed.fields ?? {}),
+        whitelistMatched: isBound,
+        whitelistSize: whitelist.count(parsed.incoming.chatId),
+      },
+    };
+  }
+
+  if (isBound) {
+    return {
+      ...parsed,
+      fields: {
+        ...(parsed.fields ?? {}),
+        whitelistMatched: true,
+        whitelistSize: whitelist.count(parsed.incoming.chatId),
+      },
+    };
+  }
+
+  return {
+    accepted: false,
+    reason: parsed.hasAnyMention ? "group-mention-mismatch" : "not-whitelisted",
+    fields: {
+      ...(parsed.fields ?? {}),
+      chatId: parsed.incoming.chatId,
+      chatType: parsed.incoming.chatType,
+      messageId: parsed.incoming.messageId,
+      senderOpenId: parsed.incoming.senderOpenId,
+      whitelistChatId: parsed.incoming.chatId,
+    },
+  };
+}
+
+function parseIncomingMessage(payload: FeishuReceiveEvent, options: FeishuIngressOptions): IncomingMessageInspection {
   const message = payload.message;
   if (!message) {
     return { accepted: false, reason: "no-message" };
@@ -252,30 +383,6 @@ function inspectIncomingMessage(payload: FeishuReceiveEvent, options: FeishuIngr
     return { accepted: false, reason: "unsupported-message-type", fields: { chatType, messageType } };
   }
 
-  if (chatType !== "p2p" && options.requireBotMentionInGroup) {
-    const mentionMatched = options.strictBotMention
-      ? parsed.hasExactBotMention
-      : parsed.hasExactBotMention || parsed.hasAnyMention;
-    if (!mentionMatched) {
-      return {
-        accepted: false,
-        reason: "group-mention-mismatch",
-        fields: {
-          chatId,
-          chatType,
-          messageId,
-          senderOpenId,
-          configuredBotOpenIds: [...options.botOpenIds],
-          configuredBotMentionNames: [...options.botMentionNames],
-          configuredSelfBotOpenIds: [...options.selfBotOpenIds],
-          mentionIds,
-          hasAnyMention: parsed.hasAnyMention,
-          hasExactBotMention: parsed.hasExactBotMention,
-        },
-      };
-    }
-  }
-
   const threadKey = computeThreadKey({
     chatType,
     messageId,
@@ -306,6 +413,8 @@ function inspectIncomingMessage(payload: FeishuReceiveEvent, options: FeishuIngr
       threadKey,
       conversationKey: buildConversationKey(chatType, chatId, threadKey),
     },
+    hasAnyMention: parsed.hasAnyMention,
+    hasExactBotMention: parsed.hasExactBotMention,
     fields: {
       senderType,
       mentionIds,
@@ -316,6 +425,15 @@ function inspectIncomingMessage(payload: FeishuReceiveEvent, options: FeishuIngr
       hasExactBotMention: parsed.hasExactBotMention,
     },
   };
+}
+
+function resolveMentionMatch(
+  inspection: Extract<IncomingMessageInspection, { accepted: true }>,
+  options: FeishuIngressOptions,
+): boolean {
+  return options.strictBotMention
+    ? inspection.hasExactBotMention
+    : inspection.hasExactBotMention || inspection.hasAnyMention;
 }
 
 function isChatTypeEnabled(chatType: string, options: FeishuIngressOptions): boolean {
