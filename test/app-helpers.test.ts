@@ -10,6 +10,14 @@ describe("runtime prompt helpers", () => {
     });
   });
 
+  it("adds model override when provided", () => {
+    expect(buildPromptRequest("hello", "state", "openai/gpt-5.4")).toEqual({
+      system: "state",
+      model: "openai/gpt-5.4",
+      parts: [{ type: "text", text: "hello" }],
+    });
+  });
+
   it("builds bridge system state from the current window", () => {
     const prompt = buildBridgeSystemPrompt({
       chatType: "group",
@@ -27,6 +35,7 @@ describe("runtime prompt helpers", () => {
 
     expect(prompt).toContain("windowType: group");
     expect(prompt).toContain("sessionMode: multi");
+    expect(prompt).toContain("currentModel: default");
     expect(prompt).toContain("activeSessionId: ses_2");
     expect(prompt).toContain("* 当前会话 (ses_2)");
     expect(prompt).toContain("Bridge owns /new /sessions /switch /status");

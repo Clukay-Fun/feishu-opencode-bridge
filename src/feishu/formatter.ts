@@ -66,6 +66,42 @@ export type LeaveCommandCardView = {
   unbound: boolean;
 };
 
+export type RenameCommandCardView = {
+  previousLabel: string;
+  currentLabel: string;
+};
+
+export type CloseCommandCardView = {
+  closedLabel: string;
+  nextLabel?: string | null;
+  footer: string;
+};
+
+export type ModelCommandCardView = {
+  providers: Array<{
+    title: string;
+    highlightStyle?: string | null;
+    models: Array<{
+      label: string;
+      current?: boolean;
+      default?: boolean;
+    }>;
+  }>;
+  footer: string;
+};
+
+export type NoticeCardView = {
+  title: string;
+  message: string;
+  template: "blue" | "yellow" | "red" | "grey" | "orange";
+  iconToken: string;
+};
+
+export type PermissionNoticeCardView = {
+  command: string;
+  timeoutText: string;
+};
+
 export function buildQueueNoticePayload(notice: QueueNotice): FeishuPostPayload {
   return buildPostMarkdownPayload(notice.message);
 }
@@ -217,6 +253,190 @@ export function buildLeaveCommandCardPayload(view: LeaveCommandCardView): Feishu
   });
 }
 
+export function buildRenameCommandCardPayload(view: RenameCommandCardView): FeishuPostPayload {
+  return buildInteractivePayload({
+    title: "已重命名会话",
+    template: "green",
+    iconToken: "edit_filled",
+    bodyElements: [
+      buildSessionTransitionRow("原名", `~~${escapeText(view.previousLabel)}~~`, "grey-50"),
+      buildSessionTransitionRow("当前", `**${escapeText(view.currentLabel)}**`, "green-50"),
+      buildDivider(),
+      buildFooterTipBlock("后续 `/sessions` 将显示新的会话名称", "efficiency_outlined", "green", "notation"),
+    ],
+  });
+}
+
+export function buildCloseCommandCardPayload(view: CloseCommandCardView): FeishuPostPayload {
+  const bodyElements: Array<Record<string, unknown>> = [
+    buildSessionTransitionRow("删除", `~~${escapeText(view.closedLabel)}~~`, "grey-50"),
+  ];
+  if (view.nextLabel) {
+    bodyElements.push(buildSessionTransitionRow("当前", `**${escapeText(view.nextLabel)}**`, "green-50"));
+  }
+  bodyElements.push(buildDivider());
+  bodyElements.push(buildFooterTipBlock(view.footer, "calendar-add_outlined", "green", "notation"));
+
+  return buildInteractivePayload({
+    title: "已关闭会话",
+    template: "green",
+    iconToken: "close-bold_outlined",
+    bodyElements,
+  });
+}
+
+export function buildModelCommandCardPayload(view: ModelCommandCardView): FeishuPostPayload {
+  const bodyElements: Array<Record<string, unknown>> = [];
+
+  view.providers.forEach((provider, index) => {
+    if (index > 0) {
+      bodyElements.push(buildDivider());
+    }
+    bodyElements.push(buildModelProviderBlock(provider));
+  });
+
+  bodyElements.push(buildDivider());
+  bodyElements.push({
+    tag: "markdown",
+    content: view.footer,
+    text_align: "left",
+    text_size: "notation",
+    margin: "0px 0px 0px 0px",
+  });
+
+  return buildInteractivePayload({
+    title: "可用模型",
+    template: "indigo",
+    iconToken: "ai-common_colorful",
+    bodyElements,
+  });
+}
+
+export function buildNoticeCardPayload(view: NoticeCardView): FeishuPostPayload {
+  return buildInteractivePayload({
+    title: view.title,
+    template: view.template,
+    iconToken: view.iconToken,
+    bodyElements: [
+      {
+        tag: "column_set",
+        horizontal_spacing: "8px",
+        horizontal_align: "left",
+        columns: [
+          {
+            tag: "column",
+            width: "auto",
+            elements: [
+              {
+                tag: "markdown",
+                content: view.message,
+                text_align: "left",
+                text_size: "normal_v2",
+                margin: "0px 0px 0px 0px",
+              },
+            ],
+            padding: "8px 8px 8px 8px",
+            direction: "vertical",
+            horizontal_spacing: "8px",
+            vertical_spacing: "8px",
+            horizontal_align: "left",
+            vertical_align: "top",
+            margin: "0px 0px 0px 0px",
+          },
+        ],
+        margin: "0px 0px 0px 0px",
+      },
+    ],
+  });
+}
+
+export function buildPermissionNoticeCardPayload(view: PermissionNoticeCardView): FeishuPostPayload {
+  return buildInteractivePayload({
+    title: "权限请求",
+    template: "purple",
+    iconToken: "lock_filled",
+    bodyElements: [
+      {
+        tag: "column_set",
+        horizontal_spacing: "8px",
+        horizontal_align: "left",
+        columns: [
+          {
+            tag: "column",
+            width: "weighted",
+            elements: [
+              {
+                tag: "markdown",
+                content: "OpenCode 想执行：",
+                text_align: "left",
+                text_size: "normal_v2",
+                margin: "0px 0px 0px 0px",
+              },
+              {
+                tag: "column_set",
+                horizontal_spacing: "8px",
+                horizontal_align: "left",
+                columns: [
+                  {
+                    tag: "column",
+                    width: "weighted",
+                    elements: [
+                      {
+                        tag: "markdown",
+                        content: `\`\`\`\n${escapeText(view.command)}\n\`\`\``,
+                        text_align: "left",
+                        text_size: "normal_v2",
+                        margin: "0px 0px 0px 0px",
+                      },
+                    ],
+                    vertical_align: "top",
+                    weight: 1,
+                  },
+                ],
+                margin: "0px 0px 0px 0px",
+              },
+            ],
+            padding: "8px 8px 8px 8px",
+            direction: "vertical",
+            horizontal_spacing: "8px",
+            vertical_spacing: "8px",
+            horizontal_align: "left",
+            vertical_align: "top",
+            margin: "0px 0px 0px 0px",
+            weight: 1,
+          },
+        ],
+        margin: "0px 0px 0px 0px",
+      },
+      buildDivider(),
+      {
+        tag: "column_set",
+        flex_mode: "stretch",
+        horizontal_spacing: "8px",
+        horizontal_align: "left",
+        columns: [
+          buildFakeButtonColumn("/allow once · 仅此一次", "primary_filled", "fill"),
+          buildFakeButtonColumn("/allow always · 始终允许", "primary", "default"),
+          buildFakeButtonColumn("/deny · 拒绝", "danger", "default"),
+        ],
+        margin: "0px 0px 0px 0px",
+      },
+      {
+        tag: "markdown",
+        content: view.timeoutText,
+        text_align: "left",
+        text_size: "notation",
+        margin: "8px 8px 8px 8px",
+        icon: {
+          tag: "standard_icon",
+          token: "alarm-clock_outlined",
+          color: "grey",
+        },
+      },
+    ],
+  });
+}
+
 function shortSessionId(sessionId: string): string {
   return sessionId.length <= 12 ? sessionId : sessionId.slice(0, 12);
 }
@@ -273,8 +493,8 @@ function buildTurnBodyElements(
 
 function buildInteractivePayload(options: {
   title: string;
-  template: "blue" | "green" | "red" | "wathet" | "grey";
-  iconToken: string;
+  template: "blue" | "green" | "red" | "wathet" | "grey" | "yellow" | "orange" | "purple" | "indigo";
+  iconToken?: string;
   bodyElements: Array<Record<string, unknown>>;
 }): FeishuPostPayload {
   return {
@@ -298,10 +518,14 @@ function buildInteractivePayload(options: {
         subtitle: { tag: "plain_text", content: "" },
         template: options.template,
         title: { tag: "plain_text", content: options.title },
-        icon: {
-          tag: "standard_icon",
-          token: options.iconToken,
-        },
+        ...(options.iconToken
+          ? {
+            icon: {
+              tag: "standard_icon",
+              token: options.iconToken,
+            },
+          }
+          : {}),
       },
       body: {
         direction: "vertical",
@@ -558,6 +782,102 @@ function buildTwoColumnBadgeRow(
         margin: "0px 0px 0px 0px",
       },
     ],
+    margin: "0px 0px 0px 0px",
+  };
+}
+
+function buildFakeButtonColumn(
+  text: string,
+  buttonType: "primary_filled" | "primary" | "danger",
+  width: "fill" | "default",
+): Record<string, unknown> {
+  return {
+    tag: "column",
+    width: "auto",
+    elements: [
+      {
+        tag: "button",
+        text: {
+          tag: "plain_text",
+          content: text,
+        },
+        type: buttonType,
+        width,
+        size: "medium",
+        margin: "0px 0px 0px 0px",
+      },
+    ],
+    vertical_align: "top",
+  };
+}
+
+function buildModelProviderBlock(provider: ModelCommandCardView["providers"][number]): Record<string, unknown> {
+  return {
+    tag: "column_set",
+    flex_mode: "stretch",
+    horizontal_spacing: "12px",
+    horizontal_align: "left",
+    columns: [
+      {
+        tag: "column",
+        width: "weighted",
+        elements: [
+          {
+            tag: "markdown",
+            content: escapeText(provider.title),
+            text_align: "left",
+            text_size: "normal",
+          },
+          {
+            tag: "column_set",
+            flex_mode: "flow",
+            horizontal_spacing: "8px",
+            horizontal_align: "left",
+            columns: provider.models.map((model) => buildModelChip(model, provider.highlightStyle ?? null)),
+            margin: "0px 0px 0px 0px",
+          },
+        ],
+        padding: "8px 8px 8px 8px",
+        direction: "vertical",
+        horizontal_spacing: "8px",
+        vertical_spacing: "4px",
+        horizontal_align: "left",
+        vertical_align: "top",
+        margin: "0px 0px 0px 0px",
+        weight: 1,
+      },
+    ],
+    margin: "0px 0px 0px 0px",
+  };
+}
+
+function buildModelChip(
+  model: ModelCommandCardView["providers"][number]["models"][number],
+  highlightStyle: string | null,
+): Record<string, unknown> {
+  const markers: string[] = [];
+  if (model.current) markers.push("当前");
+  if (model.default) markers.push("默认");
+  const suffix = markers.length > 0 ? ` ← ${markers.join(" / ")}` : "";
+  return {
+    tag: "column",
+    width: "auto",
+    ...(model.current && highlightStyle ? { background_style: highlightStyle } : {}),
+    elements: [
+      {
+        tag: "markdown",
+        content: `${model.current ? "**" : ""}${escapeText(model.label)}${suffix}${model.current ? "**" : ""}`,
+        text_align: "left",
+        text_size: "notation",
+        margin: "0px 0px 0px 0px",
+      },
+    ],
+    padding: "4px 4px 4px 4px",
+    direction: "vertical",
+    horizontal_spacing: "8px",
+    vertical_spacing: "8px",
+    horizontal_align: "left",
+    vertical_align: "top",
     margin: "0px 0px 0px 0px",
   };
 }

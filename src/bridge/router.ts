@@ -4,8 +4,12 @@ export type RoutedText =
     command:
       | { kind: "new" }
       | { kind: "status" }
+      | { kind: "rename"; label: string }
+      | { kind: "close"; index?: number | undefined }
       | { kind: "abort" }
-      | { kind: "models" }
+      | { kind: "models"; provider?: string | undefined }
+      | { kind: "model-use"; model: string }
+      | { kind: "model-reset" }
       | { kind: "leave" }
       | { kind: "who" }
       | { kind: "sessions" }
@@ -34,12 +38,67 @@ export function routeIncomingText(text: string): RoutedText {
     return { kind: "command", command: { kind: "status" } };
   }
 
+  if (rawCommand === "current" && args.length === 0) {
+    return { kind: "command", command: { kind: "status" } };
+  }
+
+  if (rawCommand === "rename" && args.length > 0) {
+    return {
+      kind: "command",
+      command: { kind: "rename", label: args.join(" ").trim() },
+    };
+  }
+
+  if (rawCommand === "close" && args.length === 0) {
+    return { kind: "command", command: { kind: "close" } };
+  }
+
+  if (rawCommand === "close" && args.length === 1 && /^\d+$/.test(args[0] ?? "")) {
+    return {
+      kind: "command",
+      command: { kind: "close", index: Number(args[0]) },
+    };
+  }
+
+  if (rawCommand === "delete" && args.length === 0) {
+    return { kind: "command", command: { kind: "close" } };
+  }
+
+  if (rawCommand === "delete" && args.length === 1 && /^\d+$/.test(args[0] ?? "")) {
+    return {
+      kind: "command",
+      command: { kind: "close", index: Number(args[0]) },
+    };
+  }
+
   if (rawCommand === "abort" && args.length === 0) {
     return { kind: "command", command: { kind: "abort" } };
   }
 
   if (rawCommand === "models" && args.length === 0) {
     return { kind: "command", command: { kind: "models" } };
+  }
+
+  if (rawCommand === "model" && args.length === 0) {
+    return { kind: "command", command: { kind: "models" } };
+  }
+
+  if (rawCommand === "models" && args.length === 1) {
+    return { kind: "command", command: { kind: "models", provider: args[0] } };
+  }
+
+  if (rawCommand === "model" && args.length === 1) {
+    if (args[0] === "reset") {
+      return { kind: "command", command: { kind: "model-reset" } };
+    }
+    return { kind: "command", command: { kind: "models", provider: args[0] } };
+  }
+
+  if (rawCommand === "model" && args.length >= 2 && args[0] === "use") {
+    return {
+      kind: "command",
+      command: { kind: "model-use", model: args.slice(1).join(" ").trim() },
+    };
   }
 
   if (rawCommand === "leave" && args.length === 0) {

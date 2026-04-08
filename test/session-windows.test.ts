@@ -9,6 +9,7 @@ import {
   removeSession,
   resolveSessionMode,
   setActiveSession,
+  updateWindowModel,
 } from "../src/runtime/session-windows.js";
 
 describe("session windows", () => {
@@ -21,6 +22,7 @@ describe("session windows", () => {
   it("keeps only one active session in single mode", () => {
     const record: SessionWindowRecord = {
       mode: "single",
+      model: "openai/gpt-5.4",
       activeSessionId: "ses_old",
       sessions: [
         { sessionId: "ses_old", label: "old", createdAt: 1, lastUsedAt: 1 },
@@ -31,6 +33,7 @@ describe("session windows", () => {
     const normalized = normalizeSessionWindowRecord(record, "single", 20);
     expect(normalized.sessions).toHaveLength(1);
     expect(normalized.activeSessionId).toBe("ses_old");
+    expect(normalized.model).toBe("openai/gpt-5.4");
   });
 
   it("adds and switches sessions in multi mode", () => {
@@ -56,6 +59,7 @@ describe("session windows", () => {
   it("removes stale sessions and promotes the next active item", () => {
     const record = removeSession({
       mode: "multi",
+      model: "openai/gpt-5.4-mini",
       activeSessionId: "ses_2",
       sessions: [
         { sessionId: "ses_2", label: "two", createdAt: 2, lastUsedAt: 2 },
@@ -65,5 +69,19 @@ describe("session windows", () => {
 
     expect(record.activeSessionId).toBe("ses_1");
     expect(record.sessions).toHaveLength(1);
+    expect(record.model).toBe("openai/gpt-5.4-mini");
+  });
+
+  it("updates the window model override", () => {
+    const record = updateWindowModel({
+      mode: "multi",
+      model: null,
+      activeSessionId: "ses_1",
+      sessions: [
+        { sessionId: "ses_1", label: "one", createdAt: 1, lastUsedAt: 1 },
+      ],
+    }, "openai/gpt-5.4", 5);
+
+    expect(record.model).toBe("openai/gpt-5.4");
   });
 });

@@ -37,7 +37,7 @@ describe("MappingStore", () => {
     const store = new MappingStore(dir, "mappings.json", 2);
 
     await store.save({
-      a: { mode: "single", activeSessionId: "ses_a", sessions: [{ sessionId: "ses_a", label: "A", createdAt: 1, lastUsedAt: 1 }] },
+      a: { mode: "single", model: "openai/gpt-5.4", activeSessionId: "ses_a", sessions: [{ sessionId: "ses_a", label: "A", createdAt: 1, lastUsedAt: 1 }] },
       b: { mode: "single", activeSessionId: "ses_b", sessions: [{ sessionId: "ses_b", label: "B", createdAt: 3, lastUsedAt: 3 }] },
       c: { mode: "single", activeSessionId: "ses_c", sessions: [{ sessionId: "ses_c", label: "C", createdAt: 2, lastUsedAt: 2 }] },
     });

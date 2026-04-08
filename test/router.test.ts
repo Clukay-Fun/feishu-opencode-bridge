@@ -8,9 +8,55 @@ describe("routeIncomingText", () => {
       kind: "command",
       command: { kind: "status" },
     });
+    expect(routeIncomingText("/current")).toEqual({
+      kind: "command",
+      command: { kind: "status" },
+    });
     expect(routeIncomingText("/new")).toEqual({
       kind: "command",
       command: { kind: "new" },
+    });
+    expect(routeIncomingText("/model")).toEqual({
+      kind: "command",
+      command: { kind: "models" },
+    });
+  });
+
+  it("routes model subcommands", () => {
+    expect(routeIncomingText("/model openai")).toEqual({
+      kind: "command",
+      command: { kind: "models", provider: "openai" },
+    });
+    expect(routeIncomingText("/models opencode")).toEqual({
+      kind: "command",
+      command: { kind: "models", provider: "opencode" },
+    });
+    expect(routeIncomingText("/model use openai/gpt-5.4")).toEqual({
+      kind: "command",
+      command: { kind: "model-use", model: "openai/gpt-5.4" },
+    });
+    expect(routeIncomingText("/model reset")).toEqual({
+      kind: "command",
+      command: { kind: "model-reset" },
+    });
+  });
+
+  it("routes rename and close aliases", () => {
+    expect(routeIncomingText("/rename 代码审查")).toEqual({
+      kind: "command",
+      command: { kind: "rename", label: "代码审查" },
+    });
+    expect(routeIncomingText("/close")).toEqual({
+      kind: "command",
+      command: { kind: "close" },
+    });
+    expect(routeIncomingText("/close 2")).toEqual({
+      kind: "command",
+      command: { kind: "close", index: 2 },
+    });
+    expect(routeIncomingText("/delete 3")).toEqual({
+      kind: "command",
+      command: { kind: "close", index: 3 },
     });
   });
 

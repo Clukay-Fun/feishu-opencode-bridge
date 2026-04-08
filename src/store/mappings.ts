@@ -11,6 +11,7 @@ export type SessionBindingRecord = {
 
 export type SessionWindowRecord = {
   mode: SessionMode;
+  model?: string | null;
   activeSessionId: string | null;
   sessions: SessionBindingRecord[];
 };
@@ -177,6 +178,7 @@ function normalizeWindowRecord(value: unknown): SessionWindowRecord | null {
   if (sessions.length === 0) {
     return {
       mode,
+      model: typeof value.model === "string" && value.model.trim().length > 0 ? value.model.trim() : null,
       activeSessionId: null,
       sessions: [],
     };
@@ -189,11 +191,13 @@ function normalizeWindowRecord(value: unknown): SessionWindowRecord | null {
   return mode === "single"
     ? {
       mode,
+      model: typeof value.model === "string" && value.model.trim().length > 0 ? value.model.trim() : null,
       activeSessionId,
       sessions: [findSessionById(sessions, activeSessionId) ?? pickMostRecentSession(sessions)!],
     }
     : {
       mode,
+      model: typeof value.model === "string" && value.model.trim().length > 0 ? value.model.trim() : null,
       activeSessionId,
       sessions: sessions.sort((a, b) => b.lastUsedAt - a.lastUsedAt),
     };
@@ -218,6 +222,7 @@ function normalizeSessionBindingRecord(value: unknown, now: number): SessionBind
 function createSingleWindow(sessionId: string, now: number, label: string): SessionWindowRecord {
   return {
     mode: "single",
+    model: null,
     activeSessionId: sessionId,
     sessions: [{
       sessionId,

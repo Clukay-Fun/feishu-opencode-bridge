@@ -80,7 +80,17 @@ export type OpenCodeCommandRequest = {
 };
 
 export type OpenCodeProvidersResponse = {
-  providers: Array<Record<string, unknown>>;
+  providers: Array<Record<string, unknown> & {
+    id?: string;
+    providerID?: string;
+    name?: string;
+    models?: Record<string, Record<string, unknown> & {
+      id?: string;
+      name?: string;
+      status?: string;
+      release_date?: string;
+    }>;
+  }>;
   default: Record<string, string>;
 };
 

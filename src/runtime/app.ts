@@ -7,9 +7,14 @@ import { transitionTurn } from "../bridge/state-machine.js";
 import { TurnWatchdog } from "../bridge/watchdog.js";
 import type { BridgeTurn } from "../bridge/turn.js";
 import {
+  buildCloseCommandCardPayload,
   buildPostMarkdownPayload,
   buildLeaveCommandCardPayload,
+  buildModelCommandCardPayload,
+  buildNoticeCardPayload,
+  buildPermissionNoticeCardPayload,
   buildQueueNoticePayload,
+  buildRenameCommandCardPayload,
   buildSessionListCardPayload,
   buildSessionTransitionCardPayload,
   buildStatusCommandCardPayload,
@@ -43,6 +48,7 @@ import {
   resolveSessionMode,
   setActiveSession,
   updateSessionLabel,
+  updateWindowModel,
 } from "./session-windows.js";
 
 export type IncomingChatMessage = {
@@ -364,10 +370,11 @@ export class BridgeApp {
       );
 
       watchdog.start();
+      const window = this.getSessionWindow(turn.conversationKey, turn.chatType);
       const systemPrompt = this.config.bridge.injectSystemState
-        ? buildBridgeSystemPrompt(turn, this.getSessionWindow(turn.conversationKey, turn.chatType))
+        ? buildBridgeSystemPrompt(turn, window)
         : undefined;
-      void this.opencode.promptAsync(turn.sessionId, buildPromptRequest(turn.text, systemPrompt))
+      void this.opencode.promptAsync(turn.sessionId, buildPromptRequest(turn.text, systemPrompt, window.model ?? undefined))
         .then(() => {
           queue.replaceActive(transitionTurn(turn, "awaiting-sse"));
           void this.updateTurnCard(turn.turnId, { status: "处理中", update: "请求已发送，等待事件流...", target: "step" });
@@ -492,11 +499,14 @@ export class BridgeApp {
         update: `请求权限：${permissionName}，请回复 /allow once、/allow always 或 /deny`,
         target: "step",
       });
-      await this.sendPayload(turn.chatId, buildPostMarkdownPayload(`OpenCode 请求权限 \`${escapeMarkdownText(permissionName)}\`，请回复 \`/allow once\`、\`/allow always\` 或 \`/deny\`。`), {
+      await this.sendPayload(turn.chatId, buildPermissionNoticeCardPayload({
+        command: permissionName,
+        timeoutText: "120s 后自动拒绝",
+      }), {
         event: "final message sent",
         transcriptType: "outbound-final",
         textPreview: `权限请求：${permissionName}`,
-        len: permissionName.length + 16,
+        len: permissionName.length + 5,
       }, { replyToMessageId: turn.inboundMessageId });
       return;
     }
@@ -583,19 +593,188 @@ export class BridgeApp {
       return;
     }
 
-    if (command.kind === "abort") {
+    if (command.kind === "rename") {
       const window = this.getSessionWindow(message.conversationKey, message.chatType);
       const currentSession = getActiveSession(window);
-      if (currentSession) {
-        await this.opencode.abort(currentSession.sessionId);
+      if (!currentSession) {
+        await this.sendNoticeCard(message.chatId, {
+          title: "信息提示",
+          message: "当前没有可重命名的会话。",
+          template: "blue",
+          iconToken: "info_outlined",
+        }, message.messageId);
+        return;
       }
-      await this.sendMarkdown(message.chatId, "已请求中止当前任务。", message.messageId);
+
+      const nextLabel = command.label.trim();
+      if (!nextLabel || nextLabel === currentSession.label) {
+        await this.sendNoticeCard(message.chatId, {
+          title: "信息提示",
+          message: nextLabel ? "当前会话已经是这个名称。" : "请输入新的会话名称。",
+          template: "blue",
+          iconToken: "info_outlined",
+        }, message.messageId);
+        return;
+      }
+
+      const nextWindow = updateSessionLabel(window, currentSession.sessionId, nextLabel, this.config.bridge.maxSessionsPerWindow);
+      await this.saveSessionWindow(message.conversationKey, nextWindow);
+      await this.sendPayload(message.chatId, buildRenameCommandCardPayload({
+        previousLabel: currentSession.label,
+        currentLabel: nextLabel,
+      }), {
+        event: "final message sent",
+        transcriptType: "outbound-final",
+        textPreview: `已重命名会话 ${nextLabel}`,
+        len: nextLabel.length + 6,
+      }, { replyToMessageId: message.messageId });
+      return;
+    }
+
+    if (command.kind === "close") {
+      const window = this.getSessionWindow(message.conversationKey, message.chatType);
+      let targetSession = getActiveSession(window);
+
+      if (command.index !== undefined) {
+        if (window.mode === "single") {
+          await this.sendNoticeCard(message.chatId, {
+            title: "提醒",
+            message: "当前窗口为单会话模式，不支持按编号关闭。",
+            template: "yellow",
+            iconToken: "maybe_outlined",
+          }, message.messageId);
+          return;
+        }
+
+        const visibleSessions = getVisibleSessions(window);
+        targetSession = visibleSessions[command.index - 1] ?? null;
+        if (!targetSession) {
+          await this.sendNoticeCard(message.chatId, {
+            title: "提醒",
+            message: "无效的会话编号，请重新执行 `/sessions` 查看列表。",
+            template: "yellow",
+            iconToken: "maybe_outlined",
+          }, message.messageId);
+          return;
+        }
+      }
+
+      if (!targetSession) {
+        await this.sendNoticeCard(message.chatId, {
+          title: "信息提示",
+          message: "当前没有可关闭的会话。",
+          template: "blue",
+          iconToken: "info_outlined",
+        }, message.messageId);
+        return;
+      }
+
+      const nextWindow = removeSession(window, targetSession.sessionId, this.config.bridge.maxSessionsPerWindow);
+      await this.saveSessionWindow(message.conversationKey, nextWindow);
+      this.clearPendingSessionSelection(message.conversationKey);
+      const nextActiveSession = getActiveSession(nextWindow);
+      await this.sendPayload(message.chatId, buildCloseCommandCardPayload({
+        closedLabel: targetSession.label,
+        nextLabel: nextActiveSession?.label ?? null,
+        footer: nextActiveSession
+          ? `当前已切换到「${nextActiveSession.label}」`
+          : "当前窗口暂无会话，发送 `/new` 或直接发送消息开始",
+      }), {
+        event: "final message sent",
+        transcriptType: "outbound-final",
+        textPreview: `已关闭会话 ${targetSession.label}`,
+        len: targetSession.label.length + 6,
+      }, { replyToMessageId: message.messageId });
+      return;
+    }
+
+    if (command.kind === "abort") {
+      const queue = this.queues.get(message.conversationKey);
+      const activeTurn = queue.peek();
+      const window = this.getSessionWindow(message.conversationKey, message.chatType);
+      const currentSession = getActiveSession(window);
+      if (activeTurn && currentSession) {
+        await this.opencode.abort(currentSession.sessionId);
+        await this.sendNoticeCard(message.chatId, {
+          title: "任务已中止",
+          message: "当前任务已中止，可发送新消息继续对话。",
+          template: "orange",
+          iconToken: "stop-record_filled",
+        }, message.messageId);
+        return;
+      }
+      await this.sendNoticeCard(message.chatId, {
+        title: "无任务可中止",
+        message: "当前没有正在执行的任务。",
+        template: "grey",
+        iconToken: "info-hollow_filled",
+      }, message.messageId);
       return;
     }
 
     if (command.kind === "models") {
       const providers = await this.opencode.listProviders();
-      await this.sendMarkdown(message.chatId, formatProviders(providers), message.messageId);
+      const window = this.getSessionWindow(message.conversationKey, message.chatType);
+      const card = buildModelCardView(providers, {
+        providerFilter: command.provider,
+        currentModel: window.model ?? null,
+      });
+      if (!card) {
+        await this.sendNoticeCard(message.chatId, {
+          title: "提醒",
+          message: "没有找到匹配的模型提供方，请先发送 `/model` 查看全部可切换模型。",
+          template: "yellow",
+          iconToken: "maybe_outlined",
+        }, message.messageId);
+        return;
+      }
+      await this.sendPayload(message.chatId, buildModelCommandCardPayload(card), {
+        event: "final message sent",
+        transcriptType: "outbound-final",
+        textPreview: "可用模型",
+        len: 4,
+      }, { replyToMessageId: message.messageId });
+      return;
+    }
+
+    if (command.kind === "model-use") {
+      const providers = await this.opencode.listProviders();
+      const catalog = buildModelCatalog(providers);
+      const normalizedModel = command.model.trim();
+      const matchedModel = catalog.get(normalizedModel);
+      if (!matchedModel) {
+        await this.sendNoticeCard(message.chatId, {
+          title: "提醒",
+          message: "目标模型不存在，请先发送 `/model` 查看可切换模型。",
+          template: "yellow",
+          iconToken: "maybe_outlined",
+        }, message.messageId);
+        return;
+      }
+
+      const window = this.getSessionWindow(message.conversationKey, message.chatType);
+      const resolvedModel = `${matchedModel.providerId}/${matchedModel.modelId}`;
+      const nextWindow = updateWindowModel(window, resolvedModel, this.config.bridge.maxSessionsPerWindow);
+      await this.saveSessionWindow(message.conversationKey, nextWindow);
+      await this.sendNoticeCard(message.chatId, {
+        title: "信息提示",
+        message: `当前窗口模型已切换为 \`${escapeMarkdownText(resolvedModel)}\`。`,
+        template: "blue",
+        iconToken: "info_outlined",
+      }, message.messageId);
+      return;
+    }
+
+    if (command.kind === "model-reset") {
+      const window = this.getSessionWindow(message.conversationKey, message.chatType);
+      const nextWindow = updateWindowModel(window, null, this.config.bridge.maxSessionsPerWindow);
+      await this.saveSessionWindow(message.conversationKey, nextWindow);
+      await this.sendNoticeCard(message.chatId, {
+        title: "信息提示",
+        message: "当前窗口已恢复默认模型。",
+        template: "blue",
+        iconToken: "info_outlined",
+      }, message.messageId);
       return;
     }
 
@@ -669,20 +848,35 @@ export class BridgeApp {
     if (command.kind === "sessions-select") {
       const window = this.getSessionWindow(message.conversationKey, message.chatType);
       if (window.mode === "single") {
-        await this.sendMarkdown(message.chatId, "当前窗口为单会话模式，不支持切换。", message.messageId);
+        await this.sendNoticeCard(message.chatId, {
+          title: "提醒",
+          message: "当前窗口为单会话模式，不支持切换。",
+          template: "yellow",
+          iconToken: "maybe_outlined",
+        }, message.messageId);
         return;
       }
 
       const pending = this.pendingInteractions.get(message.conversationKey);
       if (!pending || pending.kind !== "session-select" || pending.expiresAt <= Date.now()) {
         this.clearPendingInteraction(message.conversationKey, false);
-        await this.sendMarkdown(message.chatId, "会话列表已过期，请先重新执行 `/sessions`。", message.messageId);
+        await this.sendNoticeCard(message.chatId, {
+          title: "提醒",
+          message: "会话列表已过期，请先重新执行 `/sessions`。",
+          template: "yellow",
+          iconToken: "maybe_outlined",
+        }, message.messageId);
         return;
       }
 
       const match = pending.options.find((option) => option.index === command.index);
       if (!match) {
-        await this.sendMarkdown(message.chatId, "无效的会话编号，请重新执行 `/sessions` 查看列表。", message.messageId);
+        await this.sendNoticeCard(message.chatId, {
+          title: "提醒",
+          message: "无效的会话编号，请重新执行 `/sessions` 查看列表。",
+          template: "yellow",
+          iconToken: "maybe_outlined",
+        }, message.messageId);
         return;
       }
 
@@ -691,7 +885,12 @@ export class BridgeApp {
         const nextWindow = removeSession(window, match.sessionId, this.config.bridge.maxSessionsPerWindow);
         await this.saveSessionWindow(message.conversationKey, nextWindow);
         this.clearPendingInteraction(message.conversationKey, false);
-        await this.sendMarkdown(message.chatId, "目标会话已失效，已从当前窗口列表移除，请重新执行 `/sessions`。", message.messageId);
+        await this.sendNoticeCard(message.chatId, {
+          title: "错误",
+          message: "目标会话已失效，已从当前窗口列表移除，请重新执行 `/sessions`。",
+          template: "red",
+          iconToken: "more-close_outlined",
+        }, message.messageId);
         return;
       }
 
@@ -756,7 +955,12 @@ export class BridgeApp {
     if (command.kind === "allow" || command.kind === "deny") {
       const pending = this.pendingInteractions.get(message.conversationKey);
       if (!pending || pending.kind !== "permission") {
-        await this.sendMarkdown(message.chatId, "当前没有待确认的权限请求。", message.messageId);
+        await this.sendNoticeCard(message.chatId, {
+          title: "信息提示",
+          message: "当前没有待确认的权限请求。",
+          template: "blue",
+          iconToken: "info_outlined",
+        }, message.messageId);
         return;
       }
 
@@ -770,9 +974,11 @@ export class BridgeApp {
     }
 
     const sessionId = await this.ensureSession(message);
+    const window = this.getSessionWindow(message.conversationKey, message.chatType);
     const result = await this.opencode.runCommand(sessionId, {
       command: command.name,
       arguments: command.arguments,
+      ...(window.model ? { model: window.model } : {}),
     });
     const text = extractAssistantText(result) || "命令已执行。";
     await this.sendMarkdown(message.chatId, text, message.messageId);
@@ -795,7 +1001,12 @@ export class BridgeApp {
     }
 
     if (pending.kind === "permission") {
-      await this.sendMarkdown(message.chatId, "当前有待确认的权限请求，请先回复 `/allow once`、`/allow always` 或 `/deny`。", message.messageId);
+      await this.sendNoticeCard(message.chatId, {
+        title: "信息提示",
+        message: "当前有待确认的权限请求，请先回复 `/allow once`、`/allow always` 或 `/deny`。",
+        template: "blue",
+        iconToken: "info_outlined",
+      }, message.messageId);
       return true;
     }
 
@@ -835,7 +1046,12 @@ export class BridgeApp {
       await this.opencode.health();
       return true;
     } catch {
-      await this.sendMarkdown(message.chatId, "OpenCode 服务不可用，请先确认 `opencode serve` 正在运行。", message.messageId);
+      await this.sendNoticeCard(message.chatId, {
+        title: "错误",
+        message: "OpenCode 服务不可用，请先确认 `opencode serve` 正在运行。",
+        template: "red",
+        iconToken: "more-close_outlined",
+      }, message.messageId);
       return false;
     }
   }
@@ -963,7 +1179,7 @@ export class BridgeApp {
   }
 
   private async saveSessionWindow(conversationKey: string, window: SessionWindowRecord): Promise<void> {
-    if (window.sessions.length === 0) {
+    if (window.sessions.length === 0 && !window.model) {
       delete this.sessionMap[conversationKey];
     } else {
       this.sessionMap[conversationKey] = window;
@@ -1073,6 +1289,13 @@ export class BridgeApp {
     this.pendingInteractions.delete(conversationKey);
   }
 
+  private clearPendingSessionSelection(conversationKey: string): void {
+    const current = this.pendingInteractions.get(conversationKey);
+    if (current?.kind === "session-select") {
+      this.clearPendingInteraction(conversationKey, false);
+    }
+  }
+
   private async handlePermissionTimeout(conversationKey: string, pending: PendingPermissionInteraction): Promise<void> {
     const current = this.pendingInteractions.get(conversationKey);
     if (!current || current.kind !== "permission" || current.permissionId !== pending.permissionId) {
@@ -1089,7 +1312,12 @@ export class BridgeApp {
     }
 
     await this.updateTurnCard(current.turnId, { status: "处理中", update: "权限请求已超时，已默认拒绝", target: "step" });
-    await this.sendMarkdown(current.chatId, "权限请求已超时，已默认拒绝。", current.replyToMessageId);
+    await this.sendNoticeCard(current.chatId, {
+      title: "提醒",
+      message: "权限请求已超时，已默认拒绝。",
+      template: "yellow",
+      iconToken: "maybe_outlined",
+    }, current.replyToMessageId);
   }
 
   private async createTurnCard(chatId: string, turnId: string, sessionId: string, replyToMessageId: string): Promise<TurnCardState | null> {
@@ -1231,6 +1459,19 @@ export class BridgeApp {
     }, replyToMessageId ? { replyToMessageId } : undefined);
   }
 
+  private async sendNoticeCard(
+    chatId: string,
+    view: Parameters<typeof buildNoticeCardPayload>[0],
+    replyToMessageId?: string,
+  ): Promise<void> {
+    await this.sendPayload(chatId, buildNoticeCardPayload(view), {
+      event: "final message sent",
+      transcriptType: "outbound-final",
+      textPreview: `${view.title} ${createTextPreview(view.message)}`.trim(),
+      len: view.title.length + view.message.length,
+    }, replyToMessageId ? { replyToMessageId } : undefined);
+  }
+
   private async sendPayload(
     chatId: string,
     payload: FeishuPostPayload,
@@ -1247,10 +1488,11 @@ export class BridgeApp {
   }
 }
 
-export function buildPromptRequest(text: string, system?: string): { system?: string; parts: Array<{ type: "text"; text: string }> } {
-  return system
+export function buildPromptRequest(text: string, system?: string, model?: string): { system?: string; model?: string; parts: Array<{ type: "text"; text: string }> } {
+  return system || model
     ? {
-      system,
+      ...(system ? { system } : {}),
+      ...(model ? { model } : {}),
       parts: [{ type: "text", text }],
     }
     : {
@@ -1294,19 +1536,176 @@ function formatQuestionPrompt(questions: PendingQuestionInteraction["questions"]
   return ["OpenCode 需要你回答：", ...questions.map((question, index) => `${index + 1}. ${escapeMarkdownText(question.header)}\n${escapeMarkdownText(question.question)}`)].join("\n\n");
 }
 
-function formatProviders(providers: OpenCodeProvidersResponse): string {
-  const lines = ["可用模型提供方："];
+function buildModelCardView(
+  providers: OpenCodeProvidersResponse,
+  options?: { providerFilter?: string | undefined; currentModel?: string | null },
+): {
+  providers: Array<{
+    title: string;
+    highlightStyle?: string | null;
+    models: Array<{ label: string; current?: boolean; default?: boolean }>;
+  }>;
+  footer: string;
+} | null {
+  const filter = options?.providerFilter?.trim().toLowerCase();
+  const catalog = [...buildProviderCatalog(providers).values()]
+    .filter((provider) => !filter || provider.id.toLowerCase() === filter || provider.name.toLowerCase() === filter);
+
+  if (catalog.length === 0) {
+    return null;
+  }
+
+  const providersView = catalog.map((provider) => {
+    const models = selectModelsForCard(provider, options?.currentModel ?? null, !filter)
+      .map((model) => ({
+        label: model.id,
+        current: options?.currentModel === model.fullId,
+        default: provider.defaultModel === model.id,
+      }));
+
+    return {
+      title: `${provider.name} 模型`,
+      highlightStyle: provider.id === "openai" ? "purple-50" : provider.id === "opencode" ? "blue-50" : "grey-50",
+      models,
+    };
+  });
+
+  const footerLines = [
+    "`/model use <provider/model>` 切换当前窗口模型",
+    "`/model reset` 恢复默认模型",
+  ];
+  if (!filter) {
+    footerLines.push("当前仅展示每个提供方最近 5 个模型；发送 `/model <provider>` 查看更多。");
+  }
+
+  return {
+    providers: providersView,
+    footer: footerLines.join("\n"),
+  };
+}
+
+function buildModelCatalog(providers: OpenCodeProvidersResponse): Map<string, { providerId: string; modelId: string; providerName: string }> {
+  const catalog = new Map<string, { providerId: string; modelId: string; providerName: string }>();
+  const bareIdCounts = new Map<string, number>();
+  const entries: Array<{ fullId: string; providerId: string; modelId: string; providerName: string }> = [];
+
+  for (const provider of buildProviderCatalog(providers).values()) {
+    for (const model of provider.models) {
+      entries.push({
+        fullId: model.fullId,
+        providerId: provider.id,
+        modelId: model.id,
+        providerName: provider.name,
+      });
+      bareIdCounts.set(model.id, (bareIdCounts.get(model.id) ?? 0) + 1);
+    }
+  }
+
+  for (const entry of entries) {
+    const value = {
+      providerId: entry.providerId,
+      modelId: entry.modelId,
+      providerName: entry.providerName,
+    };
+    catalog.set(entry.fullId, value);
+    if ((bareIdCounts.get(entry.modelId) ?? 0) === 1) {
+      catalog.set(entry.modelId, value);
+    }
+  }
+
+  return catalog;
+}
+
+function buildProviderCatalog(providers: OpenCodeProvidersResponse): Map<string, {
+  id: string;
+  name: string;
+  defaultModel: string | null;
+  models: Array<{ id: string; fullId: string; name: string; releaseDate: string | null }>;
+}> {
   const defaults = providers.default;
+  const catalog = new Map<string, {
+    id: string;
+    name: string;
+    defaultModel: string | null;
+    models: Array<{ id: string; fullId: string; name: string; releaseDate: string | null }>;
+  }>();
+
   for (const provider of providers.providers) {
     const id = typeof provider.id === "string" ? provider.id : typeof provider.providerID === "string" ? provider.providerID : "unknown";
     const name = typeof provider.name === "string" ? provider.name : id;
-    const model = defaults[id];
-    lines.push(`- ${name}${model ? `：默认 \`${model}\`` : ""}`);
+    const rawModels = provider.models && typeof provider.models === "object" ? provider.models : {};
+    const models = Object.entries(rawModels)
+      .map(([modelId, model]) => {
+        const resolvedId = typeof model?.id === "string" ? model.id : modelId;
+        const resolvedName = typeof model?.name === "string" ? model.name : resolvedId;
+        return {
+          id: resolvedId,
+          fullId: `${id}/${resolvedId}`,
+          name: resolvedName,
+          releaseDate: typeof model?.release_date === "string" ? model.release_date : null,
+        };
+      })
+      .sort((a, b) => a.id.localeCompare(b.id));
+
+    catalog.set(id, {
+      id,
+      name,
+      defaultModel: typeof defaults[id] === "string" ? defaults[id] : null,
+      models,
+    });
   }
-  if (lines.length === 1) {
-    lines.push("- 当前没有 provider 信息");
+
+  return catalog;
+}
+
+function selectModelsForCard(
+  provider: {
+    defaultModel: string | null;
+    models: Array<{ id: string; fullId: string; name: string; releaseDate: string | null }>;
+  },
+  currentModel: string | null,
+  limitRecent: boolean,
+): Array<{ id: string; fullId: string; name: string; releaseDate: string | null }> {
+  const sorted = [...provider.models].sort((a, b) => compareModelsForDisplay(a, b, provider.defaultModel, currentModel));
+  if (!limitRecent) {
+    return sorted;
   }
-  return lines.join("\n");
+  return sorted.slice(0, 5);
+}
+
+function compareModelsForDisplay(
+  left: { id: string; fullId: string; releaseDate: string | null },
+  right: { id: string; fullId: string; releaseDate: string | null },
+  defaultModel: string | null,
+  currentModel: string | null,
+): number {
+  const leftPriority = getModelDisplayPriority(left, defaultModel, currentModel);
+  const rightPriority = getModelDisplayPriority(right, defaultModel, currentModel);
+  if (leftPriority !== rightPriority) {
+    return leftPriority - rightPriority;
+  }
+
+  const leftTimestamp = left.releaseDate ? Date.parse(left.releaseDate) : 0;
+  const rightTimestamp = right.releaseDate ? Date.parse(right.releaseDate) : 0;
+  if (leftTimestamp !== rightTimestamp) {
+    return rightTimestamp - leftTimestamp;
+  }
+
+  return left.id.localeCompare(right.id);
+}
+
+function getModelDisplayPriority(
+  model: { id: string; fullId: string },
+  defaultModel: string | null,
+  currentModel: string | null,
+): number {
+  if (currentModel && model.fullId === currentModel) {
+    return 0;
+  }
+  if (defaultModel && model.id === defaultModel) {
+    return 1;
+  }
+  return 2;
 }
 
 export function buildBridgeSystemPrompt(
@@ -1319,6 +1718,7 @@ export function buildBridgeSystemPrompt(
     `windowType: ${turn.chatType ?? "p2p"}`,
     `conversationKey: ${turn.conversationKey}`,
     `sessionMode: ${window.mode}`,
+    `currentModel: ${window.model ?? "default"}`,
     `activeSessionId: ${window.activeSessionId ?? "none"}`,
     "visibleSessions:",
     ...(visibleSessions.length > 0

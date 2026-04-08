@@ -26,6 +26,7 @@ export function normalizeSessionWindowRecord(
     const active = findSessionById(sessions, record?.activeSessionId) ?? sessions[0] ?? null;
     return {
       mode,
+      model: record?.model ?? null,
       activeSessionId: active?.sessionId ?? null,
       sessions: active ? [active] : [],
     };
@@ -35,6 +36,7 @@ export function normalizeSessionWindowRecord(
   const active = findSessionById(uniqueSessions, record?.activeSessionId) ?? uniqueSessions[0] ?? null;
   return {
     mode,
+    model: record?.model ?? null,
     activeSessionId: active?.sessionId ?? null,
     sessions: uniqueSessions,
   };
@@ -68,6 +70,7 @@ export function setActiveSession(
 
   return normalizeSessionWindowRecord({
     mode: window.mode,
+    model: window.model ?? null,
     activeSessionId: sessionId,
     sessions: updatedSessions,
   }, window.mode, maxSessions);
@@ -80,6 +83,7 @@ export function addSession(
 ): SessionWindowRecord {
   return normalizeSessionWindowRecord({
     mode: window.mode,
+    model: window.model ?? null,
     activeSessionId: session.sessionId,
     sessions: [session, ...window.sessions.filter((item) => item.sessionId !== session.sessionId)],
   }, window.mode, maxSessions);
@@ -96,6 +100,7 @@ export function removeSession(
     : window.activeSessionId;
   return normalizeSessionWindowRecord({
     mode: window.mode,
+    model: window.model ?? null,
     activeSessionId: nextActive,
     sessions: remaining,
   }, window.mode, maxSessions);
@@ -114,6 +119,7 @@ export function updateSessionLabel(
 
   return normalizeSessionWindowRecord({
     mode: window.mode,
+    model: window.model ?? null,
     activeSessionId: window.activeSessionId,
     sessions: window.sessions.map((session) => (
       session.sessionId === sessionId
@@ -125,6 +131,15 @@ export function updateSessionLabel(
 
 export function getVisibleSessions(window: SessionWindowRecord): SessionBindingRecord[] {
   return sortSessionsByLastUsed(window.sessions);
+}
+
+export function updateWindowModel(window: SessionWindowRecord, model: string | null, maxSessions: number): SessionWindowRecord {
+  return normalizeSessionWindowRecord({
+    mode: window.mode,
+    model: model?.trim() || null,
+    activeSessionId: window.activeSessionId,
+    sessions: window.sessions,
+  }, window.mode, maxSessions);
 }
 
 export function hasSession(window: SessionWindowRecord, sessionId: string): boolean {

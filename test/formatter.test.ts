@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildCloseCommandCardPayload,
   buildLeaveCommandCardPayload,
+  buildModelCommandCardPayload,
+  buildNoticeCardPayload,
+  buildPermissionNoticeCardPayload,
   buildPostMarkdownPayload,
   buildPostPayload,
+  buildRenameCommandCardPayload,
   buildSessionListCardPayload,
   buildSessionTransitionCardPayload,
   buildStatusCommandCardPayload,
@@ -149,5 +154,102 @@ describe("buildPostPayload", () => {
     const content = JSON.parse(payload.content) as any;
     expect(content.header.title.content).toBe("无需解除绑定");
     expect(content.body.elements[0].columns[0].elements[0].content).toContain("尚未绑定");
+  });
+
+  it("renders a rename command card", () => {
+    const payload = buildRenameCommandCardPayload({
+      previousLabel: "帮我写个单测",
+      currentLabel: "代码审查",
+    });
+    const content = JSON.parse(payload.content) as any;
+    expect(content.header.title.content).toBe("已重命名会话");
+    expect(content.body.elements[0].columns[1].elements[0].content).toBe("~~帮我写个单测~~");
+    expect(content.body.elements[1].columns[1].elements[0].content).toBe("**代码审查**");
+  });
+
+  it("renders a close command card with next session", () => {
+    const payload = buildCloseCommandCardPayload({
+      closedLabel: "帮我写个单测",
+      nextLabel: "代码审查",
+      footer: "当前已切换到「代码审查」",
+    });
+    const content = JSON.parse(payload.content) as any;
+    expect(content.header.title.content).toBe("已关闭会话");
+    expect(content.body.elements[0].columns[1].elements[0].content).toBe("~~帮我写个单测~~");
+    expect(content.body.elements[1].columns[1].elements[0].content).toBe("**代码审查**");
+    expect(content.body.elements[3].columns[0].elements[0].content).toContain("代码审查");
+  });
+
+  it("renders a yellow notice card", () => {
+    const payload = buildNoticeCardPayload({
+      title: "提醒",
+      message: "会话列表已过期，请重新发送 `/sessions`",
+      template: "yellow",
+      iconToken: "maybe_outlined",
+    });
+    const content = JSON.parse(payload.content) as any;
+    expect(content.header.title.content).toBe("提醒");
+    expect(content.header.template).toBe("yellow");
+    expect(content.header.icon.token).toBe("maybe_outlined");
+    expect(content.body.elements[0].columns[0].elements[0].content).toContain("`/sessions`");
+  });
+
+  it("renders an orange abort notice card", () => {
+    const payload = buildNoticeCardPayload({
+      title: "任务已中止",
+      message: "当前任务已中止，可发送新消息继续对话。",
+      template: "orange",
+      iconToken: "stop-record_filled",
+    });
+    const content = JSON.parse(payload.content) as any;
+    expect(content.header.title.content).toBe("任务已中止");
+    expect(content.header.template).toBe("orange");
+    expect(content.body.elements[0].columns[0].elements[0].content).toContain("当前任务已中止");
+  });
+
+  it("renders a permission notice card with fake buttons", () => {
+    const payload = buildPermissionNoticeCardPayload({
+      command: "rm -rf dist/",
+      timeoutText: "120s 后自动拒绝",
+    });
+    const content = JSON.parse(payload.content) as any;
+    expect(content.header.title.content).toBe("权限请求");
+    expect(content.header.template).toBe("purple");
+    expect(content.body.elements[0].columns[0].elements[0].content).toBe("OpenCode 想执行：");
+    expect(content.body.elements[0].columns[0].elements[1].columns[0].elements[0].content).toContain("rm -rf dist/");
+    expect(content.body.elements[2].columns[0].elements[0].text.content).toContain("/allow once");
+    expect(content.body.elements[2].columns[1].elements[0].text.content).toContain("/allow always");
+    expect(content.body.elements[2].columns[2].elements[0].text.content).toContain("/deny");
+    expect(content.body.elements[3].content).toBe("120s 后自动拒绝");
+  });
+
+  it("renders a model command card", () => {
+    const payload = buildModelCommandCardPayload({
+      providers: [
+        {
+          title: "OpenAI 模型",
+          highlightStyle: "purple-50",
+          models: [
+            { label: "gpt-5.4-mini", current: true, default: true },
+            { label: "gpt-5.4" },
+          ],
+        },
+        {
+          title: "OpenCode 模型",
+          highlightStyle: "blue-50",
+          models: [
+            { label: "big-pickle" },
+          ],
+        },
+      ],
+      footer: "`/model use <provider/model>` 切换当前窗口模型\n当前仅展示每个提供方最近 5 个模型；发送 `/model <provider>` 查看更多。",
+    });
+    const content = JSON.parse(payload.content) as any;
+    expect(content.header.title.content).toBe("可用模型");
+    expect(content.header.template).toBe("indigo");
+    expect(content.body.elements[0].columns[0].elements[0].content).toBe("OpenAI 模型");
+    expect(content.body.elements[0].columns[0].elements[1].columns[0].background_style).toBe("purple-50");
+    expect(content.body.elements[0].columns[0].elements[1].columns[0].elements[0].content).toContain("gpt-5.4-mini");
+    expect(content.body.elements[4].content).toContain("最近 5 个模型");
   });
 });
