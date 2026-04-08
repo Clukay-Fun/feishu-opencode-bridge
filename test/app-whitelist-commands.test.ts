@@ -52,11 +52,9 @@ describe("BridgeApp whitelist commands", () => {
       command: { kind: "leave" },
     });
 
-    const texts = getReplyPayloads(outbound).map((payload) => extractMarkdown(payload));
-    expect(texts).toEqual([
-      "已解除绑定，后续消息不再响应。",
-      "当前群里你尚未绑定，无需解除。",
-    ]);
+    const texts = getReplyPayloads(outbound).map((payload) => extractInteractiveText(payload));
+    expect(texts[0]).toContain("后续消息不再响应");
+    expect(texts[1]).toContain("尚未绑定");
   });
 
   it("reports group binding status for /who", async () => {
@@ -85,7 +83,9 @@ describe("BridgeApp whitelist commands", () => {
       command: { kind: "who" },
     });
 
-    expect(extractMarkdown(getReplyPayloads(outbound)[0])).toBe("当前群已绑定 2 人，你已绑定 ✓");
+    const text = extractInteractiveText(getReplyPayloads(outbound)[0]);
+    expect(text).toContain("**2 人**");
+    expect(text).toContain("**已绑定**");
   });
 
   it("rejects /who outside group chats", async () => {
@@ -113,7 +113,7 @@ describe("BridgeApp whitelist commands", () => {
       command: { kind: "who" },
     });
 
-    expect(extractMarkdown(getReplyPayloads(outbound)[0])).toBe("该命令仅支持群聊使用。");
+    expect(extractMarkdown(getReplyPayloads(outbound)[0])).toBe("该命令仅支持群聊使用");
   });
 });
 
@@ -225,6 +225,14 @@ function extractMarkdown(payload: { content: string } | undefined): string {
     };
   };
   return parsed.zh_cn?.content?.[0]?.[0]?.text ?? "";
+}
+
+function extractInteractiveText(payload: { content: string } | undefined): string {
+  if (!payload) {
+    return "";
+  }
+  const parsed = JSON.parse(payload.content) as { body?: { elements?: unknown[] } };
+  return JSON.stringify(parsed.body?.elements ?? []);
 }
 
 function getReplyPayloads(outbound: ReturnType<typeof createOutbound>): Array<{ content: string } | undefined> {

@@ -43,19 +43,23 @@ describe("routeIncomingText", () => {
     });
   });
 
-  it("routes whitelist management commands", () => {
-    expect(routeIncomingText("/leave")).toEqual({
-      kind: "command",
-      command: { kind: "leave" },
-    });
+  it("routes group whitelist commands", () => {
     expect(routeIncomingText("/who")).toEqual({
       kind: "command",
       command: { kind: "who" },
     });
+    expect(routeIncomingText("/leave")).toEqual({
+      kind: "command",
+      command: { kind: "leave" },
+    });
   });
 
-  it("recognizes commands wrapped by a visible leading mention", () => {
+  it("routes slash commands with a visible mention prefix", () => {
     expect(routeIncomingText("@机器人 /who")).toEqual({
+      kind: "command",
+      command: { kind: "who" },
+    });
+    expect(routeIncomingText("@OpenCode /who")).toEqual({
       kind: "command",
       command: { kind: "who" },
     });

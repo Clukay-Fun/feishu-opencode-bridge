@@ -17,9 +17,9 @@ async function main(): Promise<void> {
     config.feishu.appId,
     config.feishu.appSecret,
     createFeishuIngressOptions(config.feishu),
+    whitelist,
     (message) => app.handleIncomingMessage(message),
     logger,
-    whitelist,
   );
   await ws.start();
 }

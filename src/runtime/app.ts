@@ -1,15 +1,20 @@
 import crypto from "node:crypto";
 
 import { QueueRegistry } from "../bridge/queue.js";
-import { type PendingInteraction, type PendingPermissionInteraction, type PendingQuestionInteraction, type PendingSessionSelectionInteraction } from "../bridge/state.js";
+import { type PendingInteraction, type PendingPermissionInteraction, type PendingQuestionInteraction } from "../bridge/state.js";
 import { routeIncomingText, type RoutedText } from "../bridge/router.js";
 import { transitionTurn } from "../bridge/state-machine.js";
 import { TurnWatchdog } from "../bridge/watchdog.js";
 import type { BridgeTurn } from "../bridge/turn.js";
 import {
   buildPostMarkdownPayload,
+  buildLeaveCommandCardPayload,
   buildQueueNoticePayload,
+  buildSessionListCardPayload,
+  buildSessionTransitionCardPayload,
+  buildStatusCommandCardPayload,
   buildTurnStatusCardPayload,
+  buildWhoCommandCardPayload,
   type FeishuPostPayload,
   type OutputView,
   type ToolUpdateView,
@@ -24,8 +29,8 @@ import {
   type OpenCodeSessionStatus,
 } from "../opencode/client.js";
 import { getEventSessionId, OpenCodeEventStream, type OpenCodeEvent } from "../opencode/events.js";
-import { MappingStore, type MappingRecord, type SessionBindingRecord, type SessionMode, type SessionWindowRecord } from "../store/mappings.js";
-import type { ChatWhitelist } from "../store/whitelist.js";
+import { MappingStore, type MappingRecord, type SessionBindingRecord, type SessionWindowRecord } from "../store/mappings.js";
+import type { WhitelistStore } from "../store/whitelist.js";
 import type { AppConfig } from "../config/schema.js";
 import { cleanAssistantReply } from "./sanitize.js";
 import {
@@ -82,12 +87,6 @@ const STREAM_FLUSH_MIN_CHARS = 120;
 const STREAM_FLUSH_INTERVAL_MS = 750;
 const PERMISSION_TTL_MS = 120_000;
 const SESSION_SELECTION_TTL_MS = 30_000;
-const NOOP_WHITELIST: ChatWhitelist = {
-  isBound: () => false,
-  bind: async () => {},
-  unbind: async () => false,
-  count: () => 0,
-};
 
 export class BridgeApp {
   private readonly queues: QueueRegistry;
@@ -107,7 +106,7 @@ export class BridgeApp {
     private readonly config: AppConfig,
     private readonly outbound: OutboundPort,
     private readonly logger: Logger,
-    private readonly whitelist: ChatWhitelist = NOOP_WHITELIST,
+    private readonly whitelist: Pick<WhitelistStore, "count" | "isBound" | "unbind">,
   ) {
     this.queues = new QueueRegistry(config.bridge.queueLimit, logger);
     this.mappings = new MappingStore(config.storage.dataDir, config.storage.mappingsFile, 200, logger);
@@ -534,8 +533,20 @@ export class BridgeApp {
   ): Promise<void> {
     const { command } = routed;
     if (command.kind === "new") {
+      const previousSession = getActiveSession(this.getSessionWindow(message.conversationKey, message.chatType));
       const entry = await this.createAndBindSession(message);
-      await this.sendMarkdown(message.chatId, `已创建并切换到新会话 \`${entry.sessionId}\`。`, message.messageId);
+      await this.sendPayload(message.chatId, buildSessionTransitionCardPayload({
+        title: "已创建新会话",
+        iconToken: "add-bold_outlined",
+        previousLabel: previousSession?.label ?? null,
+        currentLabel: entry.label,
+        footer: "刚刚创建 · 发送第一条消息开始",
+      }), {
+        event: "final message sent",
+        transcriptType: "outbound-final",
+        textPreview: "已创建新会话",
+        len: 6,
+      }, { replyToMessageId: message.messageId });
       return;
     }
 
@@ -555,16 +566,20 @@ export class BridgeApp {
       const window = this.getSessionWindow(message.conversationKey, message.chatType);
       const currentSession = getActiveSession(window);
       const status = currentSession ? this.sessionStatuses.get(currentSession.sessionId)?.type ?? "unknown" : "unbound";
-      const statusText = [
-        `事件流状态：${this.eventStream.getConnectionState()}`,
-        `会话模式：${window.mode}`,
-        `当前会话：${currentSession ? `${escapeMarkdownText(currentSession.label)} \`${currentSession.sessionId}\`` : "未绑定"}`,
-        `Session 状态：${status}`,
-        `队列状态：${active ? `处理中 ${createTextPreview(active.text)}` : "空闲"}`,
-        `排队数量：${queue.pendingCount()}`,
-        `窗口会话数：${window.sessions.length}`,
-      ].join("\n");
-      await this.sendMarkdown(message.chatId, statusText, message.messageId);
+      await this.sendPayload(message.chatId, buildStatusCommandCardPayload({
+        currentSession: currentSession ? { sessionId: currentSession.sessionId, label: currentSession.label } : null,
+        connectionState: this.eventStream.getConnectionState(),
+        sessionMode: window.mode,
+        sessionState: status,
+        queueState: active ? "处理中" : "空闲",
+        pendingCount: queue.pendingCount(),
+        windowCount: window.sessions.length,
+      }), {
+        event: "final message sent",
+        transcriptType: "outbound-final",
+        textPreview: "会话状态",
+        len: 4,
+      }, { replyToMessageId: message.messageId });
       return;
     }
 
@@ -584,53 +599,42 @@ export class BridgeApp {
       return;
     }
 
-    if (command.kind === "leave") {
-      if (!supportsGroupWhitelistCommands(message.chatType)) {
-        await this.sendMarkdown(message.chatId, "该命令仅支持群聊使用。", message.messageId);
-        return;
-      }
-
-      const removed = await this.whitelist.unbind(message.chatId, message.senderOpenId);
-      await this.sendMarkdown(
-        message.chatId,
-        removed ? "已解除绑定，后续消息不再响应。" : "当前群里你尚未绑定，无需解除。",
-        message.messageId,
-      );
-      return;
-    }
-
-    if (command.kind === "who") {
-      if (!supportsGroupWhitelistCommands(message.chatType)) {
-        await this.sendMarkdown(message.chatId, "该命令仅支持群聊使用。", message.messageId);
-        return;
-      }
-
-      const count = this.whitelist.count(message.chatId);
-      const isBound = this.whitelist.isBound(message.chatId, message.senderOpenId);
-      await this.sendMarkdown(
-        message.chatId,
-        isBound
-          ? `当前群已绑定 ${count} 人，你已绑定 ✓`
-          : `当前群已绑定 ${count} 人，你未绑定（发送任意消息并 @ bot 即可绑定）`,
-        message.messageId,
-      );
-      return;
-    }
-
     if (command.kind === "sessions") {
       const window = this.getSessionWindow(message.conversationKey, message.chatType);
       const currentSession = getActiveSession(window);
       if (window.mode === "single") {
-        const text = currentSession
-          ? formatSingleSessionStatus(window.mode, currentSession)
-          : "当前窗口为单会话模式，暂未绑定会话。";
-        await this.sendMarkdown(message.chatId, text, message.messageId);
+        await this.sendPayload(message.chatId, buildSessionListCardPayload({
+          items: currentSession ? [{
+            index: 1,
+            title: currentSession.label,
+            current: true,
+            meta: "当前",
+          }] : [],
+          footer: currentSession
+            ? "当前窗口为单会话模式，不支持切换"
+            : "发送 `/new` 创建第一个会话",
+          emptyText: "暂无会话",
+        }), {
+          event: "final message sent",
+          transcriptType: "outbound-final",
+          textPreview: "会话列表",
+          len: 4,
+        }, { replyToMessageId: message.messageId });
         return;
       }
 
       const visibleSessions = getVisibleSessions(window).slice(0, this.config.bridge.sessionListLimit);
       if (visibleSessions.length === 0) {
-        await this.sendMarkdown(message.chatId, "当前窗口暂无可切换的会话。", message.messageId);
+        await this.sendPayload(message.chatId, buildSessionListCardPayload({
+          items: [],
+          footer: "发送 `/new` 创建第一个会话",
+          emptyText: "暂无会话",
+        }), {
+          event: "final message sent",
+          transcriptType: "outbound-final",
+          textPreview: "会话列表",
+          len: 4,
+        }, { replyToMessageId: message.messageId });
         return;
       }
 
@@ -645,7 +649,20 @@ export class BridgeApp {
         options,
         expiresAt: Date.now() + SESSION_SELECTION_TTL_MS,
       });
-      await this.sendMarkdown(message.chatId, formatSessionList(options), message.messageId);
+      await this.sendPayload(message.chatId, buildSessionListCardPayload({
+        items: options.map((option) => ({
+          index: option.index,
+          title: option.title,
+          current: option.current,
+          meta: option.current ? "当前" : formatSessionTimestamp(findSessionMeta(window, option.sessionId)?.lastUsedAt),
+        })),
+        footer: "发送 `/switch <编号>` 切换 · 30s 内有效",
+      }), {
+        event: "final message sent",
+        transcriptType: "outbound-final",
+        textPreview: "会话列表",
+        len: 4,
+      }, { replyToMessageId: message.messageId });
       return;
     }
 
@@ -684,7 +701,55 @@ export class BridgeApp {
       nextWindow = updateSessionLabel(nextWindow, match.sessionId, fallbackLabel, this.config.bridge.maxSessionsPerWindow);
       await this.saveSessionWindow(message.conversationKey, nextWindow);
       this.clearPendingInteraction(message.conversationKey, false);
-      await this.sendMarkdown(message.chatId, `已切换到会话 ${escapeMarkdownText(fallbackLabel)} \`${match.sessionId}\`。`, message.messageId);
+      const previous = getActiveSession(window);
+      const current = getActiveSession(nextWindow);
+      const messageCount = await this.getSessionMessageCount(match.sessionId);
+      await this.sendPayload(message.chatId, buildSessionTransitionCardPayload({
+        title: "已切换会话",
+        iconToken: "sheet-iconsets-check_filled",
+        previousLabel: previous?.sessionId === current?.sessionId ? null : previous?.label ?? null,
+        currentLabel: current?.label ?? fallbackLabel,
+        footer: `创建于 ${formatSessionTimestamp(current?.createdAt ?? sessionMeta?.time?.created ?? Date.now())} · 共 ${messageCount} 条消息`,
+      }), {
+        event: "final message sent",
+        transcriptType: "outbound-final",
+        textPreview: "已切换会话",
+        len: 5,
+      }, { replyToMessageId: message.messageId });
+      return;
+    }
+
+    if (command.kind === "who") {
+      if (message.chatType !== "group" && message.chatType !== "topic_group") {
+        await this.sendMarkdown(message.chatId, "该命令仅支持群聊使用", message.messageId);
+        return;
+      }
+
+      await this.sendPayload(message.chatId, buildWhoCommandCardPayload({
+        boundCount: this.whitelist.count(message.chatId),
+        isBound: this.whitelist.isBound(message.chatId, message.senderOpenId),
+      }), {
+        event: "final message sent",
+        transcriptType: "outbound-final",
+        textPreview: "群聊绑定状态",
+        len: 6,
+      }, { replyToMessageId: message.messageId });
+      return;
+    }
+
+    if (command.kind === "leave") {
+      if (message.chatType !== "group" && message.chatType !== "topic_group") {
+        await this.sendMarkdown(message.chatId, "该命令仅支持群聊使用", message.messageId);
+        return;
+      }
+
+      const unbound = await this.whitelist.unbind(message.chatId, message.senderOpenId);
+      await this.sendPayload(message.chatId, buildLeaveCommandCardPayload({ unbound }), {
+        event: "final message sent",
+        transcriptType: "outbound-final",
+        textPreview: unbound ? "已解除绑定" : "无需解除绑定",
+        len: unbound ? 5 : 6,
+      }, { replyToMessageId: message.messageId });
       return;
     }
 
@@ -936,6 +1001,14 @@ export class BridgeApp {
   private async listOpenCodeSessionsById(): Promise<Map<string, OpenCodeSession>> {
     const sessions = await this.opencode.listSessions();
     return new Map(sessions.map((session) => [session.id, session]));
+  }
+
+  private async getSessionMessageCount(sessionId: string): Promise<number> {
+    try {
+      return (await this.opencode.getSessionMessages(sessionId, 200)).length;
+    } catch {
+      return 0;
+    }
   }
 
   private async syncStoredSessionLabels(): Promise<void> {
@@ -1236,27 +1309,6 @@ function formatProviders(providers: OpenCodeProvidersResponse): string {
   return lines.join("\n");
 }
 
-function formatSessionList(options: PendingSessionSelectionInteraction["options"]): string {
-  return [
-    "当前窗口会话：",
-    ...options.map((option) => `${option.index}. ${escapeMarkdownText(option.title)}${option.current ? " ← 当前" : ""}\n   \`${option.sessionId}\``),
-    "",
-    "30 秒内可用 `/switch <编号>` 或 `/sessions <编号>` 切换。",
-  ].join("\n");
-}
-
-function formatSingleSessionStatus(mode: SessionMode, session: SessionBindingRecord): string {
-  return [
-    `当前窗口为${mode}会话模式。`,
-    `当前会话：${escapeMarkdownText(session.label)}`,
-    `Session ID：\`${session.sessionId}\``,
-  ].join("\n");
-}
-
-function supportsGroupWhitelistCommands(chatType: string): boolean {
-  return chatType === "group" || chatType === "topic_group";
-}
-
 export function buildBridgeSystemPrompt(
   turn: Pick<BridgeTurn, "chatType" | "conversationKey" | "senderOpenId" | "sessionId">,
   window: SessionWindowRecord,
@@ -1421,6 +1473,23 @@ function formatToolTarget(title: string | undefined): string {
 
 function formatDuration(ms: number): string {
   return `约 ${Math.max(1, Math.round(ms / 1000))}s`;
+}
+
+function formatSessionTimestamp(timestamp: number | undefined): string {
+  if (!timestamp || !Number.isFinite(timestamp)) {
+    return "--";
+  }
+
+  const date = new Date(timestamp);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${month}-${day} ${hours}:${minutes}`;
+}
+
+function findSessionMeta(window: SessionWindowRecord, sessionId: string): SessionBindingRecord | null {
+  return window.sessions.find((session) => session.sessionId === sessionId) ?? null;
 }
 
 function isFinalStatus(status: string): boolean {

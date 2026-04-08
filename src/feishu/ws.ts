@@ -87,12 +87,6 @@ type IncomingMessageInspection =
 
 const SUPPORTED_MESSAGE_TYPES = new Set(["text", "post"]);
 const RECENT_MESSAGE_TTL_MS = 24 * 60 * 60 * 1000;
-const NOOP_WHITELIST: ChatWhitelist = {
-  isBound: () => false,
-  bind: async () => {},
-  unbind: async () => false,
-  count: () => 0,
-};
 
 type FeishuIngressOptions = {
   botOpenIds: Set<string>;
@@ -114,9 +108,9 @@ export class FeishuWsClient {
     appId: string,
     appSecret: string,
     private readonly options: FeishuIngressOptions,
+    private readonly whitelist: ChatWhitelist,
     private readonly handler: MessageHandler,
     private readonly logger: LoggerLike,
-    private readonly whitelist: ChatWhitelist = NOOP_WHITELIST,
   ) {
     this.dispatcher = new lark.EventDispatcher({}).register({
       "im.message.receive_v1": async (data: unknown) => {
@@ -156,6 +150,41 @@ export class FeishuWsClient {
       return;
     }
     const incoming = inspection.incoming;
+    const hasAnyMention = inspection.fields?.hasAnyMention === true;
+    const hasExactBotMention = inspection.fields?.hasExactBotMention === true;
+    const mentionMatched = this.options.strictBotMention ? hasExactBotMention : hasExactBotMention || hasAnyMention;
+    const routed = routeIncomingText(incoming.plainText);
+    const isBound = incoming.chatType !== "p2p" && this.whitelist.isBound(incoming.chatId, incoming.senderOpenId);
+    const isSlashCommand = routed.kind === "command";
+    const allowsUnauthedGroupCommand = isSlashCommand && (
+      routed.command.kind === "who" || routed.command.kind === "leave"
+    );
+
+    if (incoming.chatType !== "p2p" && this.options.requireBotMentionInGroup) {
+      if (isSlashCommand) {
+        if (!mentionMatched && !isBound && !allowsUnauthedGroupCommand) {
+          this.logger.log("feishu/ws", "message skipped", {
+            reason: hasAnyMention ? "group-mention-mismatch" : "not-whitelisted",
+            chatId: incoming.chatId,
+            chatType: incoming.chatType,
+            messageId: incoming.messageId,
+            senderId: incoming.senderOpenId,
+          }, "warn");
+          return;
+        }
+      } else if (mentionMatched) {
+        await this.whitelist.bind(incoming.chatId, incoming.senderOpenId);
+      } else if (!isBound) {
+        this.logger.log("feishu/ws", "message skipped", {
+          reason: hasAnyMention ? "group-mention-mismatch" : "not-whitelisted",
+          chatId: incoming.chatId,
+          chatType: incoming.chatType,
+          messageId: incoming.messageId,
+          senderId: incoming.senderOpenId,
+        }, "warn");
+        return;
+      }
+    }
 
     this.logger.log("feishu/ws", "message received", {
       chatId: incoming.chatId,
@@ -170,7 +199,6 @@ export class FeishuWsClient {
       ...(inspection.fields ?? {}),
     });
 
-    const routed = routeIncomingText(incoming.plainText);
     if (
       incoming.chatType !== "p2p"
       && routed.kind === "message"
@@ -232,7 +260,20 @@ export function createFeishuIngressOptions(feishu: AppConfig["feishu"]): FeishuI
 
 export function normalizeIncomingMessage(payload: FeishuReceiveEvent, options: FeishuIngressOptions): IncomingChatMessage | null {
   const inspection = inspectIncomingMessage(payload, options);
-  return inspection.accepted ? inspection.incoming : null;
+  if (!inspection.accepted) {
+    return null;
+  }
+
+  if (inspection.incoming.chatType !== "p2p" && options.requireBotMentionInGroup) {
+    const mentionMatched = options.strictBotMention
+      ? inspection.fields?.hasExactBotMention === true
+      : inspection.fields?.hasExactBotMention === true || inspection.fields?.hasAnyMention === true;
+    if (!mentionMatched) {
+      return null;
+    }
+  }
+
+  return inspection.incoming;
 }
 
 function inspectIncomingMessage(payload: FeishuReceiveEvent, options: FeishuIngressOptions): IncomingMessageInspection {
@@ -278,7 +319,8 @@ async function inspectIncomingMessageForDispatch(
   const isBound = whitelist.isBound(parsed.incoming.chatId, parsed.incoming.senderOpenId);
 
   if (routed.kind === "command") {
-    if (hasBotMention || isBound) {
+    const allowsUnauthedGroupCommand = routed.command.kind === "who" || routed.command.kind === "leave";
+    if (hasBotMention || isBound || allowsUnauthedGroupCommand) {
       return {
         ...parsed,
         fields: {

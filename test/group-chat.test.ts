@@ -19,6 +19,33 @@ import { FeishuWsClient, buildConversationKey, computeThreadKey, createFeishuIng
 import { toOpencodePromptText } from "../src/runtime/app.js";
 import type { ChatWhitelist } from "../src/store/whitelist.js";
 
+function createWhitelistStub(initial: Record<string, string[]> = {}) {
+  const map = new Map<string, Set<string>>(
+    Object.entries(initial).map(([chatId, members]) => [chatId, new Set(members)]),
+  );
+
+  return {
+    isBound(chatId: string, senderOpenId: string) {
+      return map.get(chatId)?.has(senderOpenId) ?? false;
+    },
+    async bind(chatId: string, senderOpenId: string) {
+      const members = map.get(chatId) ?? new Set<string>();
+      members.add(senderOpenId);
+      map.set(chatId, members);
+    },
+    async unbind(chatId: string, senderOpenId: string) {
+      const members = map.get(chatId);
+      if (!members?.has(senderOpenId)) return false;
+      members.delete(senderOpenId);
+      if (members.size === 0) map.delete(chatId);
+      return true;
+    },
+    count(chatId: string) {
+      return map.get(chatId)?.size ?? 0;
+    },
+  };
+}
+
 function makeOptions(overrides?: Partial<ReturnType<typeof createFeishuIngressOptions>>) {
   return {
     ...createFeishuIngressOptions({
@@ -73,7 +100,7 @@ describe("group chat support", () => {
   it("normalizes group text messages using nested mentions and thread keys", async () => {
     const handler = vi.fn(async () => {});
     const logger = { log() {} };
-    const client = new FeishuWsClient("app", "secret", makeOptions(), handler, logger);
+    const client = new FeishuWsClient("app", "secret", makeOptions(), createWhitelistStub(), handler, logger);
 
     await (client as unknown as { handleEvent(payload: unknown): Promise<void> }).handleEvent({
       message: {
@@ -454,7 +481,7 @@ describe("group chat support", () => {
   it("deduplicates repeated deliveries with the same message id", async () => {
     const handler = vi.fn(async () => {});
     const logger = { log() {} };
-    const client = new FeishuWsClient("app", "secret", makeOptions(), handler, logger);
+    const client = new FeishuWsClient("app", "secret", makeOptions(), createWhitelistStub(), handler, logger);
     const payload = {
       message: {
         chat_id: "oc_p2p_1",
@@ -476,11 +503,45 @@ describe("group chat support", () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
+  it("allows bound group members to continue without mention", async () => {
+    const handler = vi.fn(async () => {});
+    const logger = { log() {} };
+    const client = new FeishuWsClient(
+      "app",
+      "secret",
+      makeOptions(),
+      createWhitelistStub({ oc_group_1: ["ou_123"] }),
+      handler,
+      logger,
+    );
+
+    await (client as unknown as { handleEvent(payload: unknown): Promise<void> }).handleEvent({
+      message: {
+        chat_id: "oc_group_1",
+        chat_type: "group",
+        message_id: "om_bound_1",
+        message_type: "text",
+        content: JSON.stringify({ text: "继续刚才的话题" }),
+      },
+      sender: {
+        sender_id: {
+          open_id: "ou_123",
+        },
+      },
+    });
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({
+      plainText: "继续刚才的话题",
+      senderOpenId: "ou_123",
+    }));
+  });
+
   it("binds a sender after an @bot message and then allows non-mentioned follow-ups", async () => {
     const handler = vi.fn(async () => {});
     const logger = { log: vi.fn() };
     const whitelist = createWhitelist();
-    const client = new FeishuWsClient("app", "secret", makeOptions(), handler, logger, whitelist);
+    const client = new FeishuWsClient("app", "secret", makeOptions(), whitelist, handler, logger);
 
     await (client as unknown as { handleEvent(payload: unknown): Promise<void> }).handleEvent({
       message: {
@@ -512,7 +573,7 @@ describe("group chat support", () => {
   it("skips unbound non-mentioned group messages with not-whitelisted", async () => {
     const handler = vi.fn(async () => {});
     const logger = { log: vi.fn() };
-    const client = new FeishuWsClient("app", "secret", makeOptions(), handler, logger, createWhitelist());
+    const client = new FeishuWsClient("app", "secret", makeOptions(), createWhitelist(), handler, logger);
 
     await (client as unknown as { handleEvent(payload: unknown): Promise<void> }).handleEvent({
       message: {
@@ -538,9 +599,9 @@ describe("group chat support", () => {
       "app",
       "secret",
       makeOptions({ requireBotMentionInGroup: false }),
+      createWhitelist(),
       handler,
       { log() {} },
-      createWhitelist(),
     );
 
     await (client as unknown as { handleEvent(payload: unknown): Promise<void> }).handleEvent({
@@ -564,7 +625,7 @@ describe("group chat support", () => {
   it("allows slash commands with @bot without auto-binding the sender", async () => {
     const handler = vi.fn(async () => {});
     const whitelist = createWhitelist();
-    const client = new FeishuWsClient("app", "secret", makeOptions(), handler, { log() {} }, whitelist);
+    const client = new FeishuWsClient("app", "secret", makeOptions(), whitelist, handler, { log() {} });
 
     await (client as unknown as { handleEvent(payload: unknown): Promise<void> }).handleEvent({
       message: {
@@ -586,7 +647,7 @@ describe("group chat support", () => {
   it("shares the same whitelist across group and topic_group windows", async () => {
     const handler = vi.fn(async () => {});
     const whitelist = createWhitelist();
-    const client = new FeishuWsClient("app", "secret", makeOptions(), handler, { log() {} }, whitelist);
+    const client = new FeishuWsClient("app", "secret", makeOptions(), whitelist, handler, { log() {} });
 
     await (client as unknown as { handleEvent(payload: unknown): Promise<void> }).handleEvent({
       message: {
@@ -617,5 +678,72 @@ describe("group chat support", () => {
       chatType: "topic_group",
       conversationKey: "oc_group_shared_1:om_root_1",
     }));
+  });
+
+  it("allows /who for unbound users without mention", async () => {
+    const handler = vi.fn(async () => {});
+    const logger = { log() {} };
+    const whitelist = {
+      isBound() { return false; },
+      bind: vi.fn(async () => {}),
+      async unbind() { return false; },
+      count() { return 0; },
+    };
+    const client = new FeishuWsClient("app", "secret", makeOptions(), whitelist, handler, logger);
+
+    await (client as unknown as { handleEvent(payload: unknown): Promise<void> }).handleEvent({
+      message: {
+        chat_id: "oc_group_1",
+        chat_type: "group",
+        message_id: "om_who_1",
+        message_type: "text",
+        content: JSON.stringify({ text: "/who" }),
+      },
+      sender: {
+        sender_id: {
+          open_id: "ou_999",
+        },
+      },
+    });
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(whitelist.bind).not.toHaveBeenCalled();
+  });
+
+  it("does not bind users for @bot /who", async () => {
+    const handler = vi.fn(async () => {});
+    const logger = { log() {} };
+    const whitelist = {
+      isBound() { return false; },
+      bind: vi.fn(async () => {}),
+      async unbind() { return false; },
+      count() { return 0; },
+    };
+    const client = new FeishuWsClient("app", "secret", makeOptions(), whitelist, handler, logger);
+
+    await (client as unknown as { handleEvent(payload: unknown): Promise<void> }).handleEvent({
+      message: {
+        chat_id: "oc_group_1",
+        chat_type: "group",
+        message_id: "om_who_2",
+        message_type: "text",
+        content: JSON.stringify({ text: '<at user_id="ou_bot">OpenCode</at> /who' }),
+        mentions: [
+          {
+            id: { open_id: "ou_bot" },
+            name: "OpenCode",
+          },
+        ],
+      },
+      sender: {
+        sender_id: {
+          open_id: "ou_999",
+        },
+      },
+    });
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({ plainText: "/who" }));
+    expect(whitelist.bind).not.toHaveBeenCalled();
   });
 });

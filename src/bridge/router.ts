@@ -90,7 +90,7 @@ export function routeIncomingText(text: string): RoutedText {
 }
 
 function normalizeCommandCandidate(text: string): string {
-  const trimmed = text.trim();
+  const trimmed = stripVisibleMentionPrefix(text.trim());
   if (trimmed.startsWith("/")) {
     return trimmed;
   }
@@ -101,4 +101,9 @@ function normalizeCommandCandidate(text: string): string {
   }
 
   return mentionWrapped[2]?.trim() ?? trimmed;
+}
+
+function stripVisibleMentionPrefix(text: string): string {
+  const match = text.match(/^@.+?\s+(\/.+)$/);
+  return match?.[1]?.trim() ?? text;
 }
