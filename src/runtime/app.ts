@@ -542,6 +542,16 @@ export class BridgeApp {
     routed: Extract<RoutedText, { kind: "command" }>,
   ): Promise<void> {
     const { command } = routed;
+    if (command.kind === "invalid") {
+      await this.sendNoticeCard(message.chatId, {
+        title: "信息提示",
+        message: command.message,
+        template: "blue",
+        iconToken: "info_outlined",
+      }, message.messageId);
+      return;
+    }
+
     if (command.kind === "new") {
       const previousSession = getActiveSession(this.getSessionWindow(message.conversationKey, message.chatType));
       const entry = await this.createAndBindSession(message);
@@ -633,6 +643,7 @@ export class BridgeApp {
 
     if (command.kind === "close") {
       const window = this.getSessionWindow(message.conversationKey, message.chatType);
+      const currentSession = getActiveSession(window);
       let targetSession = getActiveSession(window);
 
       if (command.index !== undefined) {
@@ -665,6 +676,22 @@ export class BridgeApp {
           message: "当前没有可关闭的会话。",
           template: "blue",
           iconToken: "info_outlined",
+        }, message.messageId);
+        return;
+      }
+
+      const activeTurn = this.queues.get(message.conversationKey).peek();
+      const closingRunningSession = activeTurn
+        && (
+          activeTurn.sessionId === targetSession.sessionId
+          || (!activeTurn.sessionId && currentSession?.sessionId === targetSession.sessionId)
+        );
+      if (closingRunningSession) {
+        await this.sendNoticeCard(message.chatId, {
+          title: "提醒",
+          message: "该会话有任务正在执行，请先 /abort 再关闭。",
+          template: "yellow",
+          iconToken: "maybe_outlined",
         }, message.messageId);
         return;
       }
@@ -1726,8 +1753,8 @@ export function buildBridgeSystemPrompt(
       : ["- none"]),
     `senderOpenId: ${turn.senderOpenId}`,
     "rules:",
-    "- Bridge owns /new /sessions /switch /status and all runtime progress or reply messages.",
-    "- Do not pretend to switch, create, close, or rename bridge sessions yourself.",
+    "- Bridge owns /new /sessions /switch /status /rename /close /model and all runtime progress or reply messages.",
+    "- Do not pretend to switch, create, close, rename, or change bridge session models yourself.",
     "- Use lark-cli only when the user explicitly asks to operate on Feishu or Lark resources.",
   ];
   return lines.join("\n");

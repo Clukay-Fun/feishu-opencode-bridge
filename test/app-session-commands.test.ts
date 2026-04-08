@@ -91,6 +91,46 @@ describe("BridgeApp session commands", () => {
     expect(text).toContain("当前窗口为单会话模式，不支持按编号关闭");
   });
 
+  it("blocks closing a session with an in-flight turn", async () => {
+    const outbound = createOutbound();
+    const app = createApp(outbound);
+    setSessionMap(app, {
+      oc_p2p_1: {
+        mode: "multi",
+        activeSessionId: "ses_2",
+        sessions: [
+          { sessionId: "ses_2", label: "帮我写个单测", createdAt: 2, lastUsedAt: 20 },
+          { sessionId: "ses_1", label: "代码审查", createdAt: 1, lastUsedAt: 10 },
+        ],
+      },
+    });
+    setActiveTurn(app, "oc_p2p_1", {
+      turnId: "turn_1",
+      chatId: "oc_p2p_1",
+      conversationKey: "oc_p2p_1",
+      threadKey: "om_1",
+      senderOpenId: "ou_123",
+      inboundMessageId: "om_1",
+      plainText: "继续执行",
+      text: "继续执行",
+      sessionId: "ses_2",
+      state: "running",
+    });
+
+    await invokeCommand(app, {
+      chatId: "oc_p2p_1",
+      chatType: "p2p",
+      messageId: "om_2",
+      conversationKey: "oc_p2p_1",
+      threadKey: "om_2",
+      senderOpenId: "ou_123",
+    }, { kind: "close" });
+
+    expect(getSessionMap(app).oc_p2p_1?.sessions).toHaveLength(2);
+    const text = extractInteractiveText(getReplyPayloads(outbound)[0]);
+    expect(text).toContain("该会话有任务正在执行，请先 /abort 再关闭。");
+  });
+
   it("stores a window model override via /model use", async () => {
     const outbound = createOutbound();
     const app = createApp(outbound);
@@ -179,6 +219,32 @@ describe("BridgeApp session commands", () => {
     expect(JSON.stringify(parsed?.body?.elements ?? [])).toContain("gpt-5.4-mini");
     expect(JSON.stringify(parsed?.body?.elements ?? [])).not.toContain("gpt-5-codex");
   });
+
+  it("shows usage notice for invalid built-in commands instead of passthrough", async () => {
+    const outbound = createOutbound();
+    const app = createApp(outbound);
+    const runCommand = vi.fn(async () => ({ info: {}, parts: [] }));
+    (app as unknown as { opencode: Record<string, unknown> }).opencode = {
+      ...((app as unknown as { opencode: Record<string, unknown> }).opencode),
+      runCommand,
+    };
+
+    await app.handleIncomingMessage({
+      chatId: "oc_p2p_1",
+      chatType: "p2p",
+      messageId: "om_1",
+      conversationKey: "oc_p2p_1",
+      threadKey: "om_1",
+      senderOpenId: "ou_123",
+      messageType: "text",
+      rawContent: "/model use",
+      plainText: "/model use",
+    });
+
+    expect(runCommand).not.toHaveBeenCalled();
+    const text = extractInteractiveText(getReplyPayloads(outbound)[0]);
+    expect(text).toContain("用法：/model use <provider/model>");
+  });
 });
 
 function createApp(outbound: ReturnType<typeof createOutbound>): BridgeApp {
@@ -203,6 +269,30 @@ function setSessionMap(app: BridgeApp, value: MappingRecord): void {
 
 function getSessionMap(app: BridgeApp): MappingRecord {
   return (app as unknown as { sessionMap: MappingRecord }).sessionMap;
+}
+
+function setActiveTurn(
+  app: BridgeApp,
+  conversationKey: string,
+  turn: {
+    turnId: string;
+    chatId: string;
+    conversationKey: string;
+    threadKey: string;
+    senderOpenId: string;
+    inboundMessageId: string;
+    plainText: string;
+    text: string;
+    sessionId: string;
+    state: "running";
+  },
+): void {
+  const queue = (app as unknown as {
+    queues: {
+      get(key: string): { replaceActive(nextTurn: typeof turn): void };
+    };
+  }).queues.get(conversationKey);
+  queue.replaceActive(turn);
 }
 
 async function invokeCommand(

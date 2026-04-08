@@ -41,6 +41,21 @@ describe("routeIncomingText", () => {
     });
   });
 
+  it("rejects invalid built-in command arguments before passthrough", () => {
+    expect(routeIncomingText("/model use")).toEqual({
+      kind: "command",
+      command: { kind: "invalid", message: "用法：/model use <provider/model>" },
+    });
+    expect(routeIncomingText("/close abc")).toEqual({
+      kind: "command",
+      command: { kind: "invalid", message: "用法：/close [编号]" },
+    });
+    expect(routeIncomingText("/rename")).toEqual({
+      kind: "command",
+      command: { kind: "invalid", message: "用法：/rename <新名称>" },
+    });
+  });
+
   it("routes rename and close aliases", () => {
     expect(routeIncomingText("/rename 代码审查")).toEqual({
       kind: "command",
