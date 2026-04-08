@@ -18,6 +18,12 @@ It listens to Feishu message events over WebSocket, maps each conversation to an
 - Persists Feishu conversation to OpenCode session bindings with LRU trimming
 - Supports OpenCode Basic Auth through `OPENCODE_SERVER_PASSWORD`
 
+## Output rules
+
+- Feishu output Markdown rules live in `docs/feishu-markdown.md`
+- Plain Post is reserved for passthrough text output, ultra-short confirmations, and card fallback
+- Bridge-owned commands, structured lists, and system notices should use cards instead of Plain Post
+
 ## Architecture
 
 The main runtime flow is:

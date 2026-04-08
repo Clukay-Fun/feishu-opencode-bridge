@@ -18,6 +18,12 @@ Feishu OpenCode Bridge 是一个独立运行的 TypeScript 服务，用来把飞
 - 通过 LRU 持久化保存飞书对话到 OpenCode session 的绑定关系
 - 支持使用 `OPENCODE_SERVER_PASSWORD` 访问带鉴权的 OpenCode 服务
 
+## 输出规范
+
+- 飞书输出 Markdown 规范见 `docs/feishu-markdown.md`
+- `Plain Post` 只用于 passthrough 文本输出、极短确认语、以及卡片发送失败时的降级兜底
+- bridge 自有命令、结构化列表、系统提示应优先使用卡片，而不是 `Plain Post`
+
 ## 架构概览
 
 主流程如下：
