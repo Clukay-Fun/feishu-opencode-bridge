@@ -42,6 +42,9 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
       dataDir,
       mappingsFile: parsed.storage.mappingsFile,
     },
+    whitelist: {
+      storePath: resolveRelative(dataDir, parsed.whitelist.storePath),
+    },
     bridge: {
       queueLimit: parsed.bridge.queueLimit,
       sessionModes: {

@@ -13,6 +13,7 @@ Feishu OpenCode Bridge 是一个独立运行的 TypeScript 服务，用来把飞
 - 使用飞书交互卡片承载过程消息，并持续更新同一条回复
 - 群聊 `@` 规则支持通过配置控制严格或宽松模式
 - 支持多个机器人身份，以及“触发身份”和“自身身份”分离
+- 支持按群维度的白名单绑定，首次 `@ bot` 后可免 `@` 继续对话
 - 按 `message_id` 去重飞书重复投递
 - 通过 LRU 持久化保存飞书对话到 OpenCode session 的绑定关系
 - 支持使用 `OPENCODE_SERVER_PASSWORD` 访问带鉴权的 OpenCode 服务
@@ -90,6 +91,9 @@ npm install
     "dataDir": "./data",
     "mappingsFile": "mappings.json"
   },
+  "whitelist": {
+    "storePath": "whitelist.json"
+  },
   "bridge": {
     "queueLimit": 3,
     "sessions": {
@@ -136,6 +140,13 @@ npm install
 
 当 `strictBotMention=true` 时，只接受明确命中已配置机器人身份的消息。
 
+### 群聊白名单绑定
+
+- 在 `group` 和 `topic_group` 中，用户首次发送普通消息并 `@ bot` 后，会写入当前群的白名单。
+- 绑定后，同一 `chat_id` 下的群主窗口和话题窗口都可以免 `@` 继续对话。
+- `/leave` 用于解除当前用户在该群里的绑定。
+- `/who` 会显示当前群绑定人数，以及你自己是否已绑定。
+
 ### 会话模式
 
 - `p2pMode`、`groupMode`、`topicGroupMode` 用来控制窗口采用 `single` 还是 `multi` 模式。
@@ -181,6 +192,8 @@ npm run dev:once
 - `/status`
 - `/abort`
 - `/models`
+- `/leave`
+- `/who`
 - `/sessions`
 - `/switch <编号>`
 - `/sessions <编号>`

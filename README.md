@@ -13,6 +13,7 @@ It listens to Feishu message events over WebSocket, maps each conversation to an
 - Streams progress into a Feishu interactive card and updates the same message in place
 - Supports strict or relaxed group mention matching through config
 - Supports multiple bot identities and separate self-bot identities
+- Supports per-group whitelist binding so users can continue without re-mentioning the bot
 - Deduplicates repeated Feishu message deliveries by `message_id`
 - Persists Feishu conversation to OpenCode session bindings with LRU trimming
 - Supports OpenCode Basic Auth through `OPENCODE_SERVER_PASSWORD`
@@ -90,6 +91,9 @@ Copy the example config and fill in your real values:
     "dataDir": "./data",
     "mappingsFile": "mappings.json"
   },
+  "whitelist": {
+    "storePath": "whitelist.json"
+  },
   "bridge": {
     "queueLimit": 3,
     "sessions": {
@@ -135,6 +139,13 @@ Copy the example config and fill in your real values:
 When `requireBotMentionInGroup=true`, group messages are handled only when they match your configured bot identity rules.
 
 When `strictBotMention=true`, the bridge only accepts messages that explicitly mention one of the configured bot identities.
+
+### Group whitelist binding
+
+- In `group` and `topic_group`, a user is added to the group whitelist when they send a normal message that mentions the bot.
+- Once bound, the same user can continue in the same Feishu `chat_id` without mentioning the bot again, including inside topic threads.
+- `/leave` removes the current user from the group whitelist.
+- `/who` shows the current group binding count and whether the caller is already bound.
 
 ### Session modes
 
@@ -183,6 +194,8 @@ Supported slash commands:
 - `/status`
 - `/abort`
 - `/models`
+- `/leave`
+- `/who`
 - `/sessions`
 - `/switch <index>`
 - `/sessions <index>`
