@@ -56,9 +56,9 @@ export function buildPostPayload(title: string, text: string): FeishuPostPayload
 }
 
 export function buildTurnStatusCardPayload(view: TurnStatusCardView): FeishuPostPayload {
-  const progressUpdate = formatCurrentProgress(view.progressUpdates);
+  const state = resolveCardState(view.status);
   const toolElements = buildToolElements(view.toolUpdates);
-  const outputElements = buildOutputElements(view.output);
+  const outputElements = buildOutputElements(view.output, state);
   return {
     msg_type: "interactive",
     content: JSON.stringify({
@@ -69,17 +69,21 @@ export function buildTurnStatusCardPayload(view: TurnStatusCardView): FeishuPost
           text_size: {
             normal_v2: {
               default: "normal",
-              mobile: "normal",
+              mobile: "heading",
               pc: "normal",
             },
           },
         },
       },
       header: {
-        padding: "12px 8px 12px 8px",
+        padding: "12px 8px 12px 12px",
         subtitle: { tag: "plain_text", content: "" },
-        template: mapCardTemplate(view.status),
-        title: { tag: "plain_text", content: mapHeaderTitle(view.status) },
+        template: state.template,
+        title: { tag: "plain_text", content: state.title },
+        icon: {
+          tag: "standard_icon",
+          token: state.headerIconToken,
+        },
       },
       body: {
         direction: "vertical",
@@ -87,181 +91,117 @@ export function buildTurnStatusCardPayload(view: TurnStatusCardView): FeishuPost
         vertical_spacing: "8px",
         horizontal_align: "left",
         vertical_align: "top",
-        elements: [
-          {
-            tag: "column_set",
-            flex_mode: "stretch",
-            horizontal_spacing: "12px",
-            horizontal_align: "left",
-            margin: "0px 0px 0px 0px",
-            columns: [
-              {
-                tag: "column",
-                width: "weighted",
-                weight: 1,
-                horizontal_align: "left",
-                vertical_align: "top",
-                vertical_spacing: "8px",
-                elements: [{ tag: "markdown", content: `**会话 ID**：\`${escapeText(shortSessionId(view.sessionId))}\``, text_align: "left", text_size: "normal_v2" }],
-              },
-              {
-                tag: "column",
-                width: "weighted",
-                weight: 1,
-                horizontal_align: "left",
-                vertical_align: "top",
-                vertical_spacing: "8px",
-                elements: [{ tag: "markdown", content: view.durationText ? `⏱ **耗时**：${escapeText(view.durationText)}` : "", text_align: "left", text_size: "normal_v2" }],
-              },
-            ],
-          },
-          { tag: "hr", margin: "0px 0px 0px 0px" },
-          { tag: "markdown", content: "📋 **执行进度**", margin: "0px 0px 0px 0px" },
-          {
-            tag: "column_set",
-            flex_mode: "stretch",
-            horizontal_spacing: "12px",
-            horizontal_align: "left",
-            margin: "0px 0px 0px 0px",
-            columns: [{
-              tag: "column",
-              width: "weighted",
-              weight: 1,
-              background_style: mapProgressBackground(view.status),
-              padding: "12px 12px 12px 12px",
-              direction: "vertical",
-              horizontal_align: "left",
-              vertical_align: "top",
-              vertical_spacing: "4px",
-              elements: [{ tag: "markdown", content: progressUpdate, text_align: "left", text_size: "normal_v2" }],
-            }],
-          },
-          ...(toolElements.length > 0
-            ? [
-              { tag: "hr", margin: "0px 0px 0px 0px" },
-              { tag: "markdown", content: "🔧 **工具调用**", margin: "0px 0px 0px 0px" },
-              {
-                tag: "column_set",
-                flex_mode: "stretch",
-                horizontal_spacing: "12px",
-                horizontal_align: "left",
-                margin: "0px 0px 0px 0px",
-                columns: [{
-                  tag: "column",
-                  width: "weighted",
-                  weight: 1,
-                  background_style: "grey-50",
-                  padding: "12px 12px 12px 12px",
-                  horizontal_align: "left",
-                  vertical_align: "top",
-                  vertical_spacing: "4px",
-                  elements: toolElements,
-                }],
-              },
-            ]
-            : []),
-          { tag: "hr", margin: "0px 0px 0px 0px" },
-          { tag: "markdown", content: "💬 **输出结果**", margin: "0px 0px 0px 0px" },
-          {
-            tag: "column_set",
-            flex_mode: "stretch",
-            horizontal_spacing: "12px",
-            horizontal_align: "left",
-            margin: "0px 0px 0px 0px",
-            columns: [{
-              tag: "column",
-              width: "weighted",
-              weight: 1,
-              horizontal_align: "left",
-              vertical_align: "top",
-              vertical_spacing: "8px",
-              elements: outputElements,
-            }],
-          },
-        ],
+        elements: buildTurnBodyElements(state, toolElements, outputElements, view),
       },
     }),
   };
-}
-
-function mapCardTemplate(status: string): string {
-  if (status.includes("失败") || status.includes("超时") || status.includes("中止")) return "red";
-  if (status.includes("完成")) return "green";
-  return "blue";
-}
-
-function mapHeaderTitle(status: string): string {
-  if (status.includes("失败") || status.includes("超时") || status.includes("中止")) return "任务异常";
-  if (status.includes("完成")) return "任务已完成";
-  return "任务进行中";
-}
-
-function mapProgressBackground(status: string): string {
-  if (status.includes("失败") || status.includes("超时") || status.includes("中止")) return "red-50";
-  if (status.includes("完成")) return "green-50";
-  return "blue-50";
 }
 
 function shortSessionId(sessionId: string): string {
   return sessionId.length <= 12 ? sessionId : sessionId.slice(0, 12);
 }
 
-function formatCurrentProgress(lines: readonly string[]): string {
-  const line = lines.length === 0 ? "等待 OpenCode 事件" : lines[lines.length - 1] ?? "等待 OpenCode 事件";
-  return toProgressLine(line);
+type CardState = {
+  kind: "running" | "completed" | "error";
+  title: string;
+  template: "blue" | "green" | "red";
+  headerIconToken: string;
+};
+
+function resolveCardState(status: string): CardState {
+  if (status.includes("失败") || status.includes("超时") || status.includes("中止")) {
+    return {
+      kind: "error",
+      title: "出了点问题",
+      template: "red",
+      headerIconToken: "error_filled",
+    };
+  }
+  if (status.includes("完成")) {
+    return {
+      kind: "completed",
+      title: "已完成",
+      template: "green",
+      headerIconToken: "thumbsup_filled",
+    };
+  }
+  return {
+    kind: "running",
+    title: "正在忙",
+    template: "blue",
+    headerIconToken: "external_filled",
+  };
 }
 
-function toProgressLine(line: string): string {
-  if (line.includes("已创建会话")) return "⏳ **已创建会话** — 等待 OpenCode 事件";
-  if (line.includes("最终回复已生成（")) return `✅ **生成最终回复** — ${escapeText(line.replace("最终回复已生成", "").trim())}`;
-  if (line.includes("检索")) return "✅ **检索相关信息** — 已完成";
-  if (line.includes("上下文") || line.includes("整理")) return "✅ **整理上下文** — 已完成";
-  if (line.includes("收到你的回答")) return "✅ **接收补充信息** — 已完成";
-  return `⏳ **${escapeText(line)}** — 处理中`;
+function buildTurnBodyElements(
+  state: CardState,
+  toolElements: Array<Record<string, unknown>>,
+  outputElements: Array<Record<string, unknown>>,
+  view: TurnStatusCardView,
+): Array<Record<string, unknown>> {
+  const elements: Array<Record<string, unknown>> = [];
+
+  if (state.kind !== "completed" && toolElements.length > 0) {
+    elements.push(buildToolBlock(toolElements));
+  }
+
+  elements.push(buildOutputBlock(outputElements));
+  elements.push(buildSpacerBlock());
+  elements.push(buildFooter(view.sessionId, view.durationText));
+  return elements;
 }
 
-function buildToolElements(lines: ReadonlyArray<ToolUpdateView>): Array<Record<string, string>> {
-  return lines.map((line) => ({
+function buildToolElements(lines: ReadonlyArray<ToolUpdateView>): Array<Record<string, unknown>> {
+  return lines.slice(-3).map((line) => ({
     tag: "markdown",
     content: formatToolDisplay(line),
     text_align: "left",
-    text_size: "normal_v2",
+    text_size: "normal",
+    icon: mapToolIcon(line.status),
   }));
 }
 
 function formatToolDisplay(line: ToolUpdateView): string {
-  const icon = mapToolStatusIcon(line.status);
-  return line.detail ? `${icon} **${escapeText(line.label)}**：${escapeText(line.detail)}` : `${icon} **${escapeText(line.label)}**`;
+  return line.detail ? `**${escapeText(line.label)}**：${escapeText(line.detail)}` : `**${escapeText(line.label)}**`;
 }
 
-function mapToolStatusIcon(status: ToolUpdateView["status"]): string {
+function mapToolIcon(status: ToolUpdateView["status"]): Record<string, string> {
   switch (status) {
+    case "completed":
+      return { tag: "standard_icon", token: "yes_outlined", color: "green" };
+    case "error":
+      return { tag: "standard_icon", token: "more-close_outlined", color: "red" };
     case "pending":
-    case "running": return "⏳";
-    case "completed": return "✅";
-    case "error": return "❌";
-    default: return "•";
+    case "running":
+      return { tag: "standard_icon", token: "loading_outlined", color: "blue" };
+    default:
+      return { tag: "standard_icon", token: "info_outlined", color: "grey" };
   }
 }
 
-function buildOutputElements(output: OutputView): Array<Record<string, string>> {
-  const elements: Array<Record<string, string>> = [];
+function buildOutputElements(output: OutputView, state: CardState): Array<Record<string, unknown>> {
+  const blocks: string[] = [];
+
   if (output.text) {
-    elements.push({ tag: "markdown", content: formatOutputText(output.text) });
+    blocks.push(formatOutputText(output.text));
   }
   for (const path of output.paths) {
-    elements.push({ tag: "markdown", content: `**${escapeText(fileNameFromPath(path))}**\n\`${escapeText(path)}\`` });
+    blocks.push(`**${escapeText(fileNameFromPath(path))}**\n\`${escapeText(path)}\``);
   }
   if (output.commands.length > 0) {
-    elements.push({ tag: "markdown", content: "执行命令：" });
-    for (const command of output.commands) {
-      elements.push({ tag: "markdown", content: `\`${escapeText(command)}\`` });
-    }
+    blocks.push(output.commands.map((command) => `\`${escapeText(command)}\``).join("\n"));
   }
-  if (elements.length === 0) {
-    elements.push({ tag: "markdown", content: "处理中..." });
+
+  if (blocks.length === 0) {
+    blocks.push(state.kind === "error" ? "问题描述" : "处理中...");
   }
-  return elements;
+
+  return [{
+    tag: "markdown",
+    content: blocks.join("\n\n"),
+    text_align: "left",
+    text_size: "normal_v2",
+  }];
 }
 
 function formatOutputText(text: string): string {
@@ -289,6 +229,99 @@ function formatOutputLine(line: string): string {
 function fileNameFromPath(path: string): string {
   const parts = path.split("\\").filter(Boolean);
   return parts[parts.length - 1] ?? path;
+}
+
+function buildToolBlock(toolElements: Array<Record<string, unknown>>): Record<string, unknown> {
+  return {
+    tag: "column_set",
+    flex_mode: "stretch",
+    horizontal_spacing: "12px",
+    horizontal_align: "left",
+    columns: [
+      {
+        tag: "column",
+        width: "weighted",
+        background_style: "grey-50",
+        elements: toolElements,
+        padding: "12px 12px 12px 12px",
+        direction: "vertical",
+        horizontal_spacing: "8px",
+        vertical_spacing: "4px",
+        horizontal_align: "left",
+        vertical_align: "top",
+        weight: 1,
+      },
+    ],
+    margin: "0px 0px 0px 0px",
+  };
+}
+
+function buildOutputBlock(outputElements: Array<Record<string, unknown>>): Record<string, unknown> {
+  return {
+    tag: "column_set",
+    flex_mode: "stretch",
+    horizontal_spacing: "12px",
+    horizontal_align: "left",
+    columns: [
+      {
+        tag: "column",
+        width: "weighted",
+        elements: outputElements,
+        vertical_spacing: "8px",
+        horizontal_align: "left",
+        vertical_align: "top",
+        weight: 1,
+      },
+    ],
+    margin: "0px 0px 0px 0px",
+  };
+}
+
+function buildSpacerBlock(): Record<string, unknown> {
+  return {
+    tag: "column_set",
+    flex_mode: "stretch",
+    horizontal_spacing: "8px",
+    horizontal_align: "left",
+    columns: [
+      {
+        tag: "column",
+        width: "weighted",
+        elements: [
+          {
+            tag: "markdown",
+            content: "",
+            text_align: "left",
+            text_size: "notation",
+          },
+        ],
+        vertical_spacing: "8px",
+        horizontal_align: "left",
+        vertical_align: "top",
+        weight: 1,
+      },
+    ],
+    margin: "0px 0px 0px 0px",
+  };
+}
+
+function buildFooter(sessionId: string, durationText: string): Record<string, unknown> {
+  const duration = durationText ? `｜耗时：${durationText}` : "";
+  return {
+    tag: "div",
+    text: {
+      tag: "plain_text",
+      content: `ID：${shortSessionId(sessionId)}${duration}`,
+      text_size: "notation",
+      text_align: "left",
+      text_color: "grey",
+    },
+    icon: {
+      tag: "standard_icon",
+      token: "robot_outlined",
+      color: "light_grey",
+    },
+  };
 }
 
 function escapeText(text: string): string {
