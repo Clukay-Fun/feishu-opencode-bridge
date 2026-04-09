@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { SessionWindowRecord } from "../src/store/mappings.js";
+import type { MappingRecord, SessionWindowRecord } from "../src/store/mappings.js";
 import {
   addSession,
   createSessionEntry,
@@ -65,5 +65,23 @@ describe("session windows", () => {
 
     expect(record.activeSessionId).toBe("ses_1");
     expect(record.sessions).toHaveLength(1);
+  });
+
+  it("keeps topic windows isolated by conversation key", () => {
+    const mappings: MappingRecord = {};
+    mappings["oc_group_1:om_root_a"] = addSession(
+      normalizeSessionWindowRecord(undefined, "single", 20),
+      createSessionEntry("ses_topic_a", 1, "topic-a"),
+      20,
+    );
+    mappings["oc_group_1:om_root_b"] = addSession(
+      normalizeSessionWindowRecord(undefined, "single", 20),
+      createSessionEntry("ses_topic_b", 2, "topic-b"),
+      20,
+    );
+
+    expect(getActiveSession(mappings["oc_group_1:om_root_a"])?.sessionId).toBe("ses_topic_a");
+    expect(getActiveSession(mappings["oc_group_1:om_root_b"])?.sessionId).toBe("ses_topic_b");
+    expect(mappings["oc_group_1:om_root_a"].activeSessionId).not.toBe(mappings["oc_group_1:om_root_b"].activeSessionId);
   });
 });

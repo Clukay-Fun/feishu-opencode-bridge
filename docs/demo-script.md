@@ -26,18 +26,22 @@
 
 3. 等待 Process Card 流式更新
 4. 发送 `/sessions`
-5. 发送第二条任务，观察会话列表和当前窗口状态
-6. 如需切换模型，直接发送 passthrough 命令：
+5. 发送 `/model`
+6. 确认可用模型卡正常展示
+7. 发送模型切换命令：
 
    ```text
    /model use openai/gpt-5.4-mini
    ```
 
+8. 发送第二条任务，观察后续仍在当前窗口继续
+
 ### Expected
 
 - Process Card 持续更新
 - `/sessions` 能列出当前窗口的会话列表
-- OpenCode 原生命令仍然可通过 slash passthrough 使用
+- `/model` 返回模型卡
+- `/model use ...` 可继续透传给 OpenCode 执行
 
 ## Scene 2 · 群聊协作
 
@@ -55,6 +59,7 @@
 3. 不再 `@bot`，直接发送第二条群消息
 4. 发送 `/who`
 5. 发送 `/leave`
+6. 再发送一条不带 `@bot` 的普通消息
 
 ### Expected
 
@@ -76,6 +81,10 @@
    - 或 `/allow always · 始终允许`
    - 或 `/deny · 拒绝`
 4. 观察原卡被直接更新为终态
+5. 重新触发一次权限请求，验证文本 fallback：
+   - `/allow once`
+   - `/allow always`
+   - `/deny`
 
 ### Expected
 

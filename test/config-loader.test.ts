@@ -7,6 +7,11 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config/loader.js";
 
 describe("loadConfig", () => {
+  it("fails when config.json is missing", async () => {
+    const missingPath = path.join(os.tmpdir(), `bridge-missing-${Date.now()}.json`);
+    await expect(loadConfig(missingPath)).rejects.toThrow(/ENOENT|no such file/i);
+  });
+
   it("resolves whitelist.storePath under storage.dataDir by default", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-"));
     const configPath = path.join(dir, "config.json");

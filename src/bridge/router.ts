@@ -38,7 +38,7 @@ export function routeIncomingText(text: string): RoutedText {
     return { kind: "command", command: { kind: "abort" } };
   }
 
-  if (rawCommand === "models" && args.length === 0) {
+  if ((rawCommand === "models" || rawCommand === "model") && args.length === 0) {
     return { kind: "command", command: { kind: "models" } };
   }
 

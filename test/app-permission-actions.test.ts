@@ -6,6 +6,24 @@ import type { PendingPermissionInteraction } from "../src/bridge/state.js";
 import type { ChatWhitelist } from "../src/store/whitelist.js";
 
 describe("BridgeApp permission card actions", () => {
+  it("handles an allow-once button click for the requester", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const replyPermission = vi.fn(async () => true);
+    (app as unknown as { opencode: { replyPermission: typeof replyPermission } }).opencode = { replyPermission };
+
+    const interaction = seedPermission(app);
+    const card = await app.handlePermissionCardAction(
+      interaction.requesterOpenId,
+      interaction.permissionMessageId ?? "",
+      buildActionValue(interaction, "once"),
+    );
+
+    expect(replyPermission).toHaveBeenCalledWith(interaction.sessionId, interaction.permissionId, "once", false);
+    expect(JSON.stringify(card)).toContain("当前权限请求已确认，可继续执行");
+    expect((app as unknown as { pendingInteractions: Map<string, unknown> }).pendingInteractions.has(interaction.conversationKey)).toBe(false);
+  });
+
   it("handles an allow-always button click for the requester", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
@@ -21,6 +39,24 @@ describe("BridgeApp permission card actions", () => {
 
     expect(replyPermission).toHaveBeenCalledWith(interaction.sessionId, interaction.permissionId, "always", true);
     expect(JSON.stringify(card)).toContain("后续同类权限将自动允许");
+    expect((app as unknown as { pendingInteractions: Map<string, unknown> }).pendingInteractions.has(interaction.conversationKey)).toBe(false);
+  });
+
+  it("handles a deny button click for the requester", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const replyPermission = vi.fn(async () => true);
+    (app as unknown as { opencode: { replyPermission: typeof replyPermission } }).opencode = { replyPermission };
+
+    const interaction = seedPermission(app);
+    const card = await app.handlePermissionCardAction(
+      interaction.requesterOpenId,
+      interaction.permissionMessageId ?? "",
+      buildActionValue(interaction, "deny"),
+    );
+
+    expect(replyPermission).toHaveBeenCalledWith(interaction.sessionId, interaction.permissionId, "reject", false);
+    expect(JSON.stringify(card)).toContain("当前权限请求已拒绝");
     expect((app as unknown as { pendingInteractions: Map<string, unknown> }).pendingInteractions.has(interaction.conversationKey)).toBe(false);
   });
 
@@ -42,6 +78,26 @@ describe("BridgeApp permission card actions", () => {
     expect((app as unknown as { pendingInteractions: Map<string, unknown> }).pendingInteractions.has(interaction.conversationKey)).toBe(true);
   });
 
+  it("returns a timed-out terminal card for expired interactions", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const replyPermission = vi.fn(async () => true);
+    (app as unknown as { opencode: { replyPermission: typeof replyPermission } }).opencode = { replyPermission };
+
+    const interaction = seedPermission(app, {
+      expiresAt: Date.now() - 1_000,
+    });
+    const card = await app.handlePermissionCardAction(
+      interaction.requesterOpenId,
+      interaction.permissionMessageId ?? "",
+      buildActionValue(interaction, "once"),
+    );
+
+    expect(replyPermission).toHaveBeenCalledWith(interaction.sessionId, interaction.permissionId, "reject", false);
+    expect(JSON.stringify(card)).toContain("权限请求已超时，已默认拒绝");
+    expect((app as unknown as { pendingInteractions: Map<string, unknown> }).pendingInteractions.has(interaction.conversationKey)).toBe(false);
+  });
+
   it("returns an idempotent terminal card for resolved interactions", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
@@ -60,6 +116,54 @@ describe("BridgeApp permission card actions", () => {
 
     expect(replyPermission).not.toHaveBeenCalled();
     expect(JSON.stringify(card)).toContain("当前权限请求已拒绝");
+  });
+
+  it("keeps text /allow once fallback working", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const replyPermission = vi.fn(async () => true);
+    (app as unknown as { opencode: { replyPermission: typeof replyPermission } }).opencode = { replyPermission };
+
+    const interaction = seedPermission(app);
+    await runCommand(app, {
+      kind: "command",
+      command: { kind: "allow", policy: "once" },
+    });
+
+    expect(replyPermission).toHaveBeenCalledWith(interaction.sessionId, interaction.permissionId, "once", false);
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("当前权限请求已确认，可继续执行");
+  });
+
+  it("keeps text /allow always fallback working", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const replyPermission = vi.fn(async () => true);
+    (app as unknown as { opencode: { replyPermission: typeof replyPermission } }).opencode = { replyPermission };
+
+    const interaction = seedPermission(app);
+    await runCommand(app, {
+      kind: "command",
+      command: { kind: "allow", policy: "always" },
+    });
+
+    expect(replyPermission).toHaveBeenCalledWith(interaction.sessionId, interaction.permissionId, "always", true);
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("后续同类权限将自动允许");
+  });
+
+  it("keeps text /deny fallback working", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const replyPermission = vi.fn(async () => true);
+    (app as unknown as { opencode: { replyPermission: typeof replyPermission } }).opencode = { replyPermission };
+
+    const interaction = seedPermission(app);
+    await runCommand(app, {
+      kind: "command",
+      command: { kind: "deny" },
+    });
+
+    expect(replyPermission).toHaveBeenCalledWith(interaction.sessionId, interaction.permissionId, "reject", false);
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("当前权限请求已拒绝");
   });
 });
 
@@ -178,6 +282,46 @@ function createOutbound() {
     replyMessage: vi.fn(async () => ({ messageId: "om_reply" })),
     updateMessage: vi.fn(async () => ({ messageId: "om_update" })),
   };
+}
+
+async function runCommand(
+  app: BridgeApp,
+  routed: PermissionTextCommandRoute,
+) {
+  await (app as unknown as {
+    handleCommand(
+      message: {
+        chatId: string;
+        chatType: string;
+        messageId: string;
+        conversationKey: string;
+        threadKey: string;
+        senderOpenId: string;
+      },
+      routed: PermissionTextCommandRoute,
+    ): Promise<void>;
+  }).handleCommand({
+    chatId: "oc_chat_1",
+    chatType: "p2p",
+    messageId: "om_text_1",
+    conversationKey: "oc_chat_1",
+    threadKey: "om_text_1",
+    senderOpenId: "ou_requester",
+  }, routed);
+}
+
+type PermissionTextCommandRoute =
+  | { kind: "command"; command: { kind: "allow"; policy: "once" | "always" } }
+  | { kind: "command"; command: { kind: "deny" } };
+
+function getReplyPayloads(outbound: ReturnType<typeof createOutbound>): Array<{ content: string } | undefined> {
+  return (outbound.replyMessage.mock.calls as unknown[][]).map((call) => call[1] as { content: string } | undefined);
+}
+
+function extractInteractiveText(payload: { content: string } | undefined): string {
+  if (!payload) return "";
+  const parsed = JSON.parse(payload.content) as { body?: { elements?: unknown[] } };
+  return JSON.stringify(parsed.body?.elements ?? []);
 }
 
 function createWhitelist(): ChatWhitelist {

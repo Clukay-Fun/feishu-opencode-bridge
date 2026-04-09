@@ -54,6 +54,21 @@ describe("routeIncomingText", () => {
     });
   });
 
+  it("routes /model to the provider listing command and keeps model subcommands as passthrough", () => {
+    expect(routeIncomingText("/model")).toEqual({
+      kind: "command",
+      command: { kind: "models" },
+    });
+    expect(routeIncomingText("/model use openai/gpt-5.4")).toEqual({
+      kind: "command",
+      command: { kind: "passthrough", name: "model", arguments: ["use", "openai/gpt-5.4"] },
+    });
+    expect(routeIncomingText("/model reset")).toEqual({
+      kind: "command",
+      command: { kind: "passthrough", name: "model", arguments: ["reset"] },
+    });
+  });
+
   it("routes slash commands with a visible mention prefix", () => {
     expect(routeIncomingText("@机器人 /who")).toEqual({
       kind: "command",

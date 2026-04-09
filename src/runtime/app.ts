@@ -704,12 +704,44 @@ export class BridgeApp {
     }
 
     if (command.kind === "abort") {
+      const queue = this.queues.get(message.conversationKey);
+      const activeTurn = queue.peek();
+      if (!activeTurn) {
+        await this.sendPayload(message.chatId, buildNoticeCardPayload({
+          title: "无任务可中止",
+          template: "grey",
+          iconToken: "info-hollow_filled",
+          message: "当前没有正在执行的任务。",
+          messageIconToken: "info-hollow_filled",
+          messageIconColor: "grey",
+        }), {
+          event: "final message sent",
+          transcriptType: "outbound-final",
+          textPreview: "当前没有正在执行的任务。",
+          len: 12,
+        }, { replyToMessageId: message.messageId });
+        return;
+      }
+
       const window = this.getSessionWindow(message.conversationKey, message.chatType);
       const currentSession = getActiveSession(window);
-      if (currentSession) {
-        await this.opencode.abort(currentSession.sessionId);
+      const sessionId = activeTurn.sessionId ?? currentSession?.sessionId;
+      if (sessionId) {
+        await this.opencode.abort(sessionId);
       }
-      await this.sendMarkdown(message.chatId, "已请求中止当前任务。", message.messageId);
+      await this.sendPayload(message.chatId, buildNoticeCardPayload({
+        title: "任务已中止",
+        template: "orange",
+        iconToken: "stop-record_filled",
+        message: "当前任务已中止，可发送新消息继续对话。",
+        messageIconToken: "stop-record_filled",
+        messageIconColor: "orange",
+      }), {
+        event: "final message sent",
+        transcriptType: "outbound-final",
+        textPreview: "当前任务已中止，可发送新消息继续对话。",
+        len: 17,
+      }, { replyToMessageId: message.messageId });
       return;
     }
 

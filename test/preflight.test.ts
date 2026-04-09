@@ -9,27 +9,7 @@ describe("runStartupPreflight", () => {
   });
 
   it("passes with healthy upstream dependencies", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      const url = typeof input === "string" ? input : input.toString();
-      if (url.includes("/global/health")) {
-        return jsonResponse({ healthy: true, version: "1.0.0" });
-      }
-      if (url.includes("/project/current")) {
-        return jsonResponse({
-          id: "project_1",
-          worktree: process.cwd(),
-          sandboxes: [],
-          time: { created: Date.now(), updated: Date.now() },
-        });
-      }
-      if (url.includes("/config/providers")) {
-        return jsonResponse({
-          providers: [{ id: "openai", name: "OpenAI" }],
-          default: { openai: "gpt-5.4-mini" },
-        });
-      }
-      throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch);
+    stubHealthyFetch();
 
     const feishu = {
       getTenantToken: vi.fn(async () => "tenant-token"),
@@ -43,27 +23,7 @@ describe("runStartupPreflight", () => {
   });
 
   it("fails when button mode is enabled without a verification token", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      const url = typeof input === "string" ? input : input.toString();
-      if (url.includes("/global/health")) {
-        return jsonResponse({ healthy: true, version: "1.0.0" });
-      }
-      if (url.includes("/project/current")) {
-        return jsonResponse({
-          id: "project_1",
-          worktree: process.cwd(),
-          sandboxes: [],
-          time: { created: Date.now(), updated: Date.now() },
-        });
-      }
-      if (url.includes("/config/providers")) {
-        return jsonResponse({
-          providers: [{ id: "openai", name: "OpenAI" }],
-          default: { openai: "gpt-5.4-mini" },
-        });
-      }
-      throw new Error(`unexpected fetch: ${url}`);
-    }) as typeof fetch);
+    stubHealthyFetch();
 
     const config = baseConfig();
     config.feishu.cardActions.enabled = true;
@@ -72,6 +32,75 @@ describe("runStartupPreflight", () => {
     await expect(runStartupPreflight(config, {
       getTenantToken: async () => "tenant-token",
     }, () => {})).rejects.toThrow("缺少 feishu.cardActions.verificationToken");
+  });
+
+  it("fails when data dir is not writable", async () => {
+    stubHealthyFetch();
+
+    const config = baseConfig();
+    config.storage.dataDir = "/definitely/missing/bridge-data-dir";
+
+    await expect(runStartupPreflight(config, {
+      getTenantToken: async () => "tenant-token",
+    }, () => {})).rejects.toThrow(/数据目录/i);
+  });
+
+  it("fails when Feishu credentials are invalid", async () => {
+    stubHealthyFetch();
+
+    await expect(runStartupPreflight(baseConfig(), {
+      getTenantToken: async () => {
+        throw new Error("invalid app credentials");
+      },
+    }, () => {})).rejects.toThrow(/飞书鉴权/i);
+  });
+
+  it("fails when OpenCode is unavailable", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/global/health")) {
+        throw new Error("connect ECONNREFUSED");
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch);
+
+    await expect(runStartupPreflight(baseConfig(), {
+      getTenantToken: async () => "tenant-token",
+    }, () => {})).rejects.toThrow(/OpenCode 健康检查/i);
+  });
+
+  it("fails when worktree mismatches", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/global/health")) {
+        return jsonResponse({ healthy: true, version: "1.0.0" });
+      }
+      if (url.includes("/project/current")) {
+        return jsonResponse({
+          id: "project_1",
+          worktree: "/tmp/other-project",
+          sandboxes: [],
+          time: { created: Date.now(), updated: Date.now() },
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch);
+
+    await expect(runStartupPreflight(baseConfig(), {
+      getTenantToken: async () => "tenant-token",
+    }, () => {})).rejects.toThrow(/工作目录/i);
+  });
+
+  it("fails when card actions are enabled without publicBaseUrl", async () => {
+    stubHealthyFetch();
+
+    const config = baseConfig();
+    config.feishu.cardActions.enabled = true;
+    config.server.publicBaseUrl = null as unknown as URL;
+
+    await expect(runStartupPreflight(config, {
+      getTenantToken: async () => "tenant-token",
+    }, () => {})).rejects.toThrow(/publicBaseUrl/i);
   });
 });
 
@@ -146,4 +175,28 @@ function jsonResponse(body: unknown): Response {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function stubHealthyFetch(): void {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("/global/health")) {
+      return jsonResponse({ healthy: true, version: "1.0.0" });
+    }
+    if (url.includes("/project/current")) {
+      return jsonResponse({
+        id: "project_1",
+        worktree: process.cwd(),
+        sandboxes: [],
+        time: { created: Date.now(), updated: Date.now() },
+      });
+    }
+    if (url.includes("/config/providers")) {
+      return jsonResponse({
+        providers: [{ id: "openai", name: "OpenAI" }],
+        default: { openai: "gpt-5.4-mini" },
+      });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  }) as typeof fetch);
 }

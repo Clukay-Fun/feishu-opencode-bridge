@@ -1,0 +1,81 @@
+# 4/20 Submission Gap Matrix
+
+> 基于当前仓库代码、现有测试与部署文档的基线审计。
+
+## Buckets
+
+- `automated-now`
+  当前仓库已有实现或明确钩子，可直接通过单元/集成测试补齐验证。
+- `manual-env`
+  需要真实 Feishu / OpenCode / Caddy / 域名环境验证。
+- `blocked-by-scope`
+  当前仓库没有对应子系统，或该能力不在现有 bridge 实现范围内。
+
+## Matrix
+
+| Checklist item | Code path | Existing test | Missing work | Verification mode |
+| --- | --- | --- | --- | --- |
+| Startup: `config.json` 关键字段完整 | [src/config/loader.ts](/Users/clukay/Program/feishu-opencode-bridge/src/config/loader.ts), [src/config/schema.ts](/Users/clukay/Program/feishu-opencode-bridge/src/config/schema.ts), [src/runtime/preflight.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/preflight.ts) | [test/config-loader.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/config-loader.test.ts), [test/preflight.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/preflight.test.ts) | 缺少“配置文件不存在”这类入口级失败测试 | automated-now |
+| Startup: `data/` 与 `logs/` 可写 | [src/runtime/preflight.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/preflight.ts) | [test/preflight.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/preflight.test.ts) | 需补日志目录单独失败用例 | automated-now |
+| Startup: Feishu tenant token 可获取 | [src/feishu/api.ts](/Users/clukay/Program/feishu-opencode-bridge/src/feishu/api.ts), [src/runtime/preflight.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/preflight.ts) | [test/preflight.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/preflight.test.ts) | 需补“鉴权失败”显式断言 | automated-now |
+| Startup: OpenCode 健康检查通过 | [src/runtime/preflight.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/preflight.ts), [src/opencode/client.ts](/Users/clukay/Program/feishu-opencode-bridge/src/opencode/client.ts) | [test/preflight.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/preflight.test.ts) | 需补“OpenCode 不可用”显式断言 | automated-now |
+| Startup: OpenCode worktree 匹配 | [src/runtime/preflight.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/preflight.ts) | [test/preflight.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/preflight.test.ts) | 需补 mismatch 失败断言 | automated-now |
+| Startup: 按钮模式下 `publicBaseUrl` 与 `cardActions` 配置完整 | [src/runtime/preflight.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/preflight.ts), [src/config/schema.ts](/Users/clukay/Program/feishu-opencode-bridge/src/config/schema.ts) | [test/preflight.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/preflight.test.ts) | 已覆盖 `verificationToken`，还可补 `publicBaseUrl` 缺失用例 | automated-now |
+| Startup: `/config/providers` 可访问 | [src/runtime/preflight.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/preflight.ts), [src/opencode/client.ts](/Users/clukay/Program/feishu-opencode-bridge/src/opencode/client.ts) | [test/preflight.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/preflight.test.ts) | 需补 provider 异常返回用例 | automated-now |
+| DM: `/new` | [src/bridge/router.ts](/Users/clukay/Program/feishu-opencode-bridge/src/bridge/router.ts), [src/runtime/app.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/app.ts) | [test/router.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/router.test.ts) | 缺少 app 级行为测试 | automated-now |
+| DM: `/sessions` | [src/bridge/router.ts](/Users/clukay/Program/feishu-opencode-bridge/src/bridge/router.ts), [src/runtime/app.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/app.ts) | [test/formatter.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/formatter.test.ts) | 缺少 DM 场景端到端测试 | automated-now |
+| DM: `/switch 2` | [src/bridge/router.ts](/Users/clukay/Program/feishu-opencode-bridge/src/bridge/router.ts), [src/runtime/app.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/app.ts) | [test/router.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/router.test.ts) | 缺少成功切换测试 | automated-now |
+| DM: `/switch 999` | [src/runtime/app.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/app.ts) | 无 | 需补失效编号与过期列表测试 | automated-now |
+| DM: `/status` | [src/bridge/router.ts](/Users/clukay/Program/feishu-opencode-bridge/src/bridge/router.ts), [src/runtime/app.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/app.ts) | [test/router.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/router.test.ts), [test/formatter.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/formatter.test.ts) | 缺少 app 级输出断言 | automated-now |
+| DM: `/model` | [src/bridge/router.ts](/Users/clukay/Program/feishu-opencode-bridge/src/bridge/router.ts), [src/runtime/app.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/app.ts) | 无 | 当前仅有 `/models`，`/model` 尚未 bridge 接管 | blocked-by-scope |
+| DM: `/model use openai/gpt-5.4` | OpenCode passthrough only via [src/runtime/app.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/app.ts) | 无 | 当前 bridge 不管理模型切换状态，只能透传给 OpenCode | manual-env |
+| DM: `/model reset` | OpenCode passthrough only via [src/runtime/app.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/app.ts) | 无 | 当前 bridge 不管理模型覆盖或 reset 状态 | blocked-by-scope |
+| DM: `/model use nonexistent` | OpenCode passthrough only via [src/runtime/app.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/app.ts) | 无 | 依赖真实 OpenCode 返回错误，不是 bridge 自有逻辑 | manual-env |
+| DM: `/abort` 有活跃任务 | [src/bridge/router.ts](/Users/clukay/Program/feishu-opencode-bridge/src/bridge/router.ts), [src/runtime/app.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/app.ts) | 无 | 缺少“有任务时中止”测试 | automated-now |
+| DM: `/abort` 无活跃任务 | [src/runtime/app.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/app.ts) | 无 | 当前实现不会区分空闲态，需要明确产品行为与测试 | automated-now |
+| Group: 首次 `@bot` 绑定发送者 | [src/feishu/ws.ts](/Users/clukay/Program/feishu-opencode-bridge/src/feishu/ws.ts), [src/store/whitelist.ts](/Users/clukay/Program/feishu-opencode-bridge/src/store/whitelist.ts) | [test/group-chat.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/group-chat.test.ts), [test/whitelist.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/whitelist.test.ts) | 需确认现有测试覆盖首次绑定而不只是基本消息放行 | automated-now |
+| Group: 已绑定用户免 `@` 继续说话 | [src/feishu/ws.ts](/Users/clukay/Program/feishu-opencode-bridge/src/feishu/ws.ts) | [test/group-chat.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/group-chat.test.ts) | 需补更明确的 acceptance 断言 | automated-now |
+| Group: 未绑定且未 `@` 被忽略 | [src/feishu/ws.ts](/Users/clukay/Program/feishu-opencode-bridge/src/feishu/ws.ts) | [test/group-chat.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/group-chat.test.ts) | 基本具备 | automated-now |
+| Group: `@bot /who` 不修改绑定状态 | [src/feishu/ws.ts](/Users/clukay/Program/feishu-opencode-bridge/src/feishu/ws.ts), [src/runtime/app.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/app.ts) | 无 | 需补“不自动绑定”的回归测试 | automated-now |
+| Group: `/leave` 解除绑定 | [src/runtime/app.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/app.ts), [src/store/whitelist.ts](/Users/clukay/Program/feishu-opencode-bridge/src/store/whitelist.ts) | [test/app-whitelist-commands.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/app-whitelist-commands.test.ts) | 已有基础覆盖 | automated-now |
+| Group: `/leave` 后再次免 `@` 被忽略 | [src/feishu/ws.ts](/Users/clukay/Program/feishu-opencode-bridge/src/feishu/ws.ts) | 无 | 需补解绑后回归测试 | automated-now |
+| Group: topic 继承 whitelist | [src/feishu/ws.ts](/Users/clukay/Program/feishu-opencode-bridge/src/feishu/ws.ts) | [test/group-chat.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/group-chat.test.ts) | 需确认测试显式覆盖 `chatId` 共享绑定 | automated-now |
+| Group: 两个 topic 隔离 `sessionId` | [src/runtime/session-windows.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/session-windows.ts), [src/store/mappings.ts](/Users/clukay/Program/feishu-opencode-bridge/src/store/mappings.ts) | [test/session-windows.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/session-windows.test.ts) | 需补 topic 级 conversationKey 隔离测试 | automated-now |
+| Permission: `allow once` 按钮点击 | [src/runtime/app.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/app.ts), [src/http/server.ts](/Users/clukay/Program/feishu-opencode-bridge/src/http/server.ts), [src/feishu/formatter.ts](/Users/clukay/Program/feishu-opencode-bridge/src/feishu/formatter.ts) | [test/app-permission-actions.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/app-permission-actions.test.ts) | 已有基础覆盖 | automated-now |
+| Permission: `allow always` 按钮点击 | [src/runtime/app.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/app.ts) | [test/app-permission-actions.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/app-permission-actions.test.ts) | 已有基础覆盖 | automated-now |
+| Permission: `deny` 按钮点击 | [src/runtime/app.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/app.ts) | [test/app-permission-actions.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/app-permission-actions.test.ts) | 已有基础覆盖 | automated-now |
+| Permission: 超时点击返回终态提示 | [src/runtime/app.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/app.ts) | 无 | 需补超时后的 action 响应测试 | automated-now |
+| Permission: 重复点击幂等 | [src/runtime/app.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/app.ts) | [test/app-permission-actions.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/app-permission-actions.test.ts) | 可补更明确的“同一按钮二次点击”测试 | automated-now |
+| Permission: 非发起者点击被拒绝 | [src/runtime/app.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/app.ts) | [test/app-permission-actions.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/app-permission-actions.test.ts) | 已覆盖 | automated-now |
+| Permission: 文本 `/allow once` | [src/bridge/router.ts](/Users/clukay/Program/feishu-opencode-bridge/src/bridge/router.ts), [src/runtime/app.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/app.ts) | [test/router.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/router.test.ts) | 缺少 app 级 fallback 测试 | automated-now |
+| Permission: 文本 `/allow always` | [src/bridge/router.ts](/Users/clukay/Program/feishu-opencode-bridge/src/bridge/router.ts), [src/runtime/app.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/app.ts) | [test/router.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/router.test.ts) | 缺少 app 级 fallback 测试 | automated-now |
+| Permission: 文本 `/deny` | [src/bridge/router.ts](/Users/clukay/Program/feishu-opencode-bridge/src/bridge/router.ts), [src/runtime/app.ts](/Users/clukay/Program/feishu-opencode-bridge/src/runtime/app.ts) | [test/router.test.ts](/Users/clukay/Program/feishu-opencode-bridge/test/router.test.ts) | 缺少 app 级 fallback 测试 | automated-now |
+| Permission: 运行中禁止 `/close` | 无 bridge 自有 `/close` 代码路径 | 无 | 当前仓库没有 `/close` 命令实现 | blocked-by-scope |
+| HTTP: `/healthz` 返回 200 | [src/http/server.ts](/Users/clukay/Program/feishu-opencode-bridge/src/http/server.ts) | 无 | 需补 HTTP 测试文件 | automated-now |
+| HTTP: 未知路由返回 404 | [src/http/server.ts](/Users/clukay/Program/feishu-opencode-bridge/src/http/server.ts) | 无 | 需补 HTTP 测试文件 | automated-now |
+| Deploy: 本机 `curl http://127.0.0.1:3000/healthz` | [src/http/server.ts](/Users/clukay/Program/feishu-opencode-bridge/src/http/server.ts), [docs/deploy.md](/Users/clukay/Program/feishu-opencode-bridge/docs/deploy.md) | 无 | 需在真实运行进程中手工验收 | manual-env |
+| Deploy: 域名 `curl https://<domain>/healthz` | [ops/Caddyfile](/Users/clukay/Program/feishu-opencode-bridge/ops/Caddyfile), [docs/deploy.md](/Users/clukay/Program/feishu-opencode-bridge/docs/deploy.md) | 无 | 依赖真实服务器、域名与 Caddy | manual-env |
+| Memory: embedding 检索 | 无 | 无 | 当前仓库没有 memory 子系统 | blocked-by-scope |
+| Memory: memory store / recall | 无 | 无 | 当前仓库没有 memory 子系统 | blocked-by-scope |
+| Memory: vector 存储 | 无 | 无 | 当前仓库没有 memory 子系统 | blocked-by-scope |
+| Memory: Obsidian 同步 | 无 | 无 | 当前仓库没有 memory 子系统 | blocked-by-scope |
+| Memory: `profile.md` 输出 | 无 | 无 | 当前仓库没有 memory 子系统 | blocked-by-scope |
+| Memory: fact extraction | 无 | 无 | 当前仓库没有 memory 子系统 | blocked-by-scope |
+| Acceptance: 私聊演示链路 | [docs/demo-script.md](/Users/clukay/Program/feishu-opencode-bridge/docs/demo-script.md) | 无 | 需真机执行并留证据 | manual-env |
+| Acceptance: 群聊演示链路 | [docs/demo-script.md](/Users/clukay/Program/feishu-opencode-bridge/docs/demo-script.md) | 无 | 需真机执行并留证据 | manual-env |
+| Acceptance: 权限卡演示链路 | [docs/demo-script.md](/Users/clukay/Program/feishu-opencode-bridge/docs/demo-script.md), [src/http/server.ts](/Users/clukay/Program/feishu-opencode-bridge/src/http/server.ts) | 无 | 需真实回调环境验证 | manual-env |
+| Acceptance: `lark-cli` 联动演示链路 | [docs/demo-script.md](/Users/clukay/Program/feishu-opencode-bridge/docs/demo-script.md) | 无 | 依赖真实 Feishu 资源权限与 OpenCode passthrough | manual-env |
+| Acceptance: 录屏 / 截图素材采集 | [docs/demo-script.md](/Users/clukay/Program/feishu-opencode-bridge/docs/demo-script.md) | 无 | 需手工录制与整理素材 | manual-env |
+
+## Coverage Summary
+
+- `automated-now`: 31
+- `manual-env`: 9
+- `blocked-by-scope`: 8
+
+## Immediate Priorities
+
+1. 补齐启动前 preflight 边界测试。
+2. 补齐 DM 命令面里缺失的 `/switch 999`、`/abort` 空闲态等测试与行为。
+3. 补齐权限卡 timeout / HTTP `/healthz` 测试。
+4. 明确把 memory 相关项标记为当前仓库 out of scope。

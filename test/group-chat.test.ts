@@ -752,4 +752,48 @@ describe("group chat support", () => {
     expect(handler).toHaveBeenCalledWith(expect.objectContaining({ plainText: "/who" }));
     expect(whitelist.bind).not.toHaveBeenCalled();
   });
+
+  it("ignores follow-up messages again after a binding is removed", async () => {
+    const handler = vi.fn(async () => {});
+    const logger = { log: vi.fn() };
+    const whitelist = createWhitelist();
+    const client = new FeishuWsClient("app", "secret", makeOptions(), whitelist, handler, logger);
+
+    await (client as unknown as { handleEvent(payload: unknown): Promise<void> }).handleEvent({
+      message: {
+        chat_id: "oc_group_leave_1",
+        chat_type: "group",
+        message_id: "om_leave_1",
+        message_type: "text",
+        content: JSON.stringify({ text: '<at user_id="ou_bot">机器人</at> 先绑定一下' }),
+        mentions: [{ id: { open_id: "ou_bot" }, name: "机器人" }],
+      },
+      sender: { sender_id: { open_id: "ou_123" } },
+    });
+
+    await whitelist.unbind("oc_group_leave_1", "ou_123");
+
+    await (client as unknown as { handleEvent(payload: unknown): Promise<void> }).handleEvent({
+      message: {
+        chat_id: "oc_group_leave_1",
+        chat_type: "group",
+        message_id: "om_leave_2",
+        message_type: "text",
+        content: JSON.stringify({ text: "解绑后这条不该继续触发" }),
+      },
+      sender: { sender_id: { open_id: "ou_123" } },
+    });
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    const lastCall = logger.log.mock.calls.at(-1);
+    expect(lastCall?.[0]).toBe("feishu/ws");
+    expect(lastCall?.[1]).toBe("message skipped");
+    expect(lastCall?.[2]).toEqual(expect.objectContaining({
+      reason: "not-whitelisted",
+      chatId: "oc_group_leave_1",
+      messageId: "om_leave_2",
+      senderOpenId: "ou_123",
+    }));
+    expect(lastCall?.[3]).toBe("warn");
+  });
 });
