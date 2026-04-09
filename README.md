@@ -1,175 +1,81 @@
 # Feishu OpenCode Bridge
 
-Feishu OpenCode Bridge is a standalone TypeScript service that connects Feishu chat messages to the local OpenCode Server API.
+[![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6)](https://www.typescriptlang.org/)
+[![Feishu](https://img.shields.io/badge/Feishu-Bridge-0F6FFF)](https://open.feishu.cn/)
 
-It listens to Feishu message events over WebSocket, maps each conversation to an OpenCode session, forwards prompts to `opencode serve`, receives assistant output from the OpenCode SSE event stream, and posts the result back to Feishu.
+Feishu OpenCode Bridge is a Feishu-native runtime adapter for OpenCode.
+
+It turns Feishu chats into session-aware OpenCode workspaces, keeps process updates inside interactive cards, handles permission confirmation, and preserves a clear boundary between bridge-owned runtime control and passthrough OpenCode commands.
+
+## Why This Is Not A Normal Bot
+
+This project is not trying to be a generic chat bot.
+
+It is a bridge layer that gives OpenCode a stable runtime surface inside Feishu:
+
+- session-aware windows for `p2p`, `group`, and `topic_group`
+- bridge-owned runtime commands such as `/new`, `/status`, `/sessions`, `/switch`
+- process cards that update in place while a task is running
+- real permission buttons backed by Feishu card actions
+- group whitelist binding so collaboration can continue without repeated `@bot`
 
 ## Features
 
-- Supports Feishu `p2p`, `group`, and `topic_group` chats
-- Uses per-window session registries with configurable `single` or `multi` mode
-- Uses thread-aware isolation for group chats
-- Supports OpenCode `prompt_async`, command routing, abort, status, models, permissions, and session switching
-- Streams progress into a Feishu interactive card and updates the same message in place
-- Supports strict or relaxed group mention matching through config
-- Supports multiple bot identities and separate self-bot identities
-- Supports per-group whitelist binding so users can continue without re-mentioning the bot
-- Deduplicates repeated Feishu message deliveries by `message_id`
-- Persists Feishu conversation to OpenCode session bindings with LRU trimming
-- Supports OpenCode Basic Auth through `OPENCODE_SERVER_PASSWORD`
-
-## Output rules
-
-- Feishu output Markdown rules live in `docs/feishu-markdown.md`
-- Plain Post is reserved for passthrough text output, ultra-short confirmations, and card fallback
-- Bridge-owned commands, structured lists, and system notices should use cards instead of Plain Post
+- Interactive Process Card with in-place updates for running turns
+- Bridge-owned command cards for session and group binding flows
+- True permission buttons with text-command fallback
+- Group whitelist binding with `/who` and `/leave`
+- `single` and `multi` session modes per window type
+- Slash command passthrough to OpenCode for commands the bridge does not own
+- Startup preflight for Feishu auth, OpenCode health, providers, and callback config
+- JSON-backed stores for session mappings and group bindings
+- Markdown output rules documented in [docs/feishu-markdown.md](/Users/clukay/Program/feishu-opencode-bridge/docs/feishu-markdown.md)
 
 ## Architecture
 
-The main runtime flow is:
+```mermaid
+flowchart LR
+    A["Feishu WebSocket Events"] --> B["Bridge Runtime"]
+    B --> C["OpenCode Server API"]
+    C --> D["OpenCode Event Stream"]
+    D --> B
+    B --> E["Feishu Process / Command / Notice Cards"]
+    F["Feishu Card Action Callback"] --> B
+    G["Whitelist + Session Mapping Stores"] --> B
+```
 
-1. Feishu sends `im.message.receive_v1` events over WebSocket.
-2. The bridge normalizes the incoming message, applies group mention rules, and derives a `conversationKey`.
-3. The runtime resolves or creates an OpenCode session for that conversation.
-4. The bridge sends the prompt through `POST /session/:id/prompt_async`.
-5. The OpenCode SSE stream (`/event`, fallback `/global/event`) delivers assistant updates.
-6. The bridge updates a Feishu reply card until the turn is complete.
+## Demo Flow
 
-Key modules:
+The fixed public demo script lives in [docs/demo-script.md](/Users/clukay/Program/feishu-opencode-bridge/docs/demo-script.md).
 
-- `src/feishu/`
-  Feishu API client, formatter, and inbound WS normalization
-- `src/opencode/`
-  OpenCode HTTP client and SSE event stream
-- `src/runtime/`
-  Main orchestration, queueing, cards, session binding, and event handling
-- `src/store/`
-  JSON-backed persistent stores
-- `src/bridge/`
-  Queueing, routing, pending interactions, and watchdog logic
+It covers:
+
+1. Private chat developer assistant flow
+2. Group chat binding and no-mention continuation
+3. Permission button flow
+4. `lark-cli`-driven Feishu workflow actions
+
+## Output Rules
+
+- Markdown rules: [docs/feishu-markdown.md](/Users/clukay/Program/feishu-opencode-bridge/docs/feishu-markdown.md)
+- `Plain Post` is only for passthrough text output, ultra-short confirmations, and card fallback
+- Bridge-owned commands, structured lists, and system notices should use cards instead
 
 ## Requirements
 
 - Node.js 20+
-- A Feishu app with bot capability enabled
-- A running local OpenCode server:
+- A Feishu app with bot capability
+- A running OpenCode server
+- Public HTTPS callback if you want real permission buttons
 
-```bash
-opencode serve
-```
+## Quick Start
 
-## Install
+Install dependencies:
 
 ```bash
 npm install
 ```
-
-## Configuration
-
-Copy the example config and fill in your real values:
-
-```json
-{
-  "feishu": {
-    "appId": "cli_xxx",
-    "appSecret": "xxx",
-    "botOpenId": "ou_xxx",
-    "botOpenIds": ["ou_xxx", "ou_yyy"],
-    "botMentionNames": ["opencode", "open code"],
-    "selfBotOpenId": "ou_xxx",
-    "selfBotOpenIds": ["ou_xxx"],
-    "wsUrl": "wss://open.feishu.cn/open-apis/ws/v2",
-    "allowedOpenIds": [],
-    "behavior": {
-      "enableP2p": true,
-      "enableGroup": true,
-      "requireBotMentionInGroup": true,
-      "strictBotMention": true,
-      "ignoreNonUserSenders": true,
-      "replyInThread": true
-    }
-  },
-  "opencode": {
-    "baseUrl": "http://127.0.0.1:4096/",
-    "directory": "/absolute/path/to/project"
-  },
-  "storage": {
-    "dataDir": "./data",
-    "mappingsFile": "mappings.json"
-  },
-  "whitelist": {
-    "storePath": "whitelist.json"
-  },
-  "bridge": {
-    "queueLimit": 3,
-    "sessions": {
-      "p2pMode": "multi",
-      "groupMode": "single",
-      "topicGroupMode": "single",
-      "maxSessionsPerWindow": 20,
-      "listLimit": 10,
-      "injectSystemState": true
-    },
-    "timeouts": {
-      "firstEvent": 30000,
-      "eventInterval": 120000,
-      "totalTurn": 300000
-    }
-  },
-  "logging": {
-    "dir": "./logs",
-    "level": "info",
-    "enableTranscript": true,
-    "enableConsole": true,
-    "enableColor": true,
-    "rotateDaily": true
-  }
-}
-```
-
-### Feishu config notes
-
-- `botOpenId`
-  Legacy single identity setting. Still supported.
-- `botOpenIds`
-  All bot identities that should trigger this bridge in group chats.
-- `botMentionNames`
-  Extra display-name fallbacks used only when mention IDs are unreliable.
-- `selfBotOpenId` and `selfBotOpenIds`
-  Identities that belong to this bridge itself. These are ignored when Feishu re-delivers bot-originated messages, which helps prevent reply loops.
-- `allowedOpenIds`
-  Optional sender whitelist. When non-empty, only these users can talk to the bridge.
-
-### Group mention behavior
-
-When `requireBotMentionInGroup=true`, group messages are handled only when they match your configured bot identity rules.
-
-When `strictBotMention=true`, the bridge only accepts messages that explicitly mention one of the configured bot identities.
-
-### Group whitelist binding
-
-- In `group` and `topic_group`, a user is added to the group whitelist when they send a normal message that mentions the bot.
-- Once bound, the same user can continue in the same Feishu `chat_id` without mentioning the bot again, including inside topic threads.
-- `/leave` removes the current user from the group whitelist.
-- `/who` shows the current group binding count and whether the caller is already bound.
-
-### Session modes
-
-- `p2pMode`, `groupMode`, and `topicGroupMode` control whether a window behaves as `single` or `multi` session mode.
-- `single` keeps exactly one active session in the window. `/new` replaces it. `/switch` and `/sessions <index>` are rejected.
-- `multi` keeps multiple sessions per window, shows them through `/sessions`, and allows switching with `/switch <index>` or `/sessions <index>`.
-- `injectSystemState=true` adds bridge-owned window and session state into the OpenCode `system` field without polluting the user message text.
-
-## OpenCode auth
-
-If your OpenCode server is protected, set:
-
-```bash
-export OPENCODE_SERVER_PASSWORD=your-password
-export OPENCODE_SERVER_USERNAME=opencode
-```
-
-## Development
 
 Start OpenCode first:
 
@@ -183,62 +89,138 @@ Then start the bridge:
 npm run dev
 ```
 
-Useful scripts:
+## Configuration
 
-```bash
-npm run typecheck
-npm test
-npm run lint
-npm run dev:once
+Use [config.example.json](/Users/clukay/Program/feishu-opencode-bridge/config.example.json) as the baseline.
+
+Important sections:
+
+- `feishu`
+  bot identity, behavior flags, and card action security settings
+- `opencode`
+  OpenCode base URL and target worktree
+- `server`
+  local HTTP listen address and public callback base URL
+- `storage`
+  JSON persistence location
+- `bridge`
+  queueing, session mode, and timeout behavior
+
+### Button Callback Config
+
+To enable real permission buttons:
+
+```json
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 3000,
+    "publicBaseUrl": "https://bridge.example.com/"
+  },
+  "feishu": {
+    "cardActions": {
+      "enabled": true,
+      "path": "/webhook/card",
+      "verificationToken": "your-token",
+      "encryptKey": ""
+    }
+  }
+}
 ```
+
+If Feishu event encryption is enabled, set `encryptKey` as well.
 
 ## Commands
 
-Supported slash commands:
+Bridge-owned commands:
 
 - `/new`
 - `/status`
 - `/abort`
 - `/models`
-- `/leave`
-- `/who`
 - `/sessions`
-- `/switch <index>`
 - `/sessions <index>`
+- `/switch <index>`
+- `/who`
+- `/leave`
 - `/allow once`
 - `/allow always`
 - `/deny`
-- any other slash command is forwarded to the OpenCode command endpoint
 
-## Logging and troubleshooting
+Any other slash command is forwarded to OpenCode.
 
-Logs are written to `logs/`.
+That means OpenCode-native commands such as:
 
-Useful log patterns:
+- `/model use ...`
+- `/review`
+- `/init`
 
-- `feishu/ws message received`
-  The bridge accepted and normalized a Feishu message
-- `feishu/ws message skipped`
-  The bridge saw the event but filtered it
-- `feishu/ws duplicate message skipped`
-  Feishu re-delivered the same `message_id`
-- `opencode/events event stream connected`
-  OpenCode SSE is healthy
-- `bridge/queue turn started`
-  A prompt is being processed
+can continue to work through passthrough, as long as your OpenCode runtime supports them.
 
-If a group message does not trigger:
+## Startup Preflight
 
-1. Check whether the message shows up in `feishu/ws message skipped`.
-2. Compare `mentionIds` in the log with your configured `botOpenIds`.
-3. Confirm that the bot is actually in the group and the Feishu app has the required message permissions.
+On startup the bridge checks:
 
-## Current limitations
+- storage and log directories are writable
+- Feishu tenant token can be fetched
+- OpenCode health is good
+- OpenCode worktree matches bridge config
+- provider list is reachable
+- card callback config is complete when button mode is enabled
 
-- The bridge depends on a locally running `opencode serve` process.
-- Feishu may re-deliver the same `message_id`; the bridge deduplicates these in memory, not across restarts.
-- Robot-to-robot behavior depends on what Feishu delivers to the app. Some robot-to-robot scenarios may not be supported by Feishu itself.
+If any of these checks fail, the bridge exits early instead of half-starting.
 
-## License
+## Deployment
 
-This repository currently has no explicit license file.
+Single-host deployment guidance lives in [docs/deploy.md](/Users/clukay/Program/feishu-opencode-bridge/docs/deploy.md).
+
+Included assets:
+
+- [ops/Caddyfile](/Users/clukay/Program/feishu-opencode-bridge/ops/Caddyfile)
+- [.env.example](/Users/clukay/Program/feishu-opencode-bridge/.env.example)
+
+Health check endpoint:
+
+```text
+GET /healthz
+```
+
+Card action callback default path:
+
+```text
+/webhook/card
+```
+
+## Development
+
+Useful commands:
+
+```bash
+npm run typecheck
+npm test
+npm run lint
+npm run dev
+npm run dev:once
+```
+
+## Project Layout
+
+- `src/bridge/`
+  queueing, routing, pending interaction state, watchdog
+- `src/config/`
+  config schema and loader
+- `src/feishu/`
+  API client, formatter, WebSocket ingress
+- `src/http/`
+  callback server and health endpoint
+- `src/opencode/`
+  OpenCode HTTP client and event stream
+- `src/runtime/`
+  bridge orchestration and startup preflight
+- `src/store/`
+  JSON-backed stores
+
+## Notes
+
+- This repo currently targets a public demo / submission build, not a full team-production platform
+- Linux x64 validation remains a release gate, especially if any native dependency is introduced later

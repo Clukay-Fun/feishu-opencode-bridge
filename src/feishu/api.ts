@@ -4,7 +4,7 @@ export class FeishuApiClient {
   constructor(private readonly appId: string, private readonly appSecret: string) {}
 
   async sendMessage(chatId: string, payload: FeishuPostPayload): Promise<{ messageId: string }> {
-    const token = await this.fetchTenantToken();
+    const token = await this.getTenantToken();
     const response = await fetch("https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id", {
       method: "POST",
       headers: {
@@ -21,7 +21,7 @@ export class FeishuApiClient {
   }
 
   async replyMessage(messageId: string, payload: FeishuPostPayload): Promise<{ messageId: string }> {
-    const token = await this.fetchTenantToken();
+    const token = await this.getTenantToken();
     const response = await fetch(`https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/reply`, {
       method: "POST",
       headers: {
@@ -38,7 +38,7 @@ export class FeishuApiClient {
   }
 
   async updateMessage(messageId: string, payload: FeishuPostPayload): Promise<{ messageId: string }> {
-    const token = await this.fetchTenantToken();
+    const token = await this.getTenantToken();
     const response = await fetch(`https://open.feishu.cn/open-apis/im/v1/messages/${messageId}`, {
       method: "PATCH",
       headers: {
@@ -54,7 +54,7 @@ export class FeishuApiClient {
     return { messageId: body.data?.message_id ?? messageId };
   }
 
-  private async fetchTenantToken(): Promise<string> {
+  async getTenantToken(): Promise<string> {
     const response = await fetch("https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

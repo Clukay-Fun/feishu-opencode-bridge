@@ -25,18 +25,17 @@ export class TurnWatchdog {
 
   markEvent(): void {
     if (!this.seenEvent) {
-      this.seenEvent = true;
-      if (this.firstEventTimer) {
-        clearTimeout(this.firstEventTimer);
-        this.firstEventTimer = null;
-      }
+      this.markFirstEventSeen();
     }
 
-    if (this.eventGapTimer) {
-      clearTimeout(this.eventGapTimer);
-    }
+    this.scheduleEventGap(this.config.eventGapTimeoutMs);
+  }
 
-    this.eventGapTimer = setTimeout(() => this.handlers.onEventGapTimeout(), this.config.eventGapTimeoutMs);
+  snoozeEventGap(timeoutMs: number): void {
+    if (!this.seenEvent) {
+      this.markFirstEventSeen();
+    }
+    this.scheduleEventGap(timeoutMs);
   }
 
   clear(): void {
@@ -52,5 +51,20 @@ export class TurnWatchdog {
       clearTimeout(this.totalTimer);
       this.totalTimer = null;
     }
+  }
+
+  private markFirstEventSeen(): void {
+    this.seenEvent = true;
+    if (this.firstEventTimer) {
+      clearTimeout(this.firstEventTimer);
+      this.firstEventTimer = null;
+    }
+  }
+
+  private scheduleEventGap(timeoutMs: number): void {
+    if (this.eventGapTimer) {
+      clearTimeout(this.eventGapTimer);
+    }
+    this.eventGapTimer = setTimeout(() => this.handlers.onEventGapTimeout(), timeoutMs);
   }
 }

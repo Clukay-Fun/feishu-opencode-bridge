@@ -66,6 +66,12 @@ function makeOptions(overrides?: Partial<ReturnType<typeof createFeishuIngressOp
         ignoreNonUserSenders: true,
         replyInThread: true,
       },
+      cardActions: {
+        enabled: false,
+        path: "/webhook/card",
+        verificationToken: "",
+        encryptKey: "",
+      },
     }),
     ...overrides,
   };

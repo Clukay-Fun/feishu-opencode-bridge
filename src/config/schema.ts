@@ -21,6 +21,12 @@ export const ConfigSchema = z.object({
       ignoreNonUserSenders: z.boolean().default(true),
       replyInThread: z.boolean().default(true),
     }).default({}),
+    cardActions: z.object({
+      enabled: z.boolean().default(false),
+      path: z.string().min(1).default("/webhook/card"),
+      verificationToken: z.string().default(""),
+      encryptKey: z.string().default(""),
+    }).default({}),
   }),
   opencode: z.object({
     baseUrl: z.string().url(),
@@ -30,6 +36,11 @@ export const ConfigSchema = z.object({
     dataDir: z.string().min(1).default("./data"),
     mappingsFile: z.string().min(1).default("mappings.json"),
   }),
+  server: z.object({
+    host: z.string().min(1).default("127.0.0.1"),
+    port: z.number().int().positive().default(3000),
+    publicBaseUrl: z.string().url().default("http://127.0.0.1:3000/"),
+  }).default({}),
   whitelist: z.object({
     storePath: z.string().min(1).default("whitelist.json"),
   }).default({}),
@@ -78,6 +89,12 @@ export type AppConfig = {
       ignoreNonUserSenders: boolean;
       replyInThread: boolean;
     };
+    cardActions: {
+      enabled: boolean;
+      path: string;
+      verificationToken: string;
+      encryptKey: string;
+    };
   };
   opencode: {
     baseUrl: URL;
@@ -86,6 +103,11 @@ export type AppConfig = {
   storage: {
     dataDir: string;
     mappingsFile: string;
+  };
+  server: {
+    host: string;
+    port: number;
+    publicBaseUrl: URL;
   };
   whitelist: {
     storePath: string;

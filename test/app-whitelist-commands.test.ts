@@ -135,6 +135,12 @@ function baseConfig(): AppConfig {
         ignoreNonUserSenders: true,
         replyInThread: true,
       },
+      cardActions: {
+        enabled: false,
+        path: "/webhook/card",
+        verificationToken: "",
+        encryptKey: "",
+      },
     },
     opencode: {
       baseUrl: new URL("http://127.0.0.1:4096/"),
@@ -143,6 +149,11 @@ function baseConfig(): AppConfig {
     storage: {
       dataDir: process.cwd(),
       mappingsFile: "mappings.json",
+    },
+    server: {
+      host: "127.0.0.1",
+      port: 3000,
+      publicBaseUrl: new URL("http://127.0.0.1:3000/"),
     },
     whitelist: {
       storePath: "whitelist.json",

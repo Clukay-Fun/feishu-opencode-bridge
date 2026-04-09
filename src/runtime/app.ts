@@ -7,7 +7,9 @@ import { transitionTurn } from "../bridge/state-machine.js";
 import { TurnWatchdog } from "../bridge/watchdog.js";
 import type { BridgeTurn } from "../bridge/turn.js";
 import {
+  buildNoticeCardPayload,
   buildPostMarkdownPayload,
+  buildPermissionRequestCardPayload,
   buildLeaveCommandCardPayload,
   buildQueueNoticePayload,
   buildSessionListCardPayload,
@@ -17,6 +19,7 @@ import {
   buildWhoCommandCardPayload,
   type FeishuPostPayload,
   type OutputView,
+  toInteractiveCardContent,
   type ToolUpdateView,
   type TurnStatusCardView,
 } from "../feishu/formatter.js";
@@ -25,6 +28,7 @@ import {
   OpenCodeClient,
   type OpenCodeMessage,
   type OpenCodeProvidersResponse,
+  type PermissionPolicy,
   type OpenCodeSession,
   type OpenCodeSessionStatus,
 } from "../opencode/client.js";
@@ -81,12 +85,24 @@ type StreamFlushState = {
   timer: NodeJS.Timeout | null;
 };
 
+export type PermissionCardActionValue = {
+  kind: "permission";
+  conversationKey: string;
+  turnId: string;
+  sessionId: string;
+  permissionId: string;
+  policy: "once" | "always" | "deny";
+  nonce: string;
+};
+
 const initialCardSummary = "已创建会话，等待 OpenCode 事件...";
 const FIRST_SSE_FALLBACK_MS = 5_000;
 const STREAM_FLUSH_MIN_CHARS = 120;
 const STREAM_FLUSH_INTERVAL_MS = 750;
 const PERMISSION_TTL_MS = 120_000;
 const SESSION_SELECTION_TTL_MS = 30_000;
+
+type PermissionResolution = "once" | "always" | "deny" | "timeout";
 
 export class BridgeApp {
   private readonly queues: QueueRegistry;
@@ -100,6 +116,8 @@ export class BridgeApp {
   private readonly turnCards = new Map<string, TurnCardState>();
   private readonly streamFlushStates = new Map<string, StreamFlushState>();
   private readonly sessionStatuses = new Map<string, OpenCodeSessionStatus>();
+  private readonly permissionInteractions = new Map<string, PendingPermissionInteraction>();
+  private readonly permissionProcessing = new Set<string>();
   private globalEventUnsubscribe: (() => void) | null = null;
 
   constructor(
@@ -148,6 +166,86 @@ export class BridgeApp {
     this.pendingInteractionTimers.clear();
     this.streamFlushStates.clear();
     await this.eventStream.stop();
+  }
+
+  async handlePermissionCardAction(
+    actorOpenId: string,
+    openMessageId: string,
+    value: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    if (!isPermissionCardActionValue(value)) {
+      return this.toCardContent(buildNoticeCardPayload({
+        title: "信息提示",
+        template: "blue",
+        iconToken: "info_outlined",
+        message: "当前卡片动作无法识别。",
+        messageIconToken: "info_outlined",
+        messageIconColor: "blue",
+      }));
+    }
+
+    const interaction = this.permissionInteractions.get(value.nonce);
+    if (!interaction || !this.matchesPermissionAction(interaction, value, openMessageId)) {
+      return this.toCardContent(buildNoticeCardPayload({
+        title: "提醒",
+        template: "yellow",
+        iconToken: "maybe_outlined",
+        message: "权限请求已失效，请重新触发操作。",
+        messageIconToken: "maybe_outlined",
+        messageIconColor: "yellow",
+      }));
+    }
+
+    if (interaction.requesterOpenId !== actorOpenId) {
+      return this.toCardContent(buildNoticeCardPayload({
+        title: "提醒",
+        template: "yellow",
+        iconToken: "maybe_outlined",
+        message: "当前按钮仅限本轮发起者处理。",
+        messageIconToken: "maybe_outlined",
+        messageIconColor: "yellow",
+      }));
+    }
+
+    if (interaction.resolvedAt && interaction.resolution) {
+      return this.toCardContent(this.buildPermissionResolutionPayload(interaction.resolution));
+    }
+
+    if (interaction.expiresAt <= Date.now()) {
+      await this.expirePermissionInteraction(interaction, false);
+      return this.toCardContent(this.buildPermissionResolutionPayload("timeout"));
+    }
+
+    if (this.permissionProcessing.has(interaction.permissionVersion)) {
+      return this.toCardContent(buildNoticeCardPayload({
+        title: "信息提示",
+        template: "blue",
+        iconToken: "info_outlined",
+        message: "当前权限请求正在处理。",
+        messageIconToken: "info_outlined",
+        messageIconColor: "blue",
+      }));
+    }
+
+    try {
+      await this.resolvePermissionInteraction(interaction, value.policy);
+      return this.toCardContent(this.buildPermissionResolutionPayload(value.policy));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.log("bridge/permission", "card action failed", {
+        permissionId: interaction.permissionId,
+        nonce: interaction.permissionVersion,
+        detail,
+      }, "warn");
+      return this.toCardContent(buildNoticeCardPayload({
+        title: "错误",
+        template: "red",
+        iconToken: "more-close_outlined",
+        message: "权限请求处理失败，请稍后重试。",
+        messageIconToken: "more-close_outlined",
+        messageIconColor: "red",
+      }));
+    }
   }
 
   async handleIncomingMessage(message: IncomingChatMessage): Promise<void> {
@@ -327,6 +425,7 @@ export class BridgeApp {
         }
 
         try {
+          let nextWatchdogGapMs: number | null = null;
           await this.handleEvent(turn, event, {
             getAssistantMessageId: () => assistantMessageId,
             setAssistantMessageId: (value) => { assistantMessageId = value; },
@@ -342,8 +441,13 @@ export class BridgeApp {
             finish: settleWithText,
             fail: settleWithError,
             getFinalText: () => finalText,
+            snoozeWatchdog: (timeoutMs) => { nextWatchdogGapMs = timeoutMs; },
           });
-          watchdog.markEvent();
+          if (nextWatchdogGapMs !== null) {
+            watchdog.snoozeEventGap(nextWatchdogGapMs);
+          } else {
+            watchdog.markEvent();
+          }
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
           this.logger.log("opencode/events", "event listener failed", { chatId: turn.chatId, conversationKey, sessionId: turn.sessionId, detail, type: event.type }, "warn");
@@ -404,6 +508,7 @@ export class BridgeApp {
       finish: () => Promise<void>;
       fail: (error: Error) => void;
       getFinalText: () => string;
+      snoozeWatchdog: (timeoutMs: number) => void;
     },
   ): Promise<void> {
     if (event.type === "message.updated") {
@@ -477,27 +582,42 @@ export class BridgeApp {
       const permissionId = readOptionalString(event.properties, "id");
       const permissionName = readOptionalString(event.properties, "permission") ?? "unknown";
       if (!permissionId) return;
-      this.setPendingInteraction(turn.conversationKey, {
+      const interaction: PendingPermissionInteraction = {
         kind: "permission",
         chatId: turn.chatId,
+        conversationKey: turn.conversationKey,
         replyToMessageId: turn.inboundMessageId,
+        requesterOpenId: turn.senderOpenId,
         sessionId: turn.sessionId,
         permissionId,
         permissionName,
+        permissionMessageId: null,
+        permissionVersion: crypto.randomUUID(),
         turnId: turn.turnId,
         expiresAt: Date.now() + PERMISSION_TTL_MS,
-      });
+      };
+      this.permissionInteractions.set(interaction.permissionVersion, interaction);
+      this.setPendingInteraction(turn.conversationKey, interaction);
+      context.snoozeWatchdog(PERMISSION_TTL_MS + 5_000);
       await this.updateTurnCard(turn.turnId, {
         status: "等待确认",
-        update: `请求权限：${permissionName}，请回复 /allow once、/allow always 或 /deny`,
+        update: "当前权限请求待确认，可点击卡片按钮或发送文本命令处理",
         target: "step",
       });
-      await this.sendPayload(turn.chatId, buildPostMarkdownPayload(`OpenCode 请求权限 \`${escapeMarkdownText(permissionName)}\`，请回复 \`/allow once\`、\`/allow always\` 或 \`/deny\`。`), {
+      const permissionPayload = this.config.feishu.cardActions.enabled
+        ? buildPermissionRequestCardPayload({
+          permissionName,
+          buttons: this.buildPermissionActionButtons(interaction),
+          expiresInSeconds: Math.floor(PERMISSION_TTL_MS / 1000),
+        })
+        : buildPostMarkdownPayload(`OpenCode 请求权限 \`${escapeMarkdownText(permissionName)}\`，请回复 \`/allow once\`、\`/allow always\` 或 \`/deny\`。`);
+      const sent = await this.sendPayload(turn.chatId, permissionPayload, {
         event: "final message sent",
         transcriptType: "outbound-final",
         textPreview: `权限请求：${permissionName}`,
         len: permissionName.length + 16,
       }, { replyToMessageId: turn.inboundMessageId });
+      interaction.permissionMessageId = sent.messageId;
       return;
     }
 
@@ -756,16 +876,30 @@ export class BridgeApp {
     if (command.kind === "allow" || command.kind === "deny") {
       const pending = this.pendingInteractions.get(message.conversationKey);
       if (!pending || pending.kind !== "permission") {
-        await this.sendMarkdown(message.chatId, "当前没有待确认的权限请求。", message.messageId);
+        await this.sendPayload(message.chatId, buildNoticeCardPayload({
+          title: "信息提示",
+          template: "blue",
+          iconToken: "info_outlined",
+          message: "当前没有待确认的权限请求。",
+          messageIconToken: "info_outlined",
+          messageIconColor: "blue",
+        }), {
+          event: "final message sent",
+          transcriptType: "outbound-final",
+          textPreview: "当前没有待确认的权限请求。",
+          len: 13,
+        }, { replyToMessageId: message.messageId });
         return;
       }
 
-      const response = command.kind === "deny" ? "reject" : command.policy;
-      const remember = command.kind === "allow" && command.policy === "always";
-      await this.opencode.replyPermission(pending.sessionId, pending.permissionId, response, remember);
-      this.clearPendingInteraction(message.conversationKey, false);
-      await this.updateTurnCard(pending.turnId, { status: "处理中", update: `已处理权限请求：${pending.permissionName}`, target: "step" });
-      await this.sendMarkdown(message.chatId, command.kind === "deny" ? "已拒绝权限请求。" : "已确认权限请求。", message.messageId);
+      const resolution: PermissionResolution = command.kind === "deny" ? "deny" : command.policy;
+      await this.resolvePermissionInteraction(pending, resolution);
+      await this.sendPayload(message.chatId, this.buildPermissionResolutionPayload(resolution), {
+        event: "final message sent",
+        transcriptType: "outbound-final",
+        textPreview: resolution === "deny" ? "已拒绝权限请求。" : "已确认权限请求。",
+        len: 8,
+      }, { replyToMessageId: message.messageId });
       return;
     }
 
@@ -795,7 +929,19 @@ export class BridgeApp {
     }
 
     if (pending.kind === "permission") {
-      await this.sendMarkdown(message.chatId, "当前有待确认的权限请求，请先回复 `/allow once`、`/allow always` 或 `/deny`。", message.messageId);
+      await this.sendPayload(message.chatId, buildNoticeCardPayload({
+        title: "信息提示",
+        template: "blue",
+        iconToken: "info_outlined",
+        message: "当前有待确认的权限请求，请先点击卡片按钮或发送 `/allow once`、`/allow always`、`/deny`。",
+        messageIconToken: "info_outlined",
+        messageIconColor: "blue",
+      }), {
+        event: "final message sent",
+        transcriptType: "outbound-final",
+        textPreview: "当前有待确认的权限请求。",
+        len: 25,
+      }, { replyToMessageId: message.messageId });
       return true;
     }
 
@@ -1079,17 +1225,164 @@ export class BridgeApp {
       return;
     }
 
+    await this.expirePermissionInteraction(current, true);
+  }
+
+  private buildPermissionActionButtons(interaction: PendingPermissionInteraction): Array<{
+    label: string;
+    type: "default" | "primary" | "danger";
+    value: PermissionCardActionValue;
+  }> {
+    return [
+      {
+        label: "/allow once · 仅此一次",
+        type: "primary",
+        value: this.buildPermissionActionValue(interaction, "once"),
+      },
+      {
+        label: "/allow always · 始终允许",
+        type: "default",
+        value: this.buildPermissionActionValue(interaction, "always"),
+      },
+      {
+        label: "/deny · 拒绝",
+        type: "danger",
+        value: this.buildPermissionActionValue(interaction, "deny"),
+      },
+    ];
+  }
+
+  private buildPermissionActionValue(
+    interaction: PendingPermissionInteraction,
+    policy: PermissionCardActionValue["policy"],
+  ): PermissionCardActionValue {
+    return {
+      kind: "permission",
+      conversationKey: interaction.conversationKey,
+      turnId: interaction.turnId,
+      sessionId: interaction.sessionId,
+      permissionId: interaction.permissionId,
+      policy,
+      nonce: interaction.permissionVersion,
+    };
+  }
+
+  private matchesPermissionAction(
+    interaction: PendingPermissionInteraction,
+    value: PermissionCardActionValue,
+    openMessageId: string,
+  ): boolean {
+    return interaction.conversationKey === value.conversationKey
+      && interaction.permissionId === value.permissionId
+      && interaction.sessionId === value.sessionId
+      && interaction.turnId === value.turnId
+      && interaction.permissionVersion === value.nonce
+      && (!interaction.permissionMessageId || interaction.permissionMessageId === openMessageId);
+  }
+
+  private async resolvePermissionInteraction(
+    interaction: PendingPermissionInteraction,
+    resolution: PermissionResolution,
+  ): Promise<void> {
+    const remember = resolution === "always";
+    const response: PermissionPolicy = resolution === "deny" || resolution === "timeout" ? "reject" : resolution;
+    this.permissionProcessing.add(interaction.permissionVersion);
     try {
-      await this.opencode.replyPermission(current.sessionId, current.permissionId, "reject", false);
+      await this.opencode.replyPermission(interaction.sessionId, interaction.permissionId, response, remember);
+      interaction.resolvedAt = Date.now();
+      interaction.resolution = resolution;
+      this.permissionInteractions.set(interaction.permissionVersion, interaction);
+      this.clearPendingInteraction(interaction.conversationKey, false);
+      await this.updateTurnCard(interaction.turnId, {
+        status: "处理中",
+        update: resolution === "timeout"
+          ? "权限请求已超时，已默认拒绝"
+          : `已处理权限请求：${interaction.permissionName}`,
+        target: "step",
+      });
+    } finally {
+      this.permissionProcessing.delete(interaction.permissionVersion);
+    }
+  }
+
+  private async expirePermissionInteraction(
+    interaction: PendingPermissionInteraction,
+    notifyChat: boolean,
+  ): Promise<void> {
+    try {
+      await this.resolvePermissionInteraction(interaction, "timeout");
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      this.logger.log("bridge/permission", "auto deny failed", { chatId: current.chatId, conversationKey, permissionId: current.permissionId, detail }, "warn");
-    } finally {
-      this.clearPendingInteraction(conversationKey, false);
+      this.logger.log("bridge/permission", "auto deny failed", {
+        chatId: interaction.chatId,
+        permissionId: interaction.permissionId,
+        nonce: interaction.permissionVersion,
+        detail,
+      }, "warn");
+      interaction.resolvedAt = Date.now();
+      interaction.resolution = "timeout";
+      this.permissionInteractions.set(interaction.permissionVersion, interaction);
+      this.clearPendingInteraction(interaction.conversationKey, false);
     }
 
-    await this.updateTurnCard(current.turnId, { status: "处理中", update: "权限请求已超时，已默认拒绝", target: "step" });
-    await this.sendMarkdown(current.chatId, "权限请求已超时，已默认拒绝。", current.replyToMessageId);
+    if (!notifyChat) {
+      return;
+    }
+
+    await this.sendPayload(interaction.chatId, this.buildPermissionResolutionPayload("timeout"), {
+      event: "final message sent",
+      transcriptType: "outbound-final",
+      textPreview: "权限请求已超时，已默认拒绝。",
+      len: 13,
+    }, { replyToMessageId: interaction.replyToMessageId });
+  }
+
+  private buildPermissionResolutionPayload(resolution: PermissionResolution): FeishuPostPayload {
+    if (resolution === "once") {
+      return buildNoticeCardPayload({
+        title: "信息提示",
+        template: "green",
+        iconToken: "yes_outlined",
+        message: "当前权限请求已确认，可继续执行。",
+        messageIconToken: "yes_outlined",
+        messageIconColor: "green",
+      });
+    }
+
+    if (resolution === "always") {
+      return buildNoticeCardPayload({
+        title: "信息提示",
+        template: "green",
+        iconToken: "yes_outlined",
+        message: "当前权限请求已确认，后续同类权限将自动允许。",
+        messageIconToken: "yes_outlined",
+        messageIconColor: "green",
+      });
+    }
+
+    if (resolution === "timeout") {
+      return buildNoticeCardPayload({
+        title: "提醒",
+        template: "yellow",
+        iconToken: "maybe_outlined",
+        message: "权限请求已超时，已默认拒绝。",
+        messageIconToken: "maybe_outlined",
+        messageIconColor: "yellow",
+      });
+    }
+
+    return buildNoticeCardPayload({
+      title: "错误",
+      template: "red",
+      iconToken: "more-close_outlined",
+      message: "当前权限请求已拒绝。",
+      messageIconToken: "more-close_outlined",
+      messageIconColor: "red",
+    });
+  }
+
+  private toCardContent(payload: FeishuPostPayload): Record<string, unknown> {
+    return toInteractiveCardContent(payload);
   }
 
   private async createTurnCard(chatId: string, turnId: string, sessionId: string, replyToMessageId: string): Promise<TurnCardState | null> {
@@ -1272,6 +1565,16 @@ function buildSessionTitle(chatId: string, chatType: string | undefined, threadK
   }
 
   return threadKey ? `Feishu ${chatType} ${chatId} ${threadKey}` : `Feishu ${chatType} ${chatId}`;
+}
+
+function isPermissionCardActionValue(value: Record<string, unknown>): value is PermissionCardActionValue {
+  return value.kind === "permission"
+    && typeof value.conversationKey === "string"
+    && typeof value.turnId === "string"
+    && typeof value.sessionId === "string"
+    && typeof value.permissionId === "string"
+    && (value.policy === "once" || value.policy === "always" || value.policy === "deny")
+    && typeof value.nonce === "string";
 }
 
 function toQuestionRequest(properties: Record<string, unknown>, sessionId: string): { id: string; sessionId: string; questions: Array<{ header: string; question: string }> } | null {

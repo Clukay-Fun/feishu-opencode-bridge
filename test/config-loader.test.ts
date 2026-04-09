@@ -27,5 +27,7 @@ describe("loadConfig", () => {
     const config = await loadConfig(configPath);
 
     expect(config.whitelist.storePath).toBe(path.join(dir, "data", "whitelist.json"));
+    expect(config.server.publicBaseUrl.toString()).toBe("http://127.0.0.1:3000/");
+    expect(config.feishu.cardActions.path).toBe("/webhook/card");
   });
 });

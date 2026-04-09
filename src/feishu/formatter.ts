@@ -66,6 +66,27 @@ export type LeaveCommandCardView = {
   unbound: boolean;
 };
 
+export type NoticeCardView = {
+  title: string;
+  template: "blue" | "green" | "red" | "wathet" | "grey" | "orange" | "yellow" | "purple" | "indigo";
+  iconToken: string;
+  message: string;
+  messageIconToken?: string;
+  messageIconColor?: string;
+};
+
+export type PermissionActionButton = {
+  label: string;
+  type: "default" | "primary" | "danger";
+  value: Record<string, unknown>;
+};
+
+export type PermissionRequestCardView = {
+  permissionName: string;
+  buttons: PermissionActionButton[];
+  expiresInSeconds: number;
+};
+
 export function buildQueueNoticePayload(notice: QueueNotice): FeishuPostPayload {
   return buildPostMarkdownPayload(notice.message);
 }
@@ -217,6 +238,40 @@ export function buildLeaveCommandCardPayload(view: LeaveCommandCardView): Feishu
   });
 }
 
+export function buildNoticeCardPayload(view: NoticeCardView): FeishuPostPayload {
+  return buildInteractivePayload({
+    title: view.title,
+    template: view.template,
+    iconToken: view.iconToken,
+    bodyElements: [
+      buildNoticeBodyBlock(view.message, view.messageIconToken, view.messageIconColor),
+    ],
+  });
+}
+
+export function buildPermissionRequestCardPayload(view: PermissionRequestCardView): FeishuPostPayload {
+  return buildInteractivePayload({
+    title: "权限请求",
+    template: "purple",
+    iconToken: "lock_filled",
+    bodyElements: [
+      buildPermissionRequestBlock(view.permissionName),
+      buildDivider(),
+      buildPermissionActionBlock(view.buttons),
+      buildFooterTipBlock(
+        `发送 \`/allow once\`、\`/allow always\` 或 \`/deny\` 也可处理\n${view.expiresInSeconds}s 后自动拒绝`,
+        "alarm-clock_outlined",
+        "grey",
+        "notation",
+      ),
+    ],
+  });
+}
+
+export function toInteractiveCardContent(payload: FeishuPostPayload): Record<string, unknown> {
+  return JSON.parse(payload.content) as Record<string, unknown>;
+}
+
 function shortSessionId(sessionId: string): string {
   return sessionId.length <= 12 ? sessionId : sessionId.slice(0, 12);
 }
@@ -273,7 +328,7 @@ function buildTurnBodyElements(
 
 function buildInteractivePayload(options: {
   title: string;
-  template: "blue" | "green" | "red" | "wathet" | "grey";
+  template: "blue" | "green" | "red" | "wathet" | "grey" | "orange" | "yellow" | "purple" | "indigo";
   iconToken: string;
   bodyElements: Array<Record<string, unknown>>;
 }): FeishuPostPayload {
@@ -312,6 +367,130 @@ function buildInteractivePayload(options: {
         elements: options.bodyElements,
       },
     }),
+  };
+}
+
+function buildNoticeBodyBlock(
+  message: string,
+  iconToken = "info_outlined",
+  iconColor = "grey",
+): Record<string, unknown> {
+  return {
+    tag: "column_set",
+    horizontal_spacing: "8px",
+    horizontal_align: "left",
+    columns: [
+      {
+        tag: "column",
+        width: "auto",
+        elements: [
+          {
+            tag: "markdown",
+            content: message,
+            text_align: "left",
+            text_size: "normal_v2",
+            margin: "0px 0px 0px 0px",
+            icon: {
+              tag: "standard_icon",
+              token: iconToken,
+              color: iconColor,
+            },
+          },
+        ],
+        padding: "8px 8px 8px 8px",
+        direction: "vertical",
+        horizontal_spacing: "8px",
+        vertical_spacing: "8px",
+        horizontal_align: "left",
+        vertical_align: "top",
+        margin: "0px 0px 0px 0px",
+      },
+    ],
+    margin: "0px 0px 0px 0px",
+  };
+}
+
+function buildPermissionRequestBlock(permissionName: string): Record<string, unknown> {
+  return {
+    tag: "column_set",
+    horizontal_spacing: "8px",
+    horizontal_align: "left",
+    columns: [
+      {
+        tag: "column",
+        width: "weighted",
+        elements: [
+          {
+            tag: "markdown",
+            content: "OpenCode 想执行：",
+            text_align: "left",
+            text_size: "normal_v2",
+            margin: "0px 0px 0px 0px",
+          },
+          {
+            tag: "column_set",
+            horizontal_spacing: "8px",
+            horizontal_align: "left",
+            columns: [
+              {
+                tag: "column",
+                width: "weighted",
+                elements: [
+                  {
+                    tag: "markdown",
+                    content: `\`\`\`\n${escapeText(permissionName)}\n\`\`\``,
+                    text_align: "left",
+                    text_size: "normal_v2",
+                    margin: "0px 0px 0px 0px",
+                  },
+                ],
+                vertical_align: "top",
+                weight: 1,
+              },
+            ],
+            margin: "0px 0px 0px 0px",
+          },
+        ],
+        padding: "8px 8px 8px 8px",
+        direction: "vertical",
+        horizontal_spacing: "8px",
+        vertical_spacing: "8px",
+        horizontal_align: "left",
+        vertical_align: "top",
+        margin: "0px 0px 0px 0px",
+        weight: 1,
+      },
+    ],
+    margin: "0px 0px 0px 0px",
+  };
+}
+
+function buildPermissionActionBlock(buttons: PermissionActionButton[]): Record<string, unknown> {
+  return {
+    tag: "column_set",
+    flex_mode: "stretch",
+    horizontal_spacing: "8px",
+    horizontal_align: "left",
+    columns: buttons.map((button) => ({
+      tag: "column",
+      width: "auto",
+      elements: [
+        {
+          tag: "button",
+          text: {
+            tag: "plain_text",
+            content: button.label,
+          },
+          type: button.type,
+          width: button.type === "primary" ? "fill" : "default",
+          size: "medium",
+          margin: "0px 0px 0px 0px",
+          value: button.value,
+        },
+      ],
+      vertical_align: "top",
+    })),
+    margin: "0px 0px 0px 0px",
   };
 }
 

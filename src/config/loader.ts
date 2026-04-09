@@ -33,6 +33,12 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
         ignoreNonUserSenders: parsed.feishu.behavior.ignoreNonUserSenders,
         replyInThread: parsed.feishu.behavior.replyInThread,
       },
+      cardActions: {
+        enabled: parsed.feishu.cardActions.enabled,
+        path: normalizeRoutePath(parsed.feishu.cardActions.path),
+        verificationToken: parsed.feishu.cardActions.verificationToken,
+        encryptKey: parsed.feishu.cardActions.encryptKey,
+      },
     },
     opencode: {
       baseUrl: new URL(parsed.opencode.baseUrl),
@@ -41,6 +47,11 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
     storage: {
       dataDir,
       mappingsFile: parsed.storage.mappingsFile,
+    },
+    server: {
+      host: parsed.server.host,
+      port: parsed.server.port,
+      publicBaseUrl: new URL(parsed.server.publicBaseUrl),
     },
     whitelist: {
       storePath: resolveRelative(dataDir, parsed.whitelist.storePath),
@@ -72,6 +83,10 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
 
 function resolveRelative(baseDir: string, value: string): string {
   return path.isAbsolute(value) ? value : path.resolve(baseDir, value);
+}
+
+function normalizeRoutePath(value: string): string {
+  return value.startsWith("/") ? value : `/${value}`;
 }
 
 function mergeBotOpenIds(botOpenId: string | undefined, botOpenIds: string[]): Set<string> {

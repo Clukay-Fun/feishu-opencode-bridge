@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildNoticeCardPayload,
   buildLeaveCommandCardPayload,
   buildPostMarkdownPayload,
   buildPostPayload,
+  buildPermissionRequestCardPayload,
   buildSessionListCardPayload,
   buildSessionTransitionCardPayload,
   buildStatusCommandCardPayload,
@@ -149,5 +151,62 @@ describe("buildPostPayload", () => {
     const content = JSON.parse(payload.content) as any;
     expect(content.header.title.content).toBe("无需解除绑定");
     expect(content.body.elements[0].columns[0].elements[0].content).toContain("尚未绑定");
+  });
+
+  it("renders a notice card", () => {
+    const payload = buildNoticeCardPayload({
+      title: "提醒",
+      template: "yellow",
+      iconToken: "maybe_outlined",
+      message: "会话列表已过期，请重新发送 `/sessions`",
+      messageIconToken: "maybe_outlined",
+      messageIconColor: "yellow",
+    });
+    const content = JSON.parse(payload.content) as any;
+    expect(content.header.title.content).toBe("提醒");
+    expect(content.header.template).toBe("yellow");
+    expect(content.body.elements[0].columns[0].elements[0].content).toContain("`/sessions`");
+  });
+
+  it("renders a permission request card with action buttons", () => {
+    const payload = buildPermissionRequestCardPayload({
+      permissionName: "rm -rf dist/",
+      expiresInSeconds: 120,
+      buttons: [
+        {
+          label: "/allow once · 仅此一次",
+          type: "primary",
+          value: {
+            kind: "permission",
+            conversationKey: "oc_chat_1",
+            turnId: "turn_1",
+            sessionId: "ses_1",
+            permissionId: "perm_1",
+            policy: "once",
+            nonce: "nonce_1",
+          },
+        },
+        {
+          label: "/deny · 拒绝",
+          type: "danger",
+          value: {
+            kind: "permission",
+            conversationKey: "oc_chat_1",
+            turnId: "turn_1",
+            sessionId: "ses_1",
+            permissionId: "perm_1",
+            policy: "deny",
+            nonce: "nonce_1",
+          },
+        },
+      ],
+    });
+    const content = JSON.parse(payload.content) as any;
+    expect(content.header.title.content).toBe("权限请求");
+    expect(content.header.template).toBe("purple");
+    expect(content.body.elements[0].columns[0].elements[1].columns[0].elements[0].content).toContain("rm -rf dist/");
+    expect(content.body.elements[2].columns[0].elements[0].text.content).toBe("/allow once · 仅此一次");
+    expect(content.body.elements[2].columns[1].elements[0].value.policy).toBe("deny");
+    expect(content.body.elements[3].columns[0].elements[0].content).toContain("120s 后自动拒绝");
   });
 });

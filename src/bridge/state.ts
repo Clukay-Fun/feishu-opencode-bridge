@@ -8,12 +8,18 @@ export type PendingQuestionInteraction = {
 export type PendingPermissionInteraction = {
   kind: "permission";
   chatId: string;
+  conversationKey: string;
   replyToMessageId: string;
+  requesterOpenId: string;
   sessionId: string;
   permissionId: string;
   permissionName: string;
+  permissionMessageId: string | null;
+  permissionVersion: string;
   turnId: string;
   expiresAt: number;
+  resolvedAt?: number | undefined;
+  resolution?: "once" | "always" | "deny" | "timeout" | undefined;
 };
 
 export type PendingSessionSelectionInteraction = {

@@ -1,175 +1,81 @@
 # Feishu OpenCode Bridge
 
-Feishu OpenCode Bridge 是一个独立运行的 TypeScript 服务，用来把飞书消息桥接到本地 OpenCode Server API。
+[![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6)](https://www.typescriptlang.org/)
+[![Feishu](https://img.shields.io/badge/Feishu-Bridge-0F6FFF)](https://open.feishu.cn/)
 
-它会通过飞书 WebSocket 订阅消息事件，把每个对话映射到一个 OpenCode session，把用户消息转发给 `opencode serve`，再通过 OpenCode 的 SSE 事件流拿到回复，并回写到飞书。
+Feishu OpenCode Bridge 是一个把 OpenCode 运行时产品化到飞书里的桥接层。
+
+它把飞书聊天窗口变成有会话、有过程卡片、有权限确认、有群聊协作边界的 OpenCode 入口，而不是一个普通的聊天机器人。
+
+## 为什么它不是普通机器人
+
+这个项目的目标不是“在飞书里接一个 LLM 问答机器人”。
+
+它更像一个 Feishu-native 的 OpenCode runtime adapter：
+
+- 在 `p2p`、`group`、`topic_group` 里维护窗口级 session
+- 把 `/new`、`/status`、`/sessions`、`/switch` 这类运行时控制留在 bridge 侧
+- 用 Process Card 持续更新任务处理过程
+- 用真实权限按钮处理危险操作确认
+- 用群级白名单绑定保证协作流畅，而不是每句都重复 `@bot`
 
 ## 功能特性
 
-- 支持飞书 `p2p`、`group`、`topic_group` 三类会话
-- 按窗口维护 OpenCode session registry，并支持 `single` / `multi` 两种会话模式
-- 群聊按线程隔离上下文
-- 支持 OpenCode `prompt_async`、命令转发、中止、状态、模型、权限请求、session 切换
-- 使用飞书交互卡片承载过程消息，并持续更新同一条回复
-- 群聊 `@` 规则支持通过配置控制严格或宽松模式
-- 支持多个机器人身份，以及“触发身份”和“自身身份”分离
-- 支持按群维度的白名单绑定，首次 `@ bot` 后可免 `@` 继续对话
-- 按 `message_id` 去重飞书重复投递
-- 通过 LRU 持久化保存飞书对话到 OpenCode session 的绑定关系
-- 支持使用 `OPENCODE_SERVER_PASSWORD` 访问带鉴权的 OpenCode 服务
+- Process Card 持续原位更新任务过程
+- Command Card 承载会话管理和群聊绑定结果
+- 真按钮权限流，并保留文本命令 fallback
+- 群聊白名单绑定，支持 `/who` 与 `/leave`
+- 按窗口类型配置 `single` / `multi` 会话模式
+- 未被 bridge 接管的 slash 命令透传给 OpenCode
+- 启动前 preflight，提前检查鉴权、OpenCode 健康、provider、回调配置
+- 基于 JSON 的会话映射和群聊绑定持久化
+- 飞书输出规范集中维护在 [docs/feishu-markdown.md](/Users/clukay/Program/feishu-opencode-bridge/docs/feishu-markdown.md)
+
+## 架构图
+
+```mermaid
+flowchart LR
+    A["飞书 WebSocket 事件"] --> B["Bridge Runtime"]
+    B --> C["OpenCode Server API"]
+    C --> D["OpenCode Event Stream"]
+    D --> B
+    B --> E["飞书 Process / Command / Notice Cards"]
+    F["飞书卡片 Action 回调"] --> B
+    G["白名单与 Session 映射存储"] --> B
+```
+
+## 演示脚本
+
+固定演示脚本见 [docs/demo-script.md](/Users/clukay/Program/feishu-opencode-bridge/docs/demo-script.md)。
+
+包含四条固定链路：
+
+1. 私聊开发助手
+2. 群聊协作
+3. 权限按钮流
+4. `lark-cli` 联动
 
 ## 输出规范
 
-- 飞书输出 Markdown 规范见 `docs/feishu-markdown.md`
-- `Plain Post` 只用于 passthrough 文本输出、极短确认语、以及卡片发送失败时的降级兜底
-- bridge 自有命令、结构化列表、系统提示应优先使用卡片，而不是 `Plain Post`
-
-## 架构概览
-
-主流程如下：
-
-1. 飞书通过 WebSocket 推送 `im.message.receive_v1`
-2. bridge 归一化消息，执行群聊 `@` 匹配规则，并生成 `conversationKey`
-3. runtime 为该对话解析或创建 OpenCode session
-4. 通过 `POST /session/:id/prompt_async` 发起请求
-5. OpenCode SSE 事件流（`/event`，失败时回退 `/global/event`）持续推送回复
-6. bridge 持续更新飞书 reply 卡片，直到本轮完成
-
-主要模块：
-
-- `src/feishu/`
-  飞书 API、卡片格式化、WebSocket 入站归一化
-- `src/opencode/`
-  OpenCode HTTP client 与 SSE event stream
-- `src/runtime/`
-  运行时编排、队列、卡片、session 绑定、事件处理
-- `src/store/`
-  基于 JSON 的持久化存储
-- `src/bridge/`
-  队列、路由、pending interaction、watchdog
+- Markdown 规则： [docs/feishu-markdown.md](/Users/clukay/Program/feishu-opencode-bridge/docs/feishu-markdown.md)
+- `Plain Post` 只用于 passthrough 文本输出、极短确认语和卡片降级兜底
+- bridge 自有命令、结构化列表、系统提示优先用卡片
 
 ## 环境要求
 
 - Node.js 20+
 - 已开启机器人能力的飞书应用
-- 本地已运行的 OpenCode 服务：
+- 正在运行的 OpenCode 服务
+- 若要启用真按钮权限流，需要一个公开 HTTPS 回调地址
 
-```bash
-opencode serve
-```
+## 快速开始
 
-## 安装
+安装依赖：
 
 ```bash
 npm install
 ```
-
-## 配置
-
-参考 `config.example.json`，创建你自己的 `config.json`：
-
-```json
-{
-  "feishu": {
-    "appId": "cli_xxx",
-    "appSecret": "xxx",
-    "botOpenId": "ou_xxx",
-    "botOpenIds": ["ou_xxx", "ou_yyy"],
-    "botMentionNames": ["opencode", "open code"],
-    "selfBotOpenId": "ou_xxx",
-    "selfBotOpenIds": ["ou_xxx"],
-    "wsUrl": "wss://open.feishu.cn/open-apis/ws/v2",
-    "allowedOpenIds": [],
-    "behavior": {
-      "enableP2p": true,
-      "enableGroup": true,
-      "requireBotMentionInGroup": true,
-      "strictBotMention": true,
-      "ignoreNonUserSenders": true,
-      "replyInThread": true
-    }
-  },
-  "opencode": {
-    "baseUrl": "http://127.0.0.1:4096/",
-    "directory": "/absolute/path/to/project"
-  },
-  "storage": {
-    "dataDir": "./data",
-    "mappingsFile": "mappings.json"
-  },
-  "whitelist": {
-    "storePath": "whitelist.json"
-  },
-  "bridge": {
-    "queueLimit": 3,
-    "sessions": {
-      "p2pMode": "multi",
-      "groupMode": "single",
-      "topicGroupMode": "single",
-      "maxSessionsPerWindow": 20,
-      "listLimit": 10,
-      "injectSystemState": true
-    },
-    "timeouts": {
-      "firstEvent": 30000,
-      "eventInterval": 120000,
-      "totalTurn": 300000
-    }
-  },
-  "logging": {
-    "dir": "./logs",
-    "level": "info",
-    "enableTranscript": true,
-    "enableConsole": true,
-    "enableColor": true,
-    "rotateDaily": true
-  }
-}
-```
-
-### 飞书配置说明
-
-- `botOpenId`
-  兼容旧配置的单个机器人身份字段
-- `botOpenIds`
-  群聊里会触发当前 bridge 的全部机器人身份
-- `botMentionNames`
-  当飞书 mention id 不稳定时，可额外用展示名作为回退匹配
-- `selfBotOpenId` / `selfBotOpenIds`
-  当前 bridge 自己的机器人身份，用于忽略自身发出的消息，避免回环
-- `allowedOpenIds`
-  可选白名单，非空时只有这些用户能和 bridge 对话
-
-### 群聊 `@` 行为
-
-当 `requireBotMentionInGroup=true` 时，群聊消息只有命中机器人匹配规则才会处理。
-
-当 `strictBotMention=true` 时，只接受明确命中已配置机器人身份的消息。
-
-### 群聊白名单绑定
-
-- 在 `group` 和 `topic_group` 中，用户首次发送普通消息并 `@ bot` 后，会写入当前群的白名单。
-- 绑定后，同一 `chat_id` 下的群主窗口和话题窗口都可以免 `@` 继续对话。
-- `/leave` 用于解除当前用户在该群里的绑定。
-- `/who` 会显示当前群绑定人数，以及你自己是否已绑定。
-
-### 会话模式
-
-- `p2pMode`、`groupMode`、`topicGroupMode` 用来控制窗口采用 `single` 还是 `multi` 模式。
-- `single` 模式下，窗口内始终只有 1 个 active session。`/new` 会替换它，`/switch` 和 `/sessions <编号>` 会被拒绝。
-- `multi` 模式下，窗口内可保留多个 session，可通过 `/sessions` 查看，并用 `/switch <编号>` 或 `/sessions <编号>` 切换。
-- `injectSystemState=true` 会把 bridge 的窗口和会话状态写进 OpenCode 的 `system` 字段，不污染用户正文。
-
-## OpenCode 鉴权
-
-如果 OpenCode Server 启用了鉴权，可以设置：
-
-```bash
-export OPENCODE_SERVER_PASSWORD=your-password
-export OPENCODE_SERVER_USERNAME=opencode
-```
-
-## 开发启动
 
 先启动 OpenCode：
 
@@ -183,60 +89,134 @@ opencode serve
 npm run dev
 ```
 
-常用命令：
+## 配置
 
-```bash
-npm run typecheck
-npm test
-npm run lint
-npm run dev:once
+以 [config.example.json](/Users/clukay/Program/feishu-opencode-bridge/config.example.json) 为基线创建 `config.json`。
+
+重点配置块：
+
+- `feishu`
+  飞书应用、行为开关、卡片 action 安全参数
+- `opencode`
+  OpenCode 地址与目标工作目录
+- `server`
+  本地 HTTP 监听地址与公网回调 base URL
+- `storage`
+  JSON 持久化目录
+- `bridge`
+  队列、会话模式、超时参数
+
+### 真按钮权限流配置
+
+```json
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 3000,
+    "publicBaseUrl": "https://bridge.example.com/"
+  },
+  "feishu": {
+    "cardActions": {
+      "enabled": true,
+      "path": "/webhook/card",
+      "verificationToken": "your-token",
+      "encryptKey": ""
+    }
+  }
+}
 ```
 
+如果飞书开启了加密推送，需要同时配置 `encryptKey`。
+
 ## 支持的命令
+
+bridge 自己接管的命令：
 
 - `/new`
 - `/status`
 - `/abort`
 - `/models`
-- `/leave`
-- `/who`
 - `/sessions`
-- `/switch <编号>`
 - `/sessions <编号>`
+- `/switch <编号>`
+- `/who`
+- `/leave`
 - `/allow once`
 - `/allow always`
 - `/deny`
-- 其他斜杠命令会透传到 OpenCode command 接口
 
-## 日志与排查
+其他 slash 命令会透传给 OpenCode。
 
-日志写入 `logs/` 目录。
+这意味着像下面这类 OpenCode 原生命令：
 
-重点日志：
+- `/model use ...`
+- `/review`
+- `/init`
 
-- `feishu/ws message received`
-  说明 bridge 已成功接收并归一化消息
-- `feishu/ws message skipped`
-  说明事件到了，但被过滤掉了
-- `feishu/ws duplicate message skipped`
-  说明飞书重复投递了同一个 `message_id`
-- `opencode/events event stream connected`
-  说明 OpenCode SSE 正常连接
-- `bridge/queue turn started`
-  说明本轮开始处理
+只要你的 OpenCode runtime 支持，仍然可以通过 passthrough 工作。
 
-如果群聊 `@` 没触发，建议按这个顺序看：
+## 启动前 Preflight
 
-1. 是否出现 `feishu/ws message skipped`
-2. 日志里的 `mentionIds` 是否和配置里的 `botOpenIds` 一致
-3. 飞书应用是否具备群消息相关权限，机器人是否真的在目标群里
+bridge 启动时会检查：
 
-## 当前限制
+- 数据目录与日志目录可写
+- Feishu tenant token 可获取
+- OpenCode 健康检查通过
+- OpenCode 当前 worktree 与 bridge 配置一致
+- provider 列表可访问
+- 开启按钮模式时，卡片回调配置完整
 
-- 依赖本地已运行的 `opencode serve`
-- 飞书可能重复投递同一个 `message_id`，当前只做内存级去重，进程重启后不保留
-- 机器人和机器人之间能否互相触发，最终仍受飞书平台是否投递相关事件限制
+只要其中一项失败，bridge 就会直接退出，不会进入半启动状态。
 
-## License
+## 部署
 
-当前仓库还没有单独的 license 文件。
+单机部署说明见 [docs/deploy.md](/Users/clukay/Program/feishu-opencode-bridge/docs/deploy.md)。
+
+仓库内已提供：
+
+- [ops/Caddyfile](/Users/clukay/Program/feishu-opencode-bridge/ops/Caddyfile)
+- [.env.example](/Users/clukay/Program/feishu-opencode-bridge/.env.example)
+
+健康检查：
+
+```text
+GET /healthz
+```
+
+卡片 action 默认回调路径：
+
+```text
+/webhook/card
+```
+
+## 开发命令
+
+```bash
+npm run typecheck
+npm test
+npm run lint
+npm run dev
+npm run dev:once
+```
+
+## 目录结构
+
+- `src/bridge/`
+  队列、路由、pending interaction、watchdog
+- `src/config/`
+  配置 schema 与 loader
+- `src/feishu/`
+  API、formatter、WebSocket 入站
+- `src/http/`
+  callback server 与健康检查
+- `src/opencode/`
+  OpenCode HTTP client 与 event stream
+- `src/runtime/`
+  bridge 编排与启动前 preflight
+- `src/store/`
+  JSON 持久化存储
+
+## 当前定位
+
+- 当前目标是“可公开演示、可提交”的版本，不是团队生产版
+- 若后续重新引入任何原生依赖，Linux x64 真机验证仍然是发布前门禁
