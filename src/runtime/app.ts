@@ -26,6 +26,7 @@ import {
   type TurnStatusCardView,
 } from "../feishu/formatter.js";
 import { createTextPreview, type Logger, type TranscriptType } from "../logging/logger.js";
+import { MemoryService } from "../memory/index.js";
 import {
   OpenCodeClient,
   type OpenCodeMessage,
@@ -122,6 +123,7 @@ export class BridgeApp {
   private readonly sessionStatuses = new Map<string, OpenCodeSessionStatus>();
   private readonly permissionInteractions = new Map<string, PendingPermissionInteraction>();
   private readonly permissionProcessing = new Set<string>();
+  private readonly memory: MemoryService | null;
   private globalEventUnsubscribe: (() => void) | null = null;
 
   constructor(
@@ -134,6 +136,7 @@ export class BridgeApp {
     this.mappings = new MappingStore(config.storage.dataDir, config.storage.mappingsFile, 200, logger);
     this.opencode = new OpenCodeClient(config.opencode.baseUrl);
     this.eventStream = new OpenCodeEventStream(config.opencode.baseUrl, logger);
+    this.memory = config.memory.enabled ? new MemoryService(config.memory, this.opencode, logger) : null;
   }
 
   async start(): Promise<void> {
@@ -144,6 +147,7 @@ export class BridgeApp {
       throw new Error(`opencode serve 当前在 ${project.worktree}，bridge 配置的是 ${this.config.opencode.directory}，请在正确目录重启 opencode serve`);
     }
     await this.syncStoredSessionLabels();
+    await this.memory?.start();
 
     await this.eventStream.start();
     this.globalEventUnsubscribe = this.eventStream.subscribe(async (event) => {
@@ -169,6 +173,7 @@ export class BridgeApp {
     }
     this.pendingInteractionTimers.clear();
     this.streamFlushStates.clear();
+    await this.memory?.stop();
     await this.eventStream.stop();
   }
 
@@ -402,6 +407,9 @@ export class BridgeApp {
       this.logger.log("opencode/events", "reply completed", { turnId: turn.turnId, sessionId, len: reply.length });
       this.logger.logTranscript("opencode-reply", { sessionId, turnId: turn.turnId }, reply);
       await this.maybeUpdateSessionLabel(turn as BridgeTurn & { sessionId: string });
+      if (reply) {
+        this.memory?.enqueueLearn(turn.senderOpenId, turn.plainText, reply);
+      }
       await this.flushStreamUpdate(turn.turnId, reply, true);
       await this.updateTurnCard(turn.turnId, { status: "已完成", update: `最终回复已生成（${reply.length} 字）`, target: "step" });
       queue.replaceActive(transitionTurn({ ...turn, sessionId }, "done"));
@@ -423,6 +431,13 @@ export class BridgeApp {
     const baselineAssistantId = baselineAssistant?.info.id ?? null;
     const baselineAssistantTimestamp = getMessageTimestamp(baselineAssistant);
     const queue = this.queues.get(conversationKey);
+    const bridgeSystemPrompt = this.config.bridge.injectSystemState
+      ? buildBridgeSystemPrompt(turn, this.getSessionWindow(turn.conversationKey, turn.chatType))
+      : undefined;
+    const memoryRecall = this.memory
+      ? await this.memory.buildRecallBlock(turn.senderOpenId, turn.plainText)
+      : "";
+    const systemPrompt = composeSystemPrompt(bridgeSystemPrompt, memoryRecall);
 
     return new Promise<string>((resolve, reject) => {
       let assistantMessageId: string | null = null;
@@ -511,9 +526,6 @@ export class BridgeApp {
       );
 
       watchdog.start();
-      const systemPrompt = this.config.bridge.injectSystemState
-        ? buildBridgeSystemPrompt(turn, this.getSessionWindow(turn.conversationKey, turn.chatType))
-        : undefined;
       void this.opencode.promptAsync(turn.sessionId, buildPromptRequest(turn.text, systemPrompt))
         .then(() => {
           queue.replaceActive(transitionTurn(turn, "awaiting-sse"));
@@ -2006,12 +2018,16 @@ export class BridgeApp {
     value: PermissionCardActionValue,
     openMessageId: string,
   ): boolean {
+    const matchesMessageId = !openMessageId
+      || !interaction.permissionMessageId
+      || interaction.permissionMessageId === openMessageId;
+
     return interaction.conversationKey === value.conversationKey
       && interaction.permissionId === value.permissionId
       && interaction.sessionId === value.sessionId
       && interaction.turnId === value.turnId
       && interaction.permissionVersion === value.nonce
-      && (!openMessageId || !interaction.permissionMessageId || interaction.permissionMessageId === openMessageId);
+      && matchesMessageId;
   }
 
   private async resolvePermissionInteraction(
@@ -2283,6 +2299,16 @@ export function buildPromptRequest(text: string, system?: string): { system?: st
     : {
       parts: [{ type: "text", text }],
     };
+}
+
+export function composeSystemPrompt(...sections: Array<string | undefined>): string | undefined {
+  const normalized = sections
+    .map((section) => section?.trim())
+    .filter((section): section is string => Boolean(section));
+  if (normalized.length === 0) {
+    return undefined;
+  }
+  return normalized.join("\n\n");
 }
 
 export function toOpencodePromptText(message: Pick<IncomingChatMessage, "chatType" | "senderOpenId" | "plainText">): string {

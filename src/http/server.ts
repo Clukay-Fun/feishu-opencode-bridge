@@ -45,6 +45,10 @@ export type BridgeHttpServer = {
   close(): Promise<void>;
 };
 
+type CardActionEvent = {
+  action?: { value?: Record<string, unknown> };
+} & Record<string, unknown>;
+
 export async function startBridgeHttpServer(
   config: AppConfig,
   actions: CardActionPort,
@@ -53,13 +57,7 @@ export async function startBridgeHttpServer(
   const lark = (await import("@larksuiteoapi/node-sdk") as unknown) as {
     CardActionHandler: new (
       params: Record<string, string>,
-      handler: (event: {
-        open_id?: string;
-        open_message_id?: string;
-        operator?: { open_id?: string };
-        context?: { open_message_id?: string };
-        action?: { value?: Record<string, unknown> };
-      }) => Promise<Record<string, unknown>>,
+      handler: (event: CardActionEvent) => Promise<Record<string, unknown>>,
     ) => unknown;
     adaptDefault: (
       path: string,
@@ -81,13 +79,21 @@ export async function startBridgeHttpServer(
             : {}),
         },
         async (event) => {
-          logger.log("http/card-action", "callback event parsed", {
-            event,
+          const actorOpenId = extractActorOpenId(event);
+          const openMessageId = extractOpenMessageId(event);
+          const actionValue = event.action?.value ?? {};
+
+          logger.log("http/server", "callback event parsed", {
+            actorOpenId,
+            openMessageId,
+            actionValueKind: typeof actionValue.kind === "string" ? actionValue.kind : "",
+            ...flattenScalarFields("callback", event),
           });
+
           return actions.handlePermissionCardAction(
-            extractActorOpenId(event),
-            extractOpenMessageId(event),
-            event.action?.value ?? {},
+            actorOpenId,
+            openMessageId,
+            actionValue,
           );
         },
       ),
@@ -148,4 +154,36 @@ export async function startBridgeHttpServer(
       });
     },
   };
+}
+
+function flattenScalarFields(prefix: string, value: unknown): Record<string, string | number | boolean | null> {
+  const fields: Record<string, string | number | boolean | null> = {};
+  collectScalarFields(fields, prefix, value);
+  return fields;
+}
+
+function collectScalarFields(
+  fields: Record<string, string | number | boolean | null>,
+  path: string,
+  value: unknown,
+): void {
+  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    fields[path] = value;
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => {
+      collectScalarFields(fields, `${path}.${index}`, item);
+    });
+    return;
+  }
+
+  if (!value || typeof value !== "object") {
+    return;
+  }
+
+  for (const [key, nestedValue] of Object.entries(value)) {
+    collectScalarFields(fields, `${path}.${key}`, nestedValue);
+  }
 }

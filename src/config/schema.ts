@@ -1,6 +1,47 @@
 import { z } from "zod";
 
 const SessionModeSchema = z.enum(["single", "multi"]);
+const MemoryRetrieverSchema = z.enum(["recent", "embedding"]);
+const EmbeddingProviderSchema = z.object({
+  baseUrl: z.string().url(),
+  apiKey: z.string().min(1),
+  model: z.string().min(1),
+});
+const ObsidianConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  vaultPath: z.string().min(1).optional(),
+  syncCron: z.string().min(1).default("0 2 * * *"),
+  enableWikiLinks: z.boolean().default(false),
+}).default({});
+const MemoryConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  dbPath: z.string().min(1).optional(),
+  maxMemoriesPerUser: z.number().int().positive().default(500),
+  searchLimit: z.number().int().positive().default(5),
+  extractQueueLimit: z.number().int().positive().default(100),
+  sourcePreviewLength: z.number().int().positive().default(50),
+  shutdownDrainTimeoutMs: z.number().int().positive().default(5_000),
+  retriever: MemoryRetrieverSchema.default("recent"),
+  embeddingProvider: EmbeddingProviderSchema.optional(),
+  embeddingSimilarityThreshold: z.number().positive().max(1).default(0.75),
+  obsidian: ObsidianConfigSchema,
+}).superRefine((value, context) => {
+  if (value.retriever === "embedding" && !value.embeddingProvider) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["embeddingProvider"],
+      message: "retriever=embedding 时必须提供 embeddingProvider",
+    });
+  }
+
+  if (value.obsidian.enabled && !value.obsidian.vaultPath) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["obsidian", "vaultPath"],
+      message: "obsidian.enabled=true 时必须提供 vaultPath",
+    });
+  }
+});
 
 export const ConfigSchema = z.object({
   feishu: z.object({
@@ -68,6 +109,7 @@ export const ConfigSchema = z.object({
     enableColor: z.boolean().default(true),
     rotateDaily: z.boolean().default(true),
   }).default({}),
+  memory: MemoryConfigSchema.default({}),
 });
 
 export type AppConfig = {
@@ -133,5 +175,27 @@ export type AppConfig = {
     enableConsole: boolean;
     enableColor: boolean;
     rotateDaily: boolean;
+  };
+  memory: {
+    enabled: boolean;
+    dbPath: string;
+    maxMemoriesPerUser: number;
+    searchLimit: number;
+    extractQueueLimit: number;
+    sourcePreviewLength: number;
+    shutdownDrainTimeoutMs: number;
+    retriever: "recent" | "embedding";
+    embeddingProvider?: {
+      baseUrl: URL;
+      apiKey: string;
+      model: string;
+    } | undefined;
+    embeddingSimilarityThreshold: number;
+    obsidian: {
+      enabled: boolean;
+      vaultPath?: string | undefined;
+      syncCron: string;
+      enableWikiLinks: boolean;
+    };
   };
 };

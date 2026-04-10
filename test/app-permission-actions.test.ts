@@ -118,7 +118,7 @@ describe("BridgeApp permission card actions", () => {
     expect(JSON.stringify(card)).toContain("当前权限请求已拒绝");
   });
 
-  it("allows matching permission actions when callback omits open_message_id", async () => {
+  it("accepts a valid card action when Feishu omits open_message_id", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
     const replyPermission = vi.fn(async () => true);
@@ -163,7 +163,6 @@ describe("BridgeApp permission card actions", () => {
     expect(JSON.stringify(card)).toContain("当前权限请求已确认，可继续执行");
     expect(getReplyPayloads(outbound)).toHaveLength(0);
   });
-
   it("keeps text /allow once fallback working", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
@@ -310,6 +309,24 @@ function baseConfig(): AppConfig {
       firstEventTimeoutMs: 30_000,
       eventGapTimeoutMs: 120_000,
       totalTimeoutMs: 300_000,
+    },
+    memory: {
+      enabled: false,
+      dbPath: "memory.db",
+      maxMemoriesPerUser: 500,
+      searchLimit: 5,
+      extractQueueLimit: 100,
+      sourcePreviewLength: 50,
+      shutdownDrainTimeoutMs: 5_000,
+      retriever: "recent",
+      embeddingSimilarityThreshold: 0.75,
+      embeddingProvider: undefined,
+      obsidian: {
+        enabled: false,
+        vaultPath: undefined,
+        syncCron: "0 2 * * *",
+        enableWikiLinks: false,
+      },
     },
     logging: {
       dir: process.cwd(),

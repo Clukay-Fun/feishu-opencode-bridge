@@ -4,22 +4,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const actionResults = vi.hoisted(() => ({
   nextResult: { card: { title: "ok" } } as Record<string, unknown>,
-  nextEvent: {
-    open_id: "ou_requester",
-    open_message_id: "om_permission_1",
-    action: { value: { kind: "permission" } },
-  } as Record<string, unknown>,
 }));
 
 vi.mock("@larksuiteoapi/node-sdk", () => {
   class CardActionHandler {
     constructor(
       _params: Record<string, string>,
-      public readonly handler: (event: {
-        open_id: string;
-        open_message_id: string;
-        action?: { value?: Record<string, unknown> };
-      }) => Promise<Record<string, unknown>>,
+      public readonly handler: (event: Record<string, unknown>) => Promise<Record<string, unknown>>,
     ) {}
   }
 
@@ -27,12 +18,9 @@ vi.mock("@larksuiteoapi/node-sdk", () => {
     _path: string,
     dispatcher: CardActionHandler,
   ) {
-    return async (_req: http.IncomingMessage, res: http.ServerResponse) => {
-      const result = await dispatcher.handler(actionResults.nextEvent as {
-        open_id: string;
-        open_message_id: string;
-        action?: { value?: Record<string, unknown> };
-      });
+    return async (req: http.IncomingMessage, res: http.ServerResponse) => {
+      const body = await readJsonBody(req);
+      const result = await dispatcher.handler(body);
       res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
       res.end(JSON.stringify(result ?? actionResults.nextResult));
     };
@@ -87,11 +75,6 @@ describe("startBridgeHttpServer", () => {
   it("delegates card action callbacks to the permission handler", async () => {
     const port = await reservePort();
     const handlePermissionCardAction = vi.fn(async () => ({ card: { title: "权限已处理" } }));
-    actionResults.nextEvent = {
-      open_id: "ou_requester",
-      open_message_id: "om_permission_1",
-      action: { value: { kind: "permission" } },
-    };
     const server = await startBridgeHttpServer(
       createConfig(port, { enabled: true }),
       { handlePermissionCardAction },
@@ -102,7 +85,11 @@ describe("startBridgeHttpServer", () => {
     const response = await fetch(`http://127.0.0.1:${port}/webhook/card`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({
+        open_id: "ou_requester",
+        open_message_id: "om_permission_1",
+        action: { value: { kind: "permission" } },
+      }),
     });
 
     expect(response.status).toBe(200);
@@ -110,20 +97,45 @@ describe("startBridgeHttpServer", () => {
     expect(await response.json()).toEqual({ card: { title: "权限已处理" } });
   });
 
+  it("extracts nested callback identifiers for permission actions", async () => {
+    const port = await reservePort();
+    const handlePermissionCardAction = vi.fn(async () => ({ card: { title: "权限已处理" } }));
+    const httpLogger = logger();
+    const server = await startBridgeHttpServer(
+      createConfig(port, { enabled: true }),
+      { handlePermissionCardAction },
+      httpLogger,
+    );
+    servers.push(server);
+
+    const response = await fetch(`http://127.0.0.1:${port}/webhook/card`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        operator: { operator_id: { open_id: "ou_nested" } },
+        context: { open_message_id: "om_nested" },
+        action: { value: { kind: "permission" } },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(handlePermissionCardAction).toHaveBeenCalledWith("ou_nested", "om_nested", { kind: "permission" });
+    const callbackLog = httpLogger.log.mock.calls.find((call) => call[1] === "callback event parsed");
+    expect(callbackLog).toBeDefined();
+    expect(callbackLog?.[0]).toBe("http/server");
+    expect(callbackLog?.[2]).toEqual(expect.objectContaining({
+      actorOpenId: "ou_nested",
+      openMessageId: "om_nested",
+      actionValueKind: "permission",
+      "callback.operator.operator_id.open_id": "ou_nested",
+      "callback.context.open_message_id": "om_nested",
+      "callback.action.value.kind": "permission",
+    }));
+  });
+
   it("extracts nested operator ids and tolerates missing open_message_id", async () => {
     const port = await reservePort();
     const handlePermissionCardAction = vi.fn(async () => ({ card: { title: "权限已处理" } }));
-    actionResults.nextEvent = {
-      operator: {
-        operator_id: {
-          open_id: "ou_requester_nested",
-        },
-      },
-      context: {
-        open_id: "ou_requester_context",
-      },
-      action: { value: { kind: "permission", source: "nested" } },
-    };
     const server = await startBridgeHttpServer(
       createConfig(port, { enabled: true }),
       { handlePermissionCardAction },
@@ -134,7 +146,17 @@ describe("startBridgeHttpServer", () => {
     const response = await fetch(`http://127.0.0.1:${port}/webhook/card`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({
+        operator: {
+          operator_id: {
+            open_id: "ou_requester_nested",
+          },
+        },
+        context: {
+          open_id: "ou_requester_context",
+        },
+        action: { value: { kind: "permission", source: "nested" } },
+      }),
     });
 
     expect(response.status).toBe(200);
@@ -142,6 +164,15 @@ describe("startBridgeHttpServer", () => {
     expect(await response.json()).toEqual({ card: { title: "权限已处理" } });
   });
 });
+
+async function readJsonBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+  }
+  const text = Buffer.concat(chunks).toString("utf8").trim();
+  return text ? JSON.parse(text) as Record<string, unknown> : {};
+}
 
 function createConfig(
   port: number,
@@ -202,6 +233,24 @@ function createConfig(
       eventGapTimeoutMs: 120_000,
       totalTimeoutMs: 300_000,
     },
+    memory: {
+      enabled: false,
+      dbPath: "memory.db",
+      maxMemoriesPerUser: 500,
+      searchLimit: 5,
+      extractQueueLimit: 100,
+      sourcePreviewLength: 50,
+      shutdownDrainTimeoutMs: 5_000,
+      retriever: "recent",
+      embeddingSimilarityThreshold: 0.75,
+      embeddingProvider: undefined,
+      obsidian: {
+        enabled: false,
+        vaultPath: undefined,
+        syncCron: "0 2 * * *",
+        enableWikiLinks: false,
+      },
+    },
     logging: {
       dir: process.cwd(),
       level: "info",
@@ -215,7 +264,7 @@ function createConfig(
 
 function logger() {
   return {
-    log() {},
+    log: vi.fn(),
   };
 }
 
