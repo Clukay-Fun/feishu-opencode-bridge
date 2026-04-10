@@ -54,6 +54,7 @@ export async function startBridgeHttpServer(
   actions: CardActionPort,
   logger: LoggerLike,
 ): Promise<BridgeHttpServer> {
+  const startedAt = Date.now();
   const lark = (await import("@larksuiteoapi/node-sdk") as unknown) as {
     CardActionHandler: new (
       params: Record<string, string>,
@@ -106,7 +107,15 @@ export async function startBridgeHttpServer(
 
     if (url.pathname === "/healthz") {
       res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify({ ok: true }));
+      res.end(JSON.stringify({
+        ok: true,
+        uptimeSec: Math.max(0, Math.floor((Date.now() - startedAt) / 1000)),
+        queueLimit: config.bridge.queueLimit,
+        cardActionsEnabled: config.feishu.cardActions.enabled,
+        cardActionsPath: config.feishu.cardActions.path,
+        rssBytes: process.memoryUsage().rss,
+        heapUsedBytes: process.memoryUsage().heapUsed,
+      }));
       return;
     }
 

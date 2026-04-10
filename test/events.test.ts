@@ -62,6 +62,60 @@ describe("events", () => {
     await stream.stop();
     expect(fetch).toHaveBeenCalledTimes(2);
   });
+
+  it("skips malformed JSON in SSE block without crashing", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(createSseBody([
+      'data: {NOT VALID JSON}',
+      'data: {"type":"message.part.delta","properties":{"sessionID":"ses_ok","field":"text","delta":"Hi"}}',
+    ]), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+
+    const events: string[] = [];
+    const logger = { log: vi.fn() };
+    const stream = new OpenCodeEventStream(new URL("http://127.0.0.1:4096/"), logger);
+    stream.subscribe(async (event) => {
+      events.push(`${event.type}:${event.sessionId ?? "-"}`);
+    });
+
+    await stream.start();
+    await vi.waitFor(() => expect(events).toContain("message.part.delta:ses_ok"));
+    await stream.stop();
+
+    // The malformed block should have been logged as a warning
+    expect(logger.log).toHaveBeenCalledWith(
+      "opencode/events",
+      "unparseable SSE block skipped",
+      expect.objectContaining({ preview: expect.any(String) }),
+      "warn",
+    );
+  });
+
+  it("skips SSE block with missing type field without crashing", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(createSseBody([
+      'data: {"foo":"bar"}',
+      'data: {"type":"session.idle","properties":{"sessionID":"ses_ok2"}}',
+    ]), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+
+    const events: string[] = [];
+    const logger = { log: vi.fn() };
+    const stream = new OpenCodeEventStream(new URL("http://127.0.0.1:4096/"), logger);
+    stream.subscribe(async (event) => {
+      events.push(`${event.type}:${event.sessionId ?? "-"}`);
+    });
+
+    await stream.start();
+    await vi.waitFor(() => expect(events).toContain("session.idle:ses_ok2"));
+    await stream.stop();
+
+    // The block with missing type should have been logged
+    expect(logger.log).toHaveBeenCalledWith(
+      "opencode/events",
+      "unparseable SSE block skipped",
+      expect.objectContaining({ preview: expect.any(String) }),
+      "warn",
+    );
+  });
 });
 
 function createSseBody(events: string[]): ReadableStream<Uint8Array> {

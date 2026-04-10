@@ -18,5 +18,16 @@
 - For GitHub pull requests, use Chinese titles and descriptions by default.
 - Preferred PR title format: `[codex] <动词><变更主题>`.
 - Preferred PR body sections: `变更内容`, `变更原因`, `影响`, `验证`.
+- Existing commit history does not need retroactive renaming; apply the commit naming convention only to new commits going forward.
+- Preferred commit title format: `[codex][<type>] <动词><变更主题>`.
+- Preferred commit types:
+  - `feat`: new feature or capability expansion
+  - `fix`: bug fix or compatibility fix
+  - `test`: test coverage or test baseline update
+  - `refactor`: structural change without intended behavior change
+  - `docs`: documentation, design note, or troubleshooting note
+  - `ci`: CI, build, container, or deployment workflow change
+  - `merge`: merge-main conflict resolution or integration branch merge commit
+  - `followup`: feedback-driven or validation-driven follow-up patch
 - Keep updating the same branch and PR while the related feature line is still open and unmerged.
 - Once a PR has been merged into `main`, do not reopen or reuse it for follow-up work; create a new branch and a new PR instead.

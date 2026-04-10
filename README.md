@@ -27,7 +27,7 @@ It is a bridge layer that gives OpenCode a stable runtime surface inside Feishu:
 - True permission buttons with text-command fallback
 - Group whitelist binding with `/who` and `/leave`
 - `single` and `multi` session modes per window type
-- Optional long-term memory recall, embedding-based retrieval, and Obsidian profile sync
+- Optional long-term memory with fact extraction, SQLite/FTS5 storage, embedding-based retrieval, and Obsidian `profile.md` sync
 - Slash command passthrough to OpenCode for commands the bridge does not own
 - Startup preflight for Feishu auth, OpenCode health, providers, and callback config
 - JSON-backed stores for session mappings and group bindings
@@ -140,10 +140,19 @@ Bridge-owned commands:
 - `/new`
 - `/status`
 - `/abort`
-- `/models`
+- `/model`
+- `/model <provider>`
 - `/sessions`
+- `/sessions all`
 - `/sessions <index>`
 - `/switch <index>`
+- `/close`
+- `/close all`
+- `/close <start-end>`
+- `/delete`
+- `/delete all confirm`
+- `/delete <index> confirm`
+- `/delete <start-end> confirm`
 - `/who`
 - `/leave`
 - `/allow once`
@@ -155,6 +164,7 @@ Any other slash command is forwarded to OpenCode.
 That means OpenCode-native commands such as:
 
 - `/model use ...`
+- `/model reset`
 - `/review`
 - `/init`
 
@@ -219,7 +229,10 @@ npm run dev:once
 - `src/opencode/`
   OpenCode HTTP client and event stream
 - `src/runtime/`
-  bridge orchestration and startup preflight
+  app orchestrator, command handler, turn executor,
+  permission manager, turn card manager, helpers, preflight
+- `src/memory/`
+  long-term memory storage, extraction, retrieval, Obsidian sync
 - `src/store/`
   JSON-backed stores
 

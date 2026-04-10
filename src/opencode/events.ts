@@ -173,7 +173,15 @@ export class OpenCodeEventStream {
 
       for (const rawBlock of chunks.blocks) {
         const parsed = parseSseBlock(rawBlock, endpoint);
-        if (!parsed) continue;
+        if (!parsed) {
+          if (rawBlock.trim()) {
+            this.logger.log("opencode/events", "unparseable SSE block skipped", {
+              endpoint,
+              preview: rawBlock.slice(0, 200),
+            }, "warn");
+          }
+          continue;
+        }
         if (!isKnownEventType(parsed.type) && !this.seenUnknownEvents.has(parsed.type)) {
           this.seenUnknownEvents.add(parsed.type);
           this.logger.log("opencode/events", "unknown event type received", { type: parsed.type }, "warn");
@@ -247,16 +255,26 @@ function parseSseBlock(block: string, endpoint: StreamEndpoint): OpenCodeEvent |
     return null;
   }
 
-  const raw = JSON.parse(dataLines.join("\n")) as unknown;
-  const payload = normalizeEventPayload(raw, endpoint);
-  return {
-    type: payload.type,
-    properties: payload.properties,
-    sessionId: getEventSessionId({ properties: payload.properties, sessionId: null }),
-    receivedAt: Date.now(),
-    streamEndpoint: endpoint,
-    raw,
-  };
+  let raw: unknown;
+  try {
+    raw = JSON.parse(dataLines.join("\n")) as unknown;
+  } catch {
+    return null;
+  }
+
+  try {
+    const payload = normalizeEventPayload(raw, endpoint);
+    return {
+      type: payload.type,
+      properties: payload.properties,
+      sessionId: getEventSessionId({ properties: payload.properties, sessionId: null }),
+      receivedAt: Date.now(),
+      streamEndpoint: endpoint,
+      raw,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function normalizeEventPayload(raw: unknown, endpoint: StreamEndpoint): OpenCodeEventPayload {

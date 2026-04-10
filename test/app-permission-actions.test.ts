@@ -233,10 +233,12 @@ function seedPermission(
   };
   const appAny = app as unknown as {
     pendingInteractions: Map<string, unknown>;
-    permissionInteractions: Map<string, PendingPermissionInteraction>;
+    permissionManager: {
+      registerInteraction(interaction: PendingPermissionInteraction): void;
+    };
   };
   appAny.pendingInteractions.set(interaction.conversationKey, interaction);
-  appAny.permissionInteractions.set(interaction.permissionVersion, interaction);
+  appAny.permissionManager.registerInteraction(interaction);
   return interaction;
 }
 

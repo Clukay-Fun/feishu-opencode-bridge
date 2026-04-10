@@ -34,6 +34,31 @@ describe("runStartupPreflight", () => {
     }, () => {})).rejects.toThrow("缺少 feishu.cardActions.verificationToken");
   });
 
+  it("fails when button mode is enabled without an encrypt key", async () => {
+    stubHealthyFetch();
+
+    const config = baseConfig();
+    config.feishu.cardActions.enabled = true;
+    config.feishu.cardActions.encryptKey = "";
+
+    await expect(runStartupPreflight(config, {
+      getTenantToken: async () => "tenant-token",
+    }, () => {})).rejects.toThrow("缺少 feishu.cardActions.encryptKey");
+  });
+
+  it("passes when card actions have both verificationToken and encryptKey", async () => {
+    stubHealthyFetch();
+
+    const config = baseConfig();
+    config.feishu.cardActions.enabled = true;
+    config.feishu.cardActions.verificationToken = "token";
+    config.feishu.cardActions.encryptKey = "encrypt-key";
+
+    await expect(runStartupPreflight(config, {
+      getTenantToken: async () => "tenant-token",
+    }, () => {})).resolves.toBeUndefined();
+  });
+
   it("fails when data dir is not writable", async () => {
     stubHealthyFetch();
 
@@ -96,6 +121,7 @@ describe("runStartupPreflight", () => {
 
     const config = baseConfig();
     config.feishu.cardActions.enabled = true;
+    config.feishu.cardActions.encryptKey = "encrypt-key";
     config.server.publicBaseUrl = null as unknown as URL;
 
     await expect(runStartupPreflight(config, {

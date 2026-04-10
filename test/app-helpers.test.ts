@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildBridgeSystemPrompt, buildPromptRequest, composeSystemPrompt, resolveDisplayLabel } from "../src/runtime/app.js";
+import { buildBridgeSystemPrompt, buildPromptRequest, composeSystemPrompt, resolveDisplayLabel } from "../src/runtime/app-helpers.js";
 
 describe("runtime prompt helpers", () => {
   it("adds system state when provided", () => {

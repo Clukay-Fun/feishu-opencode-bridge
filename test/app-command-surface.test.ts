@@ -57,6 +57,19 @@ describe("BridgeApp command surface", () => {
     expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("当前任务已中止");
   });
 
+  it("returns a rate-limit notice when requests exceed the per-user window", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const limiter = (app as unknown as { rateLimiter: { allow(key: string, now?: number): boolean } }).rateLimiter;
+    const now = Date.now();
+    for (let index = 0; index < 20; index += 1) {
+      limiter.allow("ou_123", now - 100 + index);
+    }
+    await app.handleIncomingMessage(createIncomingMessage("om_20"));
+
+    expect(extractMarkdown(getReplyPayloads(outbound).at(-1))).toContain("请求过于频繁，请稍后再试");
+  });
+
   it("rejects /switch 999 when the pending session selection does not include that index", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
@@ -675,6 +688,20 @@ function logger() {
   return {
     log() {},
     logTranscript() {},
+  };
+}
+
+function createIncomingMessage(messageId: string) {
+  return {
+    chatId: "oc_p2p_1",
+    chatType: "p2p",
+    senderOpenId: "ou_123",
+    messageId,
+    messageType: "text",
+    rawContent: "hello",
+    plainText: "hello",
+    threadKey: messageId,
+    conversationKey: "oc_p2p_1",
   };
 }
 

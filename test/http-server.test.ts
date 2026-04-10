@@ -4,14 +4,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const actionResults = vi.hoisted(() => ({
   nextResult: { card: { title: "ok" } } as Record<string, unknown>,
+  handlerParams: [] as Array<Record<string, string>>,
 }));
 
 vi.mock("@larksuiteoapi/node-sdk", () => {
   class CardActionHandler {
     constructor(
-      _params: Record<string, string>,
+      params: Record<string, string>,
       public readonly handler: (event: Record<string, unknown>) => Promise<Record<string, unknown>>,
-    ) {}
+    ) {
+      actionResults.handlerParams.push(params);
+    }
   }
 
   function adaptDefault(
@@ -54,7 +57,15 @@ describe("startBridgeHttpServer", () => {
     const response = await fetch(`http://127.0.0.1:${port}/healthz`);
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ok: true });
+    expect(await response.json()).toEqual(expect.objectContaining({
+      ok: true,
+      queueLimit: 3,
+      cardActionsEnabled: false,
+      cardActionsPath: "/webhook/card",
+      uptimeSec: expect.any(Number),
+      rssBytes: expect.any(Number),
+      heapUsedBytes: expect.any(Number),
+    }));
   });
 
   it("returns 404 for unknown routes", async () => {
@@ -130,6 +141,22 @@ describe("startBridgeHttpServer", () => {
       "callback.operator.operator_id.open_id": "ou_nested",
       "callback.context.open_message_id": "om_nested",
       "callback.action.value.kind": "permission",
+    }));
+  });
+
+  it("passes encryptKey to the card action sdk handler", async () => {
+    actionResults.handlerParams.length = 0;
+    const port = await reservePort();
+    const server = await startBridgeHttpServer(
+      createConfig(port, { enabled: true, verificationToken: "token", encryptKey: "encrypt-key" }),
+      { handlePermissionCardAction: vi.fn(async () => ({ ok: true })) },
+      logger(),
+    );
+    servers.push(server);
+
+    expect(actionResults.handlerParams.at(-1)).toEqual(expect.objectContaining({
+      verificationToken: "token",
+      encryptKey: "encrypt-key",
     }));
   });
 
