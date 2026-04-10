@@ -35,6 +35,8 @@ export class OpenCodeMemoryExtractor implements MemoryExtractor {
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       this.logger.log("memory/extractor", "sync extraction failed", { detail }, "warn");
+    } finally {
+      await this.cleanupSession(syncSession.id, "sync");
     }
 
     this.logger.log("memory/extractor", "fallback", { mode: "async-poll" }, "warn");
@@ -47,6 +49,21 @@ export class OpenCodeMemoryExtractor implements MemoryExtractor {
       const detail = error instanceof Error ? error.message : String(error);
       this.logger.log("memory/extractor", "fallback extraction failed", { detail }, "warn");
       return [];
+    } finally {
+      await this.cleanupSession(asyncSession.id, "fallback");
+    }
+  }
+
+  private async cleanupSession(sessionId: string, mode: "sync" | "fallback"): Promise<void> {
+    try {
+      await this.client.deleteSession(sessionId);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.log("memory/extractor", "session cleanup failed", {
+        sessionId,
+        mode,
+        detail,
+      }, "warn");
     }
   }
 }
