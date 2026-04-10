@@ -16,7 +16,7 @@ vi.mock("@larksuiteoapi/node-sdk", () => {
 });
 
 import { FeishuWsClient, buildConversationKey, computeThreadKey, createFeishuIngressOptions, normalizeIncomingMessage } from "../src/feishu/ws.js";
-import { toOpencodePromptText } from "../src/runtime/app.js";
+import { toOpencodePromptText } from "../src/runtime/app-helpers.js";
 import type { ChatWhitelist } from "../src/store/whitelist.js";
 
 function createWhitelistStub(initial: Record<string, string[]> = {}) {
