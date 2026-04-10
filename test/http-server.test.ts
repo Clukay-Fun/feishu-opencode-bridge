@@ -57,7 +57,15 @@ describe("startBridgeHttpServer", () => {
     const response = await fetch(`http://127.0.0.1:${port}/healthz`);
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ok: true });
+    expect(await response.json()).toEqual(expect.objectContaining({
+      ok: true,
+      queueLimit: 3,
+      cardActionsEnabled: false,
+      cardActionsPath: "/webhook/card",
+      uptimeSec: expect.any(Number),
+      rssBytes: expect.any(Number),
+      heapUsedBytes: expect.any(Number),
+    }));
   });
 
   it("returns 404 for unknown routes", async () => {
