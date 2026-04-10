@@ -67,6 +67,26 @@ type OutboundPort = {
   updateMessage(messageId: string, payload: FeishuPostPayload): Promise<{ messageId: string }>;
 };
 
+type BridgeAppDeps = {
+  opencode?: Pick<OpenCodeClient,
+    | "health"
+    | "getCurrentProject"
+    | "createSession"
+    | "listSessions"
+    | "deleteSession"
+    | "getSessionStatuses"
+    | "getSessionMessages"
+    | "promptAsync"
+    | "abort"
+    | "listProviders"
+    | "runCommand"
+    | "replyPermission"
+    | "replyQuestion"
+  >;
+  eventStream?: Pick<OpenCodeEventStream, "start" | "stop" | "subscribe" | "getConnectionState">;
+  memory?: MemoryService | null;
+};
+
 export type PermissionCardActionValue = {
   kind: "permission";
   conversationKey: string;
@@ -98,12 +118,13 @@ export class BridgeApp {
     private readonly outbound: OutboundPort,
     private readonly logger: Logger,
     private readonly whitelist: Pick<WhitelistStore, "count" | "isBound" | "unbind">,
+    deps?: BridgeAppDeps,
   ) {
     this.queues = new QueueRegistry(config.bridge.queueLimit, logger);
     this.mappings = new MappingStore(config.storage.dataDir, config.storage.mappingsFile, 200, logger);
-    this.opencode = new OpenCodeClient(config.opencode.baseUrl);
-    this.eventStream = new OpenCodeEventStream(config.opencode.baseUrl, logger);
-    this.memory = config.memory.enabled ? new MemoryService(config.memory, this.opencode, logger) : null;
+    this.opencode = deps?.opencode ?? new OpenCodeClient(config.opencode.baseUrl);
+    this.eventStream = deps?.eventStream ?? new OpenCodeEventStream(config.opencode.baseUrl, logger);
+    this.memory = deps && "memory" in deps ? (deps.memory ?? null) : config.memory.enabled ? new MemoryService(config.memory, this.opencode, logger) : null;
     this.permissionManager = new PermissionManager({
       replyPermission: async (sessionId, permissionId, policy, remember) => {
         return await this.opencode.replyPermission(sessionId, permissionId, policy, remember);
