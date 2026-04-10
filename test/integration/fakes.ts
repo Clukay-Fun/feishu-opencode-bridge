@@ -44,9 +44,14 @@ export class FakeOpenCodeEventStream {
 export class FakeOpenCodeClient {
   readonly sessions = new Map<string, OpenCodeSession>();
   readonly messages = new Map<string, OpenCodeMessage[]>();
+  readonly permissionReplies: Array<{ sessionId: string; permissionId: string; response: PermissionPolicy; remember: boolean }> = [];
+  private promptCount = 0;
   constructor(
     private readonly stream: FakeOpenCodeEventStream,
-    private readonly options: { finalText: string },
+    private readonly options:
+      | { kind: "message-flow"; finalText: string }
+      | { kind: "permission-flow"; permissionName: string; permissionId: string; finalText: string }
+      | { kind: "queue-flow"; finalTexts: [string, string, string] },
   ) {}
 
   async health(): Promise<OpenCodeHealth> {
@@ -93,6 +98,69 @@ export class FakeOpenCodeClient {
 
   async promptAsync(sessionId: string, request: OpenCodePromptRequest): Promise<{ accepted: true }> {
     void request;
+    if (this.options.kind === "permission-flow") {
+      queueMicrotask(() => {
+        void this.stream.emit({
+          type: "permission.asked",
+          properties: {
+            sessionID: sessionId,
+            id: this.options.permissionId,
+            permission: this.options.permissionName,
+          },
+          sessionId,
+          receivedAt: Date.now(),
+          streamEndpoint: "/event",
+          raw: {},
+        });
+      });
+
+      return { accepted: true };
+    }
+
+    if (this.options.kind === "queue-flow") {
+      const finalText = this.options.finalTexts[this.promptCount] ?? this.options.finalTexts[this.options.finalTexts.length - 1];
+      const messageId = `msg_${sessionId}_${this.promptCount + 1}`;
+      const assistantMessage: OpenCodeMessage = {
+        info: {
+          id: messageId,
+          role: "assistant",
+          sessionID: sessionId,
+          finish: "stop",
+          time: { created: Date.now(), completed: Date.now() },
+        },
+        parts: [{ id: `part_${messageId}`, type: "text", text: finalText, messageID: messageId, sessionID: sessionId }],
+      };
+      this.promptCount += 1;
+      this.messages.set(sessionId, [assistantMessage]);
+
+      setTimeout(() => {
+        void this.stream.emit({
+          type: "message.updated",
+          properties: { info: { id: messageId, role: "assistant", sessionID: sessionId } },
+          sessionId,
+          receivedAt: Date.now(),
+          streamEndpoint: "/event",
+          raw: {},
+        }).then(() => this.stream.emit({
+          type: "message.part.delta",
+          properties: { sessionID: sessionId, messageID: messageId, field: "text", delta: finalText },
+          sessionId,
+          receivedAt: Date.now(),
+          streamEndpoint: "/event",
+          raw: {},
+        })).then(() => this.stream.emit({
+          type: "session.idle",
+          properties: { sessionID: sessionId },
+          sessionId,
+          receivedAt: Date.now(),
+          streamEndpoint: "/event",
+          raw: {},
+        }));
+      }, 0);
+
+      return { accepted: true };
+    }
+
     const assistantMessage: OpenCodeMessage = {
       info: {
         id: `msg_${sessionId}`,
@@ -140,10 +208,48 @@ export class FakeOpenCodeClient {
   async runCommand(): Promise<OpenCodeMessage | null> { return null; }
 
   async replyPermission(sessionId: string, permissionId: string, response: PermissionPolicy, remember: boolean): Promise<boolean> {
-    void sessionId;
-    void permissionId;
-    void response;
-    void remember;
+    this.permissionReplies.push({ sessionId, permissionId, response, remember });
+    if (this.options.kind === "permission-flow"
+      && permissionId === this.options.permissionId
+      && response === "once"
+      && remember === false) {
+      const assistantMessage: OpenCodeMessage = {
+        info: {
+          id: `msg_${sessionId}`,
+          role: "assistant",
+          sessionID: sessionId,
+          finish: "stop",
+          time: { created: Date.now(), completed: Date.now() },
+        },
+        parts: [{ id: `part_${sessionId}`, type: "text", text: this.options.finalText, messageID: `msg_${sessionId}`, sessionID: sessionId }],
+      };
+      this.messages.set(sessionId, [assistantMessage]);
+
+      queueMicrotask(() => {
+        void this.stream.emit({
+          type: "message.updated",
+          properties: { info: { id: `msg_${sessionId}`, role: "assistant", sessionID: sessionId } },
+          sessionId,
+          receivedAt: Date.now(),
+          streamEndpoint: "/event",
+          raw: {},
+        }).then(() => this.stream.emit({
+          type: "message.part.delta",
+          properties: { sessionID: sessionId, messageID: `msg_${sessionId}`, field: "text", delta: this.options.finalText },
+          sessionId,
+          receivedAt: Date.now(),
+          streamEndpoint: "/event",
+          raw: {},
+        })).then(() => this.stream.emit({
+          type: "session.idle",
+          properties: { sessionID: sessionId },
+          sessionId,
+          receivedAt: Date.now(),
+          streamEndpoint: "/event",
+          raw: {},
+        }));
+      });
+    }
     return true;
   }
 
