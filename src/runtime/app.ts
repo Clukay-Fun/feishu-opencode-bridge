@@ -69,7 +69,12 @@ type OutboundPort = {
 };
 
 type BridgeAppDeps = {
-  opencode?: Pick<OpenCodeClient,
+  opencode?: OpenCodePort;
+  eventStream?: OpenCodeEventStreamPort;
+  memory?: MemoryService | null;
+};
+
+type OpenCodePort = Pick<OpenCodeClient,
     | "health"
     | "getCurrentProject"
     | "createSession"
@@ -84,9 +89,8 @@ type BridgeAppDeps = {
     | "replyPermission"
     | "replyQuestion"
   >;
-  eventStream?: Pick<OpenCodeEventStream, "start" | "stop" | "subscribe" | "getConnectionState">;
-  memory?: MemoryService | null;
-};
+
+type OpenCodeEventStreamPort = Pick<OpenCodeEventStream, "start" | "stop" | "subscribe" | "getConnectionState">;
 
 export type PermissionCardActionValue = {
   kind: "permission";
@@ -101,8 +105,8 @@ export type PermissionCardActionValue = {
 export class BridgeApp {
   private readonly queues: QueueRegistry;
   private readonly mappings: MappingStore;
-  private readonly opencode: OpenCodeClient;
-  private readonly eventStream: OpenCodeEventStream;
+  private readonly opencode: OpenCodePort;
+  private readonly eventStream: OpenCodeEventStreamPort;
   private readonly permissionManager: PermissionManager;
   private readonly turnCardManager: TurnCardManager;
   private readonly turnExecutor: TurnExecutor;
@@ -126,7 +130,7 @@ export class BridgeApp {
     this.mappings = new MappingStore(config.storage.dataDir, config.storage.mappingsFile, 200, logger);
     this.opencode = deps?.opencode ?? new OpenCodeClient(config.opencode.baseUrl);
     this.eventStream = deps?.eventStream ?? new OpenCodeEventStream(config.opencode.baseUrl, logger);
-    this.memory = deps && "memory" in deps ? (deps.memory ?? null) : config.memory.enabled ? new MemoryService(config.memory, this.opencode, logger) : null;
+    this.memory = deps && "memory" in deps ? (deps.memory ?? null) : config.memory.enabled ? new MemoryService(config.memory, this.opencode as OpenCodeClient, logger) : null;
     this.permissionManager = new PermissionManager({
       replyPermission: async (sessionId, permissionId, policy, remember) => {
         return await this.opencode.replyPermission(sessionId, permissionId, policy, remember);

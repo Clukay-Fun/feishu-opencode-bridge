@@ -99,13 +99,14 @@ export class FakeOpenCodeClient {
   async promptAsync(sessionId: string, request: OpenCodePromptRequest): Promise<{ accepted: true }> {
     void request;
     if (this.options.kind === "permission-flow") {
+      const scenario = this.options;
       queueMicrotask(() => {
         void this.stream.emit({
           type: "permission.asked",
           properties: {
             sessionID: sessionId,
-            id: this.options.permissionId,
-            permission: this.options.permissionName,
+            id: scenario.permissionId,
+            permission: scenario.permissionName,
           },
           sessionId,
           receivedAt: Date.now(),
@@ -118,7 +119,8 @@ export class FakeOpenCodeClient {
     }
 
     if (this.options.kind === "queue-flow") {
-      const finalText = this.options.finalTexts[this.promptCount] ?? this.options.finalTexts[this.options.finalTexts.length - 1];
+      const scenario = this.options;
+      const finalText = scenario.finalTexts[Math.min(this.promptCount, scenario.finalTexts.length - 1)]!;
       const messageId = `msg_${sessionId}_${this.promptCount + 1}`;
       const assistantMessage: OpenCodeMessage = {
         info: {
@@ -128,7 +130,7 @@ export class FakeOpenCodeClient {
           finish: "stop",
           time: { created: Date.now(), completed: Date.now() },
         },
-        parts: [{ id: `part_${messageId}`, type: "text", text: finalText, messageID: messageId, sessionID: sessionId }],
+        parts: [buildTextPart(`part_${messageId}`, messageId, sessionId, finalText)],
       };
       this.promptCount += 1;
       this.messages.set(sessionId, [assistantMessage]);
@@ -161,6 +163,7 @@ export class FakeOpenCodeClient {
       return { accepted: true };
     }
 
+    const scenario = this.options;
     const assistantMessage: OpenCodeMessage = {
       info: {
         id: `msg_${sessionId}`,
@@ -169,7 +172,7 @@ export class FakeOpenCodeClient {
         finish: "stop",
         time: { created: Date.now(), completed: Date.now() },
       },
-      parts: [{ id: `part_${sessionId}`, type: "text", text: this.options.finalText, messageID: `msg_${sessionId}`, sessionID: sessionId }],
+      parts: [buildTextPart(`part_${sessionId}`, `msg_${sessionId}`, sessionId, scenario.finalText)],
     };
     this.messages.set(sessionId, [assistantMessage]);
 
@@ -183,7 +186,7 @@ export class FakeOpenCodeClient {
         raw: {},
       }).then(() => this.stream.emit({
         type: "message.part.delta",
-        properties: { sessionID: sessionId, messageID: `msg_${sessionId}`, field: "text", delta: this.options.finalText },
+          properties: { sessionID: sessionId, messageID: `msg_${sessionId}`, field: "text", delta: scenario.finalText },
         sessionId,
         receivedAt: Date.now(),
         streamEndpoint: "/event",
@@ -205,7 +208,18 @@ export class FakeOpenCodeClient {
 
   async listProviders(): Promise<OpenCodeProvidersResponse> { return { providers: [], default: {} }; }
 
-  async runCommand(): Promise<OpenCodeMessage | null> { return null; }
+  async runCommand(): Promise<OpenCodeMessage> {
+    return {
+      info: {
+        id: "cmd_1",
+        role: "assistant",
+        sessionID: "ses_cmd",
+        finish: "stop",
+        time: { created: Date.now(), completed: Date.now() },
+      },
+      parts: [buildTextPart("part_cmd_1", "cmd_1", "ses_cmd", "命令已执行")],
+    };
+  }
 
   async replyPermission(sessionId: string, permissionId: string, response: PermissionPolicy, remember: boolean): Promise<boolean> {
     this.permissionReplies.push({ sessionId, permissionId, response, remember });
@@ -213,6 +227,7 @@ export class FakeOpenCodeClient {
       && permissionId === this.options.permissionId
       && response === "once"
       && remember === false) {
+      const scenario = this.options;
       const assistantMessage: OpenCodeMessage = {
         info: {
           id: `msg_${sessionId}`,
@@ -221,7 +236,7 @@ export class FakeOpenCodeClient {
           finish: "stop",
           time: { created: Date.now(), completed: Date.now() },
         },
-        parts: [{ id: `part_${sessionId}`, type: "text", text: this.options.finalText, messageID: `msg_${sessionId}`, sessionID: sessionId }],
+        parts: [buildTextPart(`part_${sessionId}`, `msg_${sessionId}`, sessionId, scenario.finalText)],
       };
       this.messages.set(sessionId, [assistantMessage]);
 
@@ -235,7 +250,7 @@ export class FakeOpenCodeClient {
           raw: {},
         }).then(() => this.stream.emit({
           type: "message.part.delta",
-          properties: { sessionID: sessionId, messageID: `msg_${sessionId}`, field: "text", delta: this.options.finalText },
+          properties: { sessionID: sessionId, messageID: `msg_${sessionId}`, field: "text", delta: scenario.finalText },
           sessionId,
           receivedAt: Date.now(),
           streamEndpoint: "/event",
@@ -254,6 +269,16 @@ export class FakeOpenCodeClient {
   }
 
   async replyQuestion(): Promise<void> {}
+}
+
+function buildTextPart(id: string, messageId: string, sessionId: string, text: string): OpenCodeMessage["parts"][number] {
+  return {
+    id,
+    type: "text",
+    text,
+    messageID: messageId,
+    sessionID: sessionId,
+  };
 }
 
 export function createOutbound() {

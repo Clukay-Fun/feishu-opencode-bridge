@@ -18,7 +18,7 @@ describe("FeishuApiClient", () => {
     const client = new FeishuApiClient("app", "secret");
 
     const promise = client.sendMessage("oc_1", {
-      msg_type: "text",
+      msg_type: "post",
       content: JSON.stringify({ text: "hello" }),
     });
 
@@ -38,7 +38,7 @@ describe("FeishuApiClient", () => {
     const client = new FeishuApiClient("app", "secret");
 
     const promise = client.updateMessage("om_1", {
-      msg_type: "text",
+      msg_type: "post",
       content: JSON.stringify({ text: "updated" }),
     });
 
@@ -57,7 +57,7 @@ describe("FeishuApiClient", () => {
     const client = new FeishuApiClient("app", "secret");
 
     await expect(client.sendMessage("oc_missing", {
-      msg_type: "text",
+      msg_type: "post",
       content: JSON.stringify({ text: "hello" }),
     })).rejects.toThrow("Feishu sendMessage failed: chat not found");
     expect(fetch).toHaveBeenCalledTimes(2);

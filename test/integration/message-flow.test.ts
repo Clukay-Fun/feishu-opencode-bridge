@@ -23,7 +23,7 @@ describe("integration/message-flow", () => {
     tempDirs.push(dir);
 
     const stream = new FakeOpenCodeEventStream();
-    const opencode = new FakeOpenCodeClient(stream, { finalText: "集成测试回复" });
+    const opencode = new FakeOpenCodeClient(stream, { kind: "message-flow", finalText: "集成测试回复" });
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(dir), outbound, createLogger(), createWhitelist(), {
       opencode,
