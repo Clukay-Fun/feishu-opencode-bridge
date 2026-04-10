@@ -165,19 +165,12 @@ export class CommandHandler {
       const queue = this.context.queues.get(message.conversationKey);
       const activeTurn = queue.peek();
       if (!activeTurn) {
-        await this.context.sendPayload(message.chatId, buildNoticeCardPayload({
+        await this.sendNotice(message, {
           title: "无任务可中止",
           template: "grey",
-          iconToken: "info-hollow_filled",
+          icon: "info-hollow_filled",
           message: "当前没有正在执行的任务。",
-          messageIconToken: "info-hollow_filled",
-          messageIconColor: "grey",
-        }), {
-          event: "final message sent",
-          transcriptType: "outbound-final",
-          textPreview: "当前没有正在执行的任务。",
-          len: 12,
-        }, { replyToMessageId: message.messageId });
+        });
         return;
       }
 
@@ -187,19 +180,12 @@ export class CommandHandler {
       if (sessionId) {
         await this.context.opencode.abort(sessionId);
       }
-      await this.context.sendPayload(message.chatId, buildNoticeCardPayload({
+      await this.sendNotice(message, {
         title: "任务已中止",
         template: "orange",
-        iconToken: "stop-record_filled",
+        icon: "stop-record_filled",
         message: "当前任务已中止，可发送新消息继续对话。",
-        messageIconToken: "stop-record_filled",
-        messageIconColor: "orange",
-      }), {
-        event: "final message sent",
-        transcriptType: "outbound-final",
-        textPreview: "当前任务已中止，可发送新消息继续对话。",
-        len: 17,
-      }, { replyToMessageId: message.messageId });
+      });
       return;
     }
 
@@ -207,19 +193,12 @@ export class CommandHandler {
       const providers = await this.context.opencode.listProviders();
       const modelCard = buildModelCardView(providers, command.provider);
       if (!modelCard) {
-        await this.context.sendPayload(message.chatId, buildNoticeCardPayload({
+        await this.sendNotice(message, {
           title: "提醒",
           template: "yellow",
-          iconToken: "maybe_outlined",
+          icon: "maybe_outlined",
           message: "当前没有匹配的模型提供方，请重新发送 `/model` 查看列表。",
-          messageIconToken: "maybe_outlined",
-          messageIconColor: "yellow",
-        }), {
-          event: "final message sent",
-          transcriptType: "outbound-final",
-          textPreview: "当前没有匹配的模型提供方，请重新发送 `/model` 查看列表。",
-          len: 27,
-        }, { replyToMessageId: message.messageId });
+        });
         return;
       }
 
@@ -343,7 +322,12 @@ export class CommandHandler {
         }
         await this.context.saveSessionWindow(message.conversationKey, normalizeSessionWindowRecord(undefined, window.mode, this.context.config.bridge.maxSessionsPerWindow));
         this.context.clearPendingInteraction(message.conversationKey, false);
-        await this.context.sendPayload(message.chatId, buildNoticeCardPayload({ title: "已删除全部会话", template: "grey", iconToken: "close-bold_outlined", message: "当前窗口的全部会话已移除，发送 `/new` 创建新会话。", messageIconToken: "close-bold_outlined", messageIconColor: "grey" }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "当前窗口的全部会话已移除，发送 `/new` 创建新会话。", len: 24 }, { replyToMessageId: message.messageId });
+        await this.sendNotice(message, {
+          title: "已删除全部会话",
+          template: "grey",
+          icon: "close-bold_outlined",
+          message: "当前窗口的全部会话已移除，发送 `/new` 创建新会话。",
+        });
         return;
       }
       if (command.range) {
@@ -363,7 +347,12 @@ export class CommandHandler {
         }
         await this.context.saveSessionWindow(message.conversationKey, nextWindow);
         this.context.clearPendingInteraction(message.conversationKey, false);
-        await this.context.sendPayload(message.chatId, buildNoticeCardPayload({ title: "已删除多个会话", template: "grey", iconToken: "close-bold_outlined", message: `已从当前窗口移除 ${targets.sessions.length} 个会话。`, messageIconToken: "close-bold_outlined", messageIconColor: "grey" }), { event: "final message sent", transcriptType: "outbound-final", textPreview: `已从当前窗口移除 ${targets.sessions.length} 个会话。`, len: 17 }, { replyToMessageId: message.messageId });
+        await this.sendNotice(message, {
+          title: "已删除多个会话",
+          template: "grey",
+          icon: "close-bold_outlined",
+          message: `已从当前窗口移除 ${targets.sessions.length} 个会话。`,
+        });
         return;
       }
       const target = await this.context.resolveSessionCommandTarget(message, command.index);
@@ -396,7 +385,12 @@ export class CommandHandler {
           return;
         }
         this.context.setPendingInteraction(message.conversationKey, { kind: "session-delete-confirm", all: true, sessionIds: window.sessions.map((session) => session.sessionId), expiresAt: Date.now() + SESSION_DELETE_CONFIRM_TTL_MS });
-        await this.context.sendPayload(message.chatId, buildNoticeCardPayload({ title: "提醒", template: "yellow", iconToken: "maybe_outlined", message: "确认彻底删除当前窗口全部会话？发送 `/delete all confirm`", messageIconToken: "maybe_outlined", messageIconColor: "yellow" }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "确认彻底删除当前窗口全部会话？发送 `/delete all confirm`", len: 31 }, { replyToMessageId: message.messageId });
+        await this.sendNotice(message, {
+          title: "提醒",
+          template: "yellow",
+          icon: "maybe_outlined",
+          message: "确认彻底删除当前窗口全部会话？发送 `/delete all confirm`",
+        });
         return;
       }
       if (!command.confirm) {
@@ -414,7 +408,12 @@ export class CommandHandler {
           const rangeLabel = `${command.range.start}-${command.range.end}`;
           this.context.setPendingInteraction(message.conversationKey, { kind: "session-delete-confirm", indices: targets.indices, rangeLabel, sessionIds: targets.sessions.map((session) => session.sessionId), titles: targets.sessions.map((session) => session.label), expiresAt: Date.now() + SESSION_DELETE_CONFIRM_TTL_MS });
           const confirmText = `确认删除会话 #${rangeLabel}？发送 \`/delete ${rangeLabel} confirm\``;
-          await this.context.sendPayload(message.chatId, buildNoticeCardPayload({ title: "提醒", template: "yellow", iconToken: "maybe_outlined", message: confirmText, messageIconToken: "maybe_outlined", messageIconColor: "yellow" }), { event: "final message sent", transcriptType: "outbound-final", textPreview: confirmText, len: confirmText.length }, { replyToMessageId: message.messageId });
+          await this.sendNotice(message, {
+            title: "提醒",
+            template: "yellow",
+            icon: "maybe_outlined",
+            message: confirmText,
+          });
           return;
         }
         const target = await this.context.resolveSessionCommandTarget(message, command.index);
@@ -428,7 +427,12 @@ export class CommandHandler {
         }
         this.context.setPendingInteraction(message.conversationKey, { kind: "session-delete-confirm", index: target.index, sessionId: target.session.sessionId, title: target.session.label, expiresAt: Date.now() + SESSION_DELETE_CONFIRM_TTL_MS });
         const confirmText = target.index > 0 ? `确认删除会话 #${target.index}？发送 \`/delete ${target.index} confirm\`` : "确认删除当前会话？发送 `/delete confirm`";
-        await this.context.sendPayload(message.chatId, buildNoticeCardPayload({ title: "提醒", template: "yellow", iconToken: "maybe_outlined", message: confirmText, messageIconToken: "maybe_outlined", messageIconColor: "yellow" }), { event: "final message sent", transcriptType: "outbound-final", textPreview: confirmText, len: confirmText.length }, { replyToMessageId: message.messageId });
+        await this.sendNotice(message, {
+          title: "提醒",
+          template: "yellow",
+          icon: "maybe_outlined",
+          message: confirmText,
+        });
         return;
       }
       const pending = this.context.pendingInteractions.get(message.conversationKey);
@@ -454,7 +458,12 @@ export class CommandHandler {
         const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
         await this.context.saveSessionWindow(message.conversationKey, normalizeSessionWindowRecord(undefined, window.mode, this.context.config.bridge.maxSessionsPerWindow));
         this.context.clearPendingInteraction(message.conversationKey, false);
-        await this.context.sendPayload(message.chatId, buildNoticeCardPayload({ title: "已彻底删除全部会话", template: "red", iconToken: "close-bold_outlined", message: "当前窗口的全部会话已从窗口和 OpenCode 中删除。", messageIconToken: "close-bold_outlined", messageIconColor: "red" }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "当前窗口的全部会话已从窗口和 OpenCode 中删除。", len: 25 }, { replyToMessageId: message.messageId });
+        await this.sendNotice(message, {
+          title: "已彻底删除全部会话",
+          template: "red",
+          icon: "close-bold_outlined",
+          message: "当前窗口的全部会话已从窗口和 OpenCode 中删除。",
+        });
         return;
       }
       if (command.index !== undefined && pending.index !== command.index) {
@@ -487,10 +496,20 @@ export class CommandHandler {
           }
           await this.context.saveSessionWindow(message.conversationKey, nextWindow);
           this.context.clearPendingInteraction(message.conversationKey, false);
-          await this.context.sendPayload(message.chatId, buildNoticeCardPayload({ title: "已彻底删除多个会话", template: "red", iconToken: "close-bold_outlined", message: `已从当前窗口和 OpenCode 中删除 ${pending.sessionIds.length} 个会话。`, messageIconToken: "close-bold_outlined", messageIconColor: "red" }), { event: "final message sent", transcriptType: "outbound-final", textPreview: `已从当前窗口和 OpenCode 中删除 ${pending.sessionIds.length} 个会话。`, len: 25 }, { replyToMessageId: message.messageId });
+          await this.sendNotice(message, {
+            title: "已彻底删除多个会话",
+            template: "red",
+            icon: "close-bold_outlined",
+            message: `已从当前窗口和 OpenCode 中删除 ${pending.sessionIds.length} 个会话。`,
+          });
           return;
         }
-        await this.context.sendPayload(message.chatId, buildNoticeCardPayload({ title: "提醒", template: "yellow", iconToken: "maybe_outlined", message: "删除确认已失效，请重新发送 `/delete`。", messageIconToken: "maybe_outlined", messageIconColor: "yellow" }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "删除确认已失效，请重新发送 `/delete`。", len: 19 }, { replyToMessageId: message.messageId });
+        await this.sendNotice(message, {
+          title: "提醒",
+          template: "yellow",
+          icon: "maybe_outlined",
+          message: "删除确认已失效，请重新发送 `/delete`。",
+        });
         return;
       }
       if (this.context.isSessionBusy(message.conversationKey, pending.sessionId)) {
@@ -530,7 +549,12 @@ export class CommandHandler {
     if (command.kind === "allow" || command.kind === "deny") {
       const pending = this.context.pendingInteractions.get(message.conversationKey);
       if (!pending || pending.kind !== "permission") {
-        await this.context.sendPayload(message.chatId, buildNoticeCardPayload({ title: "信息提示", template: "blue", iconToken: "info_outlined", message: "当前没有待确认的权限请求。", messageIconToken: "info_outlined", messageIconColor: "blue" }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "当前没有待确认的权限请求。", len: 13 }, { replyToMessageId: message.messageId });
+        await this.sendNotice(message, {
+          title: "信息提示",
+          template: "blue",
+          icon: "info_outlined",
+          message: "当前没有待确认的权限请求。",
+        });
         return;
       }
       const resolution: PermissionResolution = command.kind === "deny" ? "deny" : command.policy;
@@ -545,14 +569,36 @@ export class CommandHandler {
     await this.context.sendMarkdown(message.chatId, text, message.messageId);
   }
 
-  private async sendBusyNotice(message: CommandMessage): Promise<void> {
+  private async sendNotice(
+    message: CommandMessage,
+    options: {
+      title: string;
+      template: "yellow" | "grey" | "blue" | "red" | "orange";
+      icon: string;
+      message: string;
+    },
+  ): Promise<void> {
     await this.context.sendPayload(message.chatId, buildNoticeCardPayload({
+      title: options.title,
+      template: options.template,
+      iconToken: options.icon,
+      message: options.message,
+      messageIconToken: options.icon,
+      messageIconColor: options.template,
+    }), {
+      event: "final message sent",
+      transcriptType: "outbound-final",
+      textPreview: options.message,
+      len: options.message.length,
+    }, { replyToMessageId: message.messageId });
+  }
+
+  private async sendBusyNotice(message: CommandMessage): Promise<void> {
+    await this.sendNotice(message, {
       title: "提醒",
       template: "yellow",
-      iconToken: "maybe_outlined",
+      icon: "maybe_outlined",
       message: "当前会话正在执行任务，请先发送 `/abort`。",
-      messageIconToken: "maybe_outlined",
-      messageIconColor: "yellow",
-    }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "当前会话正在执行任务，请先发送 `/abort`。", len: 20 }, { replyToMessageId: message.messageId });
+    });
   }
 }
