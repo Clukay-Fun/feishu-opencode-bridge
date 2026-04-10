@@ -14,6 +14,33 @@ type CardActionPort = {
   ): Promise<Record<string, unknown>>;
 };
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" ? value as Record<string, unknown> : null;
+}
+
+function readNestedString(value: unknown, ...path: string[]): string {
+  let current: unknown = value;
+  for (const part of path) {
+    const record = asRecord(current);
+    if (!record) return "";
+    current = record[part];
+  }
+  return typeof current === "string" ? current : "";
+}
+
+function extractActorOpenId(event: unknown): string {
+  return readNestedString(event, "operator", "open_id")
+    || readNestedString(event, "operator", "operator_id", "open_id")
+    || readNestedString(event, "context", "open_id")
+    || readNestedString(event, "open_id");
+}
+
+function extractOpenMessageId(event: unknown): string {
+  return readNestedString(event, "context", "open_message_id")
+    || readNestedString(event, "open_message", "open_message_id")
+    || readNestedString(event, "open_message_id");
+}
+
 export type BridgeHttpServer = {
   close(): Promise<void>;
 };
@@ -26,7 +53,13 @@ export async function startBridgeHttpServer(
   const lark = (await import("@larksuiteoapi/node-sdk") as unknown) as {
     CardActionHandler: new (
       params: Record<string, string>,
-      handler: (event: { open_id: string; open_message_id: string; action?: { value?: Record<string, unknown> } }) => Promise<Record<string, unknown>>,
+      handler: (event: {
+        open_id?: string;
+        open_message_id?: string;
+        operator?: { open_id?: string };
+        context?: { open_message_id?: string };
+        action?: { value?: Record<string, unknown> };
+      }) => Promise<Record<string, unknown>>,
     ) => unknown;
     adaptDefault: (
       path: string,
@@ -47,11 +80,16 @@ export async function startBridgeHttpServer(
             ? { encryptKey: config.feishu.cardActions.encryptKey }
             : {}),
         },
-        async (event) => actions.handlePermissionCardAction(
-          event.open_id,
-          event.open_message_id,
-          event.action?.value ?? {},
-        ),
+        async (event) => {
+          logger.log("http/card-action", "callback event parsed", {
+            event,
+          });
+          return actions.handlePermissionCardAction(
+            extractActorOpenId(event),
+            extractOpenMessageId(event),
+            event.action?.value ?? {},
+          );
+        },
       ),
       { autoChallenge: true },
     )
@@ -67,6 +105,12 @@ export async function startBridgeHttpServer(
     }
 
     if (adapter && url.pathname === config.feishu.cardActions.path) {
+      logger.log("http/card-action", "callback received", {
+        method: req.method ?? "UNKNOWN",
+        path: url.pathname,
+        userAgent: req.headers["user-agent"] ?? "",
+        contentType: req.headers["content-type"] ?? "",
+      });
       await adapter(req, res);
       return;
     }

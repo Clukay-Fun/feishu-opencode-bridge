@@ -177,7 +177,18 @@ export class BridgeApp {
     openMessageId: string,
     value: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
+    this.logger.log("bridge/permission", "card action invoked", {
+      actorOpenId,
+      openMessageId,
+      value,
+    });
+
     if (!isPermissionCardActionValue(value)) {
+      this.logger.log("bridge/permission", "card action rejected: invalid value", {
+        actorOpenId,
+        openMessageId,
+        value,
+      }, "warn");
       return this.toCardContent(buildNoticeCardPayload({
         title: "信息提示",
         template: "blue",
@@ -190,6 +201,13 @@ export class BridgeApp {
 
     const interaction = this.permissionInteractions.get(value.nonce);
     if (!interaction || !this.matchesPermissionAction(interaction, value, openMessageId)) {
+      this.logger.log("bridge/permission", "card action rejected: interaction mismatch", {
+        actorOpenId,
+        openMessageId,
+        value,
+        hasInteraction: Boolean(interaction),
+        expectedMessageId: interaction?.permissionMessageId ?? null,
+      }, "warn");
       return this.toCardContent(buildNoticeCardPayload({
         title: "提醒",
         template: "yellow",
@@ -201,6 +219,11 @@ export class BridgeApp {
     }
 
     if (interaction.requesterOpenId !== actorOpenId) {
+      this.logger.log("bridge/permission", "card action rejected: actor mismatch", {
+        actorOpenId,
+        requesterOpenId: interaction.requesterOpenId,
+        permissionId: interaction.permissionId,
+      }, "warn");
       return this.toCardContent(buildNoticeCardPayload({
         title: "提醒",
         template: "yellow",
@@ -212,15 +235,27 @@ export class BridgeApp {
     }
 
     if (interaction.resolvedAt && interaction.resolution) {
+      this.logger.log("bridge/permission", "card action idempotent: already resolved", {
+        permissionId: interaction.permissionId,
+        resolution: interaction.resolution,
+      });
       return this.toCardContent(this.buildPermissionResolutionPayload(interaction.resolution));
     }
 
     if (interaction.expiresAt <= Date.now()) {
+      this.logger.log("bridge/permission", "card action expired before handling", {
+        permissionId: interaction.permissionId,
+        expiresAt: interaction.expiresAt,
+      }, "warn");
       await this.expirePermissionInteraction(interaction, false);
       return this.toCardContent(this.buildPermissionResolutionPayload("timeout"));
     }
 
     if (this.permissionProcessing.has(interaction.permissionVersion)) {
+      this.logger.log("bridge/permission", "card action ignored: already processing", {
+        permissionId: interaction.permissionId,
+        nonce: interaction.permissionVersion,
+      });
       return this.toCardContent(buildNoticeCardPayload({
         title: "信息提示",
         template: "blue",
@@ -233,6 +268,10 @@ export class BridgeApp {
 
     try {
       await this.resolvePermissionInteraction(interaction, value.policy);
+      this.logger.log("bridge/permission", "card action resolved", {
+        permissionId: interaction.permissionId,
+        policy: value.policy,
+      });
       return this.toCardContent(this.buildPermissionResolutionPayload(value.policy));
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -349,7 +388,7 @@ export class BridgeApp {
     queue.replaceActive(turn);
 
     try {
-      const sessionId = turn.sessionId ?? await this.ensureSession(turn);
+      const sessionId = await this.ensureSession(turn);
       turn = { ...turn, sessionId };
       queue.replaceActive(turn);
       this.logger.log("bridge/queue", "turn started", { turnId: turn.turnId, sessionId, chatId: turn.chatId, conversationKey });
@@ -643,6 +682,14 @@ export class BridgeApp {
       if (status && readOptionalString(status, "type") === "idle") {
         await context.finish();
       }
+      return;
+    }
+
+    if (event.type === "permission.replied") {
+      return;
+    }
+
+    if (event.type === "session.deleted") {
       return;
     }
 
@@ -1808,6 +1855,14 @@ export class BridgeApp {
       return;
     }
 
+    if (current.resolvedAt && current.resolution) {
+      return;
+    }
+
+    if (this.permissionProcessing.has(current.permissionVersion)) {
+      return;
+    }
+
     await this.expirePermissionInteraction(current, true);
   }
 
@@ -1956,7 +2011,7 @@ export class BridgeApp {
       && interaction.sessionId === value.sessionId
       && interaction.turnId === value.turnId
       && interaction.permissionVersion === value.nonce
-      && (!interaction.permissionMessageId || interaction.permissionMessageId === openMessageId);
+      && (!openMessageId || !interaction.permissionMessageId || interaction.permissionMessageId === openMessageId);
   }
 
   private async resolvePermissionInteraction(

@@ -4,6 +4,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const actionResults = vi.hoisted(() => ({
   nextResult: { card: { title: "ok" } } as Record<string, unknown>,
+  nextEvent: {
+    open_id: "ou_requester",
+    open_message_id: "om_permission_1",
+    action: { value: { kind: "permission" } },
+  } as Record<string, unknown>,
 }));
 
 vi.mock("@larksuiteoapi/node-sdk", () => {
@@ -23,10 +28,10 @@ vi.mock("@larksuiteoapi/node-sdk", () => {
     dispatcher: CardActionHandler,
   ) {
     return async (_req: http.IncomingMessage, res: http.ServerResponse) => {
-      const result = await dispatcher.handler({
-        open_id: "ou_requester",
-        open_message_id: "om_permission_1",
-        action: { value: { kind: "permission" } },
+      const result = await dispatcher.handler(actionResults.nextEvent as {
+        open_id: string;
+        open_message_id: string;
+        action?: { value?: Record<string, unknown> };
       });
       res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
       res.end(JSON.stringify(result ?? actionResults.nextResult));
@@ -82,6 +87,11 @@ describe("startBridgeHttpServer", () => {
   it("delegates card action callbacks to the permission handler", async () => {
     const port = await reservePort();
     const handlePermissionCardAction = vi.fn(async () => ({ card: { title: "权限已处理" } }));
+    actionResults.nextEvent = {
+      open_id: "ou_requester",
+      open_message_id: "om_permission_1",
+      action: { value: { kind: "permission" } },
+    };
     const server = await startBridgeHttpServer(
       createConfig(port, { enabled: true }),
       { handlePermissionCardAction },
@@ -97,6 +107,38 @@ describe("startBridgeHttpServer", () => {
 
     expect(response.status).toBe(200);
     expect(handlePermissionCardAction).toHaveBeenCalledWith("ou_requester", "om_permission_1", { kind: "permission" });
+    expect(await response.json()).toEqual({ card: { title: "权限已处理" } });
+  });
+
+  it("extracts nested operator ids and tolerates missing open_message_id", async () => {
+    const port = await reservePort();
+    const handlePermissionCardAction = vi.fn(async () => ({ card: { title: "权限已处理" } }));
+    actionResults.nextEvent = {
+      operator: {
+        operator_id: {
+          open_id: "ou_requester_nested",
+        },
+      },
+      context: {
+        open_id: "ou_requester_context",
+      },
+      action: { value: { kind: "permission", source: "nested" } },
+    };
+    const server = await startBridgeHttpServer(
+      createConfig(port, { enabled: true }),
+      { handlePermissionCardAction },
+      logger(),
+    );
+    servers.push(server);
+
+    const response = await fetch(`http://127.0.0.1:${port}/webhook/card`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    expect(response.status).toBe(200);
+    expect(handlePermissionCardAction).toHaveBeenCalledWith("ou_requester_nested", "", { kind: "permission", source: "nested" });
     expect(await response.json()).toEqual({ card: { title: "权限已处理" } });
   });
 });

@@ -118,6 +118,52 @@ describe("BridgeApp permission card actions", () => {
     expect(JSON.stringify(card)).toContain("当前权限请求已拒绝");
   });
 
+  it("allows matching permission actions when callback omits open_message_id", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const replyPermission = vi.fn(async () => true);
+    (app as unknown as { opencode: { replyPermission: typeof replyPermission } }).opencode = { replyPermission };
+
+    const interaction = seedPermission(app);
+    const card = await app.handlePermissionCardAction(
+      interaction.requesterOpenId,
+      "",
+      buildActionValue(interaction, "once"),
+    );
+
+    expect(replyPermission).toHaveBeenCalledWith(interaction.sessionId, interaction.permissionId, "once", false);
+    expect(JSON.stringify(card)).toContain("当前权限请求已确认，可继续执行");
+  });
+
+  it("does not auto-timeout while a button click is being processed", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    let release!: () => void;
+    const replyPermission = vi.fn(() => new Promise<boolean>((resolve) => {
+      release = () => resolve(true);
+    }));
+    (app as unknown as { opencode: { replyPermission: typeof replyPermission } }).opencode = { replyPermission };
+
+    const interaction = seedPermission(app);
+    const actionPromise = app.handlePermissionCardAction(
+      interaction.requesterOpenId,
+      interaction.permissionMessageId ?? "",
+      buildActionValue(interaction, "once"),
+    );
+
+    await Promise.resolve();
+    await (app as unknown as {
+      handlePermissionTimeout: (conversationKey: string, pending: PendingPermissionInteraction) => Promise<void>;
+    }).handlePermissionTimeout(interaction.conversationKey, interaction);
+
+    release();
+    const card = await actionPromise;
+
+    expect(replyPermission).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(card)).toContain("当前权限请求已确认，可继续执行");
+    expect(getReplyPayloads(outbound)).toHaveLength(0);
+  });
+
   it("keeps text /allow once fallback working", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
