@@ -18,6 +18,10 @@ export type BridgeHttpServer = {
   close(): Promise<void>;
 };
 
+type CardActionEvent = {
+  action?: { value?: Record<string, unknown> };
+} & Record<string, unknown>;
+
 export async function startBridgeHttpServer(
   config: AppConfig,
   actions: CardActionPort,
@@ -26,7 +30,7 @@ export async function startBridgeHttpServer(
   const lark = (await import("@larksuiteoapi/node-sdk") as unknown) as {
     CardActionHandler: new (
       params: Record<string, string>,
-      handler: (event: { open_id: string; open_message_id: string; action?: { value?: Record<string, unknown> } }) => Promise<Record<string, unknown>>,
+      handler: (event: CardActionEvent) => Promise<Record<string, unknown>>,
     ) => unknown;
     adaptDefault: (
       path: string,
@@ -47,11 +51,24 @@ export async function startBridgeHttpServer(
             ? { encryptKey: config.feishu.cardActions.encryptKey }
             : {}),
         },
-        async (event) => actions.handlePermissionCardAction(
-          event.open_id,
-          event.open_message_id,
-          event.action?.value ?? {},
-        ),
+        async (event) => {
+          const actorOpenId = pickString(event, [["operator", "open_id"], ["operator", "operator_id", "open_id"], ["context", "open_id"], ["open_id"]]);
+          const openMessageId = pickString(event, [["context", "open_message_id"], ["open_message_id"]]);
+          const actionValue = event.action?.value ?? {};
+
+          logger.log("http/server", "callback event parsed", {
+            actorOpenId,
+            openMessageId,
+            actionValueKind: typeof actionValue.kind === "string" ? actionValue.kind : "",
+            ...flattenScalarFields("callback", event),
+          });
+
+          return actions.handlePermissionCardAction(
+            actorOpenId,
+            openMessageId,
+            actionValue,
+          );
+        },
       ),
       { autoChallenge: true },
     )
@@ -104,4 +121,57 @@ export async function startBridgeHttpServer(
       });
     },
   };
+}
+
+function pickString(source: Record<string, unknown>, paths: string[][]): string {
+  for (const path of paths) {
+    const value = readPath(source, path);
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  }
+  return "";
+}
+
+function readPath(source: Record<string, unknown>, path: string[]): unknown {
+  let current: unknown = source;
+  for (const key of path) {
+    if (!current || typeof current !== "object") {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current;
+}
+
+function flattenScalarFields(prefix: string, value: unknown): Record<string, string | number | boolean | null> {
+  const fields: Record<string, string | number | boolean | null> = {};
+  collectScalarFields(fields, prefix, value);
+  return fields;
+}
+
+function collectScalarFields(
+  fields: Record<string, string | number | boolean | null>,
+  path: string,
+  value: unknown,
+): void {
+  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    fields[path] = value;
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => {
+      collectScalarFields(fields, `${path}.${index}`, item);
+    });
+    return;
+  }
+
+  if (!value || typeof value !== "object") {
+    return;
+  }
+
+  for (const [key, nestedValue] of Object.entries(value)) {
+    collectScalarFields(fields, `${path}.${key}`, nestedValue);
+  }
 }

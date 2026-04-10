@@ -1963,12 +1963,16 @@ export class BridgeApp {
     value: PermissionCardActionValue,
     openMessageId: string,
   ): boolean {
+    const matchesMessageId = !openMessageId
+      || !interaction.permissionMessageId
+      || interaction.permissionMessageId === openMessageId;
+
     return interaction.conversationKey === value.conversationKey
       && interaction.permissionId === value.permissionId
       && interaction.sessionId === value.sessionId
       && interaction.turnId === value.turnId
       && interaction.permissionVersion === value.nonce
-      && (!interaction.permissionMessageId || interaction.permissionMessageId === openMessageId);
+      && matchesMessageId;
   }
 
   private async resolvePermissionInteraction(
