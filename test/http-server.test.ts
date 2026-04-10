@@ -4,14 +4,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const actionResults = vi.hoisted(() => ({
   nextResult: { card: { title: "ok" } } as Record<string, unknown>,
+  handlerParams: [] as Array<Record<string, string>>,
 }));
 
 vi.mock("@larksuiteoapi/node-sdk", () => {
   class CardActionHandler {
     constructor(
-      _params: Record<string, string>,
+      params: Record<string, string>,
       public readonly handler: (event: Record<string, unknown>) => Promise<Record<string, unknown>>,
-    ) {}
+    ) {
+      actionResults.handlerParams.push(params);
+    }
   }
 
   function adaptDefault(
@@ -130,6 +133,22 @@ describe("startBridgeHttpServer", () => {
       "callback.operator.operator_id.open_id": "ou_nested",
       "callback.context.open_message_id": "om_nested",
       "callback.action.value.kind": "permission",
+    }));
+  });
+
+  it("passes encryptKey to the card action sdk handler", async () => {
+    actionResults.handlerParams.length = 0;
+    const port = await reservePort();
+    const server = await startBridgeHttpServer(
+      createConfig(port, { enabled: true, verificationToken: "token", encryptKey: "encrypt-key" }),
+      { handlePermissionCardAction: vi.fn(async () => ({ ok: true })) },
+      logger(),
+    );
+    servers.push(server);
+
+    expect(actionResults.handlerParams.at(-1)).toEqual(expect.objectContaining({
+      verificationToken: "token",
+      encryptKey: "encrypt-key",
     }));
   });
 });

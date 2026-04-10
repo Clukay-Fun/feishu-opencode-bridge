@@ -35,6 +35,7 @@ import { PermissionManager } from "./permission-manager.js";
 import { CommandHandler } from "./command-handler.js";
 import { TurnCardManager } from "./turn-card-manager.js";
 import { TurnExecutor } from "./turn-executor.js";
+import { SlidingWindowRateLimiter } from "./rate-limiter.js";
 import {
   addSession,
   createSessionEntry,
@@ -105,6 +106,7 @@ export class BridgeApp {
   private readonly permissionManager: PermissionManager;
   private readonly turnCardManager: TurnCardManager;
   private readonly turnExecutor: TurnExecutor;
+  private readonly rateLimiter = new SlidingWindowRateLimiter(20, 60_000);
   private sessionMap: MappingRecord = {};
   private readonly runningChats = new Map<string, Promise<void>>();
   private readonly pendingInteractions = new Map<string, PendingInteraction>();
@@ -211,6 +213,16 @@ export class BridgeApp {
         transcriptType: "outbound-final",
         textPreview: "当前账号未加入白名单。",
         len: 11,
+      }, { replyToMessageId: message.messageId });
+      return;
+    }
+
+    if (!this.rateLimiter.allow(message.senderOpenId)) {
+      await this.sendPayload(message.chatId, buildPostMarkdownPayload("请求过于频繁，请稍后再试。"), {
+        event: "final message sent",
+        transcriptType: "outbound-final",
+        textPreview: "请求过于频繁，请稍后再试。",
+        len: 14,
       }, { replyToMessageId: message.messageId });
       return;
     }

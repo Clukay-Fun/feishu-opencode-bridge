@@ -50,6 +50,9 @@ export async function runStartupPreflight(
       if (!config.feishu.cardActions.verificationToken) {
         throw new Error("缺少 feishu.cardActions.verificationToken");
       }
+      if (!config.feishu.cardActions.encryptKey) {
+        throw new Error("缺少 feishu.cardActions.encryptKey");
+      }
       if (!config.feishu.cardActions.path) {
         throw new Error("缺少 feishu.cardActions.path");
       }
