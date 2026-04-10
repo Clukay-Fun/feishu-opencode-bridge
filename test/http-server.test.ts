@@ -132,6 +132,37 @@ describe("startBridgeHttpServer", () => {
       "callback.action.value.kind": "permission",
     }));
   });
+
+  it("extracts nested operator ids and tolerates missing open_message_id", async () => {
+    const port = await reservePort();
+    const handlePermissionCardAction = vi.fn(async () => ({ card: { title: "权限已处理" } }));
+    const server = await startBridgeHttpServer(
+      createConfig(port, { enabled: true }),
+      { handlePermissionCardAction },
+      logger(),
+    );
+    servers.push(server);
+
+    const response = await fetch(`http://127.0.0.1:${port}/webhook/card`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        operator: {
+          operator_id: {
+            open_id: "ou_requester_nested",
+          },
+        },
+        context: {
+          open_id: "ou_requester_context",
+        },
+        action: { value: { kind: "permission", source: "nested" } },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(handlePermissionCardAction).toHaveBeenCalledWith("ou_requester_nested", "", { kind: "permission", source: "nested" });
+    expect(await response.json()).toEqual({ card: { title: "权限已处理" } });
+  });
 });
 
 async function readJsonBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {

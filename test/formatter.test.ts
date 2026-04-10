@@ -234,8 +234,10 @@ describe("buildPostPayload", () => {
     expect(content.header.title.content).toBe("权限请求");
     expect(content.header.template).toBe("purple");
     expect(content.body.elements[0].columns[0].elements[1].columns[0].elements[0].content).toContain("rm -rf dist/");
+    expect(content.body.elements[2].tag).toBe("column_set");
     expect(content.body.elements[2].columns[0].elements[0].text.content).toBe("/allow once · 仅此一次");
     expect(content.body.elements[2].columns[1].elements[0].value.policy).toBe("deny");
+    expect(content.body.elements[2].columns[1].elements[0].confirm.text.content).toContain("确认拒绝当前权限请求");
     expect(content.body.elements[3].columns[0].elements[0].content).toContain("120s 后自动拒绝");
   });
 });
