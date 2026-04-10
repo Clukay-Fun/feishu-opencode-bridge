@@ -3,6 +3,13 @@
 - The bridge owns session control for `/new`, `/sessions`, `/switch`, and `/status`.
 - The bridge owns runtime process cards, final replies, and other operational status messages sent back to Feishu.
 - Follow the Feishu output Markdown rules in `docs/feishu-markdown.md`.
+- For long-form bridge output such as architecture walkthroughs, use `###` section headings, render call chains as fenced code blocks, keep explanations in short sentences, and do not inline file paths or line numbers into narrative paragraphs.
+- Output formatting constraints:
+  - Use blank lines to group code blocks, around every 3-5 lines.
+  - Render call chains with indentation, not natural-language prose.
+  - Do not inline file paths or line numbers into body paragraphs.
+  - Use `###` sections for long output, and keep each section within roughly one screen.
+  - Leave one blank line between prose and code blocks.
 - Plain Post is only for passthrough text output, ultra-short confirmations, and card fallback. Bridge-owned commands, structured lists, and system notices must use cards instead.
 - Do not simulate session creation, switching, closing, or renaming inside the agent response.
 - Use `lark-cli` only when the user explicitly asks to operate on Feishu or Lark resources.

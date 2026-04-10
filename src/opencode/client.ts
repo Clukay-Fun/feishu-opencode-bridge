@@ -125,6 +125,10 @@ export class OpenCodeClient {
     return this.request("/session", { method: "GET" });
   }
 
+  async deleteSession(sessionId: string): Promise<boolean> {
+    return this.request(`/session/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+  }
+
   async getSessionStatuses(): Promise<Record<string, OpenCodeSessionStatus>> {
     return this.request("/session/status", { method: "GET" });
   }

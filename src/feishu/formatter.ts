@@ -66,6 +66,19 @@ export type LeaveCommandCardView = {
   unbound: boolean;
 };
 
+export type ModelListCardView = {
+  providers: Array<{
+    id: string;
+    name: string;
+    models: Array<{
+      id: string;
+      current?: boolean;
+      default?: boolean;
+    }>;
+  }>;
+  footer: string;
+};
+
 export type NoticeCardView = {
   title: string;
   template: "blue" | "green" | "red" | "wathet" | "grey" | "orange" | "yellow" | "purple" | "indigo";
@@ -232,6 +245,33 @@ export function buildLeaveCommandCardPayload(view: LeaveCommandCardView): Feishu
             margin: "0px 0px 0px 0px",
           },
         ],
+        margin: "0px 0px 0px 0px",
+      },
+    ],
+  });
+}
+
+export function buildModelListCardPayload(view: ModelListCardView): FeishuPostPayload {
+  return buildInteractivePayload({
+    title: "可用模型",
+    template: "indigo",
+    iconToken: "ai-common_colorful",
+    bodyElements: [
+      ...view.providers.flatMap((provider, index) => {
+        const elements: Array<Record<string, unknown>> = [
+          buildModelProviderBlock(provider),
+        ];
+        if (index < view.providers.length - 1) {
+          elements.push(buildDivider());
+        }
+        return elements;
+      }),
+      buildDivider(),
+      {
+        tag: "markdown",
+        content: view.footer,
+        text_align: "left",
+        text_size: "notation",
         margin: "0px 0px 0px 0px",
       },
     ],
@@ -461,6 +501,77 @@ function buildPermissionRequestBlock(permissionName: string): Record<string, unk
         weight: 1,
       },
     ],
+    margin: "0px 0px 0px 0px",
+  };
+}
+
+function buildModelProviderBlock(provider: ModelListCardView["providers"][number]): Record<string, unknown> {
+  return {
+    tag: "column_set",
+    flex_mode: "stretch",
+    horizontal_spacing: "12px",
+    horizontal_align: "left",
+    columns: [
+      {
+        tag: "column",
+        width: "weighted",
+        elements: [
+          {
+            tag: "markdown",
+            content: `${escapeText(provider.name)} 模型`,
+            text_align: "left",
+            text_size: "normal",
+            margin: "0px 0px 0px 0px",
+          },
+          {
+            tag: "column_set",
+            flex_mode: "flow",
+            horizontal_spacing: "8px",
+            horizontal_align: "left",
+            columns: provider.models.map((model) => buildModelChip(model)),
+            margin: "0px 0px 0px 0px",
+          },
+        ],
+        padding: "8px 8px 8px 8px",
+        direction: "vertical",
+        horizontal_spacing: "8px",
+        vertical_spacing: "4px",
+        horizontal_align: "left",
+        vertical_align: "top",
+        margin: "0px 0px 0px 0px",
+        weight: 1,
+      },
+    ],
+    margin: "0px 0px 0px 0px",
+  };
+}
+
+function buildModelChip(model: ModelListCardView["providers"][number]["models"][number]): Record<string, unknown> {
+  const label = model.id.includes("/") ? (model.id.split("/").at(-1) ?? model.id) : model.id;
+  const highlighted = model.current;
+  return {
+    tag: "column",
+    width: "auto",
+    ...(highlighted ? { background_style: "purple-50" } : {}),
+    elements: [
+      {
+        tag: "markdown",
+        content: model.current
+          ? `**${escapeText(label)}**`
+          : model.default
+            ? `${escapeText(label)} 默认`
+            : escapeText(label),
+        text_align: "left",
+        text_size: "notation",
+        margin: "0px 0px 0px 0px",
+      },
+    ],
+    padding: "4px 4px 4px 4px",
+    direction: "vertical",
+    horizontal_spacing: "8px",
+    vertical_spacing: "8px",
+    horizontal_align: "left",
+    vertical_align: "top",
     margin: "0px 0px 0px 0px",
   };
 }
@@ -997,10 +1108,9 @@ function buildOutputElements(output: OutputView, state: CardState): Array<Record
 }
 
 function formatOutputText(text: string): string {
-  return escapeText(text)
-    .split("\n")
-    .map((line) => formatOutputLine(line))
-    .join("\n");
+  return splitMarkdownByCodeFence(text)
+    .map((segment) => segment.kind === "code" ? segment.content : formatEscapedMarkdownSegment(segment.content))
+    .join("");
 }
 
 function formatOutputLine(line: string): string {
@@ -1016,6 +1126,35 @@ function formatOutputLine(line: string): string {
     return `[打开链接](${trimmed})`;
   }
   return line;
+}
+
+function formatEscapedMarkdownSegment(text: string): string {
+  return escapeText(text)
+    .split("\n")
+    .map((line) => formatOutputLine(line))
+    .join("\n");
+}
+
+function splitMarkdownByCodeFence(text: string): Array<{ kind: "text" | "code"; content: string }> {
+  const segments: Array<{ kind: "text" | "code"; content: string }> = [];
+  const codeFencePattern = /```[\s\S]*?```/g;
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(codeFencePattern)) {
+    const start = match.index ?? 0;
+    const block = match[0] ?? "";
+    if (start > lastIndex) {
+      segments.push({ kind: "text", content: text.slice(lastIndex, start) });
+    }
+    segments.push({ kind: "code", content: block });
+    lastIndex = start + block.length;
+  }
+
+  if (lastIndex < text.length) {
+    segments.push({ kind: "text", content: text.slice(lastIndex) });
+  }
+
+  return segments.length > 0 ? segments : [{ kind: "text", content: text }];
 }
 
 function fileNameFromPath(path: string): string {

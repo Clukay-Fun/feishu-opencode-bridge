@@ -24,11 +24,25 @@ export type PendingPermissionInteraction = {
 
 export type PendingSessionSelectionInteraction = {
   kind: "session-select";
-  options: Array<{ index: number; sessionId: string; title: string; current?: boolean }>;
+  options: Array<{ index: number; sessionId: string; title: string; current?: boolean; inWindow?: boolean }>;
+  expiresAt: number;
+};
+
+export type PendingSessionDeleteConfirmationInteraction = {
+  kind: "session-delete-confirm";
+  index?: number | undefined;
+  indices?: number[] | undefined;
+  rangeLabel?: string | undefined;
+  sessionId?: string | undefined;
+  title?: string | undefined;
+  all?: boolean | undefined;
+  sessionIds?: string[] | undefined;
+  titles?: string[] | undefined;
   expiresAt: number;
 };
 
 export type PendingInteraction =
   | PendingQuestionInteraction
   | PendingPermissionInteraction
-  | PendingSessionSelectionInteraction;
+  | PendingSessionSelectionInteraction
+  | PendingSessionDeleteConfirmationInteraction;

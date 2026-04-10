@@ -5,11 +5,14 @@ export type RoutedText =
       | { kind: "new" }
       | { kind: "status" }
       | { kind: "abort" }
-      | { kind: "models" }
+      | { kind: "models"; provider?: string | undefined }
       | { kind: "leave" }
       | { kind: "who" }
       | { kind: "sessions" }
+      | { kind: "sessions-all" }
       | { kind: "sessions-select"; index: number }
+      | { kind: "close"; index?: number | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined }
+      | { kind: "delete"; index?: number | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined; confirm: boolean }
       | { kind: "allow"; policy: "once" | "always" }
       | { kind: "deny" }
       | { kind: "passthrough"; name: string; arguments: string[] };
@@ -42,6 +45,10 @@ export function routeIncomingText(text: string): RoutedText {
     return { kind: "command", command: { kind: "models" } };
   }
 
+  if ((rawCommand === "models" || rawCommand === "model") && args.length === 1 && !["use", "reset"].includes(args[0] ?? "")) {
+    return { kind: "command", command: { kind: "models", provider: args[0] } };
+  }
+
   if (rawCommand === "leave" && args.length === 0) {
     return { kind: "command", command: { kind: "leave" } };
   }
@@ -52,6 +59,10 @@ export function routeIncomingText(text: string): RoutedText {
 
   if (rawCommand === "sessions" && args.length === 0) {
     return { kind: "command", command: { kind: "sessions" } };
+  }
+
+  if (rawCommand === "sessions" && args.length === 1 && args[0] === "all") {
+    return { kind: "command", command: { kind: "sessions-all" } };
   }
 
   if (rawCommand === "sessions" && args.length === 1 && /^\d+$/.test(args[0] ?? "")) {
@@ -65,6 +76,111 @@ export function routeIncomingText(text: string): RoutedText {
     return {
       kind: "command",
       command: { kind: "sessions-select", index: Number(args[0]) },
+    };
+  }
+
+  if (rawCommand === "close" && args.length === 0) {
+    return {
+      kind: "command",
+      command: { kind: "close" },
+    };
+  }
+
+  if (rawCommand === "close" && args.length === 1 && args[0] === "all") {
+    return {
+      kind: "command",
+      command: { kind: "close", all: true },
+    };
+  }
+
+  if (rawCommand === "close" && args.length === 1 && /^\d+$/.test(args[0] ?? "")) {
+    return {
+      kind: "command",
+      command: { kind: "close", index: Number(args[0]) },
+    };
+  }
+
+  if (rawCommand === "close" && args.length === 1 && /^\d+-\d+$/.test(args[0] ?? "")) {
+    const rangeArg = args[0];
+    if (!rangeArg) {
+      return { kind: "message", text };
+    }
+    const parts = rangeArg.split("-");
+    const start = Number(parts[0] ?? "0");
+    const end = Number(parts[1] ?? "0");
+    return {
+      kind: "command",
+      command: { kind: "close", range: { start, end } },
+    };
+  }
+
+  if (rawCommand === "delete" && args.length === 0) {
+    return {
+      kind: "command",
+      command: { kind: "delete", confirm: false },
+    };
+  }
+
+  if (rawCommand === "delete" && args.length === 1 && args[0] === "all") {
+    return {
+      kind: "command",
+      command: { kind: "delete", all: true, confirm: false },
+    };
+  }
+
+  if (rawCommand === "delete" && args.length === 2 && args[0] === "all" && args[1] === "confirm") {
+    return {
+      kind: "command",
+      command: { kind: "delete", all: true, confirm: true },
+    };
+  }
+
+  if (rawCommand === "delete" && args.length === 1 && args[0] === "confirm") {
+    return {
+      kind: "command",
+      command: { kind: "delete", confirm: true },
+    };
+  }
+
+  if (rawCommand === "delete" && args.length === 1 && /^\d+$/.test(args[0] ?? "")) {
+    return {
+      kind: "command",
+      command: { kind: "delete", index: Number(args[0]), confirm: false },
+    };
+  }
+
+  if (rawCommand === "delete" && args.length === 1 && /^\d+-\d+$/.test(args[0] ?? "")) {
+    const rangeArg = args[0];
+    if (!rangeArg) {
+      return { kind: "message", text };
+    }
+    const parts = rangeArg.split("-");
+    const start = Number(parts[0] ?? "0");
+    const end = Number(parts[1] ?? "0");
+    return {
+      kind: "command",
+      command: { kind: "delete", range: { start, end }, confirm: false },
+    };
+  }
+
+  if (rawCommand === "delete" && args.length === 2 && /^\d+$/.test(args[0] ?? "") && args[1] === "confirm") {
+    return {
+      kind: "command",
+      command: { kind: "delete", index: Number(args[0]), confirm: true },
+    };
+  }
+
+  if (rawCommand === "delete" && args.length === 2 && /^\d+-\d+$/.test(args[0] ?? "") && args[1] === "confirm") {
+    const rangeArg = args[0];
+    if (!rangeArg) {
+      return { kind: "message", text };
+    }
+    const parts = rangeArg.split("-");
+    const start = Number(parts[0] ?? "0");
+    const end = Number(parts[1] ?? "0");
+    return {
+      kind: "command",
+      command: { kind: "delete", range: { start, end }, confirm: true },
     };
   }
 

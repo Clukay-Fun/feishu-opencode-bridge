@@ -32,6 +32,61 @@ describe("routeIncomingText", () => {
     });
   });
 
+  it("routes close and delete session commands", () => {
+    expect(routeIncomingText("/sessions all")).toEqual({
+      kind: "command",
+      command: { kind: "sessions-all" },
+    });
+    expect(routeIncomingText("/close")).toEqual({
+      kind: "command",
+      command: { kind: "close" },
+    });
+    expect(routeIncomingText("/close all")).toEqual({
+      kind: "command",
+      command: { kind: "close", all: true },
+    });
+    expect(routeIncomingText("/close 2")).toEqual({
+      kind: "command",
+      command: { kind: "close", index: 2 },
+    });
+    expect(routeIncomingText("/close 1-10")).toEqual({
+      kind: "command",
+      command: { kind: "close", range: { start: 1, end: 10 } },
+    });
+    expect(routeIncomingText("/delete")).toEqual({
+      kind: "command",
+      command: { kind: "delete", confirm: false },
+    });
+    expect(routeIncomingText("/delete all")).toEqual({
+      kind: "command",
+      command: { kind: "delete", all: true, confirm: false },
+    });
+    expect(routeIncomingText("/delete all confirm")).toEqual({
+      kind: "command",
+      command: { kind: "delete", all: true, confirm: true },
+    });
+    expect(routeIncomingText("/delete 2")).toEqual({
+      kind: "command",
+      command: { kind: "delete", index: 2, confirm: false },
+    });
+    expect(routeIncomingText("/delete 2-6")).toEqual({
+      kind: "command",
+      command: { kind: "delete", range: { start: 2, end: 6 }, confirm: false },
+    });
+    expect(routeIncomingText("/delete confirm")).toEqual({
+      kind: "command",
+      command: { kind: "delete", confirm: true },
+    });
+    expect(routeIncomingText("/delete 2 confirm")).toEqual({
+      kind: "command",
+      command: { kind: "delete", index: 2, confirm: true },
+    });
+    expect(routeIncomingText("/delete 2-6 confirm")).toEqual({
+      kind: "command",
+      command: { kind: "delete", range: { start: 2, end: 6 }, confirm: true },
+    });
+  });
+
   it("routes permission commands", () => {
     expect(routeIncomingText("/allow once")).toEqual({
       kind: "command",
@@ -58,6 +113,10 @@ describe("routeIncomingText", () => {
     expect(routeIncomingText("/model")).toEqual({
       kind: "command",
       command: { kind: "models" },
+    });
+    expect(routeIncomingText("/model openai")).toEqual({
+      kind: "command",
+      command: { kind: "models", provider: "openai" },
     });
     expect(routeIncomingText("/model use openai/gpt-5.4")).toEqual({
       kind: "command",

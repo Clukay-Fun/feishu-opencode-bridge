@@ -22,7 +22,7 @@
 - Read: `docs/demo-script.md`
 - Read: `docs/deploy.md`
 - Test inventory: `test/preflight.test.ts`, `test/group-chat.test.ts`, `test/app-permission-actions.test.ts`, `test/app-whitelist-commands.test.ts`, `test/app-helpers.test.ts`, `test/session-windows.test.ts`
-- Create: `docs/qa/2026-04-20-submission-gap-matrix.md`
+- Create: `docs/qa/20260420-提交差距矩阵.md`
 
 **Step 1: Map every checklist item to code ownership**
 
@@ -46,7 +46,7 @@ Include all seven sections from the user checklist.
 Write the file:
 
 ```text
-docs/qa/2026-04-20-submission-gap-matrix.md
+docs/qa/20260420-提交差距矩阵.md
 ```
 
 **Step 4: Review matrix against the user checklist**
@@ -56,7 +56,7 @@ Run a manual diff against the provided checklist and confirm every bullet has ex
 **Step 5: Commit**
 
 ```bash
-git add docs/qa/2026-04-20-submission-gap-matrix.md
+git add docs/qa/20260420-提交差距矩阵.md
 git commit -m "docs: map 4/20 submission checklist coverage"
 ```
 
@@ -370,7 +370,7 @@ git commit -m "docs: align deployment and health checks"
 **Files:**
 - Read: entire `src/` tree for memory-related code
 - Read: package.json dependencies
-- Create: `docs/qa/2026-04-20-memory-status.md`
+- Create: `docs/qa/20260420-memory范围说明.md`
 
 **Step 1: Verify whether memory exists in this repo**
 
@@ -395,13 +395,13 @@ If no memory module exists in this repository, write that these checklist bullet
 Write:
 
 ```text
-docs/qa/2026-04-20-memory-status.md
+docs/qa/20260420-memory范围说明.md
 ```
 
 **Step 4: Commit**
 
 ```bash
-git add docs/qa/2026-04-20-memory-status.md
+git add docs/qa/20260420-memory范围说明.md
 git commit -m "docs: record memory module scope for 4/20"
 ```
 
@@ -409,7 +409,7 @@ git commit -m "docs: record memory module scope for 4/20"
 
 **Files:**
 - Modify: `docs/demo-script.md`
-- Create: `docs/qa/2026-04-20-acceptance-runbook.md`
+- Create: `docs/qa/20260420-人工验收手册.md`
 
 **Step 1: Convert the user checklist into a runbook**
 
@@ -437,13 +437,13 @@ Evidence: screenshot + latest bridge log lines.
 Write:
 
 ```text
-docs/qa/2026-04-20-acceptance-runbook.md
+docs/qa/20260420-人工验收手册.md
 ```
 
 **Step 4: Commit**
 
 ```bash
-git add docs/demo-script.md docs/qa/2026-04-20-acceptance-runbook.md
+git add docs/demo-script.md docs/qa/20260420-人工验收手册.md
 git commit -m "docs: add 4/20 acceptance runbook"
 ```
 
@@ -481,7 +481,7 @@ Expected: startup preflight passes and the process reaches steady state without 
 Execute the runbook in:
 
 ```text
-docs/qa/2026-04-20-acceptance-runbook.md
+docs/qa/20260420-人工验收手册.md
 ```
 
 Capture screenshots/log snippets for every card type and failure-mode test.
@@ -498,6 +498,6 @@ Summarize:
 **Step 5: Commit final documentation updates**
 
 ```bash
-git add docs/qa/2026-04-20-*.md docs/demo-script.md
+git add docs/qa/20260420-*.md docs/demo-script.md
 git commit -m "docs: finalize 4/20 submission validation package"
 ```

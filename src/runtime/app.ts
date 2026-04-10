@@ -7,6 +7,7 @@ import { transitionTurn } from "../bridge/state-machine.js";
 import { TurnWatchdog } from "../bridge/watchdog.js";
 import type { BridgeTurn } from "../bridge/turn.js";
 import {
+  buildModelListCardPayload,
   buildNoticeCardPayload,
   buildPostMarkdownPayload,
   buildPermissionRequestCardPayload,
@@ -18,6 +19,7 @@ import {
   buildTurnStatusCardPayload,
   buildWhoCommandCardPayload,
   type FeishuPostPayload,
+  type ModelListCardView,
   type OutputView,
   toInteractiveCardContent,
   type ToolUpdateView,
@@ -101,6 +103,8 @@ const STREAM_FLUSH_MIN_CHARS = 120;
 const STREAM_FLUSH_INTERVAL_MS = 750;
 const PERMISSION_TTL_MS = 120_000;
 const SESSION_SELECTION_TTL_MS = 30_000;
+const SESSION_DELETE_CONFIRM_TTL_MS = 30_000;
+const SESSIONS_ALL_PAGE_SIZE = 20;
 
 type PermissionResolution = "once" | "always" | "deny" | "timeout";
 
@@ -747,7 +751,30 @@ export class BridgeApp {
 
     if (command.kind === "models") {
       const providers = await this.opencode.listProviders();
-      await this.sendMarkdown(message.chatId, formatProviders(providers), message.messageId);
+      const modelCard = buildModelCardView(providers, command.provider);
+      if (!modelCard) {
+        await this.sendPayload(message.chatId, buildNoticeCardPayload({
+          title: "提醒",
+          template: "yellow",
+          iconToken: "maybe_outlined",
+          message: "当前没有匹配的模型提供方，请重新发送 `/model` 查看列表。",
+          messageIconToken: "maybe_outlined",
+          messageIconColor: "yellow",
+        }), {
+          event: "final message sent",
+          transcriptType: "outbound-final",
+          textPreview: "当前没有匹配的模型提供方，请重新发送 `/model` 查看列表。",
+          len: 27,
+        }, { replyToMessageId: message.messageId });
+        return;
+      }
+
+      await this.sendPayload(message.chatId, buildModelListCardPayload(modelCard), {
+        event: "final message sent",
+        transcriptType: "outbound-final",
+        textPreview: "可用模型",
+        len: 4,
+      }, { replyToMessageId: message.messageId });
       return;
     }
 
@@ -818,6 +845,62 @@ export class BridgeApp {
       return;
     }
 
+    if (command.kind === "sessions-all") {
+      const window = this.getSessionWindow(message.conversationKey, message.chatType);
+      const currentSession = getActiveSession(window);
+      const openCodeSessions = await this.listOpenCodeSessionsById();
+      const visibleIds = new Set(window.sessions.map((session) => session.sessionId));
+      const sessions = [...openCodeSessions.values()]
+        .sort((a, b) => (b.time?.updated ?? b.time?.created ?? 0) - (a.time?.updated ?? a.time?.created ?? 0));
+
+      if (sessions.length === 0) {
+        await this.sendPayload(message.chatId, buildSessionListCardPayload({
+          items: [],
+          footer: "发送 `/new` 创建第一个会话",
+          emptyText: "暂无会话",
+        }), {
+          event: "final message sent",
+          transcriptType: "outbound-final",
+          textPreview: "全部会话",
+          len: 4,
+        }, { replyToMessageId: message.messageId });
+        return;
+      }
+
+      const options = sessions.map((session, index) => ({
+        index: index + 1,
+        sessionId: session.id,
+        title: resolveDisplayLabel(session, session.title ?? session.slug ?? session.id, session.id),
+        current: session.id === currentSession?.sessionId,
+        inWindow: visibleIds.has(session.id),
+      }));
+      this.setPendingInteraction(message.conversationKey, {
+        kind: "session-select",
+        options,
+        expiresAt: Date.now() + SESSION_SELECTION_TTL_MS,
+      });
+      const pages = chunkArray(options, SESSIONS_ALL_PAGE_SIZE);
+      for (const [pageIndex, page] of pages.entries()) {
+        const footer = `第 ${pageIndex + 1}/${pages.length} 页 · 发送 \`/switch <编号>\` 恢复或切换 · \`/delete <编号>\` 彻底删除 · 30s 内有效`;
+        await this.sendPayload(message.chatId, buildSessionListCardPayload({
+          items: page.map((option) => ({
+            index: option.index,
+            title: option.title,
+            current: option.current,
+            archived: !option.inWindow,
+            meta: option.current ? "当前" : option.inWindow ? "窗口中" : "已隐藏",
+          })),
+          footer,
+        }), {
+          event: "final message sent",
+          transcriptType: "outbound-final",
+          textPreview: "全部会话",
+          len: 4,
+        }, { replyToMessageId: message.messageId });
+      }
+      return;
+    }
+
     if (command.kind === "sessions-select") {
       const window = this.getSessionWindow(message.conversationKey, message.chatType);
       if (window.mode === "single") {
@@ -847,9 +930,16 @@ export class BridgeApp {
         return;
       }
 
-      let nextWindow = setActiveSession(window, match.sessionId, Date.now(), this.config.bridge.maxSessionsPerWindow);
       const sessionMeta = openCodeSessions.get(match.sessionId);
       const fallbackLabel = resolveDisplayLabel(sessionMeta, match.title, match.sessionId);
+      let nextWindow = match.inWindow
+        ? setActiveSession(window, match.sessionId, Date.now(), this.config.bridge.maxSessionsPerWindow)
+        : addSession(window, createSessionEntry(
+          match.sessionId,
+          Date.now(),
+          fallbackLabel,
+        ), this.config.bridge.maxSessionsPerWindow);
+      nextWindow = setActiveSession(nextWindow, match.sessionId, Date.now(), this.config.bridge.maxSessionsPerWindow);
       nextWindow = updateSessionLabel(nextWindow, match.sessionId, fallbackLabel, this.config.bridge.maxSessionsPerWindow);
       await this.saveSessionWindow(message.conversationKey, nextWindow);
       this.clearPendingInteraction(message.conversationKey, false);
@@ -867,6 +957,459 @@ export class BridgeApp {
         transcriptType: "outbound-final",
         textPreview: "已切换会话",
         len: 5,
+      }, { replyToMessageId: message.messageId });
+      return;
+    }
+
+    if (command.kind === "close") {
+      if (command.all) {
+        const window = this.getSessionWindow(message.conversationKey, message.chatType);
+        if (window.sessions.length === 0) {
+          await this.sendMarkdown(message.chatId, "当前窗口暂无可操作的会话，请先发送 `/new`。", message.messageId);
+          return;
+        }
+        const busySession = window.sessions.find((session) => this.isSessionBusy(message.conversationKey, session.sessionId));
+        if (busySession) {
+          await this.sendPayload(message.chatId, buildNoticeCardPayload({
+            title: "提醒",
+            template: "yellow",
+            iconToken: "maybe_outlined",
+            message: "当前会话正在执行任务，请先发送 `/abort`。",
+            messageIconToken: "maybe_outlined",
+            messageIconColor: "yellow",
+          }), {
+            event: "final message sent",
+            transcriptType: "outbound-final",
+            textPreview: "当前会话正在执行任务，请先发送 `/abort`。",
+            len: 20,
+          }, { replyToMessageId: message.messageId });
+          return;
+        }
+
+        await this.saveSessionWindow(message.conversationKey, normalizeSessionWindowRecord(undefined, window.mode, this.config.bridge.maxSessionsPerWindow));
+        this.clearPendingInteraction(message.conversationKey, false);
+        await this.sendPayload(message.chatId, buildNoticeCardPayload({
+          title: "已删除全部会话",
+          template: "grey",
+          iconToken: "close-bold_outlined",
+          message: "当前窗口的全部会话已移除，发送 `/new` 创建新会话。",
+          messageIconToken: "close-bold_outlined",
+          messageIconColor: "grey",
+        }), {
+          event: "final message sent",
+          transcriptType: "outbound-final",
+          textPreview: "当前窗口的全部会话已移除，发送 `/new` 创建新会话。",
+          len: 24,
+        }, { replyToMessageId: message.messageId });
+        return;
+      }
+
+      if (command.range) {
+        const targets = await this.resolveSessionCommandTargets(message, command.range);
+        if (!targets.ok) {
+          await this.sendMarkdown(message.chatId, targets.message, message.messageId);
+          return;
+        }
+
+        const busySession = targets.sessions.find((session) => this.isSessionBusy(message.conversationKey, session.sessionId));
+        if (busySession) {
+          await this.sendPayload(message.chatId, buildNoticeCardPayload({
+            title: "提醒",
+            template: "yellow",
+            iconToken: "maybe_outlined",
+            message: "当前会话正在执行任务，请先发送 `/abort`。",
+            messageIconToken: "maybe_outlined",
+            messageIconColor: "yellow",
+          }), {
+            event: "final message sent",
+            transcriptType: "outbound-final",
+            textPreview: "当前会话正在执行任务，请先发送 `/abort`。",
+            len: 20,
+          }, { replyToMessageId: message.messageId });
+          return;
+        }
+
+        let nextWindow = targets.window;
+        for (const session of targets.sessions) {
+          nextWindow = removeSession(nextWindow, session.sessionId, this.config.bridge.maxSessionsPerWindow);
+        }
+        await this.saveSessionWindow(message.conversationKey, nextWindow);
+        this.clearPendingInteraction(message.conversationKey, false);
+        await this.sendPayload(message.chatId, buildNoticeCardPayload({
+          title: "已删除多个会话",
+          template: "grey",
+          iconToken: "close-bold_outlined",
+          message: `已从当前窗口移除 ${targets.sessions.length} 个会话。`,
+          messageIconToken: "close-bold_outlined",
+          messageIconColor: "grey",
+        }), {
+          event: "final message sent",
+          transcriptType: "outbound-final",
+          textPreview: `已从当前窗口移除 ${targets.sessions.length} 个会话。`,
+          len: 17,
+        }, { replyToMessageId: message.messageId });
+        return;
+      }
+
+      const target = await this.resolveSessionCommandTarget(message, command.index);
+      if (!target.ok) {
+        await this.sendMarkdown(message.chatId, target.message, message.messageId);
+        return;
+      }
+
+      if (this.isSessionBusy(message.conversationKey, target.session.sessionId)) {
+        await this.sendPayload(message.chatId, buildNoticeCardPayload({
+          title: "提醒",
+          template: "yellow",
+          iconToken: "maybe_outlined",
+          message: "当前会话正在执行任务，请先发送 `/abort`。",
+          messageIconToken: "maybe_outlined",
+          messageIconColor: "yellow",
+        }), {
+          event: "final message sent",
+          transcriptType: "outbound-final",
+          textPreview: "当前会话正在执行任务，请先发送 `/abort`。",
+          len: 20,
+        }, { replyToMessageId: message.messageId });
+        return;
+      }
+
+      const nextWindow = removeSession(target.window, target.session.sessionId, this.config.bridge.maxSessionsPerWindow);
+      await this.saveSessionWindow(message.conversationKey, nextWindow);
+      this.clearPendingInteraction(message.conversationKey, false);
+      const current = getActiveSession(nextWindow);
+      await this.sendPayload(message.chatId, buildSessionTransitionCardPayload({
+        title: "已删除会话",
+        iconToken: "close-bold_outlined",
+        previousLabel: target.session.label,
+        currentLabel: current?.label ?? "当前窗口已无会话",
+        footer: current ? "已从当前窗口移除，可继续使用当前会话" : "已从当前窗口移除，发送 `/new` 创建新会话",
+      }), {
+        event: "final message sent",
+        transcriptType: "outbound-final",
+        textPreview: "已删除会话",
+        len: 5,
+      }, { replyToMessageId: message.messageId });
+      return;
+    }
+
+    if (command.kind === "delete") {
+      if (command.all && !command.confirm) {
+        const window = this.getSessionWindow(message.conversationKey, message.chatType);
+        if (window.sessions.length === 0) {
+          await this.sendMarkdown(message.chatId, "当前窗口暂无可操作的会话，请先发送 `/new`。", message.messageId);
+          return;
+        }
+        const busySession = window.sessions.find((session) => this.isSessionBusy(message.conversationKey, session.sessionId));
+        if (busySession) {
+          await this.sendPayload(message.chatId, buildNoticeCardPayload({
+            title: "提醒",
+            template: "yellow",
+            iconToken: "maybe_outlined",
+            message: "当前会话正在执行任务，请先发送 `/abort`。",
+            messageIconToken: "maybe_outlined",
+            messageIconColor: "yellow",
+          }), {
+            event: "final message sent",
+            transcriptType: "outbound-final",
+            textPreview: "当前会话正在执行任务，请先发送 `/abort`。",
+            len: 20,
+          }, { replyToMessageId: message.messageId });
+          return;
+        }
+
+        this.setPendingInteraction(message.conversationKey, {
+          kind: "session-delete-confirm",
+          all: true,
+          sessionIds: window.sessions.map((session) => session.sessionId),
+          expiresAt: Date.now() + SESSION_DELETE_CONFIRM_TTL_MS,
+        });
+        await this.sendPayload(message.chatId, buildNoticeCardPayload({
+          title: "提醒",
+          template: "yellow",
+          iconToken: "maybe_outlined",
+          message: "确认彻底删除当前窗口全部会话？发送 `/delete all confirm`",
+          messageIconToken: "maybe_outlined",
+          messageIconColor: "yellow",
+        }), {
+          event: "final message sent",
+          transcriptType: "outbound-final",
+          textPreview: "确认彻底删除当前窗口全部会话？发送 `/delete all confirm`",
+          len: 31,
+        }, { replyToMessageId: message.messageId });
+        return;
+      }
+
+      if (!command.confirm) {
+        if (command.range) {
+          const targets = await this.resolveSessionCommandTargets(message, command.range);
+          if (!targets.ok) {
+            await this.sendMarkdown(message.chatId, targets.message, message.messageId);
+            return;
+          }
+
+          const busySession = targets.sessions.find((session) => this.isSessionBusy(message.conversationKey, session.sessionId));
+          if (busySession) {
+            await this.sendPayload(message.chatId, buildNoticeCardPayload({
+              title: "提醒",
+              template: "yellow",
+              iconToken: "maybe_outlined",
+              message: "当前会话正在执行任务，请先发送 `/abort`。",
+              messageIconToken: "maybe_outlined",
+              messageIconColor: "yellow",
+            }), {
+              event: "final message sent",
+              transcriptType: "outbound-final",
+              textPreview: "当前会话正在执行任务，请先发送 `/abort`。",
+              len: 20,
+            }, { replyToMessageId: message.messageId });
+            return;
+          }
+
+          const rangeLabel = `${command.range.start}-${command.range.end}`;
+          this.setPendingInteraction(message.conversationKey, {
+            kind: "session-delete-confirm",
+            indices: targets.indices,
+            rangeLabel,
+            sessionIds: targets.sessions.map((session) => session.sessionId),
+            titles: targets.sessions.map((session) => session.label),
+            expiresAt: Date.now() + SESSION_DELETE_CONFIRM_TTL_MS,
+          });
+          const confirmText = `确认删除会话 #${rangeLabel}？发送 \`/delete ${rangeLabel} confirm\``;
+          await this.sendPayload(message.chatId, buildNoticeCardPayload({
+            title: "提醒",
+            template: "yellow",
+            iconToken: "maybe_outlined",
+            message: confirmText,
+            messageIconToken: "maybe_outlined",
+            messageIconColor: "yellow",
+          }), {
+            event: "final message sent",
+            transcriptType: "outbound-final",
+            textPreview: confirmText,
+            len: confirmText.length,
+          }, { replyToMessageId: message.messageId });
+          return;
+        }
+
+        const target = await this.resolveSessionCommandTarget(message, command.index);
+        if (!target.ok) {
+          await this.sendMarkdown(message.chatId, target.message, message.messageId);
+          return;
+        }
+
+        if (this.isSessionBusy(message.conversationKey, target.session.sessionId)) {
+          await this.sendPayload(message.chatId, buildNoticeCardPayload({
+            title: "提醒",
+            template: "yellow",
+            iconToken: "maybe_outlined",
+            message: "当前会话正在执行任务，请先发送 `/abort`。",
+            messageIconToken: "maybe_outlined",
+            messageIconColor: "yellow",
+          }), {
+            event: "final message sent",
+            transcriptType: "outbound-final",
+            textPreview: "当前会话正在执行任务，请先发送 `/abort`。",
+            len: 20,
+          }, { replyToMessageId: message.messageId });
+          return;
+        }
+
+        this.setPendingInteraction(message.conversationKey, {
+          kind: "session-delete-confirm",
+          index: target.index,
+          sessionId: target.session.sessionId,
+          title: target.session.label,
+          expiresAt: Date.now() + SESSION_DELETE_CONFIRM_TTL_MS,
+        });
+        const confirmText = target.index > 0
+          ? `确认删除会话 #${target.index}？发送 \`/delete ${target.index} confirm\``
+          : "确认删除当前会话？发送 `/delete confirm`";
+        await this.sendPayload(message.chatId, buildNoticeCardPayload({
+          title: "提醒",
+          template: "yellow",
+          iconToken: "maybe_outlined",
+          message: confirmText,
+          messageIconToken: "maybe_outlined",
+          messageIconColor: "yellow",
+        }), {
+          event: "final message sent",
+          transcriptType: "outbound-final",
+          textPreview: confirmText,
+          len: confirmText.length,
+        }, { replyToMessageId: message.messageId });
+        return;
+      }
+
+      const pending = this.pendingInteractions.get(message.conversationKey);
+      if (!pending || pending.kind !== "session-delete-confirm" || pending.expiresAt <= Date.now()) {
+        this.clearPendingInteraction(message.conversationKey, false);
+        await this.sendMarkdown(message.chatId, "删除确认已过期，请重新发送 `/delete`。", message.messageId);
+        return;
+      }
+
+      if (command.all) {
+        if (!pending.all || !pending.sessionIds || pending.sessionIds.length === 0) {
+          this.clearPendingInteraction(message.conversationKey, false);
+          await this.sendMarkdown(message.chatId, "删除确认已过期，请重新发送 `/delete all`。", message.messageId);
+          return;
+        }
+
+        const busySession = pending.sessionIds.find((sessionId) => this.isSessionBusy(message.conversationKey, sessionId));
+        if (busySession) {
+          await this.sendPayload(message.chatId, buildNoticeCardPayload({
+            title: "提醒",
+            template: "yellow",
+            iconToken: "maybe_outlined",
+            message: "当前会话正在执行任务，请先发送 `/abort`。",
+            messageIconToken: "maybe_outlined",
+            messageIconColor: "yellow",
+          }), {
+            event: "final message sent",
+            transcriptType: "outbound-final",
+            textPreview: "当前会话正在执行任务，请先发送 `/abort`。",
+            len: 20,
+          }, { replyToMessageId: message.messageId });
+          return;
+        }
+
+        for (const sessionId of pending.sessionIds) {
+          await this.opencode.deleteSession(sessionId);
+        }
+        const window = this.getSessionWindow(message.conversationKey, message.chatType);
+        await this.saveSessionWindow(message.conversationKey, normalizeSessionWindowRecord(undefined, window.mode, this.config.bridge.maxSessionsPerWindow));
+        this.clearPendingInteraction(message.conversationKey, false);
+        await this.sendPayload(message.chatId, buildNoticeCardPayload({
+          title: "已彻底删除全部会话",
+          template: "red",
+          iconToken: "close-bold_outlined",
+          message: "当前窗口的全部会话已从窗口和 OpenCode 中删除。",
+          messageIconToken: "close-bold_outlined",
+          messageIconColor: "red",
+        }), {
+          event: "final message sent",
+          transcriptType: "outbound-final",
+          textPreview: "当前窗口的全部会话已从窗口和 OpenCode 中删除。",
+          len: 25,
+        }, { replyToMessageId: message.messageId });
+        return;
+      }
+
+      if (command.index !== undefined && pending.index !== command.index) {
+        await this.sendMarkdown(message.chatId, "删除确认编号不匹配，请重新发送 `/delete <编号>`。", message.messageId);
+        return;
+      }
+
+      if (command.range) {
+        const rangeLabel = `${command.range.start}-${command.range.end}`;
+        const expectedIndices = buildSessionRangeIndices(command.range);
+        const sameRange = pending.indices
+          && pending.rangeLabel === rangeLabel
+          && pending.indices.length === expectedIndices.length
+          && pending.indices.every((value, idx) => value === expectedIndices[idx]);
+        if (!sameRange) {
+          await this.sendMarkdown(message.chatId, "删除确认编号不匹配，请重新发送 `/delete <起始-结束>`。", message.messageId);
+          return;
+        }
+      }
+
+      if (!pending.sessionId) {
+        if (pending.sessionIds && pending.sessionIds.length > 0) {
+          const busySession = pending.sessionIds.find((sessionId) => this.isSessionBusy(message.conversationKey, sessionId));
+          if (busySession) {
+            await this.sendPayload(message.chatId, buildNoticeCardPayload({
+              title: "提醒",
+              template: "yellow",
+              iconToken: "maybe_outlined",
+              message: "当前会话正在执行任务，请先发送 `/abort`。",
+              messageIconToken: "maybe_outlined",
+              messageIconColor: "yellow",
+            }), {
+              event: "final message sent",
+              transcriptType: "outbound-final",
+              textPreview: "当前会话正在执行任务，请先发送 `/abort`。",
+              len: 20,
+            }, { replyToMessageId: message.messageId });
+            return;
+          }
+
+          const window = this.getSessionWindow(message.conversationKey, message.chatType);
+          for (const sessionId of pending.sessionIds) {
+            await this.opencode.deleteSession(sessionId);
+          }
+          let nextWindow = window;
+          for (const sessionId of pending.sessionIds) {
+            nextWindow = removeSession(nextWindow, sessionId, this.config.bridge.maxSessionsPerWindow);
+          }
+          await this.saveSessionWindow(message.conversationKey, nextWindow);
+          this.clearPendingInteraction(message.conversationKey, false);
+          await this.sendPayload(message.chatId, buildNoticeCardPayload({
+            title: "已彻底删除多个会话",
+            template: "red",
+            iconToken: "close-bold_outlined",
+            message: `已从当前窗口和 OpenCode 中删除 ${pending.sessionIds.length} 个会话。`,
+            messageIconToken: "close-bold_outlined",
+            messageIconColor: "red",
+          }), {
+            event: "final message sent",
+            transcriptType: "outbound-final",
+            textPreview: `已从当前窗口和 OpenCode 中删除 ${pending.sessionIds.length} 个会话。`,
+            len: 25,
+          }, { replyToMessageId: message.messageId });
+          return;
+        }
+
+        await this.sendPayload(message.chatId, buildNoticeCardPayload({
+          title: "提醒",
+          template: "yellow",
+          iconToken: "maybe_outlined",
+          message: "删除确认已失效，请重新发送 `/delete`。",
+          messageIconToken: "maybe_outlined",
+          messageIconColor: "yellow",
+        }), {
+          event: "final message sent",
+          transcriptType: "outbound-final",
+          textPreview: "删除确认已失效，请重新发送 `/delete`。",
+          len: 19,
+        }, { replyToMessageId: message.messageId });
+        return;
+      }
+
+      if (this.isSessionBusy(message.conversationKey, pending.sessionId)) {
+        await this.sendPayload(message.chatId, buildNoticeCardPayload({
+          title: "提醒",
+          template: "yellow",
+          iconToken: "maybe_outlined",
+          message: "当前会话正在执行任务，请先发送 `/abort`。",
+          messageIconToken: "maybe_outlined",
+          messageIconColor: "yellow",
+        }), {
+          event: "final message sent",
+          transcriptType: "outbound-final",
+          textPreview: "当前会话正在执行任务，请先发送 `/abort`。",
+          len: 20,
+        }, { replyToMessageId: message.messageId });
+        return;
+      }
+
+      const window = this.getSessionWindow(message.conversationKey, message.chatType);
+      const targetSession = window.sessions.find((session) => session.sessionId === pending.sessionId);
+      await this.opencode.deleteSession(pending.sessionId);
+      const nextWindow = removeSession(window, pending.sessionId, this.config.bridge.maxSessionsPerWindow);
+      await this.saveSessionWindow(message.conversationKey, nextWindow);
+      this.clearPendingInteraction(message.conversationKey, false);
+      const current = getActiveSession(nextWindow);
+      await this.sendPayload(message.chatId, buildSessionTransitionCardPayload({
+        title: "已彻底删除会话",
+        iconToken: "close-bold_outlined",
+        previousLabel: targetSession?.label ?? pending.title ?? null,
+        currentLabel: current?.label ?? "当前窗口已无会话",
+        footer: current ? "已从当前窗口和 OpenCode 中删除" : "已从当前窗口和 OpenCode 中删除，发送 `/new` 创建新会话",
+      }), {
+        event: "final message sent",
+        transcriptType: "outbound-final",
+        textPreview: "已彻底删除会话",
+        len: 7,
       }, { replyToMessageId: message.messageId });
       return;
     }
@@ -1231,6 +1774,14 @@ export class BridgeApp {
         this.clearPendingInteraction(conversationKey, false);
       }, Math.max(0, interaction.expiresAt - Date.now()));
       this.pendingInteractionTimers.set(conversationKey, timer);
+      return;
+    }
+
+    if (interaction.kind === "session-delete-confirm") {
+      const timer = setTimeout(() => {
+        this.clearPendingInteraction(conversationKey, false);
+      }, Math.max(0, interaction.expiresAt - Date.now()));
+      this.pendingInteractionTimers.set(conversationKey, timer);
     }
   }
 
@@ -1258,6 +1809,102 @@ export class BridgeApp {
     }
 
     await this.expirePermissionInteraction(current, true);
+  }
+
+  private isSessionBusy(conversationKey: string, sessionId: string): boolean {
+    const active = this.queues.get(conversationKey).peek();
+    return active?.sessionId === sessionId;
+  }
+
+  private async resolveSessionCommandTarget(
+    message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey">,
+    index: number | undefined,
+  ): Promise<
+    | { ok: true; window: SessionWindowRecord; session: SessionWindowRecord["sessions"][number]; index: number }
+    | { ok: false; message: string }
+  > {
+    const window = this.getSessionWindow(message.conversationKey, message.chatType);
+    const current = getActiveSession(window);
+    if (index === undefined) {
+      if (!current) {
+        return { ok: false, message: "当前窗口暂无可操作的会话，请先发送 `/new`。" };
+      }
+      return { ok: true, window, session: current, index: 0 };
+    }
+
+    if (window.mode === "single" && index === 1 && current) {
+      return { ok: true, window, session: current, index };
+    }
+
+    const pending = this.pendingInteractions.get(message.conversationKey);
+    if (!pending || pending.kind !== "session-select" || pending.expiresAt <= Date.now()) {
+      this.clearPendingInteraction(message.conversationKey, false);
+      const visibleSessions = getVisibleSessions(window);
+      const directSession = visibleSessions[index - 1];
+      if (directSession) {
+        return { ok: true, window, session: directSession, index };
+      }
+      return {
+        ok: false,
+        message: window.mode === "single"
+          ? "当前窗口为单会话模式，请发送 `/delete`、`/close` 或先执行 `/sessions all`。"
+          : "会话列表已过期，请先重新执行 `/sessions`。",
+      };
+    }
+
+    const match = pending.options.find((option) => option.index === index);
+    if (!match) {
+      return { ok: false, message: "无效的会话编号，请重新执行 `/sessions` 查看列表。" };
+    }
+
+    const session = window.sessions.find((item) => item.sessionId === match.sessionId);
+    if (!session && !match.inWindow) {
+      return {
+        ok: true,
+        window,
+        session: {
+          sessionId: match.sessionId,
+          label: match.title,
+          createdAt: 0,
+          lastUsedAt: 0,
+        },
+        index,
+      };
+    }
+
+    if (!session) {
+      return { ok: false, message: "目标会话已失效，请重新执行 `/sessions`。" };
+    }
+
+    return { ok: true, window, session, index };
+  }
+
+  private async resolveSessionCommandTargets(
+    message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey">,
+    range: { start: number; end: number },
+  ): Promise<
+    | { ok: true; window: SessionWindowRecord; sessions: SessionWindowRecord["sessions"]; indices: number[] }
+    | { ok: false; message: string }
+  > {
+    const indices = buildSessionRangeIndices(range);
+    if (indices.length === 0) {
+      return { ok: false, message: "无效的会话编号范围，请重新输入。"};
+    }
+
+    const sessions: SessionWindowRecord["sessions"] = [];
+    let window: SessionWindowRecord | null = null;
+    for (const index of indices) {
+      const target = await this.resolveSessionCommandTarget(message, index);
+      if (!target.ok) {
+        return target;
+      }
+      window = target.window;
+      if (!sessions.some((session) => session.sessionId === target.session.sessionId)) {
+        sessions.push(target.session);
+      }
+    }
+
+    return { ok: true, window: window ?? this.getSessionWindow(message.conversationKey, message.chatType), sessions, indices };
   }
 
   private buildPermissionActionButtons(interaction: PendingPermissionInteraction): Array<{
@@ -1629,19 +2276,87 @@ function formatQuestionPrompt(questions: PendingQuestionInteraction["questions"]
   return ["OpenCode 需要你回答：", ...questions.map((question, index) => `${index + 1}. ${escapeMarkdownText(question.header)}\n${escapeMarkdownText(question.question)}`)].join("\n\n");
 }
 
-function formatProviders(providers: OpenCodeProvidersResponse): string {
-  const lines = ["可用模型提供方："];
-  const defaults = providers.default;
-  for (const provider of providers.providers) {
-    const id = typeof provider.id === "string" ? provider.id : typeof provider.providerID === "string" ? provider.providerID : "unknown";
-    const name = typeof provider.name === "string" ? provider.name : id;
-    const model = defaults[id];
-    lines.push(`- ${name}${model ? `：默认 \`${model}\`` : ""}`);
+function buildModelCardView(
+  providers: OpenCodeProvidersResponse,
+  requestedProvider?: string,
+): ModelListCardView | null {
+  const normalizedFilter = requestedProvider?.trim().toLowerCase();
+  const providerViews = providers.providers
+    .map((provider) => toProviderCardView(provider, providers.default, !normalizedFilter))
+    .filter((provider): provider is NonNullable<typeof provider> => provider !== null)
+    .filter((provider) => !normalizedFilter
+      || provider.id.toLowerCase() === normalizedFilter
+      || provider.name.toLowerCase() === normalizedFilter);
+
+  if (providerViews.length === 0) {
+    return null;
   }
-  if (lines.length === 1) {
-    lines.push("- 当前没有 provider 信息");
+
+  return {
+    providers: providerViews,
+    footer: normalizedFilter
+      ? "发送 `/model use <provider/model>` 切换当前窗口模型\n发送 `/model reset` 恢复默认模型"
+      : "发送 `/model <provider>` 查看更多\n发送 `/model use <provider/model>` 切换当前窗口模型",
+  };
+}
+
+function toProviderCardView(
+  provider: Record<string, unknown>,
+  defaults: Record<string, string>,
+  compact: boolean,
+): { id: string; name: string; models: Array<{ id: string; current?: boolean; default?: boolean }> } | null {
+  const id = typeof provider.id === "string"
+    ? provider.id
+    : typeof provider.providerID === "string"
+      ? provider.providerID
+      : null;
+  if (!id) {
+    return null;
   }
-  return lines.join("\n");
+
+  const name = typeof provider.name === "string" ? provider.name : id;
+  const rawModels = isRecord(provider.models) ? provider.models : {};
+  const defaultModel = defaults[id];
+  const allModels = Object.values(rawModels)
+    .map((value) => toProviderModelView(value, defaultModel))
+    .filter((value): value is NonNullable<typeof value> => value !== null)
+    .sort((left, right) => {
+      const leftScore = (left.current ? 100 : 0) + (left.default ? 50 : 0);
+      const rightScore = (right.current ? 100 : 0) + (right.default ? 50 : 0);
+      if (leftScore !== rightScore) {
+        return rightScore - leftScore;
+      }
+      return (right.releaseDate ?? "").localeCompare(left.releaseDate ?? "");
+    });
+
+  const models = (compact ? allModels.slice(0, 5) : allModels).map((model) => ({
+    id: `${id}/${model.id}`,
+    current: model.current,
+    default: model.default,
+  }));
+
+  return { id, name, models };
+}
+
+function toProviderModelView(
+  value: unknown,
+  defaultModel: string | undefined,
+): { id: string; current: boolean; default: boolean; releaseDate?: string } | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const id = typeof value.id === "string" ? value.id : null;
+  if (!id) {
+    return null;
+  }
+
+  return {
+    id,
+    current: false,
+    default: defaultModel === id,
+    ...(typeof value.release_date === "string" ? { releaseDate: value.release_date } : {}),
+  };
 }
 
 export function buildBridgeSystemPrompt(
@@ -1884,4 +2599,26 @@ function dedupe(values: string[]): string[] {
 function appendProgressUpdate(updates: string[], nextUpdate: string): string[] {
   if (!nextUpdate || updates.includes(nextUpdate)) return updates;
   return [...updates, nextUpdate].slice(-6);
+}
+
+function buildSessionRangeIndices(range: { start: number; end: number }): number[] {
+  const start = Math.min(range.start, range.end);
+  const end = Math.max(range.start, range.end);
+  if (start < 1 || end < 1) {
+    return [];
+  }
+
+  return Array.from({ length: end - start + 1 }, (_, offset) => start + offset);
+}
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  if (size <= 0) {
+    return [items];
+  }
+
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
 }

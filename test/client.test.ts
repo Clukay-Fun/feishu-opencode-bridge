@@ -57,4 +57,16 @@ describe("OpenCodeClient", () => {
     expect(String(url)).toBe("http://127.0.0.1:4096/session/ses_9/permissions/per_7");
     expect(init.body).toBe(JSON.stringify({ response: "always", remember: true }));
   });
+
+  it("uses DELETE /session/:id when removing a session", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response("true", { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+    const client = new OpenCodeClient(new URL("http://127.0.0.1:4096/"));
+
+    await client.deleteSession("ses_delete_1");
+
+    const [url, init] = fetch.mock.calls[0] as [URL, RequestInit];
+    expect(String(url)).toBe("http://127.0.0.1:4096/session/ses_delete_1");
+    expect(init.method).toBe("DELETE");
+  });
 });

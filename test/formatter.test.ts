@@ -56,6 +56,35 @@ describe("buildPostPayload", () => {
     expect(serialized).toContain("约 8s");
   });
 
+  it("preserves fenced code blocks without escaping arrows", () => {
+    const payload = buildTurnStatusCardPayload({
+      title: "处理中",
+      status: "处理中",
+      sessionId: "ses_1234567890",
+      durationText: "约 3s",
+      progressUpdates: [],
+      toolUpdates: [],
+      output: {
+        text: [
+          "## 消息处理",
+          "",
+          "```text",
+          "飞书事件 -> ws.ts handleEvent()",
+          "  -> app.handleIncomingMessage()",
+          "```",
+        ].join("\n"),
+        paths: [],
+        commands: [],
+      },
+    });
+    const content = JSON.parse(payload.content) as any;
+    const output = content.body.elements[0].columns[0].elements[0].content as string;
+
+    expect(output).toContain("```text");
+    expect(output).toContain("飞书事件 -> ws.ts handleEvent()");
+    expect(output).not.toContain("-&gt;");
+  });
+
   it("renders a status command card", () => {
     const payload = buildStatusCommandCardPayload({
       currentSession: {
