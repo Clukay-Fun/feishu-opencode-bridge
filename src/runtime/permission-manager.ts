@@ -150,6 +150,14 @@ export class PermissionManager {
   }
 
   async expireInteraction(interaction: PendingPermissionInteraction, notifyChat: boolean): Promise<void> {
+    if (interaction.resolvedAt && interaction.resolution) {
+      return;
+    }
+
+    if (this.processing.has(interaction.permissionVersion)) {
+      return;
+    }
+
     try {
       await this.resolveInteraction(interaction, "timeout");
     } catch (error) {

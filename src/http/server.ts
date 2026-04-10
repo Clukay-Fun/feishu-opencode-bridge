@@ -14,6 +14,33 @@ type CardActionPort = {
   ): Promise<Record<string, unknown>>;
 };
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" ? value as Record<string, unknown> : null;
+}
+
+function readNestedString(value: unknown, ...path: string[]): string {
+  let current: unknown = value;
+  for (const part of path) {
+    const record = asRecord(current);
+    if (!record) return "";
+    current = record[part];
+  }
+  return typeof current === "string" ? current : "";
+}
+
+function extractActorOpenId(event: unknown): string {
+  return readNestedString(event, "operator", "open_id")
+    || readNestedString(event, "operator", "operator_id", "open_id")
+    || readNestedString(event, "context", "open_id")
+    || readNestedString(event, "open_id");
+}
+
+function extractOpenMessageId(event: unknown): string {
+  return readNestedString(event, "context", "open_message_id")
+    || readNestedString(event, "open_message", "open_message_id")
+    || readNestedString(event, "open_message_id");
+}
+
 export type BridgeHttpServer = {
   close(): Promise<void>;
 };
@@ -53,8 +80,8 @@ export async function startBridgeHttpServer(
             : {}),
         },
         async (event) => {
-          const actorOpenId = pickString(event, [["operator", "open_id"], ["operator", "operator_id", "open_id"], ["context", "open_id"], ["open_id"]]);
-          const openMessageId = pickString(event, [["context", "open_message_id"], ["open_message_id"]]);
+          const actorOpenId = extractActorOpenId(event);
+          const openMessageId = extractOpenMessageId(event);
           const actionValue = event.action?.value ?? {};
 
           logger.log("http/server", "callback event parsed", {
@@ -93,6 +120,12 @@ export async function startBridgeHttpServer(
     }
 
     if (adapter && url.pathname === config.feishu.cardActions.path) {
+      logger.log("http/card-action", "callback received", {
+        method: req.method ?? "UNKNOWN",
+        path: url.pathname,
+        userAgent: req.headers["user-agent"] ?? "",
+        contentType: req.headers["content-type"] ?? "",
+      });
       await adapter(req, res);
       return;
     }
@@ -130,27 +163,6 @@ export async function startBridgeHttpServer(
       });
     },
   };
-}
-
-function pickString(source: Record<string, unknown>, paths: string[][]): string {
-  for (const path of paths) {
-    const value = readPath(source, path);
-    if (typeof value === "string" && value.length > 0) {
-      return value;
-    }
-  }
-  return "";
-}
-
-function readPath(source: Record<string, unknown>, path: string[]): unknown {
-  let current: unknown = source;
-  for (const key of path) {
-    if (!current || typeof current !== "object") {
-      return undefined;
-    }
-    current = (current as Record<string, unknown>)[key];
-  }
-  return current;
 }
 
 function flattenScalarFields(prefix: string, value: unknown): Record<string, string | number | boolean | null> {

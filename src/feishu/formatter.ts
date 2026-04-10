@@ -500,6 +500,18 @@ function buildPermissionActionBlock(buttons: PermissionActionButton[]): Record<s
           size: "medium",
           margin: "0px 0px 0px 0px",
           value: button.value,
+          confirm: button.type === "danger"
+            ? {
+              title: {
+                tag: "plain_text",
+                content: "确认操作",
+              },
+              text: {
+                tag: "plain_text",
+                content: "确认拒绝当前权限请求？",
+              },
+            }
+            : undefined,
         },
       ],
       vertical_align: "top",
