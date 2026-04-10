@@ -1,4 +1,5 @@
 import type { QueueNotice } from "../bridge/turn.js";
+import { column, columnSet, markdown, standardIcon } from "./card-builder.js";
 
 export type FeishuPostPayload = {
   msg_type: "post" | "interactive";
@@ -415,134 +416,48 @@ function buildNoticeBodyBlock(
   iconToken = "info_outlined",
   iconColor = "grey",
 ): Record<string, unknown> {
-  return {
-    tag: "column_set",
-    horizontal_spacing: "8px",
-    horizontal_align: "left",
-    columns: [
-      {
-        tag: "column",
-        width: "auto",
-        elements: [
-          {
-            tag: "markdown",
-            content: message,
-            text_align: "left",
-            text_size: "normal_v2",
-            margin: "0px 0px 0px 0px",
-            icon: {
-              tag: "standard_icon",
-              token: iconToken,
-              color: iconColor,
-            },
-          },
-        ],
-        padding: "8px 8px 8px 8px",
-        direction: "vertical",
-        horizontal_spacing: "8px",
-        vertical_spacing: "8px",
-        horizontal_align: "left",
-        vertical_align: "top",
-        margin: "0px 0px 0px 0px",
-      },
-    ],
-    margin: "0px 0px 0px 0px",
-  };
+  return columnSet([
+    column([
+      markdown(message, {
+        icon: { token: iconToken, color: iconColor },
+      }),
+    ]),
+  ]);
 }
 
 function buildPermissionRequestBlock(permissionName: string): Record<string, unknown> {
-  return {
-    tag: "column_set",
-    horizontal_spacing: "8px",
-    horizontal_align: "left",
-    columns: [
-      {
-        tag: "column",
-        width: "weighted",
-        elements: [
-          {
-            tag: "markdown",
-            content: "OpenCode 想执行：",
-            text_align: "left",
-            text_size: "normal_v2",
-            margin: "0px 0px 0px 0px",
-          },
-          {
-            tag: "column_set",
-            horizontal_spacing: "8px",
-            horizontal_align: "left",
-            columns: [
-              {
-                tag: "column",
-                width: "weighted",
-                elements: [
-                  {
-                    tag: "markdown",
-                    content: `\`\`\`\n${escapeText(permissionName)}\n\`\`\``,
-                    text_align: "left",
-                    text_size: "normal_v2",
-                    margin: "0px 0px 0px 0px",
-                  },
-                ],
-                vertical_align: "top",
-                weight: 1,
-              },
-            ],
-            margin: "0px 0px 0px 0px",
-          },
-        ],
-        padding: "8px 8px 8px 8px",
-        direction: "vertical",
-        horizontal_spacing: "8px",
-        vertical_spacing: "8px",
-        horizontal_align: "left",
-        vertical_align: "top",
-        margin: "0px 0px 0px 0px",
-        weight: 1,
-      },
-    ],
-    margin: "0px 0px 0px 0px",
-  };
+  return columnSet([
+    column([
+      markdown("OpenCode 想执行："),
+      columnSet([
+        {
+          tag: "column",
+          width: "weighted",
+          elements: [markdown(`\`\`\`\n${escapeText(permissionName)}\n\`\`\``)],
+          vertical_align: "top",
+          weight: 1,
+        },
+      ]),
+    ], { weight: 1 }),
+  ]);
 }
 
 function buildModelProviderBlock(provider: ModelListCardView["providers"][number]): Record<string, unknown> {
   return {
-    tag: "column_set",
+    ...columnSet([
+      {
+        ...column([
+          markdown(`${escapeText(provider.name)} 模型`, { size: "normal" }),
+          {
+            ...columnSet(provider.models.map((model) => buildModelChip(model))),
+            flex_mode: "flow",
+          },
+        ], { weight: 1 }),
+        vertical_spacing: "4px",
+      },
+    ]),
     flex_mode: "stretch",
     horizontal_spacing: "12px",
-    horizontal_align: "left",
-    columns: [
-      {
-        tag: "column",
-        width: "weighted",
-        elements: [
-          {
-            tag: "markdown",
-            content: `${escapeText(provider.name)} 模型`,
-            text_align: "left",
-            text_size: "normal",
-            margin: "0px 0px 0px 0px",
-          },
-          {
-            tag: "column_set",
-            flex_mode: "flow",
-            horizontal_spacing: "8px",
-            horizontal_align: "left",
-            columns: provider.models.map((model) => buildModelChip(model)),
-            margin: "0px 0px 0px 0px",
-          },
-        ],
-        padding: "8px 8px 8px 8px",
-        direction: "vertical",
-        horizontal_spacing: "8px",
-        vertical_spacing: "4px",
-        horizontal_align: "left",
-        vertical_align: "top",
-        margin: "0px 0px 0px 0px",
-        weight: 1,
-      },
-    ],
-    margin: "0px 0px 0px 0px",
   };
 }
 
@@ -550,29 +465,17 @@ function buildModelChip(model: ModelListCardView["providers"][number]["models"][
   const label = model.id.includes("/") ? (model.id.split("/").at(-1) ?? model.id) : model.id;
   const highlighted = model.current;
   return {
-    tag: "column",
-    width: "auto",
-    ...(highlighted ? { background_style: "purple-50" } : {}),
-    elements: [
-      {
-        tag: "markdown",
-        content: model.current
+    ...column([
+      markdown(
+        model.current
           ? `**${escapeText(label)}**`
           : model.default
             ? `${escapeText(label)} 默认`
             : escapeText(label),
-        text_align: "left",
-        text_size: "notation",
-        margin: "0px 0px 0px 0px",
-      },
-    ],
+        { size: "notation" },
+      ),
+    ], highlighted ? { bg: "purple-50" } : undefined),
     padding: "4px 4px 4px 4px",
-    direction: "vertical",
-    horizontal_spacing: "8px",
-    vertical_spacing: "8px",
-    horizontal_align: "left",
-    vertical_align: "top",
-    margin: "0px 0px 0px 0px",
   };
 }
 
@@ -616,99 +519,24 @@ function buildToolElements(lines: ReadonlyArray<ToolUpdateView>): Array<Record<s
 }
 
 function buildStatusCurrentSessionBlock(session: StatusCommandCardView["currentSession"]): Record<string, unknown> {
-  return {
-    tag: "column_set",
-    horizontal_spacing: "8px",
-    horizontal_align: "left",
-    columns: [
-      {
-        tag: "column",
-        width: "weighted",
-        elements: [
-          {
-            tag: "markdown",
-            content: "**当前会话**",
-            text_align: "left",
-            text_size: "normal",
-            margin: "0px 0px 0px 0px",
-            icon: {
-              tag: "standard_icon",
-              token: "reply-cn_outlined",
-              color: "grey",
-            },
-          },
-          {
-            tag: "column_set",
-            horizontal_spacing: "8px",
-            horizontal_align: "left",
-            columns: [
-              {
-                tag: "column",
-                width: "weighted",
-                elements: [
-                  {
-                    tag: "markdown",
-                    content: session ? `\`${escapeText(session.sessionId)}\`` : "未绑定",
-                    text_align: "left",
-                    text_size: "notation",
-                    margin: "0px 0px 0px 0px",
-                  },
-                  {
-                    tag: "column_set",
-                    horizontal_spacing: "8px",
-                    horizontal_align: "left",
-                    columns: [
-                      {
-                        tag: "column",
-                        width: "weighted",
-                        background_style: "grey-50",
-                        elements: [
-                          {
-                            tag: "markdown",
-                            content: session ? escapeText(session.label) : "当前窗口暂未绑定会话",
-                            text_align: "left",
-                            text_size: "normal_v2",
-                            margin: "0px 0px 0px 0px",
-                          },
-                        ],
-                        padding: "8px 8px 8px 8px",
-                        direction: "vertical",
-                        horizontal_spacing: "8px",
-                        vertical_spacing: "8px",
-                        horizontal_align: "left",
-                        vertical_align: "top",
-                        margin: "0px 0px 0px 0px",
-                        weight: 1,
-                      },
-                    ],
-                    margin: "0px 0px 0px 0px",
-                  },
-                ],
-                padding: "0px 0px 0px 0px",
-                direction: "vertical",
-                horizontal_spacing: "8px",
-                vertical_spacing: "8px",
-                horizontal_align: "left",
-                vertical_align: "top",
-                margin: "0px 0px 0px 0px",
-                weight: 1,
-              },
-            ],
-            margin: "0px 0px 0px 0px",
-          },
-        ],
-        padding: "8px 8px 8px 8px",
-        direction: "vertical",
-        horizontal_spacing: "8px",
-        vertical_spacing: "8px",
-        horizontal_align: "left",
-        vertical_align: "top",
-        margin: "0px 0px 0px 0px",
-        weight: 1,
-      },
-    ],
-    margin: "0px 0px 0px 0px",
-  };
+  return columnSet([
+    column([
+      markdown("**当前会话**", { size: "normal", icon: { token: "reply-cn_outlined", color: "grey" } }),
+      columnSet([
+        {
+          ...column([
+            markdown(session ? `\`${escapeText(session.sessionId)}\`` : "未绑定", { size: "notation" }),
+            columnSet([
+              column([
+                markdown(session ? escapeText(session.label) : "当前窗口暂未绑定会话"),
+              ], { bg: "grey-50", weight: 1 }),
+            ]),
+          ], { weight: 1 }),
+          padding: "0px 0px 0px 0px",
+        },
+      ]),
+    ], { weight: 1 }),
+  ]);
 }
 
 function buildStatusSystemBlock(view: StatusCommandCardView): Record<string, unknown> {
@@ -720,72 +548,25 @@ function buildStatusSystemBlock(view: StatusCommandCardView): Record<string, unk
     buildStatusChip(`窗口 ${view.windowCount}`, "grey-50"),
   ];
 
-  return {
-    tag: "column_set",
-    horizontal_spacing: "8px",
-    horizontal_align: "left",
-    columns: [
+  return columnSet([
+    column([
+      markdown("**系统状态**", { icon: { token: "driveload_outlined", color: "blue" } }),
       {
-        tag: "column",
-        width: "weighted",
-        elements: [
-          {
-            tag: "markdown",
-            content: "**系统状态**",
-            text_align: "left",
-            text_size: "normal_v2",
-            margin: "0px 0px 0px 0px",
-            icon: {
-              tag: "standard_icon",
-              token: "driveload_outlined",
-              color: "blue",
-            },
-          },
-          {
-            tag: "column_set",
-            flex_mode: "flow",
-            horizontal_spacing: "8px",
-            horizontal_align: "left",
-            columns: chips,
-            margin: "0px 0px 0px 0px",
-          },
-        ],
-        padding: "8px 8px 8px 8px",
-        direction: "vertical",
-        horizontal_spacing: "8px",
-        vertical_spacing: "8px",
-        horizontal_align: "left",
-        vertical_align: "top",
-        margin: "0px 0px 0px 0px",
-        weight: 1,
+        ...columnSet(chips),
+        flex_mode: "flow",
       },
-    ],
-    margin: "0px 0px 0px 0px",
-  };
+    ], { weight: 1 }),
+  ]);
 }
 
 function buildStatusChip(text: string, backgroundStyle: string): Record<string, unknown> {
   return {
-    tag: "column",
-    width: "weighted",
-    background_style: backgroundStyle,
-    elements: [
+    ...column([
       {
-        tag: "markdown",
-        content: escapeText(text),
+        ...markdown(escapeText(text)),
         text_align: "center",
-        text_size: "normal_v2",
-        margin: "0px 0px 0px 0px",
       },
-    ],
-    padding: "8px 8px 8px 8px",
-    direction: "vertical",
-    horizontal_spacing: "8px",
-    vertical_spacing: "8px",
-    horizontal_align: "left",
-    vertical_align: "top",
-    margin: "0px 0px 0px 0px",
-    weight: 1,
+    ], { bg: backgroundStyle, weight: 1 }),
   };
 }
 
@@ -796,60 +577,12 @@ function buildTwoColumnBadgeRow(
   iconColor: string,
   backgroundStyle: string,
 ): Record<string, unknown> {
-  return {
-    tag: "column_set",
-    horizontal_spacing: "8px",
-    horizontal_align: "left",
-    columns: [
-      {
-        tag: "column",
-        width: "auto",
-        elements: [
-          {
-            tag: "markdown",
-            content: label,
-            text_align: "left",
-            text_size: "normal_v2",
-            margin: "0px 0px 0px 0px",
-          },
-        ],
-        padding: "8px 8px 8px 8px",
-        direction: "vertical",
-        horizontal_spacing: "8px",
-        vertical_spacing: "8px",
-        horizontal_align: "left",
-        vertical_align: "top",
-        margin: "0px 0px 0px 0px",
-      },
-      {
-        tag: "column",
-        width: "auto",
-        background_style: backgroundStyle,
-        elements: [
-          {
-            tag: "markdown",
-            content: value,
-            text_align: "left",
-            text_size: "normal_v2",
-            margin: "0px 0px 0px 0px",
-            icon: {
-              tag: "standard_icon",
-              token: iconToken,
-              color: iconColor,
-            },
-          },
-        ],
-        padding: "8px 8px 8px 8px",
-        direction: "vertical",
-        horizontal_spacing: "8px",
-        vertical_spacing: "8px",
-        horizontal_align: "left",
-        vertical_align: "top",
-        margin: "0px 0px 0px 0px",
-      },
-    ],
-    margin: "0px 0px 0px 0px",
-  };
+  return columnSet([
+    column([markdown(label)]),
+    column([
+      markdown(value, { icon: { token: iconToken, color: iconColor } }),
+    ], { bg: backgroundStyle }),
+  ]);
 }
 
 function mapStatusChipBackground(status: string): string {
@@ -863,74 +596,31 @@ function mapStatusChipBackground(status: string): string {
 }
 
 function buildSessionListItemBlock(item: SessionListCardView["items"][number]): Record<string, unknown> {
-  return {
-    tag: "column_set",
-    horizontal_spacing: "8px",
-    horizontal_align: "left",
-    columns: [
-      {
-        tag: "column",
-        width: "weighted",
-        background_style: item.current ? "wathet-100" : item.archived ? "grey-50" : "bg-white",
-        elements: [
-          {
-            tag: "column_set",
-            horizontal_spacing: "8px",
-            horizontal_align: "left",
-            columns: [
-              {
-                tag: "column",
-                width: "20px",
-                elements: [{
-                  tag: "markdown",
-                  content: `#${item.index}`,
-                  text_align: "left",
-                  text_size: "normal_v2",
-                  margin: "0px 0px 0px 0px",
-                }],
-                vertical_align: "top",
-              },
-              {
-                tag: "column",
-                width: "weighted",
-                elements: [{
-                  tag: "markdown",
-                  content: formatSessionListTitle(item),
-                  text_align: "left",
-                  text_size: "normal_v2",
-                  margin: "0px 0px 0px 0px",
-                }],
-                vertical_align: "top",
-                weight: 1,
-              },
-              {
-                tag: "column",
-                width: "auto",
-                elements: [{
-                  tag: "markdown",
-                  content: item.current ? "当前" : escapeText(item.meta ?? ""),
-                  text_align: "right",
-                  text_size: "normal_v2",
-                  margin: "0px 0px 0px 0px",
-                }],
-                vertical_align: "top",
-              },
-            ],
-            margin: "0px 0px 0px 0px",
-          },
-        ],
-        padding: "8px 8px 8px 8px",
-        direction: "vertical",
-        horizontal_spacing: "8px",
-        vertical_spacing: "8px",
-        horizontal_align: "left",
-        vertical_align: "top",
-        margin: "0px 0px 0px 0px",
-        weight: 1,
-      },
-    ],
-    margin: "0px 0px 0px 0px",
-  };
+  return columnSet([
+    column([
+      columnSet([
+        {
+          tag: "column",
+          width: "20px",
+          elements: [markdown(`#${item.index}`)],
+          vertical_align: "top",
+        },
+        {
+          tag: "column",
+          width: "weighted",
+          elements: [markdown(formatSessionListTitle(item))],
+          vertical_align: "top",
+          weight: 1,
+        },
+        {
+          tag: "column",
+          width: "auto",
+          elements: [{ ...markdown(item.current ? "当前" : escapeText(item.meta ?? "")), text_align: "right" }],
+          vertical_align: "top",
+        },
+      ]),
+    ], { bg: item.current ? "wathet-100" : item.archived ? "grey-50" : "bg-white", weight: 1 }),
+  ]);
 }
 
 function formatSessionListTitle(item: SessionListCardView["items"][number]): string {
@@ -946,27 +636,19 @@ function formatSessionListTitle(item: SessionListCardView["items"][number]): str
 
 function buildEmptyStateBlock(text: string): Record<string, unknown> {
   return {
-    tag: "column_set",
-    horizontal_spacing: "8px",
-    horizontal_align: "center",
-    columns: [
+    ...columnSet([
       {
-        tag: "column",
-        width: "weighted",
-        elements: [
+        ...column([
           {
-            tag: "markdown",
-            content: escapeText(text),
+            ...markdown(escapeText(text)),
             text_align: "center",
-            text_size: "normal_v2",
             margin: "20px 20px 20px 20px",
           },
-        ],
-        vertical_align: "top",
-        weight: 1,
+        ], { weight: 1 }),
+        padding: "0px 0px 0px 0px",
       },
-    ],
-    margin: "0px 0px 0px 0px",
+    ]),
+    horizontal_align: "center",
   };
 }
 
@@ -979,88 +661,28 @@ function buildDivider(): Record<string, unknown> {
 
 function buildFooterTipBlock(text: string, iconToken: string, iconColor: string, textSize: "notation" | "normal_v2"): Record<string, unknown> {
   return {
-    tag: "column_set",
-    flex_mode: "stretch",
-    horizontal_spacing: "8px",
-    horizontal_align: "left",
-    columns: [
+    ...columnSet([
       {
-        tag: "column",
-        width: "weighted",
-        elements: [
-          {
-            tag: "markdown",
-            content: text,
-            text_align: "left",
-            text_size: textSize,
-            margin: "0px 0px 0px 0px",
-            icon: {
-              tag: "standard_icon",
-              token: iconToken,
-              color: iconColor,
-            },
-          },
-        ],
-        padding: "8px 8px 8px 8px",
-        direction: "vertical",
-        horizontal_spacing: "8px",
+        ...column([
+          markdown(text, { size: textSize, icon: { token: iconToken, color: iconColor } }),
+        ], { weight: 1 }),
         vertical_spacing: "10px",
-        horizontal_align: "left",
-        vertical_align: "top",
-        margin: "0px 0px 0px 0px",
-        weight: 1,
       },
-    ],
-    margin: "0px 0px 0px 0px",
+    ]),
+    flex_mode: "stretch",
   };
 }
 
 function buildSessionTransitionRow(prefix: string, content: string, backgroundStyle: string): Record<string, unknown> {
   return {
-    tag: "column_set",
-    background_style: backgroundStyle,
-    horizontal_spacing: "8px",
-    horizontal_align: "left",
-    columns: [
+    ...columnSet([
       {
-        tag: "column",
+        ...column([{ ...markdown(prefix), text_align: "center" }]),
         width: "50px",
-        elements: [{
-          tag: "markdown",
-          content: prefix,
-          text_align: "center",
-          text_size: "normal_v2",
-          margin: "0px 0px 0px 0px",
-        }],
-        padding: "8px 8px 8px 8px",
-        direction: "vertical",
-        horizontal_spacing: "8px",
-        vertical_spacing: "8px",
-        horizontal_align: "left",
-        vertical_align: "top",
-        margin: "0px 0px 0px 0px",
       },
-      {
-        tag: "column",
-        width: "weighted",
-        elements: [{
-          tag: "markdown",
-          content,
-          text_align: "left",
-          text_size: "normal_v2",
-          margin: "0px 0px 0px 0px",
-        }],
-        padding: "8px 8px 8px 8px",
-        direction: "vertical",
-        horizontal_spacing: "8px",
-        vertical_spacing: "8px",
-        horizontal_align: "left",
-        vertical_align: "top",
-        margin: "0px 0px 0px 0px",
-        weight: 1,
-      },
-    ],
-    margin: "0px 0px 0px 0px",
+      column([markdown(content)], { weight: 1 }),
+    ]),
+    background_style: backgroundStyle,
   };
 }
 
@@ -1071,14 +693,14 @@ function formatToolDisplay(line: ToolUpdateView): string {
 function mapToolIcon(status: ToolUpdateView["status"]): Record<string, string> {
   switch (status) {
     case "completed":
-      return { tag: "standard_icon", token: "yes_outlined", color: "green" };
+      return standardIcon("yes_outlined", "green") as Record<string, string>;
     case "error":
-      return { tag: "standard_icon", token: "more-close_outlined", color: "red" };
+      return standardIcon("more-close_outlined", "red") as Record<string, string>;
     case "pending":
     case "running":
-      return { tag: "standard_icon", token: "loading_outlined", color: "blue" };
+      return standardIcon("loading_outlined", "blue") as Record<string, string>;
     default:
-      return { tag: "standard_icon", token: "info_outlined", color: "grey" };
+      return standardIcon("info_outlined", "grey") as Record<string, string>;
   }
 }
 
@@ -1099,12 +721,7 @@ function buildOutputElements(output: OutputView, state: CardState): Array<Record
     blocks.push(state.kind === "error" ? "问题描述" : "处理中...");
   }
 
-  return [{
-    tag: "markdown",
-    content: blocks.join("\n\n"),
-    text_align: "left",
-    text_size: "normal_v2",
-  }];
+  return [markdown(blocks.join("\n\n"), { size: "normal_v2" })];
 }
 
 function formatOutputText(text: string): string {
@@ -1164,75 +781,40 @@ function fileNameFromPath(path: string): string {
 
 function buildToolBlock(toolElements: Array<Record<string, unknown>>): Record<string, unknown> {
   return {
-    tag: "column_set",
+    ...columnSet([
+      {
+        ...column(toolElements, { bg: "grey-50", weight: 1 }),
+        padding: "12px 12px 12px 12px",
+        vertical_spacing: "4px",
+      },
+    ]),
     flex_mode: "stretch",
     horizontal_spacing: "12px",
-    horizontal_align: "left",
-    columns: [
-      {
-        tag: "column",
-        width: "weighted",
-        background_style: "grey-50",
-        elements: toolElements,
-        padding: "12px 12px 12px 12px",
-        direction: "vertical",
-        horizontal_spacing: "8px",
-        vertical_spacing: "4px",
-        horizontal_align: "left",
-        vertical_align: "top",
-        weight: 1,
-      },
-    ],
-    margin: "0px 0px 0px 0px",
   };
 }
 
 function buildOutputBlock(outputElements: Array<Record<string, unknown>>): Record<string, unknown> {
   return {
-    tag: "column_set",
+    ...columnSet([
+      {
+        ...column(outputElements, { weight: 1 }),
+        padding: "0px 0px 0px 0px",
+      },
+    ]),
     flex_mode: "stretch",
     horizontal_spacing: "12px",
-    horizontal_align: "left",
-    columns: [
-      {
-        tag: "column",
-        width: "weighted",
-        elements: outputElements,
-        vertical_spacing: "8px",
-        horizontal_align: "left",
-        vertical_align: "top",
-        weight: 1,
-      },
-    ],
-    margin: "0px 0px 0px 0px",
   };
 }
 
 function buildSpacerBlock(): Record<string, unknown> {
   return {
-    tag: "column_set",
-    flex_mode: "stretch",
-    horizontal_spacing: "8px",
-    horizontal_align: "left",
-    columns: [
+    ...columnSet([
       {
-        tag: "column",
-        width: "weighted",
-        elements: [
-          {
-            tag: "markdown",
-            content: "",
-            text_align: "left",
-            text_size: "notation",
-          },
-        ],
-        vertical_spacing: "8px",
-        horizontal_align: "left",
-        vertical_align: "top",
-        weight: 1,
+        ...column([markdown("", { size: "notation" })], { weight: 1 }),
+        padding: "0px 0px 0px 0px",
       },
-    ],
-    margin: "0px 0px 0px 0px",
+    ]),
+    flex_mode: "stretch",
   };
 }
 
