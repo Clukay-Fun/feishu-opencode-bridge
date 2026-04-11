@@ -172,9 +172,7 @@ export class FeishuWsClient {
           }, "warn");
           return;
         }
-      } else if (mentionMatched) {
-        await this.whitelist.bind(incoming.chatId, incoming.senderOpenId);
-      } else if (!isBound) {
+      } else if (!mentionMatched && !isBound) {
         this.logger.log("feishu/ws", "message skipped", {
           reason: hasAnyMention ? "group-mention-mismatch" : "not-whitelisted",
           chatId: incoming.chatId,

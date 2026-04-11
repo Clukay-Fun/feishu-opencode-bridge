@@ -8,6 +8,14 @@ export type Logger = {
   logTranscript: (type: TranscriptType, fields: Record<string, unknown>, content: string) => void;
 };
 
+export type LoggerOptions = {
+  level: "debug" | "info" | "warn" | "error";
+  enableTranscript: boolean;
+  enableConsole: boolean;
+  enableColor: boolean;
+  rotateDaily: boolean;
+};
+
 const TRANSCRIPT_LABELS: Record<TranscriptType, string> = {
   inbound: "入站",
   "outbound-process": "出站-过程",
@@ -16,22 +24,46 @@ const TRANSCRIPT_LABELS: Record<TranscriptType, string> = {
   "reasoning-raw": "OpenCode思考原文",
 };
 
-export async function createLogger(loggingDir: string): Promise<Logger> {
+const DEFAULT_LOGGER_OPTIONS: LoggerOptions = {
+  level: "info",
+  enableTranscript: true,
+  enableConsole: true,
+  enableColor: true,
+  rotateDaily: true,
+};
+
+const LEVEL_PRIORITY: Record<LoggerOptions["level"], number> = {
+  debug: 10,
+  info: 20,
+  warn: 30,
+  error: 40,
+};
+
+export async function createLogger(loggingDir: string, options: Partial<LoggerOptions> = {}): Promise<Logger> {
   await mkdir(loggingDir, { recursive: true });
-  const day = new Date().toISOString().slice(0, 10);
-  const bridgeLog = path.join(loggingDir, `bridge-${day}.log`);
-  const transcriptLog = path.join(loggingDir, `transcript-${day}.log`);
+  const resolvedOptions = {
+    ...DEFAULT_LOGGER_OPTIONS,
+    ...options,
+  };
 
   return {
-    log(scope, message, fields = {}) {
+    log(scope, message, fields = {}, level = "info") {
+      if (!shouldLog(level, resolvedOptions.level)) {
+        return;
+      }
       const line = `${timeStamp()} [${scope}] ${message} ${formatFields(fields)}`.trimEnd();
-      void appendFile(bridgeLog, `${line}\n`, "utf8");
-      console.log(line);
+      void appendFile(resolveLogPath(loggingDir, "bridge", resolvedOptions.rotateDaily), `${line}\n`, "utf8");
+      if (resolvedOptions.enableConsole) {
+        console.log(resolvedOptions.enableColor ? colorizeLine(line, level) : line);
+      }
     },
     logTranscript(type, fields, content) {
+      if (!resolvedOptions.enableTranscript) {
+        return;
+      }
       const header = `[${TRANSCRIPT_LABELS[type]}] ${formatFields(fields)}`.trimEnd();
       const block = `${header}\n内容: ${content}\n---\n`;
-      void appendFile(transcriptLog, block, "utf8");
+      void appendFile(resolveLogPath(loggingDir, "transcript", resolvedOptions.rotateDaily), block, "utf8");
     },
   };
 }
@@ -43,6 +75,30 @@ export function createTextPreview(text: string): string {
 
 function timeStamp(): string {
   return new Date().toTimeString().slice(0, 8);
+}
+
+function resolveLogPath(loggingDir: string, kind: "bridge" | "transcript", rotateDaily: boolean): string {
+  if (!rotateDaily) {
+    return path.join(loggingDir, `${kind}.log`);
+  }
+
+  const day = new Date().toISOString().slice(0, 10);
+  return path.join(loggingDir, `${kind}-${day}.log`);
+}
+
+function shouldLog(level: LoggerOptions["level"], configuredLevel: LoggerOptions["level"]): boolean {
+  return LEVEL_PRIORITY[level] >= LEVEL_PRIORITY[configuredLevel];
+}
+
+function colorizeLine(line: string, level: LoggerOptions["level"]): string {
+  switch (level) {
+    case "debug": return `\u001b[90m${line}\u001b[0m`;
+    case "warn": return `\u001b[33m${line}\u001b[0m`;
+    case "error": return `\u001b[31m${line}\u001b[0m`;
+    case "info":
+    default:
+      return line;
+  }
 }
 
 function formatFields(fields: Record<string, unknown>): string {

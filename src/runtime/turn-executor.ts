@@ -5,7 +5,7 @@ import { transitionTurn } from "../bridge/state-machine.js";
 import { TurnWatchdog } from "../bridge/watchdog.js";
 import type { BridgeTurn } from "../bridge/turn.js";
 import { buildPermissionRequestCardPayload, buildPostMarkdownPayload, type FeishuPostPayload } from "../feishu/formatter.js";
-import type { Logger, TranscriptType } from "../logging/logger.js";
+import { createTextPreview, type Logger, type TranscriptType } from "../logging/logger.js";
 import { type OpenCodeMessage, type OpenCodeSessionStatus } from "../opencode/client.js";
 import { getEventSessionId, type OpenCodeEvent } from "../opencode/events.js";
 import { type SessionWindowRecord } from "../store/mappings.js";
@@ -88,6 +88,7 @@ export type TurnExecutorContext = {
   ensureSession(source: Pick<BridgeTurn, "chatId" | "chatType" | "conversationKey" | "threadKey">): Promise<string>;
   maybeUpdateSessionLabel(turn: BridgeTurn & { sessionId: string }): Promise<void>;
   clearPendingInteraction(conversationKey: string, keepNonExpiring: boolean): void;
+  clearTurnOwnedPendingInteraction(conversationKey: string, turnId: string): void;
   setPendingInteraction(conversationKey: string, interaction: PendingInteraction): void;
   sendPayload(
     chatId: string,
@@ -115,6 +116,7 @@ export class TurnExecutor {
 
     let turn = transitionTurn(active, "running");
     queue.replaceActive(turn);
+    let hasProcessCard = false;
 
     try {
       const sessionId = turn.sessionId ?? await this.context.ensureSession(turn);
@@ -124,7 +126,9 @@ export class TurnExecutor {
 
       const card = await this.context.turnCardManager.createTurnCard(turn.chatId, turn.turnId, sessionId, turn.inboundMessageId);
       if (card) {
-        queue.replaceActive({ ...turn, processMessageId: card.messageId });
+        hasProcessCard = true;
+        turn = { ...turn, processMessageId: card.messageId };
+        queue.replaceActive(turn);
       }
 
       const reply = cleanAssistantReply(await this.executeTurn(conversationKey, turn as BridgeTurn & { sessionId: string }));
@@ -134,6 +138,9 @@ export class TurnExecutor {
       if (reply) {
         this.context.memory?.enqueueLearn(turn.senderOpenId, turn.plainText, reply);
       }
+      if (!card && reply) {
+        await this.sendTurnFallbackMarkdown(turn.chatId, reply);
+      }
       await this.context.turnCardManager.flushStreamUpdate(turn.turnId, reply, true);
       await this.context.turnCardManager.updateTurnCard(turn.turnId, { status: "已完成", update: `最终回复已生成（${reply.length} 字）`, target: "step" });
       queue.replaceActive(transitionTurn({ ...turn, sessionId }, "done"));
@@ -141,10 +148,13 @@ export class TurnExecutor {
     } catch (error) {
       const detail = cleanAssistantReply(error instanceof Error ? error.message : String(error));
       this.context.logger.log("bridge/queue", "run turn failed", { chatId: turn.chatId, conversationKey, turnId: turn.turnId, detail }, "error");
+      if (!hasProcessCard) {
+        await this.sendTurnFallbackMarkdown(turn.chatId, `处理失败：${escapeMarkdownText(detail)}`);
+      }
       await this.context.turnCardManager.updateTurnCard(turn.turnId, { status: detail.includes("超时") ? "已超时" : "处理失败", update: detail, target: "step" });
       queue.replaceActive(transitionTurn(turn, detail.includes("超时") ? "timeout" : "aborted"));
     } finally {
-      this.context.clearPendingInteraction(conversationKey, false);
+      this.context.clearTurnOwnedPendingInteraction(conversationKey, turn.turnId);
       this.context.turnCardManager.cleanup(turn.turnId);
     }
   }
@@ -404,6 +414,7 @@ export class TurnExecutor {
       if (!request) return;
       this.context.setPendingInteraction(turn.conversationKey, {
         kind: "question",
+        turnId: turn.turnId,
         requestId: request.id,
         sessionId: request.sessionId,
         questions: request.questions,
@@ -520,5 +531,14 @@ export class TurnExecutor {
   private async getAssistantMessageById(sessionId: string, messageId: string): Promise<OpenCodeMessage | null> {
     const messages = await this.context.opencode.getSessionMessages(sessionId, 200);
     return messages.find((message) => message.info.id === messageId && message.info.role === "assistant") ?? null;
+  }
+
+  private async sendTurnFallbackMarkdown(chatId: string, markdown: string): Promise<void> {
+    await this.context.sendPayload(chatId, buildPostMarkdownPayload(markdown), {
+      event: "fallback final message sent",
+      transcriptType: "outbound-final",
+      textPreview: createTextPreview(markdown),
+      len: markdown.length,
+    });
   }
 }

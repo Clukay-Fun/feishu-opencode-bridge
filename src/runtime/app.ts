@@ -162,6 +162,7 @@ export class BridgeApp {
       ensureSession: async (source) => await this.ensureSession(source),
       maybeUpdateSessionLabel: async (turn) => await this.maybeUpdateSessionLabel(turn),
       clearPendingInteraction: (conversationKey, keepNonExpiring) => this.clearPendingInteraction(conversationKey, keepNonExpiring),
+      clearTurnOwnedPendingInteraction: (conversationKey, turnId) => this.clearTurnOwnedPendingInteraction(conversationKey, turnId),
       setPendingInteraction: (conversationKey, interaction) => this.setPendingInteraction(conversationKey, interaction),
       sendPayload: async (chatId, payload, options, delivery) => await this.sendPayload(chatId, payload, options, delivery),
     });
@@ -551,6 +552,20 @@ export class BridgeApp {
     }
 
     this.pendingInteractions.delete(conversationKey);
+  }
+
+  private clearTurnOwnedPendingInteraction(conversationKey: string, turnId: string): void {
+    const current = this.pendingInteractions.get(conversationKey);
+    if (!current) {
+      return;
+    }
+
+    if (
+      (current.kind === "permission" && current.turnId === turnId)
+      || (current.kind === "question" && current.turnId === turnId)
+    ) {
+      this.clearPendingInteraction(conversationKey, false);
+    }
   }
 
   private async handlePermissionTimeout(conversationKey: string, pending: PendingPermissionInteraction): Promise<void> {
