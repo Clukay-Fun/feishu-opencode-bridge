@@ -1,5 +1,6 @@
 export type PendingQuestionInteraction = {
   kind: "question";
+  turnId: string;
   requestId: string;
   sessionId: string;
   questions: Array<{ header: string; question: string }>;

@@ -576,6 +576,40 @@ describe("group chat support", () => {
     expect(whitelist.isBound("oc_group_bind_1", "ou_123")).toBe(true);
   });
 
+  it("keeps dispatching mention messages when best-effort binding fails", async () => {
+    const handler = vi.fn(async () => {});
+    const logger = { log: vi.fn() };
+    const whitelist = {
+      isBound() { return false; },
+      bind: vi.fn(async () => {
+        throw new Error("disk full");
+      }),
+      async unbind() { return false; },
+      count() { return 0; },
+    };
+    const client = new FeishuWsClient("app", "secret", makeOptions(), whitelist, handler, logger);
+
+    await (client as unknown as { handleEvent(payload: unknown): Promise<void> }).handleEvent({
+      message: {
+        chat_id: "oc_group_bind_fail_1",
+        chat_type: "group",
+        message_id: "om_bind_fail_1",
+        message_type: "text",
+        content: JSON.stringify({ text: '<at user_id="ou_bot">机器人</at> 帮我分析一下' }),
+        mentions: [{ id: { open_id: "ou_bot" }, name: "机器人" }],
+      },
+      sender: { sender_id: { open_id: "ou_123" } },
+    });
+
+    expect(whitelist.bind).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(logger.log).toHaveBeenCalledWith("store/whitelist", "bind failed", expect.objectContaining({
+      chatId: "oc_group_bind_fail_1",
+      senderOpenId: "ou_123",
+      detail: "disk full",
+    }), "warn");
+  });
+
   it("skips unbound non-mentioned group messages with not-whitelisted", async () => {
     const handler = vi.fn(async () => {});
     const logger = { log: vi.fn() };

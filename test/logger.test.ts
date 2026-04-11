@@ -2,11 +2,15 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createLogger, createTextPreview } from "../src/logging/logger.js";
 
 describe("logger", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("creates previews", () => {
     expect(createTextPreview("a".repeat(120)).length).toBeLessThanOrEqual(80);
   });
@@ -77,5 +81,41 @@ describe("logger", () => {
     const day = new Date().toISOString().slice(0, 10);
     const content = await readFile(path.join(dir, `transcript-${day}.log`), "utf8");
     expect(content).toContain("reply");
+  });
+
+  it("honors level filtering and console output settings", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-logger-"));
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+    const logger = await createLogger(dir, {
+      level: "warn",
+      enableConsole: false,
+      enableColor: false,
+    });
+
+    logger.log("scope", "info message", {}, "info");
+    logger.log("scope", "warn message", {}, "warn");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const day = new Date().toISOString().slice(0, 10);
+    const content = await readFile(path.join(dir, `bridge-${day}.log`), "utf8");
+    expect(content).not.toContain("info message");
+    expect(content).toContain("warn message");
+    expect(consoleLog).not.toHaveBeenCalled();
+  });
+
+  it("honors transcript and rotation settings", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-logger-"));
+    const logger = await createLogger(dir, {
+      enableTranscript: false,
+      rotateDaily: false,
+    });
+
+    logger.log("scope", "message", {});
+    logger.logTranscript("inbound", { chatId: "c" }, "hidden");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const bridgeContent = await readFile(path.join(dir, "bridge.log"), "utf8");
+    expect(bridgeContent).toContain("message");
+    await expect(readFile(path.join(dir, "transcript.log"), "utf8")).rejects.toThrow();
   });
 });

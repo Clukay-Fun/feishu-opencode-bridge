@@ -529,6 +529,184 @@ describe("BridgeApp command surface", () => {
 
     expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("请先发送 `/abort`");
   });
+
+  it("falls back to a direct message when the process card cannot be created", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const appAny = app as unknown as {
+      turnExecutor: {
+        context: {
+          ensureSession: (source: Record<string, unknown>) => Promise<string>;
+          turnCardManager: {
+            createTurnCard: (chatId: string, turnId: string, sessionId: string, replyToMessageId: string) => Promise<null>;
+          };
+        };
+        executeTurn: (conversationKey: string, turn: Record<string, unknown>) => Promise<string>;
+      };
+      runTurn: (conversationKey: string) => Promise<void>;
+      queues: {
+        get(key: string): {
+          enqueue: (turn: Record<string, unknown>) => { accepted: boolean };
+        };
+      };
+    };
+    appAny.turnExecutor.context.ensureSession = vi.fn(async () => "ses_1");
+    appAny.turnExecutor.context.turnCardManager.createTurnCard = vi.fn(async () => null);
+    appAny.turnExecutor.executeTurn = vi.fn(async () => "最终回复");
+    appAny.queues.get("oc_p2p_1").enqueue({
+      turnId: "turn_1",
+      chatId: "oc_p2p_1",
+      conversationKey: "oc_p2p_1",
+      threadKey: "om_1",
+      senderOpenId: "ou_123",
+      inboundMessageId: "om_1",
+      plainText: "hello",
+      text: "hello",
+    });
+
+    await appAny.runTurn("oc_p2p_1");
+
+    expect(outbound.sendMessage).toHaveBeenCalledTimes(1);
+    expect(extractMarkdown(getSendPayloads(outbound)[0])).toContain("最终回复");
+  });
+
+  it("falls back to a direct error message when the process card cannot be created", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const appAny = app as unknown as {
+      turnExecutor: {
+        context: {
+          ensureSession: (source: Record<string, unknown>) => Promise<string>;
+          turnCardManager: {
+            createTurnCard: (chatId: string, turnId: string, sessionId: string, replyToMessageId: string) => Promise<null>;
+          };
+        };
+        executeTurn: (conversationKey: string, turn: Record<string, unknown>) => Promise<string>;
+      };
+      runTurn: (conversationKey: string) => Promise<void>;
+      queues: {
+        get(key: string): {
+          enqueue: (turn: Record<string, unknown>) => { accepted: boolean };
+        };
+      };
+    };
+    appAny.turnExecutor.context.ensureSession = vi.fn(async () => "ses_1");
+    appAny.turnExecutor.context.turnCardManager.createTurnCard = vi.fn(async () => null);
+    appAny.turnExecutor.executeTurn = vi.fn(async () => {
+      throw new Error("服务暂时不可用");
+    });
+    appAny.queues.get("oc_p2p_1").enqueue({
+      turnId: "turn_1",
+      chatId: "oc_p2p_1",
+      conversationKey: "oc_p2p_1",
+      threadKey: "om_1",
+      senderOpenId: "ou_123",
+      inboundMessageId: "om_1",
+      plainText: "hello",
+      text: "hello",
+    });
+
+    await appAny.runTurn("oc_p2p_1");
+
+    expect(outbound.sendMessage).toHaveBeenCalledTimes(1);
+    expect(extractMarkdown(getSendPayloads(outbound)[0])).toContain("处理失败：服务暂时不可用");
+  });
+
+  it("keeps session selection state after an unrelated turn finishes", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const appAny = app as unknown as {
+      turnExecutor: {
+        context: {
+          ensureSession: (source: Record<string, unknown>) => Promise<string>;
+          turnCardManager: {
+            createTurnCard: (chatId: string, turnId: string, sessionId: string, replyToMessageId: string) => Promise<null>;
+          };
+        };
+        executeTurn: (conversationKey: string, turn: Record<string, unknown>) => Promise<string>;
+      };
+      runTurn: (conversationKey: string) => Promise<void>;
+      queues: {
+        get(key: string): {
+          enqueue: (turn: Record<string, unknown>) => { accepted: boolean };
+        };
+      };
+      pendingInteractions: Map<string, PendingInteraction>;
+    };
+    appAny.turnExecutor.context.ensureSession = vi.fn(async () => "ses_1");
+    appAny.turnExecutor.context.turnCardManager.createTurnCard = vi.fn(async () => null);
+    appAny.turnExecutor.executeTurn = vi.fn(async () => "done");
+    appAny.pendingInteractions.set("oc_p2p_1", {
+      kind: "session-select",
+      expiresAt: Date.now() + 30_000,
+      options: [
+        { index: 1, sessionId: "ses_1", title: "会话1", current: true },
+      ],
+    });
+    appAny.queues.get("oc_p2p_1").enqueue({
+      turnId: "turn_1",
+      chatId: "oc_p2p_1",
+      conversationKey: "oc_p2p_1",
+      threadKey: "om_1",
+      senderOpenId: "ou_123",
+      inboundMessageId: "om_1",
+      plainText: "hello",
+      text: "hello",
+    });
+
+    await appAny.runTurn("oc_p2p_1");
+
+    expect(appAny.pendingInteractions.get("oc_p2p_1")).toEqual(expect.objectContaining({
+      kind: "session-select",
+    }));
+  });
+
+  it("clears question state owned by the finishing turn", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const appAny = app as unknown as {
+      turnExecutor: {
+        context: {
+          ensureSession: (source: Record<string, unknown>) => Promise<string>;
+          turnCardManager: {
+            createTurnCard: (chatId: string, turnId: string, sessionId: string, replyToMessageId: string) => Promise<null>;
+          };
+        };
+        executeTurn: (conversationKey: string, turn: Record<string, unknown>) => Promise<string>;
+      };
+      runTurn: (conversationKey: string) => Promise<void>;
+      queues: {
+        get(key: string): {
+          enqueue: (turn: Record<string, unknown>) => { accepted: boolean };
+        };
+      };
+      pendingInteractions: Map<string, PendingInteraction>;
+    };
+    appAny.turnExecutor.context.ensureSession = vi.fn(async () => "ses_1");
+    appAny.turnExecutor.context.turnCardManager.createTurnCard = vi.fn(async () => null);
+    appAny.turnExecutor.executeTurn = vi.fn(async () => "done");
+    appAny.pendingInteractions.set("oc_p2p_1", {
+      kind: "question",
+      turnId: "turn_1",
+      requestId: "q_1",
+      sessionId: "ses_1",
+      questions: [{ header: "问题", question: "请补充信息" }],
+    });
+    appAny.queues.get("oc_p2p_1").enqueue({
+      turnId: "turn_1",
+      chatId: "oc_p2p_1",
+      conversationKey: "oc_p2p_1",
+      threadKey: "om_1",
+      senderOpenId: "ou_123",
+      inboundMessageId: "om_1",
+      plainText: "hello",
+      text: "hello",
+    });
+
+    await appAny.runTurn("oc_p2p_1");
+
+    expect(appAny.pendingInteractions.has("oc_p2p_1")).toBe(false);
+  });
 });
 
 async function callHandleCommand(
@@ -735,4 +913,8 @@ function extractInteractiveHeader(payload: { content: string } | undefined): str
 
 function getReplyPayloads(outbound: ReturnType<typeof createOutbound>): Array<{ content: string } | undefined> {
   return (outbound.replyMessage.mock.calls as unknown[][]).map((call) => call[1] as { content: string } | undefined);
+}
+
+function getSendPayloads(outbound: ReturnType<typeof createOutbound>): Array<{ content: string } | undefined> {
+  return (outbound.sendMessage.mock.calls as unknown[][]).map((call) => call[1] as { content: string } | undefined);
 }

@@ -11,7 +11,7 @@ async function main(): Promise<void> {
   const config = await loadConfig();
   const outbound = new FeishuApiClient(config.feishu.appId, config.feishu.appSecret);
   await runStartupPreflight(config, outbound);
-  const logger = await createLogger(config.logging.dir);
+  const logger = await createLogger(config.logging.dir, config.logging);
   const whitelist = new WhitelistStore(config.whitelist.storePath, logger);
   await whitelist.load();
   const app = new BridgeApp(config, outbound, logger, whitelist);

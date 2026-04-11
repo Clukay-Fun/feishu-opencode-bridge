@@ -4,6 +4,9 @@ const RETRY_MAX_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 500;
 
 export class FeishuApiClient {
+  private cachedToken: { token: string; expiresAt: number } | null = null;
+  private tokenRequest: Promise<string> | null = null;
+
   constructor(private readonly appId: string, private readonly appSecret: string) {}
 
   async sendMessage(chatId: string, payload: FeishuPostPayload): Promise<{ messageId: string }> {
@@ -58,15 +61,36 @@ export class FeishuApiClient {
   }
 
   async getTenantToken(): Promise<string> {
+    if (this.cachedToken && Date.now() < this.cachedToken.expiresAt) {
+      return this.cachedToken.token;
+    }
+
+    if (this.tokenRequest) {
+      return this.tokenRequest;
+    }
+
+    this.tokenRequest = this.fetchTenantToken().finally(() => {
+      this.tokenRequest = null;
+    });
+    return this.tokenRequest;
+  }
+
+  private async fetchTenantToken(): Promise<string> {
     const response = await fetch("https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ app_id: this.appId, app_secret: this.appSecret }),
     });
-    const body = (await response.json()) as { code: number; msg?: string; tenant_access_token?: string };
+    const body = (await response.json()) as { code: number; msg?: string; tenant_access_token?: string; expire?: number };
     if (!response.ok || body.code !== 0 || !body.tenant_access_token) {
       throw new Error(`Feishu fetch token failed: ${body.msg ?? response.statusText}`);
     }
+
+    const expireSeconds = typeof body.expire === "number" && Number.isFinite(body.expire) ? body.expire : 7_200;
+    this.cachedToken = {
+      token: body.tenant_access_token,
+      expiresAt: Date.now() + Math.max(60, expireSeconds - 300) * 1_000,
+    };
     return body.tenant_access_token;
   }
 }
