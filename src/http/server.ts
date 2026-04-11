@@ -1,6 +1,7 @@
 import http from "node:http";
 
 import type { AppConfig } from "../config/schema.js";
+import { APP_VERSION } from "../version.js";
 
 type LoggerLike = {
   log: (scope: string, message: string, fields?: Record<string, unknown>, level?: "debug" | "info" | "warn" | "error") => void;
@@ -109,6 +110,7 @@ export async function startBridgeHttpServer(
       res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
       res.end(JSON.stringify({
         ok: true,
+        bridgeVersion: APP_VERSION,
         uptimeSec: Math.max(0, Math.floor((Date.now() - startedAt) / 1000)),
         queueLimit: config.bridge.queueLimit,
         cardActionsEnabled: config.feishu.cardActions.enabled,

@@ -8,6 +8,8 @@ Feishu OpenCode Bridge is a Feishu-native runtime adapter for OpenCode.
 
 It turns Feishu chats into session-aware OpenCode workspaces, keeps process updates inside interactive cards, handles permission confirmation, and preserves a clear boundary between bridge-owned runtime control and passthrough OpenCode commands.
 
+Current project version: `0.2.0`
+
 ## Why This Is Not A Normal Bot
 
 This project is not trying to be a generic chat bot.
@@ -215,6 +217,14 @@ npm run lint
 npm run dev
 npm run dev:once
 ```
+
+## Versioning
+
+- Current project version: `0.2.0`
+- Release notes live in [CHANGELOG.md](/Users/clukay/Program/feishu-opencode-bridge/CHANGELOG.md)
+- Future version bumps should follow SemVer:
+  patch for fixes/docs, minor for new backward-compatible features, major for breaking changes
+- When preparing a release, update `package.json`, `package-lock.json`, and `CHANGELOG.md` together
 
 ## Project Layout
 

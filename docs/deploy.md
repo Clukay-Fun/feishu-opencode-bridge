@@ -100,7 +100,7 @@ curl https://bridge.example.com/healthz
 应返回：
 
 ```json
-{"ok":true}
+{"ok":true,"bridgeVersion":"0.2.0"}
 ```
 
 ## 6. Configure Feishu Card Action Callback

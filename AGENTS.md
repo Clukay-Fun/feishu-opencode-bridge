@@ -31,3 +31,8 @@
   - `followup`: feedback-driven or validation-driven follow-up patch
 - Keep updating the same branch and PR while the related feature line is still open and unmerged.
 - Once a PR has been merged into `main`, do not reopen or reuse it for follow-up work; create a new branch and a new PR instead.
+- Project versions follow SemVer in a lightweight form:
+  - `patch` for fixes, compatibility adjustments, or docs-only releases
+  - `minor` for backward-compatible feature expansion
+  - `major` for incompatible runtime, config, or behavior changes
+- When preparing a release version, update `package.json`, `package-lock.json`, and `CHANGELOG.md` together.

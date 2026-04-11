@@ -6,6 +6,7 @@ import { createFeishuIngressOptions, FeishuWsClient } from "./feishu/ws.js";
 import { WhitelistStore } from "./store/whitelist.js";
 import { runStartupPreflight } from "./runtime/preflight.js";
 import { startBridgeHttpServer } from "./http/server.js";
+import { APP_VERSION } from "./version.js";
 
 async function main(): Promise<void> {
   const config = await loadConfig();
@@ -28,6 +29,10 @@ async function main(): Promise<void> {
   await ws.start();
 
   let shuttingDown = false;
+  logger.log("bridge/index", "runtime initialized", {
+    bridgeVersion: APP_VERSION,
+  });
+
   const shutdown = async (): Promise<void> => {
     if (shuttingDown) {
       return;
