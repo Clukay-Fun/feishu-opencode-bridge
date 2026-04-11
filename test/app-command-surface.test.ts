@@ -566,8 +566,10 @@ describe("BridgeApp command surface", () => {
 
     await appAny.runTurn("oc_p2p_1");
 
-    expect(outbound.sendMessage).toHaveBeenCalledTimes(1);
-    expect(extractMarkdown(getSendPayloads(outbound)[0])).toContain("最终回复");
+    expect(outbound.sendMessage).not.toHaveBeenCalled();
+    expect(outbound.replyMessage).toHaveBeenCalledTimes(1);
+    expect(outbound.replyMessage).toHaveBeenCalledWith("om_1", expect.any(Object));
+    expect(extractMarkdown(getReplyPayloads(outbound)[0])).toContain("最终回复");
   });
 
   it("falls back to a direct error message when the process card cannot be created", async () => {
@@ -608,8 +610,10 @@ describe("BridgeApp command surface", () => {
 
     await appAny.runTurn("oc_p2p_1");
 
-    expect(outbound.sendMessage).toHaveBeenCalledTimes(1);
-    expect(extractMarkdown(getSendPayloads(outbound)[0])).toContain("处理失败：服务暂时不可用");
+    expect(outbound.sendMessage).not.toHaveBeenCalled();
+    expect(outbound.replyMessage).toHaveBeenCalledTimes(1);
+    expect(outbound.replyMessage).toHaveBeenCalledWith("om_1", expect.any(Object));
+    expect(extractMarkdown(getReplyPayloads(outbound)[0])).toContain("处理失败：服务暂时不可用");
   });
 
   it("keeps session selection state after an unrelated turn finishes", async () => {
@@ -913,8 +917,4 @@ function extractInteractiveHeader(payload: { content: string } | undefined): str
 
 function getReplyPayloads(outbound: ReturnType<typeof createOutbound>): Array<{ content: string } | undefined> {
   return (outbound.replyMessage.mock.calls as unknown[][]).map((call) => call[1] as { content: string } | undefined);
-}
-
-function getSendPayloads(outbound: ReturnType<typeof createOutbound>): Array<{ content: string } | undefined> {
-  return (outbound.sendMessage.mock.calls as unknown[][]).map((call) => call[1] as { content: string } | undefined);
 }

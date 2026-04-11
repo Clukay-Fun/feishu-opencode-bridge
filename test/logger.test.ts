@@ -9,6 +9,7 @@ import { createLogger, createTextPreview } from "../src/logging/logger.js";
 describe("logger", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it("creates previews", () => {
@@ -117,5 +118,19 @@ describe("logger", () => {
     const bridgeContent = await readFile(path.join(dir, "bridge.log"), "utf8");
     expect(bridgeContent).toContain("message");
     await expect(readFile(path.join(dir, "transcript.log"), "utf8")).rejects.toThrow();
+  });
+
+  it("rotates daily logs using the local calendar day", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-logger-"));
+    vi.spyOn(Date.prototype, "getFullYear").mockReturnValue(2026);
+    vi.spyOn(Date.prototype, "getMonth").mockReturnValue(3);
+    vi.spyOn(Date.prototype, "getDate").mockReturnValue(12);
+    const logger = await createLogger(dir, { enableConsole: false });
+
+    logger.log("scope", "message", {});
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const content = await readFile(path.join(dir, "bridge-2026-04-12.log"), "utf8");
+    expect(content).toContain("message");
   });
 });

@@ -82,8 +82,15 @@ function resolveLogPath(loggingDir: string, kind: "bridge" | "transcript", rotat
     return path.join(loggingDir, `${kind}.log`);
   }
 
-  const day = new Date().toISOString().slice(0, 10);
+  const day = formatLocalDate(new Date());
   return path.join(loggingDir, `${kind}-${day}.log`);
+}
+
+function formatLocalDate(date: Date): string {
+  const year = String(date.getFullYear());
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function shouldLog(level: LoggerOptions["level"], configuredLevel: LoggerOptions["level"]): boolean {
