@@ -103,6 +103,7 @@ export type PermissionRequestCardView = {
 };
 
 const FINAL_OUTPUT_BLOCK_LIMIT = 30;
+const RUNNING_OUTPUT_PLACEHOLDER = "正在处理，请稍候...";
 
 export function buildQueueNoticePayload(notice: QueueNotice): FeishuPostPayload {
   return buildPostMarkdownPayload(notice.message);
@@ -720,6 +721,10 @@ function mapToolIcon(status: ToolUpdateView["status"]): Record<string, string> {
 }
 
 function buildOutputElements(output: OutputView, state: CardState): Array<Record<string, unknown>> {
+  if (state.kind === "running") {
+    return [markdown(RUNNING_OUTPUT_PLACEHOLDER, { size: "normal_v2" })];
+  }
+
   const blocks: string[] = [];
 
   if (output.text) {

@@ -42,7 +42,7 @@ describe("integration/message-flow", () => {
     const replyPayloads = outbound.replyMessage.mock.calls.map((call) => call[1]);
     const updatePayloads = outbound.updateMessage.mock.calls.map((call) => call[1]);
     expect(JSON.stringify(replyPayloads)).toContain("ses_1");
-    expect(JSON.stringify(replyPayloads)).toContain("处理中");
+    expect(JSON.stringify(replyPayloads)).toContain("正在处理，请稍候...");
     expect(JSON.stringify(updatePayloads)).toContain("集成测试回复");
 
     const appAny = app as unknown as {

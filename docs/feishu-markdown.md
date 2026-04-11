@@ -2,6 +2,8 @@
 
 > 适用于 `feishu-opencode-bridge` 所有卡片 body 和 Plain Post 的 Markdown 内容。
 
+> OpenCode 项目专属精简版 skill 位于 `.opencode/skills/feishu-output/SKILL.md`。本文件保留为完整开发参考。
+
 ## 一、支持的语法
 
 ### 文字样式

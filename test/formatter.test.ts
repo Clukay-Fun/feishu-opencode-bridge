@@ -51,15 +51,16 @@ describe("buildPostPayload", () => {
     expect(serialized).toContain("package.json");
     expect(serialized).toContain("执行命令");
     expect(serialized).toContain("npm run dev");
-    expect(serialized).toContain("https://www.miit.gov.cn/example");
-    expect(serialized).toContain("今日新闻五条_正式版.md");
+    expect(serialized).toContain("正在处理，请稍候...");
+    expect(serialized).not.toContain("https://www.miit.gov.cn/example");
+    expect(serialized).not.toContain("今日新闻五条_正式版.md");
     expect(serialized).toContain("约 8s");
   });
 
   it("preserves fenced code blocks without escaping arrows", () => {
     const payload = buildTurnStatusCardPayload({
-      title: "处理中",
-      status: "处理中",
+      title: "已完成",
+      status: "已完成",
       sessionId: "ses_1234567890",
       durationText: "约 3s",
       progressUpdates: [],
@@ -78,7 +79,7 @@ describe("buildPostPayload", () => {
       },
     });
     const content = JSON.parse(payload.content) as any;
-    const output = content.body.elements[0].columns[0].elements[0].content as string;
+    const output = JSON.stringify(content.body.elements[0].columns[0].elements);
 
     expect(output).toContain("```text");
     expect(output).toContain("飞书事件 -> ws.ts handleEvent()");
@@ -143,7 +144,7 @@ describe("buildPostPayload", () => {
 
     expect(outputColumn.vertical_spacing).toBe("8px");
     expect(outputColumn.elements).toHaveLength(1);
-    expect(outputColumn.elements[0].content).toBe("处理中...");
+    expect(outputColumn.elements[0].content).toBe("正在处理，请稍候...");
   });
 
   it("renders all tool updates instead of truncating at three or eight", () => {
