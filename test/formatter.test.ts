@@ -85,6 +85,94 @@ describe("buildPostPayload", () => {
     expect(output).not.toContain("-&gt;");
   });
 
+  it("renders completed output as multiple markdown elements with vertical spacing", () => {
+    const payload = buildTurnStatusCardPayload({
+      title: "已完成",
+      status: "已完成",
+      sessionId: "ses_1234567890",
+      durationText: "约 3s",
+      progressUpdates: [],
+      toolUpdates: [],
+      output: {
+        text: [
+          "### 第一段",
+          "",
+          "这里是正文。",
+          "",
+          "- 列表项 1",
+          "- 列表项 2",
+          "",
+          "```ts",
+          "const ok = true;",
+          "```",
+        ].join("\n"),
+        paths: [],
+        commands: [],
+      },
+    });
+    const content = JSON.parse(payload.content) as any;
+    const outputColumn = content.body.elements[0].columns[0];
+
+    expect(content.header.title.content).toBe("已完成");
+    expect(outputColumn.vertical_spacing).toBe("12px");
+    expect(outputColumn.elements).toHaveLength(4);
+    expect(outputColumn.elements.map((element: { content: string }) => element.content)).toEqual([
+      "### 第一段",
+      "这里是正文。",
+      "- 列表项 1\n- 列表项 2",
+      "```ts\nconst ok = true;\n```",
+    ]);
+  });
+
+  it("keeps running output as one placeholder markdown element", () => {
+    const payload = buildTurnStatusCardPayload({
+      title: "处理中",
+      status: "处理中",
+      sessionId: "ses_1234567890",
+      durationText: "",
+      progressUpdates: [],
+      toolUpdates: [],
+      output: {
+        text: "",
+        paths: [],
+        commands: [],
+      },
+    });
+    const content = JSON.parse(payload.content) as any;
+    const outputColumn = content.body.elements[0].columns[0];
+
+    expect(outputColumn.vertical_spacing).toBe("8px");
+    expect(outputColumn.elements).toHaveLength(1);
+    expect(outputColumn.elements[0].content).toBe("处理中...");
+  });
+
+  it("renders all tool updates instead of truncating at three or eight", () => {
+    const payload = buildTurnStatusCardPayload({
+      title: "处理中",
+      status: "处理中",
+      sessionId: "ses_1234567890",
+      durationText: "",
+      progressUpdates: [],
+      toolUpdates: Array.from({ length: 9 }, (_, index) => ({
+        label: `工具 ${index + 1}`,
+        detail: `detail ${index + 1}`,
+        status: "completed" as const,
+      })),
+      output: {
+        text: "",
+        paths: [],
+        commands: [],
+      },
+    });
+    const content = JSON.parse(payload.content) as any;
+    const toolElements = content.body.elements[0].columns[0].elements as Array<{ content: string }>;
+    const serialized = JSON.stringify(toolElements);
+
+    expect(toolElements).toHaveLength(9);
+    expect(serialized).toContain("工具 1");
+    expect(serialized).toContain("工具 9");
+  });
+
   it("renders a status command card", () => {
     const payload = buildStatusCommandCardPayload({
       currentSession: {

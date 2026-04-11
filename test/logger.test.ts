@@ -9,6 +9,7 @@ import { createLogger, createTextPreview } from "../src/logging/logger.js";
 describe("logger", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it("creates previews", () => {
@@ -117,5 +118,35 @@ describe("logger", () => {
     const bridgeContent = await readFile(path.join(dir, "bridge.log"), "utf8");
     expect(bridgeContent).toContain("message");
     await expect(readFile(path.join(dir, "transcript.log"), "utf8")).rejects.toThrow();
+  });
+
+  it("honors color output when console logging is enabled", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-logger-"));
+    const colored = await createLogger(dir, { enableColor: true });
+    colored.log("scope", "colored warning", {}, "warn");
+    const plain = await createLogger(dir, { enableColor: false });
+    plain.log("scope", "plain warning", {}, "warn");
+
+    expect(consoleSpy.mock.calls[0]?.[0]).toContain("\u001b[33m");
+    expect(consoleSpy.mock.calls[1]?.[0]).not.toContain("\u001b[");
+  });
+
+  it("resolves rotated log file names at write time", async () => {
+    vi.useFakeTimers();
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-logger-"));
+    const logger = await createLogger(dir, { enableConsole: false });
+
+    vi.setSystemTime(new Date("2026-04-11T12:00:00.000Z"));
+    logger.log("scope", "day one");
+    vi.setSystemTime(new Date("2026-04-12T12:00:00.000Z"));
+    logger.log("scope", "day two");
+    vi.useRealTimers();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const dayOne = await readFile(path.join(dir, "bridge-2026-04-11.log"), "utf8");
+    const dayTwo = await readFile(path.join(dir, "bridge-2026-04-12.log"), "utf8");
+    expect(dayOne).toContain("day one");
+    expect(dayTwo).toContain("day two");
   });
 });

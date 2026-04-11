@@ -67,8 +67,21 @@ export type TurnExecutorContext = {
   sessionStatuses: Map<string, OpenCodeSessionStatus>;
   turnCardManager: {
     createTurnCard(chatId: string, turnId: string, sessionId: string, replyToMessageId: string): Promise<{ messageId: string } | null>;
-    flushStreamUpdate(turnId: string, text: string, force: boolean): Promise<void>;
-    updateTurnCard(turnId: string, update: { status?: string; update?: string; sanitize?: boolean; target?: "step" | "tool" | "final"; toolKey?: string }): Promise<void>;
+    flushStreamUpdate(
+      turnId: string,
+      text: string,
+      force: boolean,
+      finalState?: { status: string; progressUpdate: string },
+    ): Promise<void>;
+    updateTurnCard(turnId: string, update: {
+      status?: string;
+      update?: string;
+      finalOutput?: string;
+      progressUpdate?: string;
+      sanitize?: boolean;
+      target?: "step" | "tool" | "final";
+      toolKey?: string;
+    }): Promise<void>;
     scheduleStreamUpdate(turnId: string, text: string): Promise<void>;
     cleanup(turnId: string): void;
   };
@@ -141,8 +154,10 @@ export class TurnExecutor {
       if (!card && reply) {
         await this.sendTurnFallbackMarkdown(turn.chatId, reply);
       }
-      await this.context.turnCardManager.flushStreamUpdate(turn.turnId, reply, true);
-      await this.context.turnCardManager.updateTurnCard(turn.turnId, { status: "已完成", update: `最终回复已生成（${reply.length} 字）`, target: "step" });
+      await this.context.turnCardManager.flushStreamUpdate(turn.turnId, reply, true, {
+        status: "已完成",
+        progressUpdate: `最终回复已生成（${reply.length} 字）`,
+      });
       queue.replaceActive(transitionTurn({ ...turn, sessionId }, "done"));
       this.context.logger.log("bridge/queue", "turn completed", { turnId: turn.turnId, duration: Date.now() - (turn.startedAt ?? Date.now()) });
     } catch (error) {
@@ -179,6 +194,65 @@ export class TurnExecutor {
       let fallbackTimer: NodeJS.Timeout | null = null;
       let seenSessionEvent = false;
       const ignoredTextPartIds = new Set<string>();
+      let pendingDeltas: Array<{ messageId: string | null; delta: string }> = [];
+      let pendingTextUpdate: { messageId: string | null; text: string } | null = null;
+
+      const isAssistantTextMessage = (messageId: string | null): boolean =>
+        assistantMessageId !== null && (messageId === null || messageId === assistantMessageId);
+
+      const scheduleFinalTextUpdate = async (): Promise<void> => {
+        await this.context.turnCardManager.scheduleStreamUpdate(turn.turnId, finalText);
+      };
+
+      const appendAssistantText = async (delta: string, messageId: string | null): Promise<void> => {
+        if (!assistantMessageId) {
+          pendingDeltas.push({ messageId, delta });
+          return;
+        }
+        if (!isAssistantTextMessage(messageId)) return;
+        finalText += delta;
+        await scheduleFinalTextUpdate();
+      };
+
+      const setAssistantText = async (text: string, messageId: string | null): Promise<void> => {
+        if (!assistantMessageId) {
+          pendingTextUpdate = { messageId, text };
+          return;
+        }
+        if (!isAssistantTextMessage(messageId)) return;
+        finalText = text;
+        await scheduleFinalTextUpdate();
+      };
+
+      const flushPendingText = async (): Promise<void> => {
+        if (!assistantMessageId) return;
+        let changed = false;
+
+        if (pendingTextUpdate) {
+          const pending = pendingTextUpdate;
+          pendingTextUpdate = null;
+          if (isAssistantTextMessage(pending.messageId)) {
+            finalText = pending.text;
+            pendingDeltas = [];
+            changed = true;
+          }
+        }
+
+        if (pendingDeltas.length > 0) {
+          const deltas = pendingDeltas;
+          pendingDeltas = [];
+          for (const pending of deltas) {
+            if (isAssistantTextMessage(pending.messageId)) {
+              finalText += pending.delta;
+              changed = true;
+            }
+          }
+        }
+
+        if (changed) {
+          await scheduleFinalTextUpdate();
+        }
+      };
 
       const settleWithError = (error: Error): void => {
         if (settled) return;
@@ -221,14 +295,9 @@ export class TurnExecutor {
             getAssistantMessageId: () => assistantMessageId,
             setAssistantMessageId: (value) => { assistantMessageId = value; },
             ignoredTextPartIds,
-            appendFinalText: async (delta) => {
-              finalText += delta;
-              await this.context.turnCardManager.scheduleStreamUpdate(turn.turnId, finalText);
-            },
-            setFinalText: async (value) => {
-              finalText = value;
-              await this.context.turnCardManager.scheduleStreamUpdate(turn.turnId, finalText);
-            },
+            appendFinalText: appendAssistantText,
+            setFinalText: setAssistantText,
+            flushPendingText,
             finish: settleWithText,
             fail: settleWithError,
             getFinalText: () => finalText,
@@ -291,8 +360,9 @@ export class TurnExecutor {
       getAssistantMessageId: () => string | null;
       setAssistantMessageId: (value: string | null) => void;
       ignoredTextPartIds: Set<string>;
-      appendFinalText: (delta: string) => Promise<void>;
-      setFinalText: (value: string) => Promise<void>;
+      appendFinalText: (delta: string, messageId: string | null) => Promise<void>;
+      setFinalText: (value: string, messageId: string | null) => Promise<void>;
+      flushPendingText: () => Promise<void>;
       finish: () => Promise<void>;
       fail: (error: Error) => void;
       getFinalText: () => string;
@@ -303,6 +373,7 @@ export class TurnExecutor {
       const info = readOptionalRecord(event.properties, "info");
       if (info && readOptionalString(info, "role") === "assistant") {
         runtime.setAssistantMessageId(readOptionalString(info, "id") ?? runtime.getAssistantMessageId());
+        await runtime.flushPendingText();
       }
       return;
     }
@@ -313,7 +384,7 @@ export class TurnExecutor {
       if (runtime.getAssistantMessageId() && messageId && messageId !== runtime.getAssistantMessageId()) return;
       if (partId && runtime.ignoredTextPartIds.has(partId)) return;
       if (readOptionalString(event.properties, "field") === "text") {
-        await runtime.appendFinalText(readOptionalString(event.properties, "delta") ?? "");
+        await runtime.appendFinalText(readOptionalString(event.properties, "delta") ?? "", messageId ?? null);
       }
       return;
     }
@@ -333,7 +404,7 @@ export class TurnExecutor {
         }
         const text = readOptionalString(part, "text");
         if (text !== undefined) {
-          await runtime.setFinalText(text);
+          await runtime.setFinalText(text, messageId ?? null);
         }
         return;
       }

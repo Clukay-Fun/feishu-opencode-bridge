@@ -37,6 +37,16 @@ type StreamFlushState = {
   timer: NodeJS.Timeout | null;
 };
 
+type TurnCardUpdate = {
+  status?: string;
+  update?: string;
+  finalOutput?: string;
+  progressUpdate?: string;
+  sanitize?: boolean;
+  target?: "step" | "tool" | "final";
+  toolKey?: string;
+};
+
 export class TurnCardManager {
   private readonly turnCards = new Map<string, TurnCardState>();
   private readonly streamFlushStates = new Map<string, StreamFlushState>();
@@ -110,14 +120,21 @@ export class TurnCardManager {
     }, delay);
   }
 
-  async flushStreamUpdate(turnId: string, text: string, force: boolean): Promise<void> {
+  async flushStreamUpdate(
+    turnId: string,
+    text: string,
+    force: boolean,
+    finalState?: { status: string; progressUpdate: string },
+  ): Promise<void> {
     const state = this.streamFlushStates.get(turnId);
     if (state?.timer) {
       clearTimeout(state.timer);
       state.timer = null;
     }
 
-    await this.updateTurnCard(turnId, { update: text, sanitize: false, target: "final" });
+    await this.updateTurnCard(turnId, finalState
+      ? { status: finalState.status, finalOutput: text, progressUpdate: finalState.progressUpdate, sanitize: false }
+      : { update: text, sanitize: false, target: "final" });
     const nextState = state ?? { flushedLength: 0, lastFlushedAt: 0, timer: null };
     nextState.flushedLength = text.length;
     nextState.lastFlushedAt = Date.now();
@@ -128,11 +145,19 @@ export class TurnCardManager {
     }
   }
 
-  async updateTurnCard(turnId: string, update: { status?: string; update?: string; sanitize?: boolean; target?: "step" | "tool" | "final"; toolKey?: string }): Promise<void> {
+  async updateTurnCard(turnId: string, update: TurnCardUpdate): Promise<void> {
     const card = this.turnCards.get(turnId);
     if (!card) return;
 
     if (update.status) card.status = update.status;
+    if (update.finalOutput !== undefined) {
+      const finalOutput = update.sanitize === false ? update.finalOutput.trim() : cleanAssistantReply(update.finalOutput);
+      card.output = parseOutput(finalOutput);
+    }
+    if (update.progressUpdate) {
+      const progressUpdate = update.sanitize === false ? update.progressUpdate.trim() : cleanAssistantReply(update.progressUpdate);
+      card.progressUpdates = appendProgressUpdate(card.progressUpdates, progressUpdate);
+    }
     const nextUpdate = update.update ? (update.sanitize === false ? update.update.trim() : cleanAssistantReply(update.update)) : "";
     if (nextUpdate) {
       if (update.target === "tool") {

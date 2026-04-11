@@ -1,5 +1,6 @@
 import type { QueueNotice } from "../bridge/turn.js";
 import { column, columnSet, markdown, standardIcon } from "./card-builder.js";
+import { splitMarkdownBlocks } from "./markdown-splitter.js";
 
 export type FeishuPostPayload = {
   msg_type: "post" | "interactive";
@@ -100,6 +101,8 @@ export type PermissionRequestCardView = {
   buttons: PermissionActionButton[];
   expiresInSeconds: number;
 };
+
+const FINAL_OUTPUT_BLOCK_LIMIT = 30;
 
 export function buildQueueNoticePayload(notice: QueueNotice): FeishuPostPayload {
   return buildPostMarkdownPayload(notice.message);
@@ -361,7 +364,7 @@ function buildTurnBodyElements(
     elements.push(buildToolBlock(toolElements));
   }
 
-  elements.push(buildOutputBlock(outputElements));
+  elements.push(buildOutputBlock(outputElements, state));
   elements.push(buildSpacerBlock());
   elements.push(buildFooter(view.sessionId, view.durationText));
   return elements;
@@ -521,7 +524,7 @@ function buildPermissionActionBlock(buttons: PermissionActionButton[]): Record<s
 }
 
 function buildToolElements(lines: ReadonlyArray<ToolUpdateView>): Array<Record<string, unknown>> {
-  return lines.slice(-3).map((line) => ({
+  return lines.map((line) => ({
     tag: "markdown",
     content: formatToolDisplay(line),
     text_align: "left",
@@ -733,7 +736,11 @@ function buildOutputElements(output: OutputView, state: CardState): Array<Record
     blocks.push(state.kind === "error" ? "问题描述" : "处理中...");
   }
 
-  return [markdown(blocks.join("\n\n"), { size: "normal_v2" })];
+  const contents = state.kind === "completed"
+    ? splitMarkdownBlocks(blocks.join("\n\n"), FINAL_OUTPUT_BLOCK_LIMIT)
+    : [blocks.join("\n\n")];
+
+  return contents.map((content) => markdown(content, { size: "normal_v2" }));
 }
 
 function formatOutputText(text: string): string {
@@ -805,12 +812,13 @@ function buildToolBlock(toolElements: Array<Record<string, unknown>>): Record<st
   };
 }
 
-function buildOutputBlock(outputElements: Array<Record<string, unknown>>): Record<string, unknown> {
+function buildOutputBlock(outputElements: Array<Record<string, unknown>>, state: CardState): Record<string, unknown> {
   return {
     ...columnSet([
       {
         ...column(outputElements, { weight: 1 }),
         padding: "0px 0px 0px 0px",
+        vertical_spacing: state.kind === "completed" ? "12px" : "8px",
       },
     ]),
     flex_mode: "stretch",
