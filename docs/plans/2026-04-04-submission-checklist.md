@@ -1,4 +1,4 @@
-# 4/20 Submission Checklist Implementation Plan
+# Submission Checklist Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
@@ -13,6 +13,7 @@
 ### Task 1: Baseline Audit And Gap Matrix
 
 **Files:**
+
 - Read: `package.json`
 - Read: `src/runtime/preflight.ts`
 - Read: `src/runtime/app.ts`
@@ -63,6 +64,7 @@ git commit -m "docs: map 4/20 submission checklist coverage"
 ### Task 2: Startup And Preflight Coverage
 
 **Files:**
+
 - Modify: `src/runtime/preflight.ts`
 - Modify: `src/index.ts`
 - Test: `test/preflight.test.ts`
@@ -142,6 +144,7 @@ git commit -m "test: harden startup preflight coverage"
 ### Task 3: Direct Message Command Surface
 
 **Files:**
+
 - Modify: `src/bridge/router.ts`
 - Modify: `src/runtime/app.ts`
 - Modify: `src/runtime/session-windows.ts`
@@ -206,6 +209,7 @@ git commit -m "feat: complete dm command coverage"
 ### Task 4: Group Binding And Session Isolation
 
 **Files:**
+
 - Modify: `src/feishu/ws.ts`
 - Modify: `src/runtime/app.ts`
 - Modify: `src/store/whitelist.ts`
@@ -257,6 +261,7 @@ git commit -m "feat: finish group binding and topic isolation"
 ### Task 5: Permission Flow And Command Fallbacks
 
 **Files:**
+
 - Modify: `src/runtime/app.ts`
 - Modify: `src/feishu/formatter.ts`
 - Modify: `src/http/server.ts`
@@ -308,6 +313,7 @@ git commit -m "feat: complete permission card lifecycle"
 ### Task 6: HTTP, Deployment, And Health Checks
 
 **Files:**
+
 - Modify: `src/http/server.ts`
 - Modify: `docs/deploy.md`
 - Possibly create: `ops/Caddyfile`
@@ -368,6 +374,7 @@ git commit -m "docs: align deployment and health checks"
 ### Task 7: Memory Module Reality Check
 
 **Files:**
+
 - Read: entire `src/` tree for memory-related code
 - Read: package.json dependencies
 - Create: `docs/qa/20260420-memory范围说明.md`
@@ -408,6 +415,7 @@ git commit -m "docs: record memory module scope for 4/20"
 ### Task 8: Manual End-To-End Acceptance Runbook
 
 **Files:**
+
 - Modify: `docs/demo-script.md`
 - Create: `docs/qa/20260420-人工验收手册.md`
 
@@ -450,6 +458,7 @@ git commit -m "docs: add 4/20 acceptance runbook"
 ### Task 9: Final Verification Pass
 
 **Files:**
+
 - Verify current worktree only
 
 **Step 1: Run full automated verification**

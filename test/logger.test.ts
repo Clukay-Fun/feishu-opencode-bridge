@@ -20,7 +20,7 @@ describe("logger", () => {
     const logger = await createLogger(dir);
     logger.logTranscript("inbound", { chatId: "c" }, "hello");
     await new Promise((resolve) => setTimeout(resolve, 20));
-    const day = new Date().toISOString().slice(0, 10);
+    const day = localDay();
     const content = await readFile(path.join(dir, `transcript-${day}.log`), "utf8");
     expect(content).toContain("hello");
   });
@@ -30,7 +30,7 @@ describe("logger", () => {
     const logger = await createLogger(dir);
     logger.log("scope", "message", { ok: true });
     await new Promise((resolve) => setTimeout(resolve, 20));
-    const day = new Date().toISOString().slice(0, 10);
+    const day = localDay();
     const content = await readFile(path.join(dir, `bridge-${day}.log`), "utf8");
     expect(content).toContain("scope");
   });
@@ -40,7 +40,7 @@ describe("logger", () => {
     const logger = await createLogger(dir);
     logger.logTranscript("reasoning-raw", { chatId: "c" }, "think");
     await new Promise((resolve) => setTimeout(resolve, 20));
-    const day = new Date().toISOString().slice(0, 10);
+    const day = localDay();
     const content = await readFile(path.join(dir, `transcript-${day}.log`), "utf8");
     expect(content).toContain("OpenCode思考原文");
   });
@@ -58,7 +58,7 @@ describe("logger", () => {
     const logger = await createLogger(dir);
     logger.logTranscript("outbound-process", { chatId: "c" }, "payload");
     await new Promise((resolve) => setTimeout(resolve, 20));
-    const day = new Date().toISOString().slice(0, 10);
+    const day = localDay();
     const content = await readFile(path.join(dir, `transcript-${day}.log`), "utf8");
     expect(content).toContain("payload");
   });
@@ -68,7 +68,7 @@ describe("logger", () => {
     const logger = await createLogger(dir);
     logger.logTranscript("outbound-final", { chatId: "c" }, "final");
     await new Promise((resolve) => setTimeout(resolve, 20));
-    const day = new Date().toISOString().slice(0, 10);
+    const day = localDay();
     const content = await readFile(path.join(dir, `transcript-${day}.log`), "utf8");
     expect(content).toContain("final");
   });
@@ -78,7 +78,7 @@ describe("logger", () => {
     const logger = await createLogger(dir);
     logger.logTranscript("opencode-reply", { sessionId: "s" }, "reply");
     await new Promise((resolve) => setTimeout(resolve, 20));
-    const day = new Date().toISOString().slice(0, 10);
+    const day = localDay();
     const content = await readFile(path.join(dir, `transcript-${day}.log`), "utf8");
     expect(content).toContain("reply");
   });
@@ -118,4 +118,26 @@ describe("logger", () => {
     expect(bridgeContent).toContain("message");
     await expect(readFile(path.join(dir, "transcript.log"), "utf8")).rejects.toThrow();
   });
+
+  it("rotates daily using the local date instead of UTC", async () => {
+    vi.spyOn(Date.prototype, "getFullYear").mockReturnValue(2026);
+    vi.spyOn(Date.prototype, "getMonth").mockReturnValue(3);
+    vi.spyOn(Date.prototype, "getDate").mockReturnValue(12);
+    vi.spyOn(Date.prototype, "toISOString").mockReturnValue("2026-04-11T16:00:00.000Z");
+
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-logger-"));
+    const logger = await createLogger(dir);
+    logger.log("scope", "message", {});
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const content = await readFile(path.join(dir, "bridge-2026-04-12.log"), "utf8");
+    expect(content).toContain("scope");
+  });
 });
+
+function localDay(value = new Date()): string {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
