@@ -612,6 +612,48 @@ describe("BridgeApp command surface", () => {
     expect(extractMarkdown(getSendPayloads(outbound)[0])).toContain("处理失败：服务暂时不可用");
   });
 
+  it("maps token refresh failures to an actionable provider login hint", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const appAny = app as unknown as {
+      turnExecutor: {
+        context: {
+          ensureSession: (source: Record<string, unknown>) => Promise<string>;
+          turnCardManager: {
+            createTurnCard: (chatId: string, turnId: string, sessionId: string, replyToMessageId: string) => Promise<null>;
+          };
+        };
+        executeTurn: (conversationKey: string, turn: Record<string, unknown>) => Promise<string>;
+      };
+      runTurn: (conversationKey: string) => Promise<void>;
+      queues: {
+        get(key: string): {
+          enqueue: (turn: Record<string, unknown>) => { accepted: boolean };
+        };
+      };
+    };
+    appAny.turnExecutor.context.ensureSession = vi.fn(async () => "ses_1");
+    appAny.turnExecutor.context.turnCardManager.createTurnCard = vi.fn(async () => null);
+    appAny.turnExecutor.executeTurn = vi.fn(async () => {
+      throw new Error("Token refresh failed: 401");
+    });
+    appAny.queues.get("oc_p2p_1").enqueue({
+      turnId: "turn_1",
+      chatId: "oc_p2p_1",
+      conversationKey: "oc_p2p_1",
+      threadKey: "om_1",
+      senderOpenId: "ou_123",
+      inboundMessageId: "om_1",
+      plainText: "hello",
+      text: "hello",
+    });
+
+    await appAny.runTurn("oc_p2p_1");
+
+    expect(outbound.sendMessage).toHaveBeenCalledTimes(1);
+    expect(extractMarkdown(getSendPayloads(outbound)[0])).toContain("请重新执行 `opencode providers login`");
+  });
+
   it("keeps session selection state after an unrelated turn finishes", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());

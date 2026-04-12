@@ -10,6 +10,7 @@ export const BRIDGE_GROUP = "bridge";
 export const LARK_GROUP = "lark";
 export const MIN_NODE_MAJOR = 20;
 export const MIN_LARK_VERSION = "1.0.8";
+const OPENCODE_AUTH_REFRESH_WARN_MS = 24 * 60 * 60 * 1_000;
 
 const STATUS_ICON = {
   pass: "✅",
@@ -263,6 +264,73 @@ export function assessLarkAuthPayload(payload) {
   return createResult("lark-auth", LARK_GROUP, "Lark 登录态", "warn", `identity=${identity}`);
 }
 
+export function assessOpencodeAuthPayload(payload, now = Date.now()) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return createResult(
+      "opencode-auth",
+      BRIDGE_GROUP,
+      "OpenCode 认证",
+      "fail",
+      "未检测到 provider 凭证",
+      "运行 opencode providers login",
+    );
+  }
+
+  const credentials = Object.entries(payload)
+    .filter(([, value]) => value && typeof value === "object" && !Array.isArray(value))
+    .map(([providerId, credential]) => ({
+      providerId,
+      credential,
+      expires: typeof credential.expires === "number" ? credential.expires : null,
+      type: typeof credential.type === "string" ? credential.type : "unknown",
+    }));
+
+  if (credentials.length === 0) {
+    return createResult(
+      "opencode-auth",
+      BRIDGE_GROUP,
+      "OpenCode 认证",
+      "fail",
+      "未检测到 provider 凭证",
+      "运行 opencode providers login",
+    );
+  }
+
+  const expired = credentials.filter((item) => item.expires !== null && item.expires <= now);
+  if (expired.length === credentials.length) {
+    const target = expired.length === 1 ? ` -p ${expired[0].providerId}` : "";
+    return createResult(
+      "opencode-auth",
+      BRIDGE_GROUP,
+      "OpenCode 认证",
+      "fail",
+      `已配置 ${credentials.length} 个 provider，但登录态已过期`,
+      `运行 opencode providers login${target}`,
+    );
+  }
+
+  const expiringSoon = credentials.filter((item) => item.expires !== null && item.expires > now && item.expires - now <= OPENCODE_AUTH_REFRESH_WARN_MS);
+  const providerNames = credentials.map((item) => formatProviderName(item.providerId)).join("、");
+  if (expiringSoon.length > 0) {
+    return createResult(
+      "opencode-auth",
+      BRIDGE_GROUP,
+      "OpenCode 认证",
+      "warn",
+      `已配置 ${credentials.length} 个 provider：${providerNames}，部分登录态即将过期`,
+      "如果后续出现 401，请重新执行 opencode providers login",
+    );
+  }
+
+  return createResult(
+    "opencode-auth",
+    BRIDGE_GROUP,
+    "OpenCode 认证",
+    "pass",
+    `已配置 ${credentials.length} 个 provider：${providerNames}`,
+  );
+}
+
 export async function checkConfigExists(options = {}) {
   const cwd = options.cwd ?? process.cwd();
   const configPath = options.configPath ?? path.join(cwd, "config.json");
@@ -363,6 +431,60 @@ export async function checkOpencodeServe(options = {}) {
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     return createResult("opencode-serve", BRIDGE_GROUP, "OpenCode 健康", "fail", detail, "确认 opencode serve 已启动");
+  }
+}
+
+export async function checkOpencodeAuth(options = {}) {
+  const executable = (options.findExecutableFn ?? findExecutable)("opencode", options);
+  if (!executable) {
+    return createResult("opencode-auth", BRIDGE_GROUP, "OpenCode 认证", "skip", "等待 opencode");
+  }
+
+  const payload = await readOpencodeAuth(options.home, {
+    env: options.env,
+    platform: options.platform,
+  });
+  return assessOpencodeAuthPayload(payload);
+}
+
+export async function checkOpencodeModels(options = {}) {
+  const state = options.state ?? await readProjectConfig(options.cwd, options.configPath);
+  if (!state.exists || state.error || !state.config) {
+    return createResult("opencode-models", BRIDGE_GROUP, "OpenCode 模型", "skip", "等待 config.json");
+  }
+  if (options.healthResult && options.healthResult.status !== "pass") {
+    return createResult("opencode-models", BRIDGE_GROUP, "OpenCode 模型", "skip", "等待 OpenCode 健康检查");
+  }
+  const baseUrl = state.config?.opencode?.baseUrl;
+  if (!isConfiguredValue(baseUrl)) {
+    return createResult("opencode-models", BRIDGE_GROUP, "OpenCode 模型", "skip", "等待 opencode.baseUrl");
+  }
+
+  try {
+    const response = await (options.fetchImpl ?? fetch)(new URL("config/providers", ensureTrailingSlash(baseUrl)));
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}`);
+    }
+    const payload = await response.json();
+    const providers = Array.isArray(payload?.providers) ? payload.providers : [];
+    const providerCount = providers.length;
+    const modelCount = providers.reduce((sum, provider) => {
+      const models = provider && typeof provider === "object" && provider.models && typeof provider.models === "object"
+        ? Object.keys(provider.models).length
+        : 0;
+      return sum + models;
+    }, 0);
+
+    if (providerCount === 0) {
+      return createResult("opencode-models", BRIDGE_GROUP, "OpenCode 模型", "fail", "未检测到可用 provider", "运行 opencode providers login");
+    }
+    if (modelCount === 0) {
+      return createResult("opencode-models", BRIDGE_GROUP, "OpenCode 模型", "fail", `已检测到 ${providerCount} 个 provider，但没有可用模型`, "检查 provider 登录状态或发送 /model 查看列表");
+    }
+    return createResult("opencode-models", BRIDGE_GROUP, "OpenCode 模型", "pass", `${providerCount} 个 provider，${modelCount} 个模型`);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return createResult("opencode-models", BRIDGE_GROUP, "OpenCode 模型", "fail", detail, "确认 provider 已登录并可访问 /config/providers");
   }
 }
 
@@ -530,7 +652,10 @@ export async function runBridgeChecks(options = {}) {
   results.push(await checkNodeVersion({ version: options.version }));
   results.push(await checkDepsInstalled({ cwd }));
   results.push(await checkOpencodeBin(options));
-  results.push(await checkOpencodeServe({ ...options, cwd, configPath, state }));
+  results.push(await checkOpencodeAuth({ ...options, cwd }));
+  const healthResult = await checkOpencodeServe({ ...options, cwd, configPath, state });
+  results.push(healthResult);
+  results.push(await checkOpencodeModels({ ...options, cwd, configPath, state, healthResult }));
   results.push(await checkOpencodeDirectory({ cwd, configPath, state }));
 
   if (options.includeDoctorExtras) {
@@ -578,6 +703,48 @@ export async function readLarkCliConfig(home = os.homedir()) {
   } catch {
     return null;
   }
+}
+
+export async function readOpencodeAuth(home = os.homedir(), options = {}) {
+  for (const configPath of getOpencodeAuthPaths(home, options)) {
+    try {
+      return JSON.parse(await readFile(configPath, "utf8"));
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+export function getOpencodeAuthPaths(home = os.homedir(), options = {}) {
+  const env = options.env ?? process.env;
+  const platform = options.platform ?? process.platform;
+  const candidates = [];
+  const pushCandidate = (candidate) => {
+    if (typeof candidate === "string" && candidate.length > 0) {
+      candidates.push(candidate);
+    }
+  };
+
+  const xdgDataHome = typeof env.XDG_DATA_HOME === "string" && env.XDG_DATA_HOME.trim().length > 0
+    ? env.XDG_DATA_HOME
+    : path.join(home, ".local", "share");
+  pushCandidate(path.join(xdgDataHome, "opencode", "auth.json"));
+
+  if (platform === "darwin") {
+    pushCandidate(path.join(home, "Library", "Application Support", "opencode", "auth.json"));
+  }
+
+  if (platform === "win32") {
+    const localAppData = typeof env.LOCALAPPDATA === "string" && env.LOCALAPPDATA.trim().length > 0
+      ? env.LOCALAPPDATA
+      : path.join(home, "AppData", "Local");
+    pushCandidate(path.join(localAppData, "opencode", "Data", "auth.json"));
+    pushCandidate(path.join(localAppData, "opencode", "auth.json"));
+  }
+
+  return Array.from(new Set(candidates));
 }
 
 export function findBuildEntry(cwd = process.cwd()) {
@@ -664,6 +831,13 @@ function isConfiguredValue(value) {
     return false;
   }
   return !["xxx", "cli_xxx", "ou_xxx"].includes(trimmed);
+}
+
+function formatProviderName(providerId) {
+  if (providerId === "openai") return "OpenAI";
+  if (providerId === "anthropic") return "Anthropic";
+  if (providerId === "openrouter") return "OpenRouter";
+  return String(providerId);
 }
 
 function isExampleUrl(value) {

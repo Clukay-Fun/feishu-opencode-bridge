@@ -4,12 +4,15 @@ import path from "node:path";
 import readline from "node:readline/promises";
 
 import {
+  assessOpencodeAuthPayload,
+  assessLarkAuthPayload,
   createAugmentedEnv,
   findExecutable,
   formatCheckHint,
   formatCheckLine,
   getDoctorExitCode,
   isMainModule,
+  readOpencodeAuth,
   readLarkCliConfig,
   runAllChecks,
   runCommand,
@@ -17,12 +20,14 @@ import {
 
 export async function runOnboard(options = {}) {
   const cwd = options.cwd ?? process.cwd();
-  let env = createAugmentedEnv(cwd, options.env ?? process.env, options.home ?? os.homedir());
+  const home = options.home ?? os.homedir();
+  let env = createAugmentedEnv(cwd, options.env ?? process.env, home);
   const logger = options.logger ?? console;
   const promptYesNoFn = options.promptYesNoFn ?? promptYesNo;
   const promptTextFn = options.promptTextFn ?? promptText;
   const runCommandFn = options.runCommandFn ?? runCommand;
   const findExecutableFn = options.findExecutableFn ?? findExecutable;
+  const runAllChecksFn = options.runAllChecksFn ?? runAllChecks;
   const configPath = path.join(cwd, "config.json");
 
   logger.log("Feishu OpenCode Bridge — 首次引导");
@@ -36,15 +41,28 @@ export async function runOnboard(options = {}) {
 
   const opencodeInstall = await ensureOpencodeInstalled({
     cwd,
+    home,
     env,
     logger,
     runCommandFn,
     findExecutableFn,
   });
   env = opencodeInstall.env;
+  if (opencodeInstall.path) {
+    await maybeLoginOpencodeProvider({
+      cwd,
+      home,
+      env,
+      logger,
+      promptYesNoFn,
+      opencodePath: opencodeInstall.path,
+      runCommandFn,
+    });
+  }
 
   const larkInstall = await ensureLarkCliInstalled({
     cwd,
+    home,
     env,
     logger,
     runCommandFn,
@@ -57,6 +75,18 @@ export async function runOnboard(options = {}) {
     shouldWriteConfig = options.configExistsOverride;
   } else if (await fileExists(configPath)) {
     shouldWriteConfig = await shouldRebuildConfig(configPath, promptYesNoFn);
+  }
+
+  if (larkInstall.path && shouldWriteConfig) {
+    await maybeLoginLarkCli({
+      cwd,
+      home,
+      env,
+      logger,
+      promptYesNoFn,
+      larkCliPath: larkInstall.path,
+      runCommandFn,
+    });
   }
 
   if (shouldWriteConfig) {
@@ -85,10 +115,23 @@ export async function runOnboard(options = {}) {
     logger.log("保留现有 config.json，不覆盖。");
   }
 
+  if (larkInstall.path && !shouldWriteConfig) {
+    await maybeLoginLarkCli({
+      cwd,
+      home,
+      env,
+      logger,
+      promptYesNoFn,
+      larkCliPath: larkInstall.path,
+      runCommandFn,
+    });
+  }
+
   logger.log("");
   logger.log("当前环境状态：");
-  const results = await runAllChecks({
+  const results = await runAllChecksFn({
     cwd,
+    home,
     env,
     includeDoctorExtras: false,
     includeLarkDoctor: false,
@@ -109,6 +152,23 @@ export async function runOnboard(options = {}) {
   logger.log("  当前配置保证 p2p 私聊可用。");
   logger.log("  如需群聊严格 @bot，请后续补 botOpenId / selfBotOpenId。");
   logger.log("  如果 OpenCode 需要在其他项目目录工作，请修改 config.opencode.directory。");
+
+  if (shouldOfferStart(results)) {
+    const launchNow = await promptYesNoFn("当前环境已接近可运行状态，是否现在启动完整栈？", false);
+    if (launchNow) {
+      const runStartFn = options.runStartFn ?? (async (startOptions) => {
+        const { runStart } = await import("./start.mjs");
+        return await runStart(startOptions);
+      });
+      return await runStartFn({
+        cwd,
+        env,
+        logger,
+        findExecutableFn,
+      });
+    }
+    return 0;
+  }
 
   return getDoctorExitCode(results);
 }
@@ -274,6 +334,79 @@ export async function resolveFeishuCredentials(options) {
   };
 }
 
+export async function maybeLoginLarkCli(options) {
+  const logger = options.logger ?? console;
+  const statusResult = await options.runCommandFn(options.larkCliPath, ["auth", "status"], {
+    cwd: options.cwd,
+    env: options.env,
+    timeoutMs: 30_000,
+  });
+  const payload = tryParseJson(`${statusResult.stdout}\n${statusResult.stderr}`);
+  const status = assessLarkAuthPayload(payload);
+  if (status.status === "pass") {
+    return status;
+  }
+
+  logger.warn(`当前 Lark 登录态未就绪：${status.detail}`);
+  const shouldLogin = await options.promptYesNoFn("是否现在运行 lark-cli auth login 完成用户授权？", true);
+  if (!shouldLogin) {
+    return status;
+  }
+
+  const loginResult = await options.runCommandFn(options.larkCliPath, ["auth", "login", "--recommend"], {
+    cwd: options.cwd,
+    env: options.env,
+    timeoutMs: 15 * 60_000,
+    onStdout: (text) => process.stdout.write(text),
+    onStderr: (text) => process.stderr.write(text),
+  });
+  if (loginResult.code !== 0) {
+    logger.warn("lark-cli auth login 未成功完成。");
+    logger.warn("你可以稍后手动执行：lark-cli auth login --recommend");
+  }
+
+  const refreshedStatus = await options.runCommandFn(options.larkCliPath, ["auth", "status"], {
+    cwd: options.cwd,
+    env: options.env,
+    timeoutMs: 30_000,
+  });
+  return assessLarkAuthPayload(tryParseJson(`${refreshedStatus.stdout}\n${refreshedStatus.stderr}`));
+}
+
+export async function maybeLoginOpencodeProvider(options) {
+  const logger = options.logger ?? console;
+  const status = assessOpencodeAuthPayload(await readOpencodeAuth(options.home, {
+    env: options.env,
+    platform: options.platform,
+  }));
+  if (status.status === "pass" || status.status === "warn") {
+    return status;
+  }
+
+  logger.warn(`当前 OpenCode provider 未就绪：${status.detail}`);
+  const shouldLogin = await options.promptYesNoFn("是否现在运行 opencode providers login 完成模型提供方登录？", true);
+  if (!shouldLogin) {
+    return status;
+  }
+
+  logger.log("即将启动 opencode providers login。请按终端提示完成 provider 登录。");
+  const loginResult = await options.runCommandFn(options.opencodePath, ["providers", "login"], {
+    cwd: options.cwd,
+    env: options.env,
+    timeoutMs: 15 * 60_000,
+    onStdout: (text) => process.stdout.write(text),
+    onStderr: (text) => process.stderr.write(text),
+  });
+  if (loginResult.code !== 0) {
+    logger.warn("opencode providers login 未成功完成。");
+  }
+
+  return assessOpencodeAuthPayload(await readOpencodeAuth(options.home, {
+    env: options.env,
+    platform: options.platform,
+  }));
+}
+
 export async function tryCreateFeishuAppWithLark(options) {
   const logger = options.logger ?? console;
   const result = await options.runCommandFn(options.larkCliPath, ["config", "init", "--new", "--lang", "zh"], {
@@ -420,6 +553,14 @@ function normalizeCredentialPayload(payload) {
   };
 }
 
+export function shouldOfferStart(results) {
+  return !results.some((result) => (
+    result.group === "bridge"
+    && result.status === "fail"
+    && result.id !== "opencode-serve"
+  ));
+}
+
 function printOpencodeManualHints(logger) {
   logger.warn("请按平台任选一种方式安装 OpenCode：");
   logger.warn("  macOS / Linux：brew install opencode");
@@ -427,6 +568,18 @@ function printOpencodeManualHints(logger) {
   logger.warn("  Windows：scoop install extras/opencode");
   logger.warn("  Windows：choco install opencode");
   logger.warn("  通用：npm i -g opencode-ai@latest");
+}
+
+function tryParseJson(text) {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return null;
+  }
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
 }
 
 if (isMainModule(import.meta.url)) {

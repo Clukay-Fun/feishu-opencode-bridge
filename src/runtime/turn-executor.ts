@@ -146,7 +146,7 @@ export class TurnExecutor {
       queue.replaceActive(transitionTurn({ ...turn, sessionId }, "done"));
       this.context.logger.log("bridge/queue", "turn completed", { turnId: turn.turnId, duration: Date.now() - (turn.startedAt ?? Date.now()) });
     } catch (error) {
-      const detail = cleanAssistantReply(error instanceof Error ? error.message : String(error));
+      const detail = normalizeTurnFailureDetail(error);
       this.context.logger.log("bridge/queue", "run turn failed", { chatId: turn.chatId, conversationKey, turnId: turn.turnId, detail }, "error");
       if (!hasProcessCard) {
         await this.sendTurnFallbackMarkdown(turn.chatId, `处理失败：${escapeMarkdownText(detail)}`);
@@ -541,4 +541,23 @@ export class TurnExecutor {
       len: markdown.length,
     });
   }
+}
+
+function normalizeTurnFailureDetail(error: unknown): string {
+  const detail = cleanAssistantReply(error instanceof Error ? error.message : String(error));
+  const normalized = detail.toLowerCase();
+
+  if (normalized.includes("token refresh failed") && normalized.includes("401")) {
+    return "模型提供方登录已失效，请重新执行 `opencode providers login`。";
+  }
+
+  if (
+    normalized.includes("no credentials")
+    || normalized.includes("provider not configured")
+    || normalized.includes("no providers")
+  ) {
+    return "当前未配置可用模型提供方，请先执行 `opencode providers login`。";
+  }
+
+  return detail;
 }
