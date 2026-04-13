@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.8 - 2026-04-14
+
+### Fixed
+- Fixed knowledge-flow tests so CI does not require a real OpenCode server on `127.0.0.1:4096`.
+
 ## 0.1.7 - 2026-04-14
 
 ### Added

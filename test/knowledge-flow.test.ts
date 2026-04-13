@@ -47,6 +47,8 @@ describe("knowledge base bridge flow", () => {
 
   it("starts ingest mode and keeps consuming files until /kb-ingest-end", async () => {
     const outbound = createOutbound();
+    const eventStream = new FakeOpenCodeEventStream();
+    const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "not used" });
     const ingestFile = vi.fn(async (_file, options?: KnowledgeIngestOptions) => {
       await options?.onProgress?.({ step: "read", status: "running", detail: "正在下载并解析文件" });
       await options?.onProgress?.({ step: "read", status: "completed", detail: "已提取 1 段正文" });
@@ -72,6 +74,8 @@ describe("knowledge base bridge flow", () => {
         async syncMirror() {},
         close() {},
       },
+      opencode,
+      eventStream,
       memory: null,
     });
 
@@ -237,6 +241,8 @@ describe("knowledge base bridge flow", () => {
 
   it("uses OpenCode-assisted web ingestion from natural language while ingest mode is enabled", async () => {
     const outbound = createOutbound();
+    const eventStream = new FakeOpenCodeEventStream();
+    const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "not used" });
     const knowledgeQuery = vi.fn(async () => ({ question: "", results: [] }));
     const ingestWebPage = vi.fn(async () => ({
       sourceFile: "劳动合同法网页.md",
@@ -256,6 +262,8 @@ describe("knowledge base bridge flow", () => {
         async syncMirror() {},
         close() {},
       },
+      opencode,
+      eventStream,
       memory: null,
     });
 
@@ -278,6 +286,8 @@ describe("knowledge base bridge flow", () => {
 
   it("ingests plain URLs directly inside ingest mode", async () => {
     const outbound = createOutbound();
+    const eventStream = new FakeOpenCodeEventStream();
+    const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "not used" });
     const ingestWebPage = vi.fn(async () => ({
       sourceFile: "劳动合同法网页.md",
       rawExtractedCount: 2,
@@ -298,6 +308,8 @@ describe("knowledge base bridge flow", () => {
         async syncMirror() {},
         close() {},
       },
+      opencode,
+      eventStream,
       memory: null,
     });
 
