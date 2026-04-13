@@ -56,6 +56,14 @@
       "totalTurn": 300000
     }
   },
+  "embeddings": {
+    "provider": {
+      "baseUrl": "https://api.openai.com/v1/",
+      "apiKey": "sk-xxx",
+      "model": "text-embedding-3-small"
+    },
+    "similarityThreshold": 0.75
+  },
   "memory": {
     "enabled": false,
     "dbPath": "./data/memory.db",
@@ -65,17 +73,56 @@
     "sourcePreviewLength": 50,
     "shutdownDrainTimeoutMs": 5000,
     "retriever": "recent",
-    "embeddingSimilarityThreshold": 0.75,
-    "embeddingProvider": {
-      "baseUrl": "https://api.openai.com/v1/",
-      "apiKey": "sk-xxx",
-      "model": "text-embedding-3-small"
-    },
     "obsidian": {
       "enabled": false,
       "vaultPath": "/absolute/path/to/vault",
       "syncCron": "0 2 * * *",
       "enableWikiLinks": false
+    }
+  },
+  "knowledgeBase": {
+    "enabled": false,
+    "autoDetect": {
+      "enabled": true,
+      "minConfidence": 0.75
+    },
+    "query": {
+      "topK": 10,
+      "finalTopN": 3,
+      "keywordFallbackLimit": 10
+    },
+    "storage": {
+      "sqlitePath": "./data/knowledge-base.db",
+      "bitable": {
+        "appToken": "bascn_xxx",
+        "tableId": "tbl_xxx",
+        "documentTableId": "tbl_doc_xxx",
+        "sourceFileField": {
+          "name": "源文件",
+          "type": "text",
+          "urlTemplate": "https://example.com/knowledge/{{messageId}}/{{fileKey}}",
+          "textTemplate": "{{fileName}}"
+        },
+        "statuteField": {
+          "name": "法条",
+          "type": "text",
+          "urlTemplate": "https://example.com/law?keyword={{statute}}",
+          "textTemplate": "{{statute}}"
+        }
+      }
+    },
+    "models": {
+      "default": "minimax-cn-coding-plan/MiniMax-M2.7",
+      "webRead": "minimax-cn-coding-plan/MiniMax-M2.7",
+      "extract": "minimax-cn-coding-plan/MiniMax-M2.7",
+      "rerank": "minimax-cn-coding-plan/MiniMax-M2.7"
+    },
+    "ingest": {
+      "allowedExtensions": [".pdf", ".docx", ".txt", ".md"],
+      "maxFileSizeMb": 20,
+      "concurrency": 3,
+      "maxExtractChunks": 30,
+      "maxExtractQas": 500
     }
   },
   "logging": {

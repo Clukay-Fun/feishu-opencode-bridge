@@ -27,12 +27,25 @@ function makeConfig(dbPath: string, overrides: Partial<{
     sourcePreviewLength: overrides.sourcePreviewLength ?? 50,
     shutdownDrainTimeoutMs: overrides.shutdownDrainTimeoutMs ?? 1_000,
     retriever: "recent" as const,
-    embeddingSimilarityThreshold: 0.75,
     obsidian: {
       enabled: false,
       syncCron: "0 2 * * *",
       enableWikiLinks: false,
     },
+  };
+}
+
+function makeEmbeddingsConfig(overrides: Partial<{
+  similarityThreshold: number;
+  provider: {
+    baseUrl: URL;
+    apiKey: string;
+    model: string;
+  } | undefined;
+}> = {}) {
+  return {
+    provider: overrides.provider,
+    similarityThreshold: overrides.similarityThreshold ?? 0.75,
   };
 }
 
@@ -65,6 +78,7 @@ describe("MemoryService", () => {
     };
     const service = new MemoryService(
       makeConfig(path.join(dir, "memory.db")),
+      makeEmbeddingsConfig(),
       new OpenCodeClient(new URL("http://127.0.0.1:4096/")),
       logger as any,
       extractor,
@@ -92,6 +106,7 @@ describe("MemoryService", () => {
     };
     const service = new MemoryService(
       makeConfig(path.join(dir, "memory.db"), { extractQueueLimit: 1 }),
+      makeEmbeddingsConfig(),
       new OpenCodeClient(new URL("http://127.0.0.1:4096/")),
       logger as any,
       extractor,
@@ -119,6 +134,7 @@ describe("MemoryService", () => {
     };
     const service = new MemoryService(
       makeConfig(dbPath),
+      makeEmbeddingsConfig(),
       new OpenCodeClient(new URL("http://127.0.0.1:4096/")),
       logger as any,
       extractor,
@@ -142,6 +158,13 @@ describe("MemoryService", () => {
     };
     const service = new MemoryService(
       makeConfig(dbPath, {
+      }),
+      makeEmbeddingsConfig({
+        provider: {
+          baseUrl: new URL("https://api.openai.com/v1/"),
+          apiKey: "sk-test",
+          model: "text-embedding-3-small",
+        },
       }),
       new OpenCodeClient(new URL("http://127.0.0.1:4096/")),
       logger as any,

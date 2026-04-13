@@ -7,6 +7,65 @@ const EmbeddingProviderSchema = z.object({
   apiKey: z.string().min(1),
   model: z.string().min(1),
 });
+const EmbeddingsConfigSchema = z.object({
+  provider: EmbeddingProviderSchema.optional(),
+  similarityThreshold: z.number().positive().max(1).optional(),
+}).default({});
+const KnowledgeBaseAutoDetectSchema = z.object({
+  enabled: z.boolean().default(false),
+  minConfidence: z.number().positive().max(1).default(0.75),
+}).default({});
+const KnowledgeBaseQuerySchema = z.object({
+  topK: z.number().int().positive().default(10),
+  finalTopN: z.number().int().positive().default(3),
+  keywordFallbackLimit: z.number().int().positive().default(10),
+}).default({});
+const KnowledgeBaseStorageSchema = z.object({
+  sqlitePath: z.string().min(1).optional(),
+  bitable: z.object({
+    appToken: z.string().default(""),
+    tableId: z.string().default(""),
+    documentTableId: z.string().min(1).optional(),
+    sourceFileField: z.object({
+      name: z.string().min(1).default("源文件"),
+      type: z.enum(["text", "hyperlink"]).default("text"),
+      urlTemplate: z.string().min(1).optional(),
+      textTemplate: z.string().min(1).default("{{fileName}}"),
+    }).optional(),
+    statuteField: z.object({
+      name: z.string().min(1).default("法条"),
+      type: z.enum(["text", "hyperlink"]).default("text"),
+      urlTemplate: z.string().min(1).optional(),
+      textTemplate: z.string().min(1).default("{{statute}}"),
+    }).optional(),
+  }).default({}),
+}).default({});
+const KnowledgeBaseIngestSchema = z.object({
+  allowedExtensions: z.array(z.string().min(1)).default([".pdf", ".docx", ".txt"]),
+  maxFileSizeMb: z.number().positive().default(20),
+  pendingTtlMs: z.number().int().positive().default(600_000),
+  concurrency: z.number().int().positive().max(10).default(3),
+  maxExtractChunks: z.number().int().positive().default(30),
+  maxExtractQas: z.number().int().positive().default(500),
+}).default({});
+const KnowledgeBaseModelRefSchema = z.string()
+  .trim()
+  .regex(/^[^/\s]+\/[^/\s].+$/, "knowledgeBase.models.* 必须使用 <provider>/<model> 格式");
+const KnowledgeBaseModelsSchema = z.object({
+  default: KnowledgeBaseModelRefSchema.optional(),
+  webRead: KnowledgeBaseModelRefSchema.optional(),
+  extract: KnowledgeBaseModelRefSchema.optional(),
+  rerank: KnowledgeBaseModelRefSchema.optional(),
+}).default({});
+const KnowledgeBaseConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  autoDetect: KnowledgeBaseAutoDetectSchema,
+  query: KnowledgeBaseQuerySchema,
+  storage: KnowledgeBaseStorageSchema,
+  embeddingProvider: EmbeddingProviderSchema.optional(),
+  models: KnowledgeBaseModelsSchema,
+  ingest: KnowledgeBaseIngestSchema,
+}).default({});
 const ObsidianConfigSchema = z.object({
   enabled: z.boolean().default(false),
   vaultPath: z.string().min(1).optional(),
@@ -23,17 +82,9 @@ const MemoryConfigSchema = z.object({
   shutdownDrainTimeoutMs: z.number().int().positive().default(5_000),
   retriever: MemoryRetrieverSchema.default("recent"),
   embeddingProvider: EmbeddingProviderSchema.optional(),
-  embeddingSimilarityThreshold: z.number().positive().max(1).default(0.75),
+  embeddingSimilarityThreshold: z.number().positive().max(1).optional(),
   obsidian: ObsidianConfigSchema,
 }).superRefine((value, context) => {
-  if (value.retriever === "embedding" && !value.embeddingProvider) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["embeddingProvider"],
-      message: "retriever=embedding 时必须提供 embeddingProvider",
-    });
-  }
-
   if (value.obsidian.enabled && !value.obsidian.vaultPath) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
@@ -101,6 +152,7 @@ export const ConfigSchema = z.object({
       totalTurn: z.number().int().positive().default(300_000),
     }).default({}),
   }),
+  embeddings: EmbeddingsConfigSchema,
   logging: z.object({
     dir: z.string().min(1).default("./logs"),
     level: z.enum(["debug", "info", "warn", "error"]).default("info"),
@@ -110,6 +162,65 @@ export const ConfigSchema = z.object({
     rotateDaily: z.boolean().default(true),
   }).default({}),
   memory: MemoryConfigSchema.default({}),
+  knowledgeBase: KnowledgeBaseConfigSchema,
+}).superRefine((value, context) => {
+  if (value.memory.retriever === "embedding" && !value.embeddings.provider && !value.memory.embeddingProvider) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["embeddings", "provider"],
+      message: "retriever=embedding 时必须提供 embeddings.provider",
+    });
+  }
+
+  if (!value.knowledgeBase.enabled) {
+    return;
+  }
+
+  if (
+    value.knowledgeBase.storage.bitable.sourceFileField?.type === "hyperlink"
+    && !value.knowledgeBase.storage.bitable.sourceFileField.urlTemplate
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["knowledgeBase", "storage", "bitable", "sourceFileField", "urlTemplate"],
+      message: "sourceFileField.type=hyperlink 时必须提供 urlTemplate",
+    });
+  }
+
+  if (
+    value.knowledgeBase.storage.bitable.statuteField?.type === "hyperlink"
+    && !value.knowledgeBase.storage.bitable.statuteField.urlTemplate
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["knowledgeBase", "storage", "bitable", "statuteField", "urlTemplate"],
+      message: "statuteField.type=hyperlink 时必须提供 urlTemplate",
+    });
+  }
+
+  if (!value.knowledgeBase.storage.bitable.appToken) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["knowledgeBase", "storage", "bitable", "appToken"],
+      message: "knowledgeBase.enabled=true 时必须提供 knowledgeBase.storage.bitable.appToken",
+    });
+  }
+
+  if (!value.knowledgeBase.storage.bitable.tableId) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["knowledgeBase", "storage", "bitable", "tableId"],
+      message: "knowledgeBase.enabled=true 时必须提供 knowledgeBase.storage.bitable.tableId",
+    });
+  }
+
+  if (!value.knowledgeBase.embeddingProvider && !value.embeddings.provider && !value.memory.embeddingProvider) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["knowledgeBase", "embeddingProvider"],
+      message: "knowledgeBase.enabled=true 时必须提供 knowledgeBase.embeddingProvider，或复用 embeddings.provider / memory.embeddingProvider",
+    });
+  }
 });
 
 export type AppConfig = {
@@ -168,6 +279,14 @@ export type AppConfig = {
     eventGapTimeoutMs: number;
     totalTimeoutMs: number;
   };
+  embeddings?: {
+    provider?: {
+      baseUrl: URL;
+      apiKey: string;
+      model: string;
+    } | undefined;
+    similarityThreshold: number;
+  };
   logging: {
     dir: string;
     level: "debug" | "info" | "warn" | "error";
@@ -190,12 +309,62 @@ export type AppConfig = {
       apiKey: string;
       model: string;
     } | undefined;
-    embeddingSimilarityThreshold: number;
     obsidian: {
       enabled: boolean;
       vaultPath?: string | undefined;
       syncCron: string;
       enableWikiLinks: boolean;
+    };
+  };
+  knowledgeBase: {
+    enabled: boolean;
+    autoDetect: {
+      enabled: boolean;
+      minConfidence: number;
+    };
+    query: {
+      topK: number;
+      finalTopN: number;
+      keywordFallbackLimit: number;
+    };
+    storage: {
+      sqlitePath: string;
+      bitable: {
+        appToken: string;
+        tableId: string;
+        documentTableId?: string | undefined;
+        sourceFileField?: {
+          name: string;
+          type: "text" | "hyperlink";
+          urlTemplate?: string | undefined;
+          textTemplate: string;
+        } | undefined;
+        statuteField?: {
+          name: string;
+          type: "text" | "hyperlink";
+          urlTemplate?: string | undefined;
+          textTemplate: string;
+        } | undefined;
+      };
+    };
+    embeddingProvider?: {
+      baseUrl: URL;
+      apiKey: string;
+      model: string;
+    } | undefined;
+    models: {
+      default?: string | undefined;
+      webRead?: string | undefined;
+      extract?: string | undefined;
+      rerank?: string | undefined;
+    };
+    ingest: {
+      allowedExtensions: string[];
+      maxFileSizeMb: number;
+      pendingTtlMs: number;
+      concurrency: number;
+      maxExtractChunks: number;
+      maxExtractQas: number;
     };
   };
 };

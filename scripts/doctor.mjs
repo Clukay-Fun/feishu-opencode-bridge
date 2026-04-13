@@ -14,6 +14,7 @@ export async function runDoctor(options = {}) {
 
   const bridge = results.filter((result) => result.group === "bridge");
   const lark = results.filter((result) => result.group === "lark");
+  const memory = results.filter((result) => result.group === "memory");
 
   logger.log("### Bridge");
   for (const result of bridge) {
@@ -31,6 +32,18 @@ export async function runDoctor(options = {}) {
     const hint = formatCheckHint(result);
     if (hint) {
       logger.log(hint);
+    }
+  }
+
+  if (memory.length > 0) {
+    logger.log("");
+    logger.log("### Memory");
+    for (const result of memory) {
+      logger.log(formatCheckLine(result));
+      const hint = formatCheckHint(result);
+      if (hint) {
+        logger.log(hint);
+      }
     }
   }
 

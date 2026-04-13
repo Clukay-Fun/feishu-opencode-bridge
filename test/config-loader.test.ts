@@ -48,9 +48,10 @@ describe("loadConfig memory settings", () => {
     expect(config.memory.retriever).toBe("recent");
     expect(config.memory.dbPath).toBe(path.join(dir, "data", "memory.db"));
     expect(config.memory.obsidian.syncCron).toBe("0 2 * * *");
+    expect(config.embeddings?.similarityThreshold).toBe(0.75);
   });
 
-  it("rejects embedding retriever without provider config", async () => {
+  it("rejects embedding retriever without embeddings provider config", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-"));
     const configPath = path.join(dir, "config.json");
     await writeFile(configPath, JSON.stringify({
@@ -61,7 +62,155 @@ describe("loadConfig memory settings", () => {
       },
     }), "utf8");
 
-    await expect(loadConfig(configPath)).rejects.toThrow("embeddingProvider");
+    await expect(loadConfig(configPath)).rejects.toThrow("embeddings.provider");
+  });
+
+  it("accepts the legacy memory.embeddingProvider config for compatibility", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({
+      ...baseConfig(),
+      memory: {
+        enabled: true,
+        retriever: "embedding",
+        embeddingProvider: {
+          baseUrl: "https://api.openai.com/v1/",
+          apiKey: "sk-test",
+          model: "text-embedding-3-small",
+        },
+        embeddingSimilarityThreshold: 0.81,
+      },
+    }), "utf8");
+
+    const config = await loadConfig(configPath);
+
+    expect(config.embeddings?.provider?.model).toBe("text-embedding-3-small");
+    expect(config.embeddings?.similarityThreshold).toBe(0.81);
+  });
+
+  it("loads the knowledge base source hyperlink field config", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({
+      ...baseConfig(),
+      embeddings: {
+        provider: {
+          baseUrl: "https://api.openai.com/v1/",
+          apiKey: "sk-test",
+          model: "text-embedding-3-small",
+        },
+      },
+      knowledgeBase: {
+        enabled: true,
+        storage: {
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+            sourceFileField: {
+              name: "资料链接",
+              type: "hyperlink",
+              urlTemplate: "https://example.com/files/{{messageId}}/{{fileKey}}",
+              textTemplate: "{{fileName}}",
+            },
+            statuteField: {
+              name: "法条",
+              type: "hyperlink",
+              urlTemplate: "https://example.com/law?keyword={{statute}}",
+              textTemplate: "{{statute}}",
+            },
+          },
+        },
+      },
+    }), "utf8");
+
+    const config = await loadConfig(configPath);
+
+    expect(config.knowledgeBase.storage.bitable.sourceFileField).toEqual({
+      name: "资料链接",
+      type: "hyperlink",
+      urlTemplate: "https://example.com/files/{{messageId}}/{{fileKey}}",
+      textTemplate: "{{fileName}}",
+    });
+    expect(config.knowledgeBase.storage.bitable.statuteField).toEqual({
+      name: "法条",
+      type: "hyperlink",
+      urlTemplate: "https://example.com/law?keyword={{statute}}",
+      textTemplate: "{{statute}}",
+    });
+    expect(config.knowledgeBase.models).toEqual({
+      default: undefined,
+      webRead: undefined,
+      extract: undefined,
+      rerank: undefined,
+    });
+    expect(config.knowledgeBase.ingest.maxExtractChunks).toBe(30);
+    expect(config.knowledgeBase.ingest.maxExtractQas).toBe(500);
+  });
+
+  it("loads knowledge base OpenCode model routing config", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({
+      ...baseConfig(),
+      embeddings: {
+        provider: {
+          baseUrl: "https://api.openai.com/v1/",
+          apiKey: "sk-test",
+          model: "text-embedding-3-small",
+        },
+      },
+      knowledgeBase: {
+        enabled: true,
+        storage: {
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+          },
+        },
+        models: {
+          default: "minimax-cn-coding-plan/MiniMax-M2.7",
+          extract: "minimax-cn-coding-plan/MiniMax-M2.7",
+        },
+      },
+    }), "utf8");
+
+    const config = await loadConfig(configPath);
+
+    expect(config.knowledgeBase.models).toEqual({
+      default: "minimax-cn-coding-plan/MiniMax-M2.7",
+      webRead: undefined,
+      extract: "minimax-cn-coding-plan/MiniMax-M2.7",
+      rerank: undefined,
+    });
+  });
+
+  it("rejects slashless knowledge base model ids", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({
+      ...baseConfig(),
+      embeddings: {
+        provider: {
+          baseUrl: "https://api.openai.com/v1/",
+          apiKey: "sk-test",
+          model: "text-embedding-3-small",
+        },
+      },
+      knowledgeBase: {
+        enabled: true,
+        storage: {
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+          },
+        },
+        models: {
+          default: "MiniMax-M2.7",
+        },
+      },
+    }), "utf8");
+
+    await expect(loadConfig(configPath)).rejects.toThrow(/knowledgeBase\.models\.\* 必须使用 <provider>\/<model> 格式/);
   });
 
   it("rejects obsidian sync without vaultPath", async () => {

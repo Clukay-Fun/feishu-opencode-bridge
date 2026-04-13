@@ -8,6 +8,7 @@ import {
   assessOpencodeAuthPayload,
   assessLarkAuthPayload,
   checkConfigPublicUrl,
+  checkObsidianSync,
   checkOpencodeModels,
   checkOpencodeDirectory,
   getDoctorExitCode,
@@ -156,9 +157,48 @@ describe("scripts/checks", () => {
     expect(result.detail).toContain("1 个 provider，2 个模型");
   });
 
+  it("skips obsidian sync when obsidian is not enabled", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-checks-obsidian-skip-"));
+    await writeConfig(dir, {
+      memory: {
+        enabled: false,
+        obsidian: {
+          enabled: false,
+          vaultPath: "/tmp/vault",
+        },
+      },
+    });
+
+    const result = await checkObsidianSync({ cwd: dir });
+
+    expect(result.status).toBe("skip");
+    expect(result.detail).toContain("未启用");
+  });
+
+  it("passes obsidian sync when enabled vault is writable", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-checks-obsidian-pass-"));
+    const vault = path.join(dir, "vault");
+    await mkdir(vault, { recursive: true });
+    await writeConfig(dir, {
+      memory: {
+        enabled: true,
+        obsidian: {
+          enabled: true,
+          vaultPath: "./vault",
+        },
+      },
+    });
+
+    const result = await checkObsidianSync({ cwd: dir });
+
+    expect(result.status).toBe("pass");
+    expect(result.detail).toContain(vault);
+  });
+
   it("only fails doctor exit code on bridge failures", () => {
     expect(getDoctorExitCode([
       { group: "lark", status: "fail" },
+      { group: "memory", status: "warn" },
       { group: "bridge", status: "warn" },
     ])).toBe(0);
 
@@ -191,6 +231,14 @@ async function writeConfig(dir: string, partial: Record<string, unknown>): Promi
       port: 3000,
       publicBaseUrl: "http://127.0.0.1:3000/",
       ...(partial.server ?? {}),
+    },
+    memory: {
+      enabled: false,
+      obsidian: {
+        enabled: false,
+        vaultPath: "/tmp/vault",
+      },
+      ...(partial.memory ?? {}),
     },
     logging: {
       dir: "./logs",

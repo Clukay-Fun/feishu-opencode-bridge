@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.3 - 2026-04-13
+
+### Added
+- Added knowledge base parser, SQLite storage, embedding retrieval, and Feishu Bitable sync primitives.
+- Added knowledge base config schema, sample config, and Feishu/OpenCode resource helpers needed by ingestion.
+- Added doctor output for Obsidian sync readiness and tests covering knowledge-base/config compatibility.
+
+### Changed
+- Unified shared embedding provider configuration under `embeddings.*`, while keeping legacy memory settings compatible.
+- Marked macOS shell entrypoints as executable for direct launch.
+
 ## 0.1.2 - 2026-04-12
 
 ### Added

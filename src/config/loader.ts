@@ -13,6 +13,11 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
   const loggingDir = resolveRelative(baseDir, parsed.logging.dir);
   await mkdir(dataDir, { recursive: true });
   await mkdir(loggingDir, { recursive: true });
+  const resolvedEmbeddingProvider = parsed.embeddings.provider ?? parsed.memory.embeddingProvider;
+  const resolvedEmbeddingThreshold = parsed.embeddings.similarityThreshold
+    ?? parsed.memory.embeddingSimilarityThreshold
+    ?? 0.75;
+  const resolvedKnowledgeEmbeddingProvider = parsed.knowledgeBase.embeddingProvider ?? resolvedEmbeddingProvider;
 
   return {
     feishu: {
@@ -70,6 +75,16 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
       eventGapTimeoutMs: parsed.bridge.timeouts.eventInterval,
       totalTimeoutMs: parsed.bridge.timeouts.totalTurn,
     },
+    embeddings: {
+      provider: resolvedEmbeddingProvider
+        ? {
+          baseUrl: new URL(resolvedEmbeddingProvider.baseUrl),
+          apiKey: resolvedEmbeddingProvider.apiKey,
+          model: resolvedEmbeddingProvider.model,
+        }
+        : undefined,
+      similarityThreshold: resolvedEmbeddingThreshold,
+    },
     logging: {
       dir: loggingDir,
       level: parsed.logging.level,
@@ -87,14 +102,13 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
       sourcePreviewLength: parsed.memory.sourcePreviewLength,
       shutdownDrainTimeoutMs: parsed.memory.shutdownDrainTimeoutMs,
       retriever: parsed.memory.retriever,
-      embeddingProvider: parsed.memory.embeddingProvider
+      embeddingProvider: resolvedEmbeddingProvider
         ? {
-          baseUrl: new URL(parsed.memory.embeddingProvider.baseUrl),
-          apiKey: parsed.memory.embeddingProvider.apiKey,
-          model: parsed.memory.embeddingProvider.model,
+          baseUrl: new URL(resolvedEmbeddingProvider.baseUrl),
+          apiKey: resolvedEmbeddingProvider.apiKey,
+          model: resolvedEmbeddingProvider.model,
         }
         : undefined,
-      embeddingSimilarityThreshold: parsed.memory.embeddingSimilarityThreshold,
       obsidian: {
         enabled: parsed.memory.obsidian.enabled,
         vaultPath: parsed.memory.obsidian.vaultPath
@@ -102,6 +116,63 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
           : undefined,
         syncCron: parsed.memory.obsidian.syncCron,
         enableWikiLinks: parsed.memory.obsidian.enableWikiLinks,
+      },
+    },
+    knowledgeBase: {
+      enabled: parsed.knowledgeBase.enabled,
+      autoDetect: {
+        enabled: parsed.knowledgeBase.autoDetect.enabled,
+        minConfidence: parsed.knowledgeBase.autoDetect.minConfidence,
+      },
+      query: {
+        topK: parsed.knowledgeBase.query.topK,
+        finalTopN: parsed.knowledgeBase.query.finalTopN,
+        keywordFallbackLimit: parsed.knowledgeBase.query.keywordFallbackLimit,
+      },
+      storage: {
+        sqlitePath: resolveRelative(baseDir, parsed.knowledgeBase.storage.sqlitePath ?? path.join(dataDir, "knowledge-base.db")),
+        bitable: {
+          appToken: parsed.knowledgeBase.storage.bitable.appToken,
+          tableId: parsed.knowledgeBase.storage.bitable.tableId,
+          documentTableId: parsed.knowledgeBase.storage.bitable.documentTableId,
+          sourceFileField: parsed.knowledgeBase.storage.bitable.sourceFileField
+            ? {
+              name: parsed.knowledgeBase.storage.bitable.sourceFileField.name,
+              type: parsed.knowledgeBase.storage.bitable.sourceFileField.type,
+              urlTemplate: parsed.knowledgeBase.storage.bitable.sourceFileField.urlTemplate,
+              textTemplate: parsed.knowledgeBase.storage.bitable.sourceFileField.textTemplate,
+            }
+            : undefined,
+          statuteField: parsed.knowledgeBase.storage.bitable.statuteField
+            ? {
+              name: parsed.knowledgeBase.storage.bitable.statuteField.name,
+              type: parsed.knowledgeBase.storage.bitable.statuteField.type,
+              urlTemplate: parsed.knowledgeBase.storage.bitable.statuteField.urlTemplate,
+              textTemplate: parsed.knowledgeBase.storage.bitable.statuteField.textTemplate,
+            }
+            : undefined,
+        },
+      },
+      embeddingProvider: resolvedKnowledgeEmbeddingProvider
+        ? {
+          baseUrl: new URL(resolvedKnowledgeEmbeddingProvider.baseUrl),
+          apiKey: resolvedKnowledgeEmbeddingProvider.apiKey,
+          model: resolvedKnowledgeEmbeddingProvider.model,
+        }
+        : undefined,
+      models: {
+        default: parsed.knowledgeBase.models.default,
+        webRead: parsed.knowledgeBase.models.webRead,
+        extract: parsed.knowledgeBase.models.extract,
+        rerank: parsed.knowledgeBase.models.rerank,
+      },
+      ingest: {
+        allowedExtensions: parsed.knowledgeBase.ingest.allowedExtensions.map((value) => value.trim().toLowerCase()),
+        maxFileSizeMb: parsed.knowledgeBase.ingest.maxFileSizeMb,
+        pendingTtlMs: parsed.knowledgeBase.ingest.pendingTtlMs,
+        concurrency: parsed.knowledgeBase.ingest.concurrency,
+        maxExtractChunks: parsed.knowledgeBase.ingest.maxExtractChunks,
+        maxExtractQas: parsed.knowledgeBase.ingest.maxExtractQas,
       },
     },
   };

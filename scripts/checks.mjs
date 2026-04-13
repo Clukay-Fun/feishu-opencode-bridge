@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 
 export const BRIDGE_GROUP = "bridge";
 export const LARK_GROUP = "lark";
+export const MEMORY_GROUP = "memory";
 export const MIN_NODE_MAJOR = 20;
 export const MIN_LARK_VERSION = "1.0.8";
 const OPENCODE_AUTH_REFRESH_WARN_MS = 24 * 60 * 60 * 1_000;
@@ -610,6 +611,47 @@ export async function checkLarkAppMatch(options = {}) {
   return createResult("lark-app-match", LARK_GROUP, "应用一致性", "warn", `bridge=${configAppId}, lark-cli=${larkAppId}`);
 }
 
+export async function checkObsidianSync(options = {}) {
+  const state = options.state ?? await readProjectConfig(options.cwd, options.configPath);
+  if (!state.exists || state.error || !state.config) {
+    return createResult("obsidian-sync", MEMORY_GROUP, "Obsidian 同步", "skip", "等待 config.json");
+  }
+
+  const memoryConfig = state.config?.memory;
+  const obsidianConfig = memoryConfig?.obsidian;
+  if (memoryConfig?.enabled !== true || obsidianConfig?.enabled !== true) {
+    return createResult("obsidian-sync", MEMORY_GROUP, "Obsidian 同步", "skip", "未启用");
+  }
+
+  const vaultPath = resolveConfigValue(state.configPath, obsidianConfig?.vaultPath);
+  if (!vaultPath) {
+    return createResult(
+      "obsidian-sync",
+      MEMORY_GROUP,
+      "Obsidian 同步",
+      "warn",
+      "已启用，但未配置有效 vaultPath",
+      "填写 memory.obsidian.vaultPath",
+    );
+  }
+
+  try {
+    await access(vaultPath, constants.R_OK | constants.W_OK);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return createResult(
+      "obsidian-sync",
+      MEMORY_GROUP,
+      "Obsidian 同步",
+      "warn",
+      `Vault 不可读写：${vaultPath}`,
+      detail.includes("ENOENT") ? "确认 vaultPath 存在并可写" : "检查 vaultPath 权限",
+    );
+  }
+
+  return createResult("obsidian-sync", MEMORY_GROUP, "Obsidian 同步", "pass", vaultPath);
+}
+
 export async function checkBuildExists(options = {}) {
   const cwd = options.cwd ?? process.cwd();
   const distEntry = findBuildEntry(cwd);
@@ -689,7 +731,11 @@ export async function runLarkChecks(options = {}) {
 export async function runAllChecks(options = {}) {
   const bridge = await runBridgeChecks(options);
   const lark = await runLarkChecks(options);
-  return [...bridge, ...lark];
+  const cwd = options.cwd ?? process.cwd();
+  const configPath = options.configPath ?? path.join(cwd, "config.json");
+  const state = await readProjectConfig(cwd, configPath);
+  const memory = [await checkObsidianSync({ ...options, cwd, configPath, state })];
+  return [...bridge, ...lark, ...memory];
 }
 
 export function getDoctorExitCode(results) {

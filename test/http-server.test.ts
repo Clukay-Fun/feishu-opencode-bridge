@@ -269,7 +269,6 @@ function createConfig(
       sourcePreviewLength: 50,
       shutdownDrainTimeoutMs: 5_000,
       retriever: "recent",
-      embeddingSimilarityThreshold: 0.75,
       embeddingProvider: undefined,
       obsidian: {
         enabled: false,
@@ -277,6 +276,18 @@ function createConfig(
         syncCron: "0 2 * * *",
         enableWikiLinks: false,
       },
+    },
+    knowledgeBase: {
+      enabled: false,
+      autoDetect: { enabled: false, minConfidence: 0.75 },
+      query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
+      storage: {
+        sqlitePath: "knowledge-base.db",
+        bitable: { appToken: "", tableId: "", documentTableId: undefined },
+      },
+      embeddingProvider: undefined,
+      models: {},
+      ingest: { allowedExtensions: [".pdf", ".docx", ".txt"], maxFileSizeMb: 20, pendingTtlMs: 600_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500 },
     },
     logging: {
       dir: process.cwd(),
