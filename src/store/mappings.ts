@@ -1,6 +1,7 @@
 import { JsonStore } from "./json-store.js";
 
 export type SessionMode = "single" | "multi";
+export type InteractionMode = "default" | "knowledge";
 
 export type SessionBindingRecord = {
   sessionId: string;
@@ -11,6 +12,7 @@ export type SessionBindingRecord = {
 
 export type SessionWindowRecord = {
   mode: SessionMode;
+  interactionMode?: InteractionMode;
   activeSessionId: string | null;
   sessions: SessionBindingRecord[];
 };
@@ -22,11 +24,11 @@ type LoggerLike = {
 };
 
 type MappingFile = {
-  version: 3;
+  version: 4;
   mappings: MappingRecord;
 };
 
-const MAPPING_STORE_VERSION = 3 as const;
+const MAPPING_STORE_VERSION = 4 as const;
 
 export class MappingStore extends JsonStore<unknown> {
   constructor(
@@ -47,6 +49,13 @@ export class MappingStore extends JsonStore<unknown> {
     if (isVersion2MappingFile(loaded)) {
       const migrated = trimMappings(migrateVersion2Mappings(loaded.mappings), this.maxEntries);
       this.logger?.log("store/mappings", "mapping store 格式升级，已迁移", { fromVersion: 2 }, "warn");
+      await super.save({ version: MAPPING_STORE_VERSION, mappings: migrated } satisfies MappingFile);
+      return migrated;
+    }
+
+    if (isVersion3MappingFile(loaded)) {
+      const migrated = trimMappings(normalizeMappings(loaded.mappings), this.maxEntries);
+      this.logger?.log("store/mappings", "mapping store 格式升级，已迁移", { fromVersion: 3 }, "warn");
       await super.save({ version: MAPPING_STORE_VERSION, mappings: migrated } satisfies MappingFile);
       return migrated;
     }
@@ -75,6 +84,10 @@ function isMappingFile(value: unknown): value is MappingFile {
 
 function isVersion2MappingFile(value: unknown): value is { version: 2; mappings: Record<string, unknown> } {
   return isRecord(value) && value.version === 2 && isRecord(value.mappings);
+}
+
+function isVersion3MappingFile(value: unknown): value is { version: 3; mappings: Record<string, unknown> } {
+  return isRecord(value) && value.version === 3 && isRecord(value.mappings);
 }
 
 function isLegacyMappingFile(value: unknown): value is Record<string, unknown> {
@@ -177,6 +190,7 @@ function normalizeWindowRecord(value: unknown): SessionWindowRecord | null {
   if (sessions.length === 0) {
     return {
       mode,
+      interactionMode: normalizeInteractionMode(value.interactionMode),
       activeSessionId: null,
       sessions: [],
     };
@@ -189,11 +203,13 @@ function normalizeWindowRecord(value: unknown): SessionWindowRecord | null {
   return mode === "single"
     ? {
       mode,
+      interactionMode: normalizeInteractionMode(value.interactionMode),
       activeSessionId,
       sessions: [findSessionById(sessions, activeSessionId) ?? pickMostRecentSession(sessions)!],
     }
     : {
       mode,
+      interactionMode: normalizeInteractionMode(value.interactionMode),
       activeSessionId,
       sessions: sessions.sort((a, b) => b.lastUsedAt - a.lastUsedAt),
     };
@@ -218,6 +234,7 @@ function normalizeSessionBindingRecord(value: unknown, now: number): SessionBind
 function createSingleWindow(sessionId: string, now: number, label: string): SessionWindowRecord {
   return {
     mode: "single",
+    interactionMode: "default",
     activeSessionId: sessionId,
     sessions: [{
       sessionId,
@@ -226,6 +243,10 @@ function createSingleWindow(sessionId: string, now: number, label: string): Sess
       lastUsedAt: now,
     }],
   };
+}
+
+function normalizeInteractionMode(value: unknown): InteractionMode {
+  return value === "knowledge" ? "knowledge" : "default";
 }
 
 function getWindowLastUsedAt(window: SessionWindowRecord): number {

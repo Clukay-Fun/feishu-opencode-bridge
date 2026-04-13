@@ -8,6 +8,11 @@ export type RoutedText =
       | { kind: "models"; provider?: string | undefined }
       | { kind: "leave" }
       | { kind: "who" }
+      | { kind: "knowledge-query"; question: string }
+      | { kind: "knowledge-ingest" }
+      | { kind: "knowledge-ingest-end" }
+      | { kind: "knowledge-mode-start" }
+      | { kind: "knowledge-mode-end" }
       | { kind: "sessions" }
       | { kind: "sessions-all" }
       | { kind: "sessions-select"; index: number }
@@ -55,6 +60,26 @@ export function routeIncomingText(text: string): RoutedText {
 
   if (rawCommand === "who" && args.length === 0) {
     return { kind: "command", command: { kind: "who" } };
+  }
+
+  if ((rawCommand === "知识入库" || rawCommand === "kb-ingest" || rawCommand === "kb-ingest-start") && args.length === 0) {
+    return { kind: "command", command: { kind: "knowledge-ingest" } };
+  }
+
+  if (rawCommand === "kb-ingest-end" && args.length === 0) {
+    return { kind: "command", command: { kind: "knowledge-ingest-end" } };
+  }
+
+  if ((rawCommand === "legal-query-start" || rawCommand === "法律咨询开始") && args.length === 0) {
+    return { kind: "command", command: { kind: "knowledge-mode-start" } };
+  }
+
+  if ((rawCommand === "legal-query-end" || rawCommand === "法律咨询结束") && args.length === 0) {
+    return { kind: "command", command: { kind: "knowledge-mode-end" } };
+  }
+
+  if ((rawCommand === "法律咨询" || rawCommand === "legal-query") && args.length > 0) {
+    return { kind: "command", command: { kind: "knowledge-query", question: args.join(" ").trim() } };
   }
 
   if (rawCommand === "sessions" && args.length === 0) {

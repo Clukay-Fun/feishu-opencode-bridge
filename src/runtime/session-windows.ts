@@ -1,4 +1,4 @@
-import type { SessionBindingRecord, SessionMode, SessionWindowRecord } from "../store/mappings.js";
+import type { InteractionMode, SessionBindingRecord, SessionMode, SessionWindowRecord } from "../store/mappings.js";
 
 export type SessionModeConfig = {
   p2p: SessionMode;
@@ -22,10 +22,12 @@ export function normalizeSessionWindowRecord(
   maxSessions: number,
 ): SessionWindowRecord {
   const sessions = sortSessionsByLastUsed(record?.sessions ?? []);
+  const interactionMode = record?.interactionMode === "knowledge" ? "knowledge" : "default";
   if (mode === "single") {
     const active = findSessionById(sessions, record?.activeSessionId) ?? sessions[0] ?? null;
     return {
       mode,
+      interactionMode,
       activeSessionId: active?.sessionId ?? null,
       sessions: active ? [active] : [],
     };
@@ -35,6 +37,7 @@ export function normalizeSessionWindowRecord(
   const active = findSessionById(uniqueSessions, record?.activeSessionId) ?? uniqueSessions[0] ?? null;
   return {
     mode,
+    interactionMode,
     activeSessionId: active?.sessionId ?? null,
     sessions: uniqueSessions,
   };
@@ -68,6 +71,7 @@ export function setActiveSession(
 
   return normalizeSessionWindowRecord({
     mode: window.mode,
+    interactionMode: resolveInteractionMode(window),
     activeSessionId: sessionId,
     sessions: updatedSessions,
   }, window.mode, maxSessions);
@@ -80,6 +84,7 @@ export function addSession(
 ): SessionWindowRecord {
   return normalizeSessionWindowRecord({
     mode: window.mode,
+    interactionMode: resolveInteractionMode(window),
     activeSessionId: session.sessionId,
     sessions: [session, ...window.sessions.filter((item) => item.sessionId !== session.sessionId)],
   }, window.mode, maxSessions);
@@ -96,6 +101,7 @@ export function removeSession(
     : window.activeSessionId;
   return normalizeSessionWindowRecord({
     mode: window.mode,
+    interactionMode: resolveInteractionMode(window),
     activeSessionId: nextActive,
     sessions: remaining,
   }, window.mode, maxSessions);
@@ -114,12 +120,26 @@ export function updateSessionLabel(
 
   return normalizeSessionWindowRecord({
     mode: window.mode,
+    interactionMode: resolveInteractionMode(window),
     activeSessionId: window.activeSessionId,
     sessions: window.sessions.map((session) => (
       session.sessionId === sessionId
         ? { ...session, label: normalizedLabel }
         : session
     )),
+  }, window.mode, maxSessions);
+}
+
+export function setInteractionMode(
+  window: SessionWindowRecord,
+  interactionMode: InteractionMode,
+  maxSessions: number,
+): SessionWindowRecord {
+  return normalizeSessionWindowRecord({
+    mode: window.mode,
+    interactionMode,
+    activeSessionId: window.activeSessionId,
+    sessions: window.sessions,
   }, window.mode, maxSessions);
 }
 
@@ -151,4 +171,8 @@ function findSessionById(sessions: SessionBindingRecord[], sessionId: string | n
     return null;
   }
   return sessions.find((session) => session.sessionId === sessionId) ?? null;
+}
+
+function resolveInteractionMode(window: SessionWindowRecord): InteractionMode {
+  return window.interactionMode === "knowledge" ? "knowledge" : "default";
 }

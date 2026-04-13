@@ -1,4 +1,5 @@
 import type { QueueNotice } from "../bridge/turn.js";
+import type { KnowledgeIngestResult, KnowledgeQueryResult } from "../knowledge/index.js";
 import { column, columnSet, markdown, standardIcon } from "./card-builder.js";
 
 export type FeishuPostPayload = {
@@ -32,6 +33,7 @@ export type StatusCommandCardView = {
   currentSession: { sessionId: string; label: string } | null;
   connectionState: string;
   sessionMode: string;
+  interactionMode: string;
   sessionState: string;
   queueState: string;
   pendingCount: number;
@@ -87,6 +89,16 @@ export type NoticeCardView = {
   message: string;
   messageIconToken?: string;
   messageIconColor?: string;
+  showMessageIcon?: boolean;
+};
+
+export type KnowledgeQueryEmptyCardView = {
+  question: string;
+};
+
+export type KnowledgeIngestProgressCardView = {
+  sourceLabel: string;
+  steps: ReadonlyArray<ToolUpdateView>;
 };
 
 export type PermissionActionButton = {
@@ -285,7 +297,12 @@ export function buildNoticeCardPayload(view: NoticeCardView): FeishuPostPayload 
     template: view.template,
     iconToken: view.iconToken,
     bodyElements: [
-      buildNoticeBodyBlock(view.message, view.messageIconToken, view.messageIconColor),
+      buildNoticeBodyBlock(
+        view.message,
+        view.messageIconToken,
+        view.messageIconColor,
+        view.showMessageIcon === undefined ? {} : { showIcon: view.showMessageIcon },
+      ),
     ],
   });
 }
@@ -305,6 +322,107 @@ export function buildPermissionRequestCardPayload(view: PermissionRequestCardVie
         "grey",
         "notation",
       ),
+    ],
+  });
+}
+
+export function buildKnowledgeQueryPayload(view: KnowledgeQueryResult): FeishuPostPayload {
+  return buildInteractivePayload({
+    title: "法律咨询",
+    template: "indigo",
+    iconToken: "search_outlined",
+    bodyElements: [
+      buildNoticeBodyBlock(`**问题**\n${escapeText(view.question)}`, "search_outlined", "indigo", { showIcon: false }),
+      buildDivider(),
+      ...view.results.flatMap((result, index) => {
+        const parts = [
+          `**答案 ${index + 1}**`,
+          escapeText(result.answer),
+          `📄 来源：${escapeText(result.sourceFile)}${result.pageSection ? ` · ${escapeText(result.pageSection)}` : ""}`,
+          result.statute ? `📌 法条：${escapeText(result.statute)}` : "",
+        ].filter(Boolean).join("\n\n");
+        return index < view.results.length - 1
+          ? [buildNoticeBodyBlock(parts, "book_outlined", "blue", { showIcon: false }), buildDivider()]
+          : [buildNoticeBodyBlock(parts, "book_outlined", "blue", { showIcon: false })];
+      }),
+      buildDivider(),
+      buildFooterTipBlock("以上内容仅供参考，不构成法律意见。", "warning_outlined", "orange", "notation"),
+    ],
+  });
+}
+
+export function buildKnowledgeQueryEmptyPayload(question: string): FeishuPostPayload {
+  return buildInteractivePayload({
+    title: "法律咨询",
+    template: "wathet",
+    iconToken: "search_outlined",
+    bodyElements: [
+      buildNoticeBodyBlock(`未找到与“${escapeText(question)}”直接相关的知识条目。`, "info_outlined", "grey", { showIcon: false }),
+      buildDivider(),
+      buildFooterTipBlock("以上内容仅供参考，不构成法律意见。", "warning_outlined", "orange", "notation"),
+    ],
+  });
+}
+
+export function buildKnowledgeIngestReadyPayload(): FeishuPostPayload {
+  return buildInteractivePayload({
+    title: "知识入库",
+    template: "blue",
+    iconToken: "upload_outlined",
+    bodyElements: [
+      buildNoticeBodyBlock("已进入知识入库模式。请上传 PDF / DOCX / TXT / MD 文件，或直接发送网页 URL；我会连续提取问答并写入知识库。发送 `/kb-ingest-end` 可退出。", "upload_outlined", "blue", { showIcon: false }),
+    ],
+  });
+}
+
+export function buildKnowledgeIngestPayload(view: KnowledgeIngestResult): FeishuPostPayload {
+  const rawExtractedCount = view.rawExtractedCount ?? view.extractedCount;
+  const dedupedCount = view.dedupedCount ?? Math.max(0, rawExtractedCount - view.extractedCount);
+  const sortedTags = Object.entries(view.tagCounts);
+  const visibleTags = sortedTags.slice(0, 10);
+  const hiddenTagCount = Math.max(0, sortedTags.length - visibleTags.length);
+  const tagSummary = visibleTags
+    .map(([tag, count]) => `${escapeText(tag)}(${count})`)
+    .join("、") || "无";
+  const tagSummaryText = hiddenTagCount > 0 ? `${tagSummary}\n\n其余 ${hiddenTagCount} 个标签已省略。` : tagSummary;
+  const bodyParts = [
+    `**源文件**\n${escapeText(view.sourceFile)}`,
+    `**原始提取**\n${rawExtractedCount} 条`,
+    `**去重合并**\n${dedupedCount} 条`,
+    `**最终入库**\n${view.extractedCount} 条`,
+    `**标签分布**\n${tagSummaryText}`,
+    `**耗时**\n${Math.max(1, Math.round(view.durationMs / 1000))}s`,
+  ];
+  if (view.bitableUrl) {
+    bodyParts.push(`[查看多维表格](${escapeText(view.bitableUrl)})`);
+  }
+  const bodyElements: Array<Record<string, unknown>> = [
+    buildNoticeBodyBlock(bodyParts.join("\n\n"), "book_outlined", "green", { showIcon: false }),
+    buildDivider(),
+    buildFooterTipBlock("以上内容仅供参考，不构成法律意见。", "warning_outlined", "orange", "notation"),
+  ];
+  if (view.warning) {
+    bodyElements.push(buildFooterTipBlock(escapeText(view.warning), "maybe_outlined", "orange", "notation"));
+  }
+  return buildInteractivePayload({
+    title: "知识入库完成",
+    template: "green",
+    iconToken: "book_outlined",
+    bodyElements,
+  });
+}
+
+export function buildKnowledgeIngestProcessingPayload(view: KnowledgeIngestProgressCardView): FeishuPostPayload {
+  return buildInteractivePayload({
+    title: "知识入库处理中",
+    template: "blue",
+    iconToken: "upload_outlined",
+    bodyElements: [
+      buildNoticeBodyBlock(`**当前对象**\n${escapeText(view.sourceLabel)}`, "upload_outlined", "blue", { showIcon: false }),
+      buildDivider(),
+      buildToolBlock(buildToolElements(view.steps)),
+      buildDivider(),
+      buildFooterTipBlock("以上内容仅供参考，不构成法律意见。", "warning_outlined", "orange", "notation"),
     ],
   });
 }
@@ -415,12 +533,15 @@ function buildNoticeBodyBlock(
   message: string,
   iconToken = "info_outlined",
   iconColor = "grey",
+  options: { showIcon?: boolean } = {},
 ): Record<string, unknown> {
   return columnSet([
     column([
-      markdown(message, {
-        icon: { token: iconToken, color: iconColor },
-      }),
+      markdown(message, options.showIcon === false
+        ? undefined
+        : {
+          icon: { token: iconToken, color: iconColor },
+        }),
     ]),
   ]);
 }
@@ -555,6 +676,7 @@ function buildStatusSystemBlock(view: StatusCommandCardView): Record<string, unk
   const chips = [
     buildStatusChip(view.connectionState, "wathet-50"),
     buildStatusChip(view.sessionState, mapStatusChipBackground(view.sessionState)),
+    buildStatusChip(view.interactionMode, view.interactionMode === "知识库模式" ? "indigo-50" : "grey-50"),
     buildStatusChip(view.queueState, view.queueState === "空闲" ? "green-50" : "wathet-50"),
     buildStatusChip(`排队 ${view.pendingCount}`, "grey-50"),
     buildStatusChip(`窗口 ${view.windowCount}`, "grey-50"),

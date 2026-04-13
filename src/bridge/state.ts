@@ -42,8 +42,17 @@ export type PendingSessionDeleteConfirmationInteraction = {
   expiresAt: number;
 };
 
+export type PendingKnowledgeIngestInteraction = {
+  kind: "knowledge-ingest-await-file";
+  chatId: string;
+  conversationKey: string;
+  requesterOpenId: string;
+  replyToMessageId: string;
+};
+
 export type PendingInteraction =
   | PendingQuestionInteraction
   | PendingPermissionInteraction
   | PendingSessionSelectionInteraction
-  | PendingSessionDeleteConfirmationInteraction;
+  | PendingSessionDeleteConfirmationInteraction
+  | PendingKnowledgeIngestInteraction;

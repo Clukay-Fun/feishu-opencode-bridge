@@ -492,6 +492,51 @@ describe("BridgeApp command surface", () => {
     expect(extractInteractiveHeader(getReplyPayloads(outbound).at(-1))).toBe("已彻底删除多个会话");
   });
 
+  it("toggles knowledge mode through dedicated commands", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
+      knowledge: {
+        async query() {
+          return { question: "", results: [] };
+        },
+        async ingestFile() {
+          throw new Error("not used");
+        },
+        async syncMirror() {},
+        close() {},
+      },
+      memory: null,
+    });
+    const appAny = app as unknown as {
+      sessionMap: Record<string, SessionWindowRecord>;
+      pendingInteractions: Map<string, PendingInteraction>;
+    };
+    appAny.pendingInteractions.set("oc_p2p_1", {
+      kind: "knowledge-ingest-await-file",
+      chatId: "oc_p2p_1",
+      conversationKey: "oc_p2p_1",
+      requesterOpenId: "ou_123",
+      replyToMessageId: "om_1",
+    });
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "knowledge-mode-start" },
+    });
+
+    expect(appAny.sessionMap["oc_p2p_1"]?.interactionMode).toBe("knowledge");
+    expect(appAny.pendingInteractions.has("oc_p2p_1")).toBe(false);
+    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("已进入知识库模式");
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "knowledge-mode-end" },
+    });
+
+    expect(appAny.sessionMap["oc_p2p_1"]).toBeUndefined();
+    expect(extractInteractiveHeader(getReplyPayloads(outbound).at(-1))).toBe("已退出知识库模式");
+  });
+
   it("blocks close when the current session is still running", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
@@ -791,6 +836,9 @@ type AppCommandSurfaceTestRoute = {
   command:
     | { kind: "abort" }
     | { kind: "models"; provider?: string | undefined }
+    | { kind: "knowledge-mode-start" }
+    | { kind: "knowledge-mode-end" }
+    | { kind: "knowledge-ingest-end" }
     | { kind: "sessions-all" }
     | { kind: "sessions-select"; index: number }
     | { kind: "close"; index?: number | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined }
@@ -861,7 +909,6 @@ function baseConfig(): AppConfig {
       sourcePreviewLength: 50,
       shutdownDrainTimeoutMs: 5_000,
       retriever: "recent",
-      embeddingSimilarityThreshold: 0.75,
       embeddingProvider: undefined,
       obsidian: {
         enabled: false,
@@ -869,6 +916,18 @@ function baseConfig(): AppConfig {
         syncCron: "0 2 * * *",
         enableWikiLinks: false,
       },
+    },
+    knowledgeBase: {
+      enabled: false,
+      autoDetect: { enabled: false, minConfidence: 0.75 },
+      query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
+      storage: {
+        sqlitePath: "knowledge-base.db",
+        bitable: { appToken: "", tableId: "", documentTableId: undefined },
+      },
+      embeddingProvider: undefined,
+      models: {},
+      ingest: { allowedExtensions: [".pdf", ".docx", ".txt"], maxFileSizeMb: 20, pendingTtlMs: 600_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500 },
     },
     logging: {
       dir: process.cwd(),
@@ -917,7 +976,7 @@ function createIncomingMessage(messageId: string) {
     chatType: "p2p",
     senderOpenId: "ou_123",
     messageId,
-    messageType: "text",
+    messageType: "text" as const,
     rawContent: "hello",
     plainText: "hello",
     threadKey: messageId,

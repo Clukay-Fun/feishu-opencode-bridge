@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildKnowledgeIngestProcessingPayload,
+  buildKnowledgeIngestPayload,
+  buildKnowledgeQueryEmptyPayload,
+  buildKnowledgeQueryPayload,
   buildNoticeCardPayload,
   buildLeaveCommandCardPayload,
   buildPostMarkdownPayload,
@@ -93,6 +97,7 @@ describe("buildPostPayload", () => {
       },
       connectionState: "connected",
       sessionMode: "multi",
+      interactionMode: "知识库模式",
       sessionState: "idle",
       queueState: "空闲",
       pendingCount: 0,
@@ -103,8 +108,9 @@ describe("buildPostPayload", () => {
     expect(content.header.template).toBe("wathet");
     expect(content.body.elements[0].columns[0].elements[0].content).toBe("**当前会话**");
     expect(content.body.elements[0].columns[0].elements[1].columns[0].elements[0].content).toContain("ses_2988a201effeCaZpLXXjarY0pM");
-    expect(content.body.elements[1].columns[0].elements[1].columns).toHaveLength(5);
+    expect(content.body.elements[1].columns[0].elements[1].columns).toHaveLength(6);
     expect(content.body.elements[1].columns[0].elements[1].columns[0].elements[0].content).toBe("connected");
+    expect(content.body.elements[1].columns[0].elements[1].columns[2].elements[0].content).toBe("知识库模式");
     expect(content.body.elements[3].columns[0].elements[0].content).toContain("`/sessions` 查看全部");
   });
 
@@ -239,5 +245,110 @@ describe("buildPostPayload", () => {
     expect(content.body.elements[2].columns[1].elements[0].value.policy).toBe("deny");
     expect(content.body.elements[2].columns[1].elements[0].confirm.text.content).toContain("确认拒绝当前权限请求");
     expect(content.body.elements[3].columns[0].elements[0].content).toContain("120s 后自动拒绝");
+  });
+
+  it("renders a knowledge query card with sources and disclaimer", () => {
+    const payload = buildKnowledgeQueryPayload({
+      question: "员工试用期最长多久？",
+      results: [{
+        id: 1,
+        documentId: 1,
+        question: "员工试用期最长多久？",
+        answer: "试用期最长不超过 6 个月。",
+        tags: ["劳动"],
+        statute: "《劳动合同法》第 19 条",
+        sourceFile: "劳动合同法实务指南.pdf",
+        pageSection: "第 23 页",
+        createdAt: Date.now(),
+        score: 0.98,
+      }],
+    });
+    const content = JSON.parse(payload.content) as any;
+    const serialized = JSON.stringify(content);
+    expect(content.header.title.content).toBe("法律咨询");
+    expect(serialized).toContain("试用期最长不超过 6 个月");
+    expect(serialized).toContain("劳动合同法实务指南.pdf");
+    expect(serialized).toContain("以上内容仅供参考，不构成法律意见");
+    expect(content.body.elements[0].columns[0].elements[0].icon).toBeUndefined();
+    expect(content.body.elements[2].columns[0].elements[0].icon).toBeUndefined();
+    expect(serialized).toContain("warning_outlined");
+  });
+
+  it("renders an empty knowledge query card", () => {
+    const payload = buildKnowledgeQueryEmptyPayload("员工试用期最长多久？");
+    const serialized = JSON.stringify(JSON.parse(payload.content));
+    expect(serialized).toContain("未找到");
+    expect(serialized).toContain("员工试用期最长多久");
+  });
+
+  it("renders a knowledge ingest result card", () => {
+    const payload = buildKnowledgeIngestPayload({
+      sourceFile: "劳动合同法实务指南.pdf",
+      rawExtractedCount: 16,
+      dedupedCount: 4,
+      extractedCount: 12,
+      tagCounts: {
+        劳动: 8,
+        合同: 4,
+        解除: 3,
+        赔偿: 2,
+        程序: 2,
+        证据: 2,
+        调岗: 2,
+        培训: 2,
+        仲裁: 1,
+        诉讼: 1,
+        免责声明: 1,
+      },
+      durationMs: 12_000,
+      bitableUrl: "https://example.com/base/app?table=tbl",
+    });
+    const content = JSON.parse(payload.content) as any;
+    const serialized = JSON.stringify(content);
+    expect(serialized).toContain("知识入库完成");
+    expect(serialized).toContain("劳动合同法实务指南.pdf");
+    expect(serialized).toContain("原始提取");
+    expect(serialized).toContain("16 条");
+    expect(serialized).toContain("去重合并");
+    expect(serialized).toContain("4 条");
+    expect(serialized).toContain("最终入库");
+    expect(serialized).toContain("劳动(8)");
+    expect(serialized).toContain("其余 1 个标签已省略");
+    expect(serialized).toContain("查看多维表格");
+    expect(serialized).toContain("12s");
+    expect(content.header.icon.token).toBe("book_outlined");
+    expect(content.body.elements[0].columns[0].elements[0].icon).toBeUndefined();
+    expect(serialized).not.toContain("link_outlined");
+    expect(serialized).toContain("warning_outlined");
+  });
+
+  it("renders a knowledge ingest processing card without body icons", () => {
+    const payload = buildKnowledgeIngestProcessingPayload({
+      sourceLabel: "劳动合同.txt",
+      steps: [
+        { label: "读取内容", detail: "正在下载并解析文件", status: "running" },
+        { label: "提取问答", detail: "等待开始", status: "pending" },
+        { label: "写入知识库", detail: "等待开始", status: "pending" },
+      ],
+    });
+    const content = JSON.parse(payload.content) as any;
+    const serialized = JSON.stringify(content);
+    expect(serialized).toContain("知识入库处理中");
+    expect(serialized).toContain("读取内容");
+    expect(serialized).toContain("loading_outlined");
+    expect(content.body.elements[0].columns[0].elements[0].icon).toBeUndefined();
+    expect(serialized).toContain("warning_outlined");
+  });
+
+  it("renders a notice card without body icon when disabled", () => {
+    const payload = buildNoticeCardPayload({
+      title: "知识入库失败",
+      template: "red",
+      iconToken: "error_filled",
+      message: "Feishu createBitableRecord failed: SingleSelectFieldConvFail",
+      showMessageIcon: false,
+    });
+    const content = JSON.parse(payload.content) as any;
+    expect(content.body.elements[0].columns[0].elements[0].icon).toBeUndefined();
   });
 });

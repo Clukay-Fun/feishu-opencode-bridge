@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.4 - 2026-04-13
+
+### Added
+- Added knowledge-base commands, mode switching, ingest progress cards, and legal-query result cards in bridge runtime.
+- Added end-to-end tests for knowledge-mode routing, file ingest flow, and knowledge-base message handling.
+- Added README documentation for knowledge-base usage and required Feishu Bitable permissions.
+
+### Changed
+- Extended session-window state to track interaction mode and persist knowledge-mode selection across command flows.
+
 ## 0.1.3 - 2026-04-13
 
 ### Added
