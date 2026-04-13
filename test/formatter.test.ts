@@ -89,6 +89,34 @@ describe("buildPostPayload", () => {
     expect(output).not.toContain("-&gt;");
   });
 
+  it("renders all tool updates without truncating the toolbar", () => {
+    const payload = buildTurnStatusCardPayload({
+      title: "处理中",
+      status: "处理中",
+      sessionId: "ses_toolbar",
+      durationText: "",
+      progressUpdates: ["已开始处理"],
+      toolUpdates: [
+        { label: "读取文件", detail: "a.ts", status: "completed" },
+        { label: "执行命令", detail: "npm test", status: "running" },
+        { label: "抓取网页", detail: "https://example.com", status: "completed" },
+        { label: "应用补丁", detail: "formatter.ts", status: "pending" },
+      ],
+      output: {
+        text: "处理中...",
+        paths: [],
+        commands: [],
+      },
+    });
+    const content = JSON.parse(payload.content) as any;
+    const serialized = JSON.stringify(content);
+
+    expect(serialized).toContain("读取文件");
+    expect(serialized).toContain("执行命令");
+    expect(serialized).toContain("抓取网页");
+    expect(serialized).toContain("应用补丁");
+  });
+
   it("renders a status command card", () => {
     const payload = buildStatusCommandCardPayload({
       currentSession: {

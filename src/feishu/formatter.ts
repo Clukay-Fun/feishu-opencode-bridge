@@ -642,7 +642,7 @@ function buildPermissionActionBlock(buttons: PermissionActionButton[]): Record<s
 }
 
 function buildToolElements(lines: ReadonlyArray<ToolUpdateView>): Array<Record<string, unknown>> {
-  return lines.slice(-3).map((line) => ({
+  return lines.map((line) => ({
     tag: "markdown",
     content: formatToolDisplay(line),
     text_align: "left",

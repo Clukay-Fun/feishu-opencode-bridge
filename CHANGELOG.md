@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.9 - 2026-04-14
+
+### Fixed
+- Fixed Feishu turn-status cards so tool updates are no longer truncated from the toolbar display.
+
 ## 0.1.8 - 2026-04-14
 
 ### Fixed
