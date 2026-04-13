@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.5 - 2026-04-13
+
+### Added
+- Added staged extraction persistence so interrupted knowledge-base ingest jobs can resume from completed chunks.
+- Added retry handling and coverage for transient OpenCode extraction interruptions.
+
+### Changed
+- Reused semantic-dedupe embeddings during knowledge-base writes to avoid duplicate embedding requests.
+- Added chunk-limit warnings and ingest-session state needed for safer long-running knowledge ingestion.
+
 ## 0.1.4 - 2026-04-13
 
 ### Added

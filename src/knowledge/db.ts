@@ -34,6 +34,16 @@ export type KnowledgeEntryCandidate = KnowledgeEntryRecord & {
   score: number;
 };
 
+export type KnowledgeExtractChunkRecord = {
+  id: number;
+  documentId: number;
+  chunkIndex: number;
+  chunkHash: string;
+  pageSection: string;
+  extractedJson: string;
+  createdAt: number;
+};
+
 type KnowledgeEntryRow = {
   id: number;
   document_id: number;
@@ -46,6 +56,16 @@ type KnowledgeEntryRow = {
   bitable_record_id: string | null;
   embedding_model: string | null;
   embedding_json: string | null;
+  created_at: number;
+};
+
+type KnowledgeExtractChunkRow = {
+  id: number;
+  document_id: number;
+  chunk_index: number;
+  chunk_hash: string;
+  page_section: string;
+  extracted_json: string;
   created_at: number;
 };
 
@@ -194,6 +214,91 @@ export class KnowledgeDb {
     return row.id;
   }
 
+  updateDocumentStatus(id: number, status: string): void {
+    this.db.prepare(`
+      UPDATE knowledge_documents
+      SET status = @status
+      WHERE id = @id
+    `).run({ id, status });
+  }
+
+  listExtractedChunks(documentId: number): KnowledgeExtractChunkRecord[] {
+    const rows = this.db.prepare(`
+      SELECT
+        id,
+        document_id AS documentId,
+        chunk_index AS chunkIndex,
+        chunk_hash AS chunkHash,
+        page_section AS pageSection,
+        extracted_json AS extractedJson,
+        created_at AS createdAt
+      FROM knowledge_extract_chunks
+      WHERE document_id = @documentId
+      ORDER BY chunk_index ASC
+    `).all({ documentId }) as Array<KnowledgeExtractChunkRow & {
+      documentId: number;
+      chunkIndex: number;
+      chunkHash: string;
+      pageSection: string;
+      extractedJson: string;
+      createdAt: number;
+    }>;
+    return rows.map((row) => ({
+      id: row.id,
+      documentId: row.documentId,
+      chunkIndex: row.chunkIndex,
+      chunkHash: row.chunkHash,
+      pageSection: row.pageSection,
+      extractedJson: row.extractedJson,
+      createdAt: row.createdAt,
+    }));
+  }
+
+  saveExtractedChunk(input: {
+    documentId: number;
+    chunkIndex: number;
+    chunkHash: string;
+    pageSection: string;
+    extractedJson: string;
+  }): void {
+    this.db.prepare(`
+      INSERT INTO knowledge_extract_chunks (
+        document_id,
+        chunk_index,
+        chunk_hash,
+        page_section,
+        extracted_json,
+        created_at
+      )
+      VALUES (
+        @documentId,
+        @chunkIndex,
+        @chunkHash,
+        @pageSection,
+        @extractedJson,
+        @createdAt
+      )
+      ON CONFLICT(document_id, chunk_index) DO UPDATE SET
+        chunk_hash = excluded.chunk_hash,
+        page_section = excluded.page_section,
+        extracted_json = excluded.extracted_json
+    `).run({
+      documentId: input.documentId,
+      chunkIndex: input.chunkIndex,
+      chunkHash: input.chunkHash,
+      pageSection: input.pageSection,
+      extractedJson: input.extractedJson,
+      createdAt: Date.now(),
+    });
+  }
+
+  clearExtractedChunks(documentId: number): void {
+    this.db.prepare(`
+      DELETE FROM knowledge_extract_chunks
+      WHERE document_id = @documentId
+    `).run({ documentId });
+  }
+
   updateEntryEmbedding(id: number, model: string, embedding: number[]): void {
     this.db.prepare(`
       UPDATE knowledge_entries
@@ -300,6 +405,20 @@ export class KnowledgeDb {
 
       CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_entries_identity
         ON knowledge_entries(document_id, question, answer, COALESCE(page_section, ''));
+
+      CREATE TABLE IF NOT EXISTS knowledge_extract_chunks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        document_id INTEGER NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        chunk_hash TEXT NOT NULL,
+        page_section TEXT NOT NULL,
+        extracted_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY(document_id) REFERENCES knowledge_documents(id)
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_extract_chunks_identity
+        ON knowledge_extract_chunks(document_id, chunk_index);
 
       CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_entries_fts USING fts5(
         question,

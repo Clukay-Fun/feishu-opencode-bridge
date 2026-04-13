@@ -48,6 +48,8 @@ export type PendingKnowledgeIngestInteraction = {
   conversationKey: string;
   requesterOpenId: string;
   replyToMessageId: string;
+  ingestSessionId?: string | undefined;
+  previousActiveSessionId?: string | null | undefined;
 };
 
 export type PendingInteraction =

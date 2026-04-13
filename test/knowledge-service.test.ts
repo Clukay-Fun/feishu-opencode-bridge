@@ -1025,14 +1025,311 @@ describe("KnowledgeBaseService", () => {
     expect(result.warning).toContain("已按质量评分保留前 3 条问答");
     service.close();
   });
+
+  it("retries transient terminated errors during extraction", async () => {
+    stubEmbeddingFetch();
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-"));
+    tempDirs.push(dir);
+    const progress: Array<{ step: string; status: string; detail?: string | undefined }> = [];
+    const requests: Array<unknown> = [];
+    const service = new KnowledgeBaseService(
+      {
+        enabled: true,
+        autoDetect: { enabled: false, minConfidence: 0.75 },
+        query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
+        storage: {
+          sqlitePath: join(dir, "knowledge.db"),
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+            documentTableId: "tbl_docs",
+          },
+        },
+        embeddingProvider: {
+          baseUrl: new URL("https://example.com/v1/"),
+          apiKey: "token",
+          model: "text-embedding",
+        },
+        models: {},
+        ingest: {
+          allowedExtensions: [".txt"],
+          maxFileSizeMb: 20,
+          pendingTtlMs: 600_000, concurrency: 1, maxExtractChunks: 30, maxExtractQas: 500,
+        },
+      },
+      {
+        async downloadMessageResource() {
+          return {
+            fileName: "retry.txt",
+            mimeType: "text/plain",
+            buffer: Buffer.from("试用期最长不超过六个月。", "utf8"),
+          };
+        },
+        async createBitableRecord(_appToken, tableId) {
+          return `${tableId}_${Date.now()}`;
+        },
+        async listBitableRecords() {
+          return [];
+        },
+      },
+      createOpenCodeStub({ extractFailures: 1, requests }),
+      logger(),
+    );
+
+    const result = await service.ingestFile({
+      messageId: "om_file_retry",
+      fileKey: "file_retry",
+      fileName: "retry.txt",
+    }, {
+      onProgress(update) {
+        progress.push(update);
+      },
+    });
+
+    expect(result.extractedCount).toBe(1);
+    expect(progress.some((item) => item.detail?.includes("正在重试"))).toBe(true);
+    expect(requests.filter((request) => ((request as { parts?: Array<{ text?: string }> }).parts?.[0]?.text ?? "").includes("法律知识提取专家"))).toHaveLength(2);
+    service.close();
+  });
+
+  it("limits extraction chunks by maxExtractChunks and adds a warning", async () => {
+    stubEmbeddingFetch();
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-"));
+    tempDirs.push(dir);
+    const requests: Array<unknown> = [];
+    const firstBlock = "第一段：试用期最长不超过六个月。".repeat(80);
+    const secondBlock = "第二段：劳动合同期限不满三个月的，不得约定试用期。".repeat(80);
+    const thirdBlock = "第三段：试用期工资不得低于法定标准。".repeat(80);
+    const service = new KnowledgeBaseService(
+      {
+        enabled: true,
+        autoDetect: { enabled: false, minConfidence: 0.75 },
+        query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
+        storage: {
+          sqlitePath: join(dir, "knowledge.db"),
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+            documentTableId: "tbl_docs",
+          },
+        },
+        embeddingProvider: {
+          baseUrl: new URL("https://example.com/v1/"),
+          apiKey: "token",
+          model: "text-embedding",
+        },
+        models: {},
+        ingest: {
+          allowedExtensions: [".txt"],
+          maxFileSizeMb: 20,
+          pendingTtlMs: 600_000, concurrency: 1, maxExtractChunks: 2, maxExtractQas: 500,
+        },
+      },
+      {
+        async downloadMessageResource() {
+          return {
+            fileName: "long.txt",
+            mimeType: "text/plain",
+            buffer: Buffer.from([firstBlock, "", secondBlock, "", thirdBlock].join("\n\n"), "utf8"),
+          };
+        },
+        async createBitableRecord(_appToken, tableId) {
+          return `${tableId}_${Date.now()}`;
+        },
+        async listBitableRecords() {
+          return [];
+        },
+      },
+      createOpenCodeStub({ requests }),
+      logger(),
+    );
+
+    const result = await service.ingestFile({
+      messageId: "om_file_long",
+      fileKey: "file_long",
+      fileName: "long.txt",
+    });
+
+    const extractRequests = requests.filter((request) => ((request as { parts?: Array<{ text?: string }> }).parts?.[0]?.text ?? "").includes("法律知识提取专家"));
+    expect(extractRequests).toHaveLength(2);
+    expect(result.warning).toContain("已仅处理前 2 段");
+    service.close();
+  });
+
+  it("resumes extraction from staged chunks after interruption", async () => {
+    stubEmbeddingFetch();
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-"));
+    tempDirs.push(dir);
+    const firstRunRequests: Array<unknown> = [];
+    const secondRunRequests: Array<unknown> = [];
+    const firstBlock = "第一段：试用期最长不超过六个月。".repeat(80);
+    const secondBlock = "第二段：劳动合同期限不满三个月的，不得约定试用期。".repeat(80);
+    const thirdBlock = "第三段：试用期工资不得低于法定标准。".repeat(80);
+    const config = {
+      enabled: true,
+      autoDetect: { enabled: false, minConfidence: 0.75 },
+      query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
+      storage: {
+        sqlitePath: join(dir, "knowledge.db"),
+        bitable: {
+          appToken: "app_token",
+          tableId: "tbl_entries",
+          documentTableId: "tbl_docs",
+        },
+      },
+      embeddingProvider: {
+        baseUrl: new URL("https://example.com/v1/"),
+        apiKey: "token",
+        model: "text-embedding",
+      },
+      models: {},
+      ingest: {
+        allowedExtensions: [".txt"],
+        maxFileSizeMb: 20,
+        pendingTtlMs: 600_000, concurrency: 1, maxExtractChunks: 2, maxExtractQas: 500,
+      },
+    };
+    const resources = {
+      async downloadMessageResource() {
+        return {
+          fileName: "resume.txt",
+          mimeType: "text/plain",
+          buffer: Buffer.from([firstBlock, "", secondBlock, "", thirdBlock].join("\n\n"), "utf8"),
+        };
+      },
+      async createBitableRecord(_appToken: string, tableId: string) {
+        return `${tableId}_${Date.now()}`;
+      },
+      async listBitableRecords() {
+        return [];
+      },
+    };
+
+    const firstRunService = new KnowledgeBaseService(
+      config,
+      resources,
+      createOpenCodeStub({ requests: firstRunRequests, extractFailCallNumbers: [2, 3, 4] }),
+      logger(),
+    );
+
+    await expect(firstRunService.ingestFile({
+      messageId: "om_file_resume",
+      fileKey: "file_resume",
+      fileName: "resume.txt",
+    })).rejects.toThrow(/第 2\/2 段被中断/);
+    firstRunService.close();
+
+    const secondRunProgress: Array<{ step: string; status: string; detail?: string | undefined }> = [];
+    const secondRunService = new KnowledgeBaseService(
+      config,
+      resources,
+      createOpenCodeStub({ requests: secondRunRequests }),
+      logger(),
+    );
+
+    const result = await secondRunService.ingestFile({
+      messageId: "om_file_resume",
+      fileKey: "file_resume",
+      fileName: "resume.txt",
+    }, {
+      onProgress(update) {
+        secondRunProgress.push(update);
+      },
+    });
+
+    const secondExtractRequests = secondRunRequests.filter((request) => ((request as { parts?: Array<{ text?: string }> }).parts?.[0]?.text ?? "").includes("法律知识提取专家"));
+    expect(firstRunRequests.filter((request) => ((request as { parts?: Array<{ text?: string }> }).parts?.[0]?.text ?? "").includes("法律知识提取专家"))).toHaveLength(4);
+    expect(secondExtractRequests).toHaveLength(1);
+    expect(secondRunProgress.some((item) => item.detail?.includes("已恢复 1/2 段历史提取结果"))).toBe(true);
+    expect(result.extractedCount).toBe(1);
+    secondRunService.close();
+  });
+
+  it("reuses semantic dedupe embeddings during write", async () => {
+    const fetchSpy = stubEmbeddingFetchCounter();
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-"));
+    tempDirs.push(dir);
+    const service = new KnowledgeBaseService(
+      {
+        enabled: true,
+        autoDetect: { enabled: false, minConfidence: 0.75 },
+        query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
+        storage: {
+          sqlitePath: join(dir, "knowledge.db"),
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+            documentTableId: "tbl_docs",
+          },
+        },
+        embeddingProvider: {
+          baseUrl: new URL("https://example.com/v1/"),
+          apiKey: "token",
+          model: "text-embedding",
+        },
+        models: {},
+        ingest: {
+          allowedExtensions: [".txt"],
+          maxFileSizeMb: 20,
+          pendingTtlMs: 600_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+        },
+      },
+      {
+        async downloadMessageResource() {
+          return {
+            fileName: "faq.txt",
+            mimeType: "text/plain",
+            buffer: Buffer.from([
+              "问：试用期最长多久？",
+              "答：最长不超过六个月。",
+              "",
+              "问：试用期工资可以低于最低工资吗？",
+              "答：不得低于本单位相同岗位最低档工资或者劳动合同约定工资的百分之八十，也不得低于最低工资标准。",
+              "",
+              "问：医疗期内能解除劳动合同吗？",
+              "答：一般不得解除。",
+              "",
+              "问：公司不续签要补偿吗？",
+              "答：符合条件的，应支付经济补偿。",
+              "",
+              "问：试用期可以随意辞退吗？",
+              "答：不可以，仍需符合法定条件。",
+            ].join("\n"), "utf8"),
+          };
+        },
+        async createBitableRecord(_appToken, tableId) {
+          return `${tableId}_${Date.now()}`;
+        },
+        async listBitableRecords() {
+          return [];
+        },
+      },
+      createOpenCodeStub(),
+      logger(),
+    );
+
+    const result = await service.ingestFile({
+      messageId: "om_file_4",
+      fileKey: "file_4",
+      fileName: "faq.txt",
+    });
+
+    expect(result.extractedCount).toBe(5);
+    expect(fetchSpy).toHaveBeenCalledTimes(5);
+    service.close();
+  });
 });
 
 function createOpenCodeStub(options?: {
   statute?: string | undefined;
   extract?: Array<Record<string, unknown>>;
   requests?: unknown[];
+  extractFailures?: number | undefined;
+  extractFailCallNumbers?: number[] | undefined;
 }) {
   let counter = 0;
+  let extractFailuresRemaining = options?.extractFailures ?? 0;
+  let extractCallCount = 0;
   return {
     async createSession(title: string) {
       counter += 1;
@@ -1064,6 +1361,14 @@ function createOpenCodeStub(options?: {
         }))));
       }
       if (prompt.includes("知识提取专家")) {
+        extractCallCount += 1;
+        if (options?.extractFailCallNumbers?.includes(extractCallCount)) {
+          throw new Error("terminated");
+        }
+        if (extractFailuresRemaining > 0) {
+          extractFailuresRemaining -= 1;
+          throw new Error("terminated");
+        }
         return assistantMessage(JSON.stringify(options?.extract ?? [
           {
             question: "员工试用期最长多久？",
@@ -1126,4 +1431,23 @@ function stubEmbeddingFetchSequence() {
       headers: { "Content-Type": "application/json" },
     });
   }) as typeof fetch);
+}
+
+function stubEmbeddingFetchCounter() {
+  let counter = 0;
+  const spy = vi.fn(async () => {
+    counter += 1;
+    const dimension = 8;
+    const embedding = Array.from({ length: dimension }, (_, index) => (index === ((counter - 1) % dimension) ? 1 : 0));
+    return new Response(JSON.stringify({
+      data: [{
+        embedding,
+      }],
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+  vi.stubGlobal("fetch", spy as typeof fetch);
+  return spy;
 }

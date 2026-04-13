@@ -80,6 +80,16 @@ type ExtractedQa = {
 
 type ExtractedQaCandidate = ExtractedQa & {
   pageSection: string;
+  embedding?: number[] | undefined;
+};
+
+type ChunkExtractionState = {
+  chunk: {
+    location: string;
+    text: string;
+    prevContext?: string | undefined;
+  };
+  items: ExtractedQa[];
 };
 
 type DetectedQaPair = {
@@ -102,6 +112,7 @@ type StatuteTemplateContext = SourceFileTemplateContext & {
 };
 
 type BitableFieldValue = string | number | boolean | string[] | { text: string; link: string } | undefined;
+const EXTRACTION_CACHE_VERSION = "v1";
 
 export class KnowledgeBaseService implements KnowledgeBasePort {
   private readonly db: KnowledgeDb;
@@ -209,7 +220,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
       title: input.fileName,
       fileName: input.fileName,
       checksum,
-      status: "ingested",
+      status: "extracting",
       bitableRecordId: await this.saveDocumentRecord(input.fileName, checksum, input.sourceType, input.sourceUrl),
     });
 
@@ -228,6 +239,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     );
 
     if (qaDocument.matched) {
+      this.db.clearExtractedChunks(document.id);
       await this.reportProgress(options, {
         step: "extract",
         status: "running",
@@ -244,22 +256,58 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
       finalCandidates = await this.semanticDedupeCandidates(dedupedCandidates, options);
       dedupedCount = rawExtractedCount - finalCandidates.length;
     } else {
-      const chunks = chapterGrouping.chapters.length > 0
+      const allChunks = chapterGrouping.chapters.length > 0
         ? chapterGrouping.chapters
           .filter((chapter) => !chapter.skipped)
           .flatMap((chapter) => chunkKnowledgeSections(chapter.sections))
         : chunkKnowledgeSections(extractionSections);
+      const maxExtractChunks = this.config.ingest.maxExtractChunks;
+      const chunks = allChunks.slice(0, maxExtractChunks);
+      if (allChunks.length > maxExtractChunks) {
+        warning = joinWarnings(warning, buildMaxExtractChunksWarning(maxExtractChunks, allChunks.length));
+      }
       await this.reportProgress(options, {
         step: "extract",
         status: "running",
-        detail: `文本切块完成（共 ${chunks.length} 段），开始提取问答`,
+        detail: allChunks.length > chunks.length
+          ? `文本切块完成（共 ${allChunks.length} 段，已截取前 ${chunks.length} 段），开始提取问答`
+          : `文本切块完成（共 ${chunks.length} 段），开始提取问答`,
       });
 
-      const extractedByChunk: Array<{ chunk: typeof chunks[number]; items: ExtractedQa[] }> = new Array(chunks.length);
-      let extractCompleted = 0;
+      const extractedByChunk: Array<ChunkExtractionState> = new Array(chunks.length);
+      const cachedChunks = this.restoreChunkExtractions(document.id, chunks);
+      let extractCompleted = cachedChunks.completedCount;
+      if (cachedChunks.completedCount > 0) {
+        for (const [index, cached] of cachedChunks.completed.entries()) {
+          extractedByChunk[index] = cached;
+        }
+        await this.reportProgress(options, {
+          step: "extract",
+          status: "running",
+          detail: `已恢复 ${cachedChunks.completedCount}/${chunks.length} 段历史提取结果，继续处理剩余分段`,
+        });
+      }
       await runWithConcurrency(chunks, concurrency, async (chunk, index) => {
-        const items = await this.extractQa(input.fileName, chunk.location, chunk.text, chunk.prevContext);
+        if (extractedByChunk[index]) {
+          return;
+        }
+        const items = await this.extractQaWithRetry(
+          input.fileName,
+          chunk.location,
+          chunk.text,
+          chunk.prevContext,
+          index,
+          chunks.length,
+          options,
+        );
         extractedByChunk[index] = { chunk, items };
+        this.db.saveExtractedChunk({
+          documentId: document.id,
+          chunkIndex: index,
+          chunkHash: buildChunkExtractionHash(chunk, resolveKnowledgeModelKey(this.config, "extract")),
+          pageSection: chunk.location,
+          extractedJson: JSON.stringify(items),
+        });
         extractCompleted += 1;
         if (shouldReportProgress(extractCompleted - 1, chunks.length) || extractCompleted === chunks.length) {
           await this.reportProgress(options, {
@@ -292,6 +340,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     }
 
     const totalExtracted = finalCandidates.length;
+    this.db.updateDocumentStatus(document.id, totalExtracted > 0 ? "writing" : "extracted");
     await this.reportProgress(options, {
       step: "extract",
       status: "completed",
@@ -313,8 +362,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     const writeErrors: string[] = [];
     await runWithConcurrency(finalCandidates, concurrency, async (item) => {
       try {
-        const entryText = `${item.question}\n${item.answer}`;
-        const embedding = await this.embeddingClient.embed(entryText);
+        const embedding = item.embedding ?? await this.embeddingClient.embed(`${item.question}\n${item.answer}`);
         const fields = compactBitableFields({
           问题: item.question,
           答案: item.answer,
@@ -374,6 +422,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     });
 
     if (writeErrors.length > 0) {
+      this.db.updateDocumentStatus(document.id, "write-failed");
       await this.reportProgress(options, {
         step: "write",
         status: "error",
@@ -382,6 +431,8 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
       throw new Error(`知识入库部分失败：成功写入 ${writeCompleted} 条，失败 ${writeErrors.length} 条。首个错误：${writeErrors[0]}`);
     }
 
+    this.db.clearExtractedChunks(document.id);
+    this.db.updateDocumentStatus(document.id, "ingested");
     await this.reportProgress(options, {
       step: "write",
       status: "completed",
@@ -529,6 +580,34 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     } finally {
       await this.opencode.deleteSession(session.id).catch(() => undefined);
     }
+  }
+
+  private async extractQaWithRetry(
+    fileName: string,
+    pageSection: string,
+    chunk: string,
+    prevContext: string | undefined,
+    chunkIndex: number,
+    chunkCount: number,
+    options?: KnowledgeIngestOptions,
+  ): Promise<ExtractedQa[]> {
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await this.extractQa(fileName, pageSection, chunk, prevContext);
+      } catch (error) {
+        if (!isRetryableKnowledgeExtractError(error) || attempt === maxAttempts) {
+          throw wrapKnowledgeExtractError(error, chunkIndex, chunkCount);
+        }
+        await this.reportProgress(options, {
+          step: "extract",
+          status: "running",
+          detail: `第 ${chunkIndex + 1}/${chunkCount} 段提取中断，正在重试（${attempt}/${maxAttempts - 1}）`,
+        });
+        await delay(extractRetryDelayMs(attempt));
+      }
+    }
+    throw new Error("知识提取重试失败");
   }
 
   private async enrichDetectedQaPairs(
@@ -683,7 +762,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     candidates: ExtractedQaCandidate[],
     options?: KnowledgeIngestOptions,
   ): Promise<ExtractedQaCandidate[]> {
-    const kept: Array<ExtractedQaCandidate & { questionEmbedding: number[] }> = [];
+    const kept: Array<ExtractedQaCandidate & { semanticEmbedding: number[] }> = [];
     for (const [index, candidate] of candidates.entries()) {
       if (candidates.length > 20 && shouldReportProgress(index, candidates.length)) {
         await this.reportProgress(options, {
@@ -692,21 +771,54 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
           detail: `正在去重问答（${index + 1}/${candidates.length}）`,
         });
       }
-      const questionEmbedding = await this.embeddingClient.embed(candidate.question);
-      const duplicateIndex = kept.findIndex((item) => cosineSimilarity(item.questionEmbedding, questionEmbedding) >= 0.9);
+      const semanticEmbedding = candidate.embedding ?? await this.embeddingClient.embed(`${candidate.question}\n${candidate.answer}`);
+      const duplicateIndex = kept.findIndex((item) => cosineSimilarity(item.semanticEmbedding, semanticEmbedding) >= 0.9);
       if (duplicateIndex < 0) {
-        kept.push({ ...candidate, questionEmbedding });
+        kept.push({ ...candidate, embedding: semanticEmbedding, semanticEmbedding });
         continue;
       }
       if (scoreExtractedCandidate(candidate) > scoreExtractedCandidate(kept[duplicateIndex]!)) {
-        kept[duplicateIndex] = { ...candidate, questionEmbedding };
+        kept[duplicateIndex] = { ...candidate, embedding: semanticEmbedding, semanticEmbedding };
       }
     }
     return kept.map((item) => {
       const candidate = { ...item };
-      delete (candidate as { questionEmbedding?: number[] }).questionEmbedding;
+      delete (candidate as { semanticEmbedding?: number[] }).semanticEmbedding;
       return candidate;
     });
+  }
+
+  private restoreChunkExtractions(
+    documentId: number,
+    chunks: Array<{ location: string; text: string; prevContext?: string | undefined }>,
+  ): { completed: Map<number, ChunkExtractionState>; completedCount: number } {
+    const cachedRows = this.db.listExtractedChunks(documentId);
+    const completed = new Map<number, ChunkExtractionState>();
+    const expectedModel = resolveKnowledgeModelKey(this.config, "extract");
+    const validIndexes = new Set(chunks.map((_chunk, index) => index));
+
+    for (const row of cachedRows) {
+      if (!validIndexes.has(row.chunkIndex)) {
+        continue;
+      }
+      const chunk = chunks[row.chunkIndex];
+      if (!chunk) {
+        continue;
+      }
+      const expectedHash = buildChunkExtractionHash(chunk, expectedModel);
+      if (row.chunkHash !== expectedHash) {
+        continue;
+      }
+      completed.set(row.chunkIndex, {
+        chunk,
+        items: normalizeExtractedQa(parseJsonArray(row.extractedJson)),
+      });
+    }
+
+    return {
+      completed,
+      completedCount: completed.size,
+    };
   }
 }
 
@@ -1137,6 +1249,10 @@ function buildMaxExtractQasWarning(limit: number): string {
   return `内容较长，已按质量评分保留前 ${limit} 条问答。`;
 }
 
+function buildMaxExtractChunksWarning(limit: number, total: number): string {
+  return `内容较长，共切分 ${total} 段，已仅处理前 ${limit} 段。建议拆分文件后重试。`;
+}
+
 function currentQuestionLooksNonQuestion(value: string): boolean {
   return /^(?:依据|来源|注|说明)[：:]/.test(value);
 }
@@ -1144,6 +1260,27 @@ function currentQuestionLooksNonQuestion(value: string): boolean {
 function joinWarnings(...warnings: Array<string | undefined>): string | undefined {
   const parts = warnings.filter((warning): warning is string => Boolean(warning && warning.trim()));
   return parts.length > 0 ? parts.join("\n") : undefined;
+}
+
+function isRetryableKnowledgeExtractError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /terminated|abort|aborted|ECONNRESET|socket|timed out|fetch failed/i.test(message);
+}
+
+function wrapKnowledgeExtractError(error: unknown, chunkIndex: number, chunkCount: number): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/terminated/i.test(message)) {
+    return new Error(`OpenCode 提取在第 ${chunkIndex + 1}/${chunkCount} 段被中断（terminated）。建议拆分文件或降低 maxExtractChunks 后重试。`);
+  }
+  return error instanceof Error ? error : new Error(message);
+}
+
+function extractRetryDelayMs(attempt: number): number {
+  return attempt === 1 ? 500 : 1500;
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function resolveKnowledgeBitableViewUrl(config: AppConfig["knowledgeBase"]): string | undefined {
@@ -1164,8 +1301,30 @@ function resolveKnowledgeModel(config: AppConfig["knowledgeBase"], step: "webRea
   return toOpenCodeModelRef(config.models[step] ?? config.models.default);
 }
 
+function resolveKnowledgeModelKey(config: AppConfig["knowledgeBase"], step: "webRead" | "extract" | "rerank"): string {
+  return config.models[step] ?? config.models.default ?? "__opencode_default__";
+}
+
 function buildKnowledgePromptRequest(parts: OpenCodePromptRequest["parts"], model?: OpenCodeModelRef | undefined): OpenCodePromptRequest {
   return model ? { model, parts } : { parts };
+}
+
+function buildChunkExtractionHash(
+  chunk: { location: string; text: string; prevContext?: string | undefined },
+  modelKey: string,
+): string {
+  return crypto
+    .createHash("sha256")
+    .update(EXTRACTION_CACHE_VERSION)
+    .update("\n")
+    .update(modelKey)
+    .update("\n")
+    .update(chunk.location)
+    .update("\n")
+    .update(chunk.prevContext ?? "")
+    .update("\n")
+    .update(chunk.text)
+    .digest("hex");
 }
 
 function toOpenCodeModelRef(model: string | undefined): OpenCodeModelRef | undefined {

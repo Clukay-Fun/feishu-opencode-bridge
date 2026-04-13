@@ -274,12 +274,25 @@ export class CommandHandler {
         });
         return;
       }
+      const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
+      const previousSession = getActiveSession(window);
+      const entry = await this.context.createAndBindSession(message);
+      const ingestLabel = "知识入库";
+      const nextWindow = updateSessionLabel(
+        this.context.getSessionWindow(message.conversationKey, message.chatType),
+        entry.sessionId,
+        ingestLabel,
+        this.context.config.bridge.maxSessionsPerWindow,
+      );
+      await this.context.saveSessionWindow(message.conversationKey, nextWindow);
       this.context.setPendingInteraction(message.conversationKey, {
         kind: "knowledge-ingest-await-file",
         chatId: message.chatId,
         conversationKey: message.conversationKey,
         requesterOpenId: message.senderOpenId,
         replyToMessageId: message.messageId,
+        ingestSessionId: entry.sessionId,
+        previousActiveSessionId: previousSession?.sessionId ?? null,
       });
       if (message.chatType !== "p2p") {
         await this.context.whitelistBind(message.chatId, message.senderOpenId);
@@ -313,7 +326,7 @@ export class CommandHandler {
         });
         return;
       }
-      this.context.clearPendingInteraction(message.conversationKey, false);
+      await this.clearKnowledgeIngestPending(message.conversationKey, message.chatType);
       await this.sendNotice(message, {
         title: "已退出知识入库模式",
         template: "green",
@@ -333,7 +346,7 @@ export class CommandHandler {
         });
         return;
       }
-      const clearedIngestPending = this.clearKnowledgeIngestPending(message.conversationKey);
+      const clearedIngestPending = await this.clearKnowledgeIngestPending(message.conversationKey, message.chatType);
       const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
       if (window.interactionMode === "knowledge") {
         await this.sendNotice(message, {
@@ -360,7 +373,7 @@ export class CommandHandler {
     }
 
     if (command.kind === "knowledge-mode-end") {
-      this.clearKnowledgeIngestPending(message.conversationKey);
+      await this.clearKnowledgeIngestPending(message.conversationKey, message.chatType);
       const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
       if (window.interactionMode !== "knowledge") {
         await this.sendNotice(message, {
@@ -783,9 +796,22 @@ export class CommandHandler {
     });
   }
 
-  private clearKnowledgeIngestPending(conversationKey: string): boolean {
+  private async clearKnowledgeIngestPending(conversationKey: string, chatType: string): Promise<boolean> {
     const pending = this.context.pendingInteractions.get(conversationKey);
     if (pending?.kind === "knowledge-ingest-await-file") {
+      if (pending.previousActiveSessionId) {
+        const window = this.context.getSessionWindow(conversationKey, chatType);
+        const previousExists = window.sessions.some((session) => session.sessionId === pending.previousActiveSessionId);
+        if (previousExists) {
+          const nextWindow = setActiveSession(
+            window,
+            pending.previousActiveSessionId,
+            Date.now(),
+            this.context.config.bridge.maxSessionsPerWindow,
+          );
+          await this.context.saveSessionWindow(conversationKey, nextWindow);
+        }
+      }
       this.context.clearPendingInteraction(conversationKey, false);
       return true;
     }
