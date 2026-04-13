@@ -96,7 +96,7 @@ describe("logger", () => {
     logger.log("scope", "warn message", {}, "warn");
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    const day = new Date().toISOString().slice(0, 10);
+    const day = localDay();
     const content = await readFile(path.join(dir, `bridge-${day}.log`), "utf8");
     expect(content).not.toContain("info message");
     expect(content).toContain("warn message");

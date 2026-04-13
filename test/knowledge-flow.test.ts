@@ -37,7 +37,7 @@ describe("knowledge base bridge flow", () => {
       memory: null,
     });
 
-    await app.handleIncomingMessage(createTextMessage("员工试用期最长多久？"));
+    await app.handleIncomingMessage(createTextMessage("劳动合同试用期最长多久？"));
 
     const appAny = app as unknown as { sessionMap: Record<string, unknown> };
     expect(appAny.sessionMap).toEqual({});
@@ -108,6 +108,42 @@ describe("knowledge base bridge flow", () => {
     expect(JSON.stringify(replyPayloads)).toContain("已退出知识入库模式");
   });
 
+  it("asks for intent when receiving a file outside ingest mode and can process it as a normal turn", async () => {
+    const outbound = {
+      ...createOutbound(),
+      downloadMessageResource: vi.fn(async () => ({
+        fileName: "说明.txt",
+        mimeType: "text/plain",
+        buffer: Buffer.from("这是一个需要总结的普通文件。", "utf8"),
+      })),
+    };
+    const eventStream = new FakeOpenCodeEventStream();
+    const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "文件总结完成。" });
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
+      knowledge: null,
+      opencode,
+      eventStream,
+      memory: null,
+    });
+
+    await app.handleIncomingMessage({
+      ...createTextMessage("说明.txt", "om_file_plain"),
+      messageType: "file",
+      file: {
+        fileKey: "file_plain",
+        fileName: "说明.txt",
+      },
+    });
+    await app.handleIncomingMessage(createTextMessage("总结这个文件", "om_instruction"));
+
+    const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+    const updatePayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+    expect(JSON.stringify(replyPayloads)).toContain("已收到文件");
+    expect(JSON.stringify(replyPayloads)).toContain("/kb-ingest-start");
+    expect(outbound.downloadMessageResource).toHaveBeenCalledWith("om_file_plain", "file_plain", "file");
+    expect(JSON.stringify(updatePayloads)).toContain("文件总结完成");
+  });
+
   it("queries the knowledge base directly while knowledge mode is enabled, then falls back to OpenCode after exit", async () => {
     const outbound = createOutbound();
     const eventStream = new FakeOpenCodeEventStream();
@@ -146,8 +182,8 @@ describe("knowledge base bridge flow", () => {
     });
 
     await app.handleIncomingMessage(createTextMessage("/legal-query-start"));
-    await app.handleIncomingMessage(createTextMessage("员工试用期最长多久？", "om_2"));
-    await app.handleIncomingMessage(createTextMessage("这个问题知识库里没有", "om_3"));
+    await app.handleIncomingMessage(createTextMessage("劳动合同试用期最长多久？", "om_2"));
+    await app.handleIncomingMessage(createTextMessage("解除劳动合同这个问题知识库里没有吗？", "om_3"));
     await app.handleIncomingMessage(createTextMessage("/legal-query-end", "om_4"));
     await app.handleIncomingMessage(createTextMessage("帮我总结一下今天的工作", "om_5"));
 
@@ -168,6 +204,35 @@ describe("knowledge base bridge flow", () => {
     expect(JSON.stringify(allPayloads)).toContain("这是普通 OpenCode 回复");
     expect(appAny.sessionMap["oc_p2p_1"]?.interactionMode).toBe("default");
     expect(appAny.sessionMap["oc_p2p_1"]?.sessions).toHaveLength(1);
+  });
+
+  it("lets non-legal text use normal chat while knowledge query mode is enabled", async () => {
+    const outbound = createOutbound();
+    const eventStream = new FakeOpenCodeEventStream();
+    const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "你好，我在。" });
+    const knowledgeQuery = vi.fn(async () => ({ question: "", results: [] }));
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
+      knowledge: {
+        query: knowledgeQuery,
+        async ingestFile() {
+          throw new Error("not used");
+        },
+        async syncMirror() {},
+        close() {},
+      },
+      opencode,
+      eventStream,
+      memory: null,
+    });
+
+    await app.handleIncomingMessage(createTextMessage("/legal-query-start"));
+    await app.handleIncomingMessage(createTextMessage("你好", "om_hello"));
+
+    await vi.waitFor(() => {
+      const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+      expect(JSON.stringify(updatedPayloads)).toContain("你好，我在。");
+    });
+    expect(knowledgeQuery).not.toHaveBeenCalled();
   });
 
   it("uses OpenCode-assisted web ingestion from natural language while ingest mode is enabled", async () => {
@@ -246,8 +311,10 @@ describe("knowledge base bridge flow", () => {
     }, expect.any(Object));
   });
 
-  it("shows a busy notice for regular messages while ingest is running", async () => {
+  it("allows regular messages while ingest is running", async () => {
     const outbound = createOutbound();
+    const eventStream = new FakeOpenCodeEventStream();
+    const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "普通对话继续处理。" });
     let resolveIngest: (() => void) | undefined;
     const ingestFile = vi.fn(async (_file, options?: KnowledgeIngestOptions) => {
       await options?.onProgress?.({ step: "read", status: "running", detail: "正在下载并解析文件" });
@@ -273,6 +340,8 @@ describe("knowledge base bridge flow", () => {
         async syncMirror() {},
         close() {},
       },
+      opencode,
+      eventStream,
       memory: null,
     });
 
@@ -294,7 +363,9 @@ describe("knowledge base bridge flow", () => {
     await ingestPromise;
 
     const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
-    expect(JSON.stringify(replyPayloads)).toContain("当前正在处理知识入库任务");
+    const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+    expect(JSON.stringify(replyPayloads)).not.toContain("当前正在处理知识入库任务");
+    expect(JSON.stringify(updatedPayloads)).toContain("普通对话继续处理");
   });
 });
 

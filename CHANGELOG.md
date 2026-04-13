@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.7 - 2026-04-14
+
+### Added
+- Added a file-intent follow-up flow so uploaded files outside ingest mode can be processed as normal OpenCode turns.
+- Added tests for non-legal text fallback while knowledge mode is enabled and ordinary chat during background ingest.
+
+### Changed
+- Updated knowledge ingestion to process long documents in batches instead of truncating to the first `maxExtractChunks` chunks.
+- Made legal question and web-ingest detection more conservative to reduce accidental knowledge-mode routing.
+
 ## 0.1.6 - 2026-04-13
 
 ### Added

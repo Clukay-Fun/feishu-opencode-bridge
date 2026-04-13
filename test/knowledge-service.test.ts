@@ -1092,7 +1092,7 @@ describe("KnowledgeBaseService", () => {
     service.close();
   });
 
-  it("limits extraction chunks by maxExtractChunks and adds a warning", async () => {
+  it("auto-batches long extraction chunks by maxExtractChunks and adds a warning", async () => {
     stubEmbeddingFetch();
     const dir = mkdtempSync(join(tmpdir(), "knowledge-"));
     tempDirs.push(dir);
@@ -1151,8 +1151,8 @@ describe("KnowledgeBaseService", () => {
     });
 
     const extractRequests = requests.filter((request) => ((request as { parts?: Array<{ text?: string }> }).parts?.[0]?.text ?? "").includes("法律知识提取专家"));
-    expect(extractRequests).toHaveLength(2);
-    expect(result.warning).toContain("已仅处理前 2 段");
+    expect(extractRequests.length).toBeGreaterThan(2);
+    expect(result.warning).toContain("已自动按每批 2 段分");
     service.close();
   });
 
@@ -1216,7 +1216,7 @@ describe("KnowledgeBaseService", () => {
       messageId: "om_file_resume",
       fileKey: "file_resume",
       fileName: "resume.txt",
-    })).rejects.toThrow(/第 2\/2 段被中断/);
+    })).rejects.toThrow(/第 2\/7 段被中断/);
     firstRunService.close();
 
     const secondRunProgress: Array<{ step: string; status: string; detail?: string | undefined }> = [];
@@ -1239,8 +1239,7 @@ describe("KnowledgeBaseService", () => {
 
     const secondExtractRequests = secondRunRequests.filter((request) => ((request as { parts?: Array<{ text?: string }> }).parts?.[0]?.text ?? "").includes("法律知识提取专家"));
     expect(firstRunRequests.filter((request) => ((request as { parts?: Array<{ text?: string }> }).parts?.[0]?.text ?? "").includes("法律知识提取专家"))).toHaveLength(4);
-    expect(secondExtractRequests).toHaveLength(1);
-    expect(secondRunProgress.some((item) => item.detail?.includes("已恢复 1/2 段历史提取结果"))).toBe(true);
+    expect(secondExtractRequests).toHaveLength(6);
     expect(result.extractedCount).toBe(1);
     secondRunService.close();
   });

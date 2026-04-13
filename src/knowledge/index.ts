@@ -261,16 +261,17 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
           .filter((chapter) => !chapter.skipped)
           .flatMap((chapter) => chunkKnowledgeSections(chapter.sections))
         : chunkKnowledgeSections(extractionSections);
+      const chunks = allChunks;
       const maxExtractChunks = this.config.ingest.maxExtractChunks;
-      const chunks = allChunks.slice(0, maxExtractChunks);
-      if (allChunks.length > maxExtractChunks) {
-        warning = joinWarnings(warning, buildMaxExtractChunksWarning(maxExtractChunks, allChunks.length));
+      const batchCount = Math.max(1, Math.ceil(chunks.length / maxExtractChunks));
+      if (batchCount > 1) {
+        warning = joinWarnings(warning, buildChunkBatchingWarning(maxExtractChunks, chunks.length, batchCount));
       }
       await this.reportProgress(options, {
         step: "extract",
         status: "running",
-        detail: allChunks.length > chunks.length
-          ? `文本切块完成（共 ${allChunks.length} 段，已截取前 ${chunks.length} 段），开始提取问答`
+        detail: batchCount > 1
+          ? `文本切块完成（共 ${chunks.length} 段，自动分 ${batchCount} 批处理），开始提取问答`
           : `文本切块完成（共 ${chunks.length} 段），开始提取问答`,
       });
 
@@ -287,36 +288,50 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
           detail: `已恢复 ${cachedChunks.completedCount}/${chunks.length} 段历史提取结果，继续处理剩余分段`,
         });
       }
-      await runWithConcurrency(chunks, concurrency, async (chunk, index) => {
-        if (extractedByChunk[index]) {
-          return;
+      const chunkBatches = sliceIntoBatches(chunks.map((chunk, index) => ({ chunk, index })), maxExtractChunks);
+      for (const [batchIndex, batch] of chunkBatches.entries()) {
+        const pendingInBatch = batch.filter(({ index }) => !extractedByChunk[index]).length;
+        if (pendingInBatch === 0) {
+          continue;
         }
-        const items = await this.extractQaWithRetry(
-          input.fileName,
-          chunk.location,
-          chunk.text,
-          chunk.prevContext,
-          index,
-          chunks.length,
-          options,
-        );
-        extractedByChunk[index] = { chunk, items };
-        this.db.saveExtractedChunk({
-          documentId: document.id,
-          chunkIndex: index,
-          chunkHash: buildChunkExtractionHash(chunk, resolveKnowledgeModelKey(this.config, "extract")),
-          pageSection: chunk.location,
-          extractedJson: JSON.stringify(items),
+        await this.reportProgress(options, {
+          step: "extract",
+          status: "running",
+          detail: batchCount > 1
+            ? `正在提交第 ${batchIndex + 1}/${batchCount} 批模型提取任务（本批 ${pendingInBatch} 段，并发 ${concurrency}）`
+            : `正在提交模型提取任务（共 ${pendingInBatch} 段，并发 ${concurrency}）`,
         });
-        extractCompleted += 1;
-        if (shouldReportProgress(extractCompleted - 1, chunks.length) || extractCompleted === chunks.length) {
-          await this.reportProgress(options, {
-            step: "extract",
-            status: "running",
-            detail: `正在调用模型提取（${extractCompleted}/${chunks.length}）`,
+        await runWithConcurrency(batch, concurrency, async ({ chunk, index }) => {
+          if (extractedByChunk[index]) {
+            return;
+          }
+          const items = await this.extractQaWithRetry(
+            input.fileName,
+            chunk.location,
+            chunk.text,
+            chunk.prevContext,
+            index,
+            chunks.length,
+            options,
+          );
+          extractedByChunk[index] = { chunk, items };
+          this.db.saveExtractedChunk({
+            documentId: document.id,
+            chunkIndex: index,
+            chunkHash: buildChunkExtractionHash(chunk, resolveKnowledgeModelKey(this.config, "extract")),
+            pageSection: chunk.location,
+            extractedJson: JSON.stringify(items),
           });
-        }
-      });
+          extractCompleted += 1;
+          if (shouldReportProgress(extractCompleted - 1, chunks.length) || extractCompleted === chunks.length) {
+            await this.reportProgress(options, {
+              step: "extract",
+              status: "running",
+              detail: `正在调用模型提取（${extractCompleted}/${chunks.length}）`,
+            });
+          }
+        });
+      }
 
       rawExtractedCount = extractedByChunk.reduce((sum, item) => sum + item.items.length, 0);
       const dedupedCandidates = dedupeExtractedCandidates(extractedByChunk.flatMap((item) => item.items.map((qa) => ({
@@ -1094,7 +1109,7 @@ function isRelevantLegalQuestion(question: string, answer: string): boolean {
   if (normalizedQuestion.length < 8 || normalizedAnswer.length < 12) {
     return false;
   }
-  if (QUESTION_NOISE_PATTERN.test(normalizedQuestion)) {
+  if (NOISE_PATTERN.test(normalizedQuestion)) {
     return false;
   }
   return LEGAL_SIGNAL_PATTERN.test(normalizedQuestion) || LEGAL_SIGNAL_PATTERN.test(normalizedAnswer);
@@ -1112,7 +1127,7 @@ function scoreExtractedCandidate(candidate: Pick<ExtractedQaCandidate, "answer" 
 }
 
 function isNoisyTag(tag: string): boolean {
-  return TAG_NOISE_PATTERN.test(tag);
+  return NOISE_PATTERN.test(tag);
 }
 
 function detectStructuredQaDocument(markdown: string, sections: Array<{ location: string; text: string }>): {
@@ -1249,8 +1264,8 @@ function buildMaxExtractQasWarning(limit: number): string {
   return `内容较长，已按质量评分保留前 ${limit} 条问答。`;
 }
 
-function buildMaxExtractChunksWarning(limit: number, total: number): string {
-  return `内容较长，共切分 ${total} 段，已仅处理前 ${limit} 段。建议拆分文件后重试。`;
+function buildChunkBatchingWarning(limit: number, total: number, batchCount: number): string {
+  return `内容较长，共切分 ${total} 段，已自动按每批 ${limit} 段分 ${batchCount} 批处理。`;
 }
 
 function currentQuestionLooksNonQuestion(value: string): boolean {
@@ -1397,6 +1412,5 @@ async function runWithConcurrency<T>(
   }
 }
 
-const QUESTION_NOISE_PATTERN = /目录|课程|学习|免责声明|转载|引用|检索|关键词|案由|文书类型|地域分布|案件分布|胜诉率|上诉率|审理程序|文章|作者|来源|课程学习|法律意见|全文检索|案例来源/;
+const NOISE_PATTERN = /目录|课程|学习|免责声明|转载|引用|检索|关键词|案由|文书类型|地域分布|案件分布|胜诉率|上诉率|审理程序|文章|作者|来源|课程学习|法律意见|全文检索|案例来源/;
 const LEGAL_SIGNAL_PATTERN = /劳动|合同|解除|赔偿|补偿|仲裁|诉讼|调岗|调薪|培训|绩效|规章制度|通知|工会|证据|违法|合法|试用期|经济补偿|代通知金|岗位|用人单位|员工/;
-const TAG_NOISE_PATTERN = /免责声明|转载|引用|课程|学习|检索|关键词|案由|文书类型|地域分布|案件分布|胜诉率|上诉率|审理程序|文章|来源|案例来源/;

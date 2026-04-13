@@ -4,9 +4,10 @@ import { detectKnowledgeWebIngest, detectLegalQuestion } from "../src/knowledge/
 
 describe("detectLegalQuestion", () => {
   it("matches high-signal legal questions conservatively", () => {
-    const result = detectLegalQuestion("员工试用期最长多久？");
+    const result = detectLegalQuestion("劳动合同试用期最长多久？");
     expect(result.matched).toBe(true);
-    expect(result.confidence).toBeGreaterThanOrEqual(0.75);
+    expect(result.confidence).toBe(0.75);
+    expect(result.reasons).not.toContain("high-signal-topic");
   });
 
   it("does not match unrelated casual messages", () => {
@@ -21,6 +22,7 @@ describe("detectKnowledgeWebIngest", () => {
     const result = detectKnowledgeWebIngest("读取 https://example.com/law 这个网页并入库");
     expect(result.matched).toBe(true);
     expect(result.url).toBe("https://example.com/law");
+    expect(result.reasons).toEqual(["url", "ingest-intent"]);
   });
 
   it("does not match ordinary URL questions", () => {

@@ -22,6 +22,7 @@ import {
   type KnowledgeIngestProgressStep,
   type KnowledgeIngestProgressUpdate,
 } from "../knowledge/index.js";
+import { parseKnowledgeFile } from "../knowledge/parser.js";
 import { MemoryService } from "../memory/index.js";
 import {
   OpenCodeClient,
@@ -320,36 +321,70 @@ export class BridgeApp {
     }
 
     const runningKnowledgeIngest = this.runningKnowledgeIngests.get(message.conversationKey);
-    if (runningKnowledgeIngest) {
+    const pending = this.pendingInteractions.get(message.conversationKey);
+    const backgroundIngestAllowsNormalText = runningKnowledgeIngest
+      && pending?.kind === "knowledge-ingest-await-file"
+      && message.messageType !== "file"
+      && !detectKnowledgeWebIngest(message.plainText, { requireIngestIntent: false }).matched;
+    if (runningKnowledgeIngest && !backgroundIngestAllowsNormalText) {
       await this.sendKnowledgeIngestBusyNotice(message);
       return;
     }
+    if (backgroundIngestAllowsNormalText && pending?.kind === "knowledge-ingest-await-file") {
+      await this.restorePreviousSessionForBackgroundIngest(message.conversationKey, message.chatType, pending);
+    }
 
-    const pending = this.pendingInteractions.get(message.conversationKey);
-    if (pending) {
+    if (pending && !backgroundIngestAllowsNormalText) {
       const consumed = await this.handlePendingInteraction(message, pending);
       if (consumed) return;
     }
 
     if (message.messageType === "file") {
+      this.setPendingInteraction(message.conversationKey, {
+        kind: "file-await-instruction",
+        chatId: message.chatId,
+        conversationKey: message.conversationKey,
+        requesterOpenId: message.senderOpenId,
+        replyToMessageId: message.messageId,
+        file: {
+          messageId: message.messageId,
+          fileKey: message.file.fileKey,
+          fileName: message.file.fileName,
+          size: message.file.size,
+        },
+      });
       await this.sendPayload(message.chatId, buildNoticeCardPayload({
-        title: "提醒",
-        template: "yellow",
-        iconToken: "maybe_outlined",
-        message: "当前仅支持通过 `/kb-ingest-start` 接收文件，请先进入知识入库模式后再上传 PDF / DOCX / TXT。",
-        messageIconToken: "maybe_outlined",
-        messageIconColor: "yellow",
+        title: "已收到文件",
+        template: "blue",
+        iconToken: "file-link-docx_outlined",
+        message: [
+          `文件：${message.file.fileName}`,
+          "",
+          "如果要入库，请发送 `/kb-ingest-start` 后重新上传文件。",
+          "如果只是要我识别、总结或分析这个文件，请直接回复你的需求，例如：`总结这个文件`。",
+        ].join("\n"),
+        messageIconToken: "file-link-docx_outlined",
+        messageIconColor: "blue",
+        showMessageIcon: false,
       }), {
-        event: "final message sent",
+        event: "file instruction requested",
         transcriptType: "outbound-final",
-        textPreview: "当前仅支持通过 /kb-ingest-start 接收文件。",
-        len: 29,
+        textPreview: "已收到文件，请说明处理方式。",
+        len: 14,
       }, { replyToMessageId: message.messageId });
       return;
     }
 
     const window = this.getSessionWindow(message.conversationKey, message.chatType);
-    if (this.knowledge && window.interactionMode === "knowledge") {
+    const knowledgeModeDetection = window.interactionMode === "knowledge"
+      ? detectLegalQuestion(message.plainText)
+      : null;
+    if (
+      this.knowledge
+      && window.interactionMode === "knowledge"
+      && knowledgeModeDetection?.matched
+      && knowledgeModeDetection.confidence >= this.config.knowledgeBase.autoDetect.minConfidence
+    ) {
       try {
         const result = await this.knowledge.query(message.plainText);
         await this.sendPayload(
@@ -658,6 +693,78 @@ export class BridgeApp {
       return true;
     }
 
+    if (pending.kind === "file-await-instruction") {
+      if (message.senderOpenId !== pending.requesterOpenId) {
+        await this.sendMarkdown(message.chatId, "当前文件处理仅允许文件发送者继续说明需求。", message.messageId);
+        return true;
+      }
+      if (message.messageType === "file") {
+        await this.sendMarkdown(message.chatId, "已收到上一个文件，请先发送文字说明你希望我如何处理；如需入库，请发送 `/kb-ingest-start`。", message.messageId);
+        return true;
+      }
+      const instruction = message.plainText.trim();
+      if (!instruction) {
+        await this.sendMarkdown(message.chatId, "请发送文字说明你希望我如何处理这个文件。", message.messageId);
+        return true;
+      }
+      const processed = await this.prepareFileForOpenCodeTurn(pending, instruction, message.messageId).catch(async (error) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        await this.sendPayload(message.chatId, buildNoticeCardPayload({
+          title: "文件读取失败",
+          template: "red",
+          iconToken: "error_filled",
+          message: detail,
+          messageIconToken: "error_filled",
+          messageIconColor: "red",
+          showMessageIcon: false,
+        }), {
+          event: "file instruction failed",
+          transcriptType: "outbound-final",
+          textPreview: detail,
+          len: detail.length,
+        }, { replyToMessageId: message.messageId });
+        return null;
+      });
+      if (!processed) {
+        this.clearPendingInteraction(message.conversationKey, false);
+        return true;
+      }
+      this.clearPendingInteraction(message.conversationKey, false);
+      if (!await this.ensureServerAvailableForMessage(message)) {
+        return true;
+      }
+      const queue = this.queues.get(message.conversationKey);
+      const turn: BridgeTurn = {
+        turnId: crypto.randomUUID(),
+        chatId: message.chatId,
+        conversationKey: message.conversationKey,
+        threadKey: message.threadKey,
+        chatType: message.chatType,
+        senderOpenId: message.senderOpenId,
+        inboundMessageId: message.messageId,
+        plainText: `${instruction}\n\n[文件] ${pending.file.fileName}`,
+        text: processed.prompt,
+      };
+      const result = queue.enqueue(turn);
+      if (!result.accepted) {
+        await this.sendPayload(message.chatId, buildQueueNoticePayload(result.notice ?? { message: "当前不可用。" }), {
+          event: "final message sent",
+          transcriptType: "outbound-final",
+          textPreview: result.notice?.message ?? "当前不可用。",
+          len: (result.notice?.message ?? "当前不可用。").length,
+        }, { replyToMessageId: message.messageId });
+        return true;
+      }
+      if (!this.runningChats.has(message.conversationKey)) {
+        const runner = this.processChat(message.conversationKey).finally(() => {
+          this.runningChats.delete(message.conversationKey);
+        });
+        this.runningChats.set(message.conversationKey, runner);
+        await runner;
+      }
+      return true;
+    }
+
     return false;
   }
 
@@ -683,6 +790,41 @@ export class BridgeApp {
 
     const entry = await this.createAndBindSession(source);
     return entry.sessionId;
+  }
+
+  private async prepareFileForOpenCodeTurn(
+    pending: Extract<PendingInteraction, { kind: "file-await-instruction" }>,
+    instruction: string,
+    replyMessageId: string,
+  ): Promise<{ prompt: string }> {
+    const resources = this.outbound as OutboundPort & Partial<KnowledgeResourcePort>;
+    if (!resources.downloadMessageResource) {
+      throw new Error("当前运行环境不支持下载飞书文件。");
+    }
+    const downloaded = await resources.downloadMessageResource(pending.file.messageId, pending.file.fileKey, "file");
+    const parsed = await parseKnowledgeFile(downloaded.fileName, downloaded.buffer);
+    if (!parsed.normalizedMarkdown.trim()) {
+      throw new Error("文件中未提取到可用文本。");
+    }
+    const maxChars = 20_000;
+    const content = parsed.normalizedMarkdown.length > maxChars
+      ? `${parsed.normalizedMarkdown.slice(0, maxChars)}\n\n[内容较长，已截取前 ${maxChars} 字符供本次处理。若要完整入库，请使用 /kb-ingest-start。]`
+      : parsed.normalizedMarkdown;
+    return {
+      prompt: [
+        "用户上传了一个文件，并要求你按下述需求处理。",
+        "请基于文件内容回答，不要默认把文件写入知识库。",
+        "",
+        `用户需求：${instruction}`,
+        `文件名：${downloaded.fileName}`,
+        `MIME：${downloaded.mimeType}`,
+        `来源消息：${replyMessageId}`,
+        "",
+        "---文件内容开始---",
+        content,
+        "---文件内容结束---",
+      ].join("\n"),
+    };
   }
 
   private async ensureServerAvailableForMessage(message: Pick<IncomingChatMessage, "chatId" | "messageId">): Promise<boolean> {
@@ -1025,6 +1167,30 @@ export class BridgeApp {
     });
   }
 
+  private async restorePreviousSessionForBackgroundIngest(
+    conversationKey: string,
+    chatType: string,
+    pending: Extract<PendingInteraction, { kind: "knowledge-ingest-await-file" }>,
+  ): Promise<void> {
+    if (!pending.previousActiveSessionId) {
+      return;
+    }
+    const window = this.getSessionWindow(conversationKey, chatType);
+    if (window.activeSessionId === pending.previousActiveSessionId) {
+      return;
+    }
+    if (!window.sessions.some((session) => session.sessionId === pending.previousActiveSessionId)) {
+      return;
+    }
+    const nextWindow = setActiveSession(
+      window,
+      pending.previousActiveSessionId,
+      Date.now(),
+      this.config.bridge.maxSessionsPerWindow,
+    );
+    await this.saveSessionWindow(conversationKey, nextWindow);
+  }
+
   private async sendKnowledgeIngestBusyNotice(
     message: Pick<IncomingChatMessage, "chatId" | "messageId">,
   ): Promise<void> {
@@ -1032,7 +1198,7 @@ export class BridgeApp {
       title: "知识入库处理中",
       template: "blue",
       iconToken: "upload_outlined",
-      message: "当前正在处理知识入库任务。\n发送 `/kb-ingest-end` 可退出入库模式。\n如需切换到法律查询，请发送 `/legal-query-start`。\n普通对话请等待当前入库完成后再发送。",
+      message: "当前正在处理知识入库任务。\n新的入库文件或入库链接请等待当前任务完成后再发送。\n发送 `/kb-ingest-end` 可退出入库模式；普通对话可直接发送。",
       messageIconToken: "upload_outlined",
       messageIconColor: "blue",
       showMessageIcon: false,

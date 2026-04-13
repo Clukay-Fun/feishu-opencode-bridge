@@ -22,8 +22,10 @@ const LEGAL_KEYWORDS = [
   "判决",
   "试用期",
   "赔偿",
+  "赔偿金",
   "违约",
   "解除劳动合同",
+  "解除合同",
   "保密协议",
   "竞业限制",
   "知识产权",
@@ -66,11 +68,6 @@ export function detectLegalQuestion(text: string): KnowledgeAutoDetectResult {
     reasons.push("statute-citation");
   }
 
-  if (/劳动合同|试用期|赔偿金|仲裁|违约金|解除合同/.test(normalized)) {
-    confidence += 0.2;
-    reasons.push("high-signal-topic");
-  }
-
   const bounded = Math.min(1, Number(confidence.toFixed(2)));
   return {
     matched: bounded >= 0.5,
@@ -97,11 +94,6 @@ export function detectKnowledgeWebIngest(
   const hasIngestIntent = /入库|导入|收录|加入知识库|添加到知识库|写入知识库|保存到知识库|放进知识库|同步到知识库/.test(normalized);
   if (hasIngestIntent) {
     reasons.push("ingest-intent");
-  }
-
-  const hasReadIntent = /读取|阅读|抓取|提取|整理|转成|写成|生成/.test(normalized);
-  if (hasReadIntent) {
-    reasons.push("read-intent");
   }
 
   return {
