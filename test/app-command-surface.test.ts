@@ -537,6 +537,64 @@ describe("BridgeApp command surface", () => {
     expect(extractInteractiveHeader(getReplyPayloads(outbound).at(-1))).toBe("已退出知识库模式");
   });
 
+  it("creates a dedicated ingest session and restores the previous session on exit", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
+      knowledge: {
+        async query() {
+          return { question: "", results: [] };
+        },
+        async ingestFile() {
+          throw new Error("not used");
+        },
+        async syncMirror() {},
+        close() {},
+      },
+      memory: null,
+    });
+    const createSession = vi.fn(async () => ({
+      id: "ses_ingest",
+      title: "知识入库",
+      time: { created: Date.now(), updated: Date.now() },
+    }));
+    const appAny = app as unknown as {
+      opencode: { createSession: typeof createSession };
+      sessionMap: Record<string, SessionWindowRecord>;
+      pendingInteractions: Map<string, PendingInteraction>;
+    };
+    appAny.opencode = { createSession };
+    appAny.sessionMap["oc_p2p_1"] = {
+      mode: "multi",
+      activeSessionId: "ses_chat",
+      sessions: [
+        { sessionId: "ses_chat", label: "普通对话", createdAt: 1, lastUsedAt: 1 },
+      ],
+    };
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "knowledge-ingest" },
+    });
+
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(appAny.sessionMap["oc_p2p_1"]?.activeSessionId).toBe("ses_ingest");
+    expect(appAny.sessionMap["oc_p2p_1"]?.sessions.map((session) => session.sessionId)).toEqual(["ses_ingest", "ses_chat"]);
+    expect(appAny.sessionMap["oc_p2p_1"]?.sessions.find((session) => session.sessionId === "ses_ingest")?.label).toBe("知识入库");
+    expect(appAny.pendingInteractions.get("oc_p2p_1")).toEqual(expect.objectContaining({
+      kind: "knowledge-ingest-await-file",
+      ingestSessionId: "ses_ingest",
+      previousActiveSessionId: "ses_chat",
+    }));
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "knowledge-ingest-end" },
+    });
+
+    expect(appAny.sessionMap["oc_p2p_1"]?.activeSessionId).toBe("ses_chat");
+    expect(appAny.pendingInteractions.has("oc_p2p_1")).toBe(false);
+  });
+
   it("blocks close when the current session is still running", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
@@ -836,6 +894,7 @@ type AppCommandSurfaceTestRoute = {
   command:
     | { kind: "abort" }
     | { kind: "models"; provider?: string | undefined }
+    | { kind: "knowledge-ingest" }
     | { kind: "knowledge-mode-start" }
     | { kind: "knowledge-mode-end" }
     | { kind: "knowledge-ingest-end" }

@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.6 - 2026-04-13
+
+### Added
+- Added a regression test covering dedicated ingest-session creation and previous-session restore on `/kb-ingest-end`.
+
 ## 0.1.5 - 2026-04-13
 
 ### Added
