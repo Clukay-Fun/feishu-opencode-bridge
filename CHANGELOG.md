@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.12 - 2026-04-14
+
+### Added
+- Added runtime version exposure through `src/version.ts`, startup logs, and the `/healthz` response.
+
 ## 0.1.11 - 2026-04-14
 
 ### Fixed

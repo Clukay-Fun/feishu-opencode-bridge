@@ -59,6 +59,7 @@ describe("startBridgeHttpServer", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(expect.objectContaining({
       ok: true,
+      bridgeVersion: "0.1.12",
       queueLimit: 3,
       cardActionsEnabled: false,
       cardActionsPath: "/webhook/card",
