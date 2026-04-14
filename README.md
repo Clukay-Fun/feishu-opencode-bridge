@@ -111,6 +111,8 @@ Important sections:
   optional long-term memory storage and retrieval settings
 - `knowledgeBase`
   optional legal knowledge base, local SQLite mirror, Feishu Bitable storage, and file ingestion settings
+- `laborSkill`
+  optional labor-dispute evidence-chain analysis workflow; requires `knowledgeBase` when enabled
 
 ### Knowledge Base Bitable Permissions
 
@@ -174,6 +176,8 @@ Bridge-owned commands:
 - `/legal-query <question>`
 - `/kb-ingest-start`
 - `/kb-ingest-end`
+- `/labor-start [case title]`
+- `/labor-end`
 - `/allow once`
 - `/allow always`
 - `/deny`
@@ -189,6 +193,20 @@ What is the maximum probation period for an employee?
 Use `/legal-query <question>` for a one-shot knowledge base search. While legal knowledge mode is enabled, ordinary questions are searched in the knowledge base.
 
 For ingestion, send `/kb-ingest-start`. In ingest mode, you can upload PDF / DOCX / TXT / MD files, or send a URL message with an explicit ingestion intent such as “read https://example.com/law and add it to the knowledge base”. URL ingestion is handled through an OpenCode-assisted Markdown ingestion path. Send `/kb-ingest-end` when finished.
+
+Labor evidence-chain analysis:
+
+```text
+/labor-start Zhang labor termination dispute
+```
+
+Then upload PDF / DOCX / TXT / MD materials such as labor contracts, payroll records, termination notices, and chat transcripts. You can also send short case-background notes. When finished, send:
+
+```text
+/labor-end
+```
+
+The bridge analyzes the evidence chain, timeline, issues, and missing materials, then asks OpenCode to call `lark-cli docs +create` to publish a Feishu document. If document publishing fails, it falls back to returning the Markdown report in chat.
 
 Any other slash command is forwarded to OpenCode.
 

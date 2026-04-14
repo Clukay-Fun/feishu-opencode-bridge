@@ -12,9 +12,6 @@ import {
 import { cleanAssistantReply } from "./sanitize.js";
 
 const INITIAL_CARD_SUMMARY = "已创建会话，等待 OpenCode 事件...";
-const STREAM_FLUSH_MIN_CHARS = 120;
-const STREAM_FLUSH_INTERVAL_MS = 750;
-
 type OutboundPort = {
   sendMessage(chatId: string, payload: FeishuPostPayload): Promise<{ messageId: string }>;
   replyMessage(messageId: string, payload: FeishuPostPayload, options?: { replyInThread?: boolean }): Promise<{ messageId: string }>;
@@ -88,29 +85,17 @@ export class TurnCardManager {
   }
 
   async scheduleStreamUpdate(turnId: string, text: string): Promise<void> {
-    const card = this.turnCards.get(turnId);
-    if (!card) return;
-
-    const state = this.streamFlushStates.get(turnId) ?? { flushedLength: 0, lastFlushedAt: 0, timer: null };
-    this.streamFlushStates.set(turnId, state);
-
-    const deltaLength = Math.max(0, text.length - state.flushedLength);
-    const elapsed = Date.now() - state.lastFlushedAt;
-    if (deltaLength >= STREAM_FLUSH_MIN_CHARS || elapsed >= STREAM_FLUSH_INTERVAL_MS) {
-      await this.flushStreamUpdate(turnId, text, false);
-      return;
-    }
-
-    if (state.timer) return;
-
-    const delay = Math.max(0, STREAM_FLUSH_INTERVAL_MS - elapsed);
-    state.timer = setTimeout(() => {
-      state.timer = null;
-      void this.flushStreamUpdate(turnId, text, false);
-    }, delay);
+    if (!this.turnCards.has(turnId)) return;
+    void text;
+    // Keep the process card as a stable placeholder. The final reply is rendered
+    // once on completion, so partial text/reasoning never leaks into Feishu.
   }
 
   async flushStreamUpdate(turnId: string, text: string, force: boolean): Promise<void> {
+    if (!force) {
+      return;
+    }
+
     const state = this.streamFlushStates.get(turnId);
     if (state?.timer) {
       clearTimeout(state.timer);

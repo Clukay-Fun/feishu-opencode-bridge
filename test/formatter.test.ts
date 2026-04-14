@@ -36,7 +36,7 @@ describe("buildPostPayload", () => {
   it("renders an interactive turn status card", () => {
     const payload = buildTurnStatusCardPayload({
       title: "处理中",
-      status: "处理中",
+      status: "已完成",
       sessionId: "ses_1234567890",
       durationText: "约 8s",
       progressUpdates: ["已检索相关信息", "最终回复已生成（605 字）"],
@@ -52,11 +52,7 @@ describe("buildPostPayload", () => {
     });
     const content = JSON.parse(payload.content) as any;
     const serialized = JSON.stringify(content);
-    expect(content.header.title.content).toBe("正在忙");
-    expect(serialized).toContain("读取文件");
-    expect(serialized).toContain("package.json");
-    expect(serialized).toContain("执行命令");
-    expect(serialized).toContain("npm run dev");
+    expect(content.header.title.content).toBe("已完成");
     expect(serialized).toContain("https://www.miit.gov.cn/example");
     expect(serialized).toContain("今日新闻五条_正式版.md");
     expect(serialized).toContain("约 8s");
@@ -65,7 +61,7 @@ describe("buildPostPayload", () => {
   it("preserves fenced code blocks without escaping arrows", () => {
     const payload = buildTurnStatusCardPayload({
       title: "处理中",
-      status: "处理中",
+      status: "已完成",
       sessionId: "ses_1234567890",
       durationText: "约 3s",
       progressUpdates: [],
@@ -89,6 +85,27 @@ describe("buildPostPayload", () => {
     expect(output).toContain("```text");
     expect(output).toContain("飞书事件 -> ws.ts handleEvent()");
     expect(output).not.toContain("-&gt;");
+  });
+
+  it("keeps running turn cards as placeholders without partial output text", () => {
+    const payload = buildTurnStatusCardPayload({
+      title: "处理中",
+      status: "处理中",
+      sessionId: "ses_1234567890",
+      durationText: "",
+      progressUpdates: [],
+      toolUpdates: [],
+      output: {
+        text: "你好",
+        paths: [],
+        commands: [],
+      },
+    });
+    const content = JSON.parse(payload.content) as any;
+    const serialized = JSON.stringify(content);
+
+    expect(serialized).toContain("处理中...");
+    expect(serialized).not.toContain("你好");
   });
 
   it("renders all tool updates without truncating the toolbar", () => {

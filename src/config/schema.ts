@@ -58,6 +58,23 @@ const KnowledgeBaseModelsSchema = z.object({
   extract: KnowledgeBaseModelRefSchema.optional(),
   rerank: KnowledgeBaseModelRefSchema.optional(),
 }).default({});
+const LaborSkillModelRefSchema = KnowledgeBaseModelRefSchema;
+const LaborSkillModelsSchema = z.object({
+  extract: LaborSkillModelRefSchema.optional(),
+  analyze: LaborSkillModelRefSchema.optional(),
+  render: LaborSkillModelRefSchema.optional(),
+}).default({});
+const LaborSkillIngestSchema = z.object({
+  allowedExtensions: z.array(z.string().min(1)).default([".pdf", ".docx", ".txt", ".md"]),
+  maxFileSizeMb: z.number().positive().default(20),
+  pendingTtlMs: z.number().int().positive().default(600_000),
+  concurrency: z.number().int().positive().max(10).default(3),
+}).default({});
+const LaborSkillConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  models: LaborSkillModelsSchema,
+  ingest: LaborSkillIngestSchema,
+}).default({});
 const KnowledgeBaseConfigSchema = z.object({
   enabled: z.boolean().default(false),
   autoDetect: KnowledgeBaseAutoDetectSchema,
@@ -164,6 +181,7 @@ export const ConfigSchema = z.object({
   }).default({}),
   memory: MemoryConfigSchema.default({}),
   knowledgeBase: KnowledgeBaseConfigSchema,
+  laborSkill: LaborSkillConfigSchema,
 }).superRefine((value, context) => {
   if (value.memory.retriever === "embedding" && !value.embeddings.provider && !value.memory.embeddingProvider) {
     context.addIssue({
@@ -174,6 +192,13 @@ export const ConfigSchema = z.object({
   }
 
   if (!value.knowledgeBase.enabled) {
+    if (value.laborSkill.enabled) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["laborSkill", "enabled"],
+        message: "laborSkill.enabled=true 时必须启用 knowledgeBase.enabled",
+      });
+    }
     return;
   }
 
@@ -369,4 +394,18 @@ export type AppConfig = {
       maxExtractQas: number;
     };
   };
+  laborSkill?: {
+    enabled: boolean;
+    models: {
+      extract?: string | undefined;
+      analyze?: string | undefined;
+      render?: string | undefined;
+    };
+    ingest: {
+      allowedExtensions: string[];
+      maxFileSizeMb: number;
+      pendingTtlMs: number;
+      concurrency: number;
+    };
+  } | undefined;
 };

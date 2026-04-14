@@ -49,6 +49,20 @@ describe("loadConfig memory settings", () => {
     expect(config.memory.dbPath).toBe(path.join(dir, "data", "memory.db"));
     expect(config.memory.obsidian.syncCron).toBe("0 2 * * *");
     expect(config.embeddings?.similarityThreshold).toBe(0.75);
+    expect(config.laborSkill).toEqual({
+      enabled: false,
+      models: {
+        extract: undefined,
+        analyze: undefined,
+        render: undefined,
+      },
+      ingest: {
+        allowedExtensions: [".pdf", ".docx", ".txt", ".md"],
+        maxFileSizeMb: 20,
+        pendingTtlMs: 600_000,
+        concurrency: 3,
+      },
+    });
   });
 
   it("rejects embedding retriever without embeddings provider config", async () => {
@@ -227,6 +241,74 @@ describe("loadConfig memory settings", () => {
     }), "utf8");
 
     await expect(loadConfig(configPath)).rejects.toThrow("vaultPath");
+  });
+
+  it("loads labor skill config when knowledge base is enabled", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({
+      ...baseConfig(),
+      embeddings: {
+        provider: {
+          baseUrl: "https://api.openai.com/v1/",
+          apiKey: "sk-test",
+          model: "text-embedding-3-small",
+        },
+      },
+      knowledgeBase: {
+        enabled: true,
+        storage: {
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+          },
+        },
+      },
+      laborSkill: {
+        enabled: true,
+        models: {
+          extract: "openai/gpt-5.4-mini",
+          analyze: "openai/gpt-5.4",
+          render: "openai/gpt-5.4-mini",
+        },
+        ingest: {
+          allowedExtensions: [".PDF", ".docx"],
+          maxFileSizeMb: 15,
+          pendingTtlMs: 300_000,
+          concurrency: 2,
+        },
+      },
+    }), "utf8");
+
+    const config = await loadConfig(configPath);
+
+    expect(config.laborSkill).toEqual({
+      enabled: true,
+      models: {
+        extract: "openai/gpt-5.4-mini",
+        analyze: "openai/gpt-5.4",
+        render: "openai/gpt-5.4-mini",
+      },
+      ingest: {
+        allowedExtensions: [".pdf", ".docx"],
+        maxFileSizeMb: 15,
+        pendingTtlMs: 300_000,
+        concurrency: 2,
+      },
+    });
+  });
+
+  it("rejects enabled labor skill without enabled knowledge base", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({
+      ...baseConfig(),
+      laborSkill: {
+        enabled: true,
+      },
+    }), "utf8");
+
+    await expect(loadConfig(configPath)).rejects.toThrow("laborSkill.enabled=true 时必须启用 knowledgeBase.enabled");
   });
 });
 

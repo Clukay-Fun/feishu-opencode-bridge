@@ -25,7 +25,6 @@ import {
   readOptionalBoolean,
   readOptionalRecord,
   readOptionalString,
-  summarizeReasoningToProgress,
   toQuestionRequest,
 } from "./app-helpers.js";
 import { cleanAssistantReply } from "./sanitize.js";
@@ -346,10 +345,6 @@ export class TurnExecutor {
         if (partId) {
           this.context.logger.log("opencode/events", "reasoning received", { turnId: turn.turnId, sessionId: turn.sessionId, len: text.length });
           this.context.logger.logTranscript("reasoning-raw", { turnId: turn.turnId, sessionId: turn.sessionId, partId, len: text.length }, text);
-          const step = summarizeReasoningToProgress(text);
-          if (step) {
-            await this.context.turnCardManager.updateTurnCard(turn.turnId, { status: "处理中", update: step, sanitize: false, target: "step" });
-          }
         }
         return;
       }

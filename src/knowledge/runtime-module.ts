@@ -748,7 +748,11 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       return message.rootId === pending.anchorMessageId
         || message.parentId === pending.anchorMessageId
         || message.rootId === pending.rootMessageId
-        || message.parentId === pending.rootMessageId;
+        || message.parentId === pending.rootMessageId
+        || (
+          message.conversationKey === pending.conversationKey
+          && this.isP2pMainlineKnowledgeIngestInput(message)
+        );
     }
     const candidates = new Set([
       message.rootId,
@@ -758,6 +762,13 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     return message.conversationKey === pending.conversationKey
       || candidates.has(pending.anchorMessageId)
       || candidates.has(pending.rootMessageId);
+  }
+
+  private isP2pMainlineKnowledgeIngestInput(message: IncomingChatMessage): boolean {
+    if (message.messageType === "file") {
+      return true;
+    }
+    return detectKnowledgeWebIngest(message.plainText, { requireIngestIntent: false }).matched;
   }
 
   private async endKnowledgeIngestInteraction(

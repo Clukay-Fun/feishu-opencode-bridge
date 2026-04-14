@@ -57,6 +57,27 @@ export type PendingKnowledgeIngestInteraction = {
   expiresAt: number;
 };
 
+export type PendingLaborAnalysisInteraction = {
+  kind: "labor-analysis-await-input";
+  chatId: string;
+  chatType: string;
+  conversationKey: string;
+  requesterOpenId: string;
+  replyToMessageId: string;
+  rootMessageId: string;
+  anchorMessageId: string;
+  deliveryMode: "group_thread" | "p2p_reply";
+  caseTitle?: string | undefined;
+  materials: Array<{
+    sourceFile: string;
+    messageId: string;
+    fileKey: string;
+    size?: number | undefined;
+  }>;
+  notes: string[];
+  expiresAt: number;
+};
+
 export type PendingFileInstructionInteraction = {
   kind: "file-await-instruction";
   chatId: string;
@@ -77,4 +98,5 @@ export type PendingInteraction =
   | PendingSessionSelectionInteraction
   | PendingSessionDeleteConfirmationInteraction
   | PendingKnowledgeIngestInteraction
+  | PendingLaborAnalysisInteraction
   | PendingFileInstructionInteraction;

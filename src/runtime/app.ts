@@ -20,6 +20,8 @@ import {
   type KnowledgeBasePort,
 } from "../knowledge/index.js";
 import { KnowledgeRuntimeModule } from "../knowledge/runtime-module.js";
+import { LaborSkillService } from "../labor/index.js";
+import { LaborRuntimeModule } from "../labor/runtime-module.js";
 import { MemoryService } from "../memory/index.js";
 import { MemoryRuntimeModule } from "../memory/runtime-module.js";
 import {
@@ -108,6 +110,7 @@ type BridgeAppDeps = {
   eventStream?: OpenCodeEventStreamPort;
   memory?: MemoryService | null;
   knowledge?: KnowledgeBasePort | null;
+  labor?: LaborSkillService | null;
 };
 
 type OpenCodePort = Pick<OpenCodeClient,
@@ -160,6 +163,7 @@ export class BridgeApp {
   private readonly sessionStatuses = new Map<string, OpenCodeSessionStatus>();
   private readonly memory: MemoryService | null;
   private readonly knowledge: KnowledgeBasePort | null;
+  private readonly labor: LaborSkillService | null;
   private globalEventUnsubscribe: (() => void) | null = null;
 
   constructor(
@@ -193,6 +197,16 @@ export class BridgeApp {
           logger,
         )
         : null;
+    this.labor = deps && "labor" in deps
+      ? (deps.labor ?? null)
+      : config.laborSkill?.enabled && this.knowledge
+        ? new LaborSkillService(
+          config,
+          this.outbound as OutboundPort & KnowledgeResourcePort,
+          this.opencode as OpenCodeClient,
+          this.knowledge,
+        )
+        : null;
     this.permissionManager = new PermissionManager({
       replyPermission: async (sessionId, permissionId, policy, remember) => {
         return await this.opencode.replyPermission(sessionId, permissionId, policy, remember);
@@ -224,6 +238,14 @@ export class BridgeApp {
     });
     this.knowledgeIngestInteractions = this.knowledgeModule.interactions;
     this.moduleManager.register(this.knowledgeModule);
+    this.moduleManager.register(new LaborRuntimeModule({
+      config: this.config,
+      logger: this.logger,
+      labor: this.labor,
+      sendPayload: async (chatId, payload, options, delivery) => await this.sendPayload(chatId, payload, options, delivery),
+      updatePayload: async (chatId, messageId, payload, options) => await this.updatePayload(chatId, messageId, payload, options),
+      enqueueGeneratedTurn: async (turn) => await this.enqueueGeneratedTurn(turn),
+    }));
     if (this.memory) {
       this.moduleManager.register(new MemoryRuntimeModule(this.memory));
     }
@@ -454,6 +476,38 @@ export class BridgeApp {
 
   private async processChat(conversationKey: string): Promise<void> {
     await this.turnExecutor.processChat(conversationKey);
+  }
+
+  private async enqueueGeneratedTurn(turn: BridgeTurn): Promise<void> {
+    if (!await this.ensureServerAvailableForMessage({ chatId: turn.chatId, messageId: turn.inboundMessageId })) {
+      return;
+    }
+    const queue = this.queues.get(turn.conversationKey);
+    const result = queue.enqueue(turn);
+    if (!result.accepted) {
+      await this.sendPayload(turn.chatId, buildQueueNoticePayload(result.notice ?? { message: "当前不可用。" }), {
+        event: "generated turn rejected",
+        transcriptType: "outbound-final",
+        textPreview: result.notice?.message ?? "当前不可用。",
+        len: (result.notice?.message ?? "当前不可用。").length,
+      }, { replyToMessageId: turn.inboundMessageId });
+      return;
+    }
+    if (result.notice) {
+      await this.sendPayload(turn.chatId, buildQueueNoticePayload(result.notice), {
+        event: "generated turn queued",
+        transcriptType: "outbound-final",
+        textPreview: createTextPreview(result.notice.message),
+        len: result.notice.message.length,
+      }, { replyToMessageId: turn.inboundMessageId });
+    }
+    if (!this.runningChats.has(turn.conversationKey)) {
+      const runner = this.processChat(turn.conversationKey).finally(() => {
+        this.runningChats.delete(turn.conversationKey);
+      });
+      this.runningChats.set(turn.conversationKey, runner);
+      await runner;
+    }
   }
 
   private async runTurn(conversationKey: string): Promise<void> {
@@ -758,7 +812,7 @@ export class BridgeApp {
       return;
     }
 
-    const nextLabel = summarizeSessionLabel(turn.plainText) || currentSession.label;
+    const nextLabel = summarizeSessionLabel(turn.plainText, turn.chatType) || currentSession.label;
     if (nextLabel === currentSession.label) {
       return;
     }

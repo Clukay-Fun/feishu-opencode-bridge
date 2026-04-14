@@ -176,6 +176,20 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
         maxExtractQas: parsed.knowledgeBase.ingest.maxExtractQas,
       },
     },
+    laborSkill: {
+      enabled: parsed.laborSkill.enabled,
+      models: {
+        extract: parsed.laborSkill.models.extract,
+        analyze: parsed.laborSkill.models.analyze,
+        render: parsed.laborSkill.models.render,
+      },
+      ingest: {
+        allowedExtensions: parsed.laborSkill.ingest.allowedExtensions.map((value) => value.trim().toLowerCase()),
+        maxFileSizeMb: parsed.laborSkill.ingest.maxFileSizeMb,
+        pendingTtlMs: parsed.laborSkill.ingest.pendingTtlMs,
+        concurrency: parsed.laborSkill.ingest.concurrency,
+      },
+    },
   };
 }
 

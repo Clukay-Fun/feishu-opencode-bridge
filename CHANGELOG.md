@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.16 - 2026-04-14
+
+### Added
+- Added a labor-dispute evidence-chain workflow with `/labor-start` and `/labor-end`, structured prompts, Feishu document rendering, and dedicated runtime handling.
+- Added labor skill tests, planning notes, and demo/docs updates for competition-oriented labor workflows.
+- Added a reusable OpenCode skill guide under `.opencode/skills/karpathy-llm-guidelines`.
+
+### Changed
+- Updated private-chat knowledge interactions, router/config wiring, and runtime cards to coexist with the new labor workflow.
+- Updated README, Chinese README, demo script, and sample config to document labor skill setup and usage.
+
 ## 0.1.15 - 2026-04-14
 
 ### Added

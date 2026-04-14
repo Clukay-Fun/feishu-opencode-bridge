@@ -13,6 +13,8 @@ export type RoutedText =
       | { kind: "knowledge-ingest-end" }
       | { kind: "knowledge-mode-start" }
       | { kind: "knowledge-mode-end" }
+      | { kind: "labor-start"; caseTitle?: string | undefined }
+      | { kind: "labor-end" }
       | { kind: "sessions" }
       | { kind: "sessions-all" }
       | { kind: "sessions-select"; index: number }
@@ -80,6 +82,18 @@ export function routeIncomingText(text: string): RoutedText {
 
   if ((rawCommand === "法律咨询" || rawCommand === "legal-query") && args.length > 0) {
     return { kind: "command", command: { kind: "knowledge-query", question: args.join(" ").trim() } };
+  }
+
+  if (rawCommand === "labor-start" || rawCommand === "劳动分析") {
+    const caseTitle = args.join(" ").trim();
+    return {
+      kind: "command",
+      command: caseTitle ? { kind: "labor-start", caseTitle } : { kind: "labor-start" },
+    };
+  }
+
+  if ((rawCommand === "labor-end" || rawCommand === "劳动分析结束") && args.length === 0) {
+    return { kind: "command", command: { kind: "labor-end" } };
   }
 
   if (rawCommand === "sessions" && args.length === 0) {

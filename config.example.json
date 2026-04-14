@@ -126,6 +126,20 @@
       "maxExtractQas": 500
     }
   },
+  "laborSkill": {
+    "enabled": false,
+    "models": {
+      "extract": "minimax-cn-coding-plan/MiniMax-M2.7",
+      "analyze": "minimax-cn-coding-plan/MiniMax-M2.7",
+      "render": "minimax-cn-coding-plan/MiniMax-M2.7"
+    },
+    "ingest": {
+      "allowedExtensions": [".pdf", ".docx", ".txt", ".md"],
+      "maxFileSizeMb": 20,
+      "pendingTtlMs": 600000,
+      "concurrency": 3
+    }
+  },
   "logging": {
     "dir": "./logs",
     "level": "info",

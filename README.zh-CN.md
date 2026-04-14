@@ -111,6 +111,8 @@ npm run dev
   可选的长期记忆存储与召回配置
 - `knowledgeBase`
   可选的法律知识库、本地 SQLite 镜像、飞书多维表格存储与文件入库配置
+- `laborSkill`
+  可选的劳动争议证据链分析工作流；开启时需要同时开启 `knowledgeBase`
 
 ### 知识库多维表格权限
 
@@ -163,6 +165,10 @@ bridge 自己接管的命令：
 - `/legal-query <问题>`
 - `/kb-ingest-start`
 - `/kb-ingest-end`
+- `/labor-start [案件标题]`
+- `/labor-end`
+- `/劳动分析 [案件标题]`
+- `/劳动分析结束`
 - `/allow once`
 - `/allow always`
 - `/deny`
@@ -178,6 +184,20 @@ bridge 自己接管的命令：
 如果只想单次查询，可以使用 `/legal-query <问题>`。知识库模式下，普通问题会进入知识库检索。
 
 如果要入库，先发送 `/kb-ingest-start`。入库模式下可以连续上传 PDF / DOCX / TXT / MD 文件，也可以发送带 URL 和明确入库意图的自然语言，例如“读取 https://example.com/law 这个网页并入库”。URL 入库会让 OpenCode 辅助读取网页并整理成 Markdown，再交给知识库入库。完成后发送 `/kb-ingest-end`。
+
+劳动争议证据链分析示例：
+
+```text
+/labor-start 张某违法解除争议
+```
+
+随后连续上传劳动合同、工资单、解除通知、聊天记录等 PDF / DOCX / TXT / MD 材料，也可以发送案件背景说明。完成后发送：
+
+```text
+/labor-end
+```
+
+bridge 会先整理证据链、时间线、争议焦点和待补材料，再通过 OpenCode 调用 `lark-cli docs +create` 生成飞书文档。若文档发布失败，会回退为在消息中返回 Markdown。
 
 其他 slash 命令会透传给 OpenCode。
 

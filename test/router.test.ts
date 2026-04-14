@@ -144,6 +144,29 @@ describe("routeIncomingText", () => {
     });
   });
 
+  it("routes labor skill commands", () => {
+    expect(routeIncomingText("/labor-start 张某违法解除争议")).toEqual({
+      kind: "command",
+      command: { kind: "labor-start", caseTitle: "张某违法解除争议" },
+    });
+    expect(routeIncomingText("/labor-start")).toEqual({
+      kind: "command",
+      command: { kind: "labor-start" },
+    });
+    expect(routeIncomingText("/labor-end")).toEqual({
+      kind: "command",
+      command: { kind: "labor-end" },
+    });
+    expect(routeIncomingText("/劳动分析 张某违法解除争议")).toEqual({
+      kind: "command",
+      command: { kind: "labor-start", caseTitle: "张某违法解除争议" },
+    });
+    expect(routeIncomingText("/劳动分析结束")).toEqual({
+      kind: "command",
+      command: { kind: "labor-end" },
+    });
+  });
+
   it("routes /model to the provider listing command and keeps model subcommands as passthrough", () => {
     expect(routeIncomingText("/model")).toEqual({
       kind: "command",

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildBridgeSystemPrompt, buildPromptRequest, composeSystemPrompt, resolveDisplayLabel, upsertToolUpdate } from "../src/runtime/app-helpers.js";
+import { buildBridgeSystemPrompt, buildPromptRequest, composeSystemPrompt, resolveDisplayLabel, summarizeSessionLabel, upsertToolUpdate } from "../src/runtime/app-helpers.js";
 
 describe("runtime prompt helpers", () => {
   it("adds system state when provided", () => {
@@ -53,6 +53,23 @@ describe("runtime prompt helpers", () => {
       id: "ses_1",
       title: "Feishu chat title",
     }, "ses_1", "ses_1")).toBe("Feishu chat title");
+  });
+
+  it("normalizes bridge-generated raw Feishu session titles", () => {
+    expect(resolveDisplayLabel({
+      id: "ses_1",
+      title: "Feishu oc_4567a3759d43051bf069a6cb9ad69931",
+    }, "ses_1", "ses_1")).toBe("【私聊】未命名会话");
+
+    expect(resolveDisplayLabel({
+      id: "ses_2",
+      title: "Feishu group oc_4567a3759d43051bf069a6cb9ad69931 om_xxx",
+    }, "ses_2", "ses_2")).toBe("【群聊】未命名会话");
+  });
+
+  it("adds conversation tags to summarized session labels", () => {
+    expect(summarizeSessionLabel("帮我写个单测", "p2p")).toBe("【私聊】帮我写个单测");
+    expect(summarizeSessionLabel("讨论提测计划", "group")).toBe("【群聊】讨论提测计划");
   });
 
   it("keeps all tool updates instead of trimming old entries", () => {

@@ -101,6 +101,11 @@ export type KnowledgeIngestProgressCardView = {
   steps: ReadonlyArray<ToolUpdateView>;
 };
 
+export type LaborAnalysisProgressCardView = {
+  sourceLabel: string;
+  steps: ReadonlyArray<ToolUpdateView>;
+};
+
 export type KnowledgeIngestSessionSummaryView = {
   completedCount: number;
   failedCount: number;
@@ -487,6 +492,34 @@ export function buildKnowledgeIngestProcessingPayload(view: KnowledgeIngestProgr
         `**整体进度**\n${completedCount}/${totalCount} 步完成`,
         currentText,
       ].join("\n\n"), "upload_outlined", "blue", { showIcon: false }),
+      buildDivider(),
+      buildKnowledgeIngestStepBlock(view.steps),
+      buildDivider(),
+      buildFooterTipBlock("以上内容仅供参考，不构成法律意见。", "warning_outlined", "orange", "notation"),
+    ],
+  });
+}
+
+export function buildLaborAnalysisProcessingPayload(view: LaborAnalysisProgressCardView): FeishuPostPayload {
+  const currentStep = view.steps.find((step) => step.status === "running")
+    ?? view.steps.find((step) => step.status === "error")
+    ?? view.steps.find((step) => step.status === "pending")
+    ?? view.steps[view.steps.length - 1];
+  const completedCount = view.steps.filter((step) => step.status === "completed").length;
+  const totalCount = Math.max(1, view.steps.length);
+  const currentText = currentStep
+    ? `**当前步骤**\n${escapeText(currentStep.label)}：${escapeText(currentStep.detail)}`
+    : "**当前步骤**\n准备开始";
+  return buildInteractivePayload({
+    title: "劳动分析处理中",
+    template: "blue",
+    iconToken: "file-search_outlined",
+    bodyElements: [
+      buildNoticeBodyBlock([
+        `**当前对象**\n${escapeText(view.sourceLabel)}`,
+        `**整体进度**\n${completedCount}/${totalCount} 步完成`,
+        currentText,
+      ].join("\n\n"), "file-search_outlined", "blue", { showIcon: false }),
       buildDivider(),
       buildKnowledgeIngestStepBlock(view.steps),
       buildDivider(),
@@ -967,6 +1000,10 @@ function mapKnowledgeIngestStepIcon(status: ToolUpdateView["status"]): IconDef {
 }
 
 function buildOutputElements(output: OutputView, state: CardState): Array<Record<string, unknown>> {
+  if (state.kind === "running") {
+    return [markdown("处理中...", { size: "normal_v2" })];
+  }
+
   const blocks: string[] = [];
 
   if (output.text) {

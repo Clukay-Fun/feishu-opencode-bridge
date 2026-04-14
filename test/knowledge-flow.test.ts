@@ -381,7 +381,7 @@ describe("knowledge base bridge flow", () => {
     }, expect.any(Object));
   });
 
-  it("keeps P2P mainline file and URL messages out of an active ingest chain", async () => {
+  it("treats P2P mainline files and URLs as ingest material while keeping plain text on the normal chat path", async () => {
     const outbound = createOutbound();
     const eventStream = new FakeOpenCodeEventStream();
     const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "主线继续聊天。" });
@@ -421,6 +421,11 @@ describe("knowledge base bridge flow", () => {
     };
 
     await app.handleIncomingMessage(createTextMessage("/kb-ingest-start"));
+    await app.handleIncomingMessage(createTextMessage("主线继续聊天", "om_mainline_text"));
+    await vi.waitFor(() => {
+      const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+      expect(JSON.stringify(updatedPayloads)).toContain("主线继续聊天");
+    });
     await app.handleIncomingMessage(createTextMessage("https://example.com/law", "om_mainline_url"));
     await app.handleIncomingMessage({
       ...createTextMessage("劳动合同.txt", "om_mainline_file"),
@@ -430,16 +435,13 @@ describe("knowledge base bridge flow", () => {
         fileName: "劳动合同.txt",
       },
     });
+    await vi.waitFor(() => {
+      expect(ingestWebPage).toHaveBeenCalledTimes(1);
+      expect(ingestFile).toHaveBeenCalledTimes(1);
+    });
 
-    const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
-    expect(ingestFile).not.toHaveBeenCalled();
-    expect(ingestWebPage).not.toHaveBeenCalled();
-    expect(appAny.pendingInteractions.get("oc_p2p_1")).toEqual(expect.objectContaining({
-      kind: "file-await-instruction",
-      file: expect.objectContaining({ messageId: "om_mainline_file" }),
-    }));
+    expect(appAny.pendingInteractions.has("oc_p2p_1")).toBe(false);
     expect(appAny.knowledgeIngestInteractions.has("oc_p2p_1")).toBe(true);
-    expect(JSON.stringify(updatedPayloads)).toContain("主线继续聊天");
   });
 
   it("allows the requester to end P2P ingest from the mainline when the reply chain is hard to find", async () => {

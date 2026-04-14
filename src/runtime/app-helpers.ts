@@ -181,23 +181,40 @@ export function buildBridgeSystemPrompt(
 }
 
 export function resolveDisplayLabel(session: OpenCodeSession | undefined, currentLabel: string, sessionId: string): string {
-  if (!shouldHydrateLabelFromSessionMeta(currentLabel, sessionId)) {
-    return currentLabel;
-  }
+  const candidate = shouldHydrateLabelFromSessionMeta(currentLabel, sessionId)
+    ? (session?.title?.trim() || session?.slug?.trim() || currentLabel || sessionId)
+    : currentLabel;
 
-  return session?.title?.trim() || session?.slug?.trim() || currentLabel || sessionId;
+  return normalizeSessionDisplayLabel(candidate, sessionId);
 }
 
 export function shouldHydrateLabelFromSessionMeta(currentLabel: string, sessionId: string): boolean {
   return currentLabel === sessionId;
 }
 
-export function summarizeSessionLabel(plainText: string): string {
+export function summarizeSessionLabel(plainText: string, chatType?: string): string {
   const normalized = plainText.trim().replace(/\s+/g, " ");
   if (!normalized) {
     return "";
   }
-  return normalized.slice(0, 20);
+  return `${formatSessionKindTag(chatType)}${normalized.slice(0, 20)}`;
+}
+
+export function normalizeSessionDisplayLabel(label: string, sessionId: string): string {
+  const normalized = label.trim();
+  if (!normalized) {
+    return sessionId;
+  }
+
+  if (isBridgeGeneratedP2pTitle(normalized)) {
+    return "【私聊】未命名会话";
+  }
+
+  if (isBridgeGeneratedGroupTitle(normalized)) {
+    return "【群聊】未命名会话";
+  }
+
+  return normalized;
 }
 
 export function extractAssistantText(message: OpenCodeMessage | null): string {
@@ -256,6 +273,21 @@ export function getMessageTimestamp(message: OpenCodeMessage | null): number | n
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function formatSessionKindTag(chatType?: string): string {
+  if (chatType === "group") {
+    return "【群聊】";
+  }
+  return "【私聊】";
+}
+
+function isBridgeGeneratedP2pTitle(value: string): boolean {
+  return /^Feishu\s+oc_[A-Za-z0-9]+$/.test(value);
+}
+
+function isBridgeGeneratedGroupTitle(value: string): boolean {
+  return /^Feishu\s+\w+\s+oc_[A-Za-z0-9]+(?:\s+\S+)?$/.test(value);
 }
 
 export function readOptionalRecord(record: Record<string, unknown>, key: string): Record<string, unknown> | null {

@@ -889,6 +889,7 @@ async function callHandleCommand(
         conversationKey: string;
         threadKey: string;
         senderOpenId: string;
+        plainText: string;
       },
       routed: AppCommandSurfaceTestRoute,
     ): Promise<void>;
@@ -898,8 +899,9 @@ async function callHandleCommand(
     messageId: "om_1",
     conversationKey: "oc_p2p_1",
     threadKey: "om_1",
-      senderOpenId: "ou_123",
-      ...overrides,
+    senderOpenId: "ou_123",
+    plainText: "",
+    ...overrides,
   }, routed);
 }
 
