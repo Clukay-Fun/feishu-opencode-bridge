@@ -199,7 +199,7 @@ function baseConfig(): AppConfig {
       },
       embeddingProvider: undefined,
       models: {},
-      ingest: { allowedExtensions: [".pdf", ".docx", ".txt"], maxFileSizeMb: 20, pendingTtlMs: 600_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500 },
+      ingest: { allowedExtensions: [".pdf", ".docx", ".txt"], maxFileSizeMb: 20, pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500 },
     },
     logging: {
       dir: process.cwd(),

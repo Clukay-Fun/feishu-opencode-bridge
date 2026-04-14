@@ -120,6 +120,7 @@
     "ingest": {
       "allowedExtensions": [".pdf", ".docx", ".txt", ".md"],
       "maxFileSizeMb": 20,
+      "sessionIdleMs": 1800000,
       "concurrency": 3,
       "maxExtractChunks": 30,
       "maxExtractQas": 500

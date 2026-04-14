@@ -25,7 +25,7 @@ type PermissionManagerCallbacks = {
     chatId: string,
     payload: FeishuPostPayload,
     options: SendPayloadOptions,
-    delivery?: { replyToMessageId: string },
+    delivery?: { replyToMessageId: string; replyInThread?: boolean },
   ): Promise<{ messageId: string }>;
   toCardContent(payload: FeishuPostPayload): Record<string, unknown>;
 };

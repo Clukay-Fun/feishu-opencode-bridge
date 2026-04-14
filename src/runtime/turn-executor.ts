@@ -94,7 +94,7 @@ export type TurnExecutorContext = {
     chatId: string,
     payload: FeishuPostPayload,
     options: { event: string; transcriptType: TranscriptType; textPreview: string; len: number },
-    delivery?: { replyToMessageId: string },
+    delivery?: { replyToMessageId: string; replyInThread?: boolean },
   ): Promise<{ messageId: string }>;
 };
 

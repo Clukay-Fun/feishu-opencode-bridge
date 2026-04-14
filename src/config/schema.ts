@@ -44,6 +44,7 @@ const KnowledgeBaseIngestSchema = z.object({
   allowedExtensions: z.array(z.string().min(1)).default([".pdf", ".docx", ".txt"]),
   maxFileSizeMb: z.number().positive().default(20),
   pendingTtlMs: z.number().int().positive().default(600_000),
+  sessionIdleMs: z.number().int().positive().default(1_800_000),
   concurrency: z.number().int().positive().max(10).default(3),
   maxExtractChunks: z.number().int().positive().default(30),
   maxExtractQas: z.number().int().positive().default(500),
@@ -362,6 +363,7 @@ export type AppConfig = {
       allowedExtensions: string[];
       maxFileSizeMb: number;
       pendingTtlMs: number;
+      sessionIdleMs: number;
       concurrency: number;
       maxExtractChunks: number;
       maxExtractQas: number;

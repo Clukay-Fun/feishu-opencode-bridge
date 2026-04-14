@@ -17,7 +17,7 @@ const STREAM_FLUSH_INTERVAL_MS = 750;
 
 type OutboundPort = {
   sendMessage(chatId: string, payload: FeishuPostPayload): Promise<{ messageId: string }>;
-  replyMessage(messageId: string, payload: FeishuPostPayload): Promise<{ messageId: string }>;
+  replyMessage(messageId: string, payload: FeishuPostPayload, options?: { replyInThread?: boolean }): Promise<{ messageId: string }>;
   updateMessage(messageId: string, payload: FeishuPostPayload): Promise<{ messageId: string }>;
 };
 
@@ -183,7 +183,7 @@ export class TurnCardManager {
     chatId: string,
     payload: FeishuPostPayload,
     options: { event: string; transcriptType: TranscriptType; textPreview: string; len: number },
-    delivery?: { replyToMessageId: string },
+    delivery?: { replyToMessageId: string; replyInThread?: boolean },
   ): Promise<{ messageId: string }> {
     const result = this.replyInThread && delivery?.replyToMessageId
       ? await this.outbound.replyMessage(delivery.replyToMessageId, payload)

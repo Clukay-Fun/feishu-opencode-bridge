@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildKnowledgeIngestProcessingPayload,
   buildKnowledgeIngestPayload,
+  buildKnowledgeIngestSessionFinalPayload,
+  buildKnowledgeIngestSessionPayload,
   buildKnowledgeQueryEmptyPayload,
   buildKnowledgeQueryPayload,
   buildNoticeCardPayload,
@@ -362,10 +364,51 @@ describe("buildPostPayload", () => {
     const content = JSON.parse(payload.content) as any;
     const serialized = JSON.stringify(content);
     expect(serialized).toContain("知识入库处理中");
+    expect(serialized).toContain("整体进度");
+    expect(serialized).toContain("0/3 步完成");
+    expect(serialized).toContain("当前步骤");
     expect(serialized).toContain("读取内容");
+    expect(serialized).toContain("进行中");
+    expect(serialized).toContain("2. 提取问答");
+    expect(serialized).toContain("等待中");
     expect(serialized).toContain("loading_outlined");
+    expect(serialized).toContain("time_outlined");
     expect(content.body.elements[0].columns[0].elements[0].icon).toBeUndefined();
     expect(serialized).toContain("warning_outlined");
+  });
+
+  it("renders knowledge ingest session summary and final cards", () => {
+    const sessionPayload = buildKnowledgeIngestSessionPayload({
+      completedCount: 3,
+      failedCount: 0,
+      queuedCount: 1,
+      currentLabel: "劳动合同法释义.pdf",
+      totalExtractedCount: 127,
+      totalDedupedCount: 38,
+    });
+    const finalPayload = buildKnowledgeIngestSessionFinalPayload({
+      completedCount: 5,
+      failedCount: 0,
+      queuedCount: 0,
+      totalExtractedCount: 214,
+      totalDedupedCount: 38,
+      elapsedMs: 222_000,
+      bitableUrl: "https://example.com/base/app?table=tbl",
+    });
+
+    const sessionSerialized = JSON.stringify(JSON.parse(sessionPayload.content));
+    const finalSerialized = JSON.stringify(JSON.parse(finalPayload.content));
+    expect(sessionSerialized).toContain("知识入库会话");
+    expect(sessionSerialized).toContain("已完成");
+    expect(sessionSerialized).toContain("劳动合同法释义.pdf");
+    expect(sessionSerialized).toContain("排队中");
+    expect(sessionSerialized).toContain("总入库");
+    expect(finalSerialized).toContain("知识入库完成");
+    expect(finalSerialized).toContain("本次共处理");
+    expect(finalSerialized).toContain("214 条问答");
+    expect(finalSerialized).toContain("去重合并");
+    expect(finalSerialized).toContain("3 分 42 秒");
+    expect(finalSerialized).toContain("查看多维表格");
   });
 
   it("renders a notice card without body icon when disabled", () => {

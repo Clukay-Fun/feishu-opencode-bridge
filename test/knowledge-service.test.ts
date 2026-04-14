@@ -45,7 +45,7 @@ describe("KnowledgeBaseService", () => {
         ingest: {
           allowedExtensions: [".txt"],
           maxFileSizeMb: 20,
-          pendingTtlMs: 600_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
         },
       },
       {
@@ -110,7 +110,7 @@ describe("KnowledgeBaseService", () => {
         ingest: {
           allowedExtensions: [".txt"],
           maxFileSizeMb: 20,
-          pendingTtlMs: 600_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
         },
       },
       {
@@ -178,7 +178,7 @@ describe("KnowledgeBaseService", () => {
         ingest: {
           allowedExtensions: [".txt"],
           maxFileSizeMb: 20,
-          pendingTtlMs: 600_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
         },
       },
       {
@@ -241,7 +241,7 @@ describe("KnowledgeBaseService", () => {
         ingest: {
           allowedExtensions: [".txt"],
           maxFileSizeMb: 20,
-          pendingTtlMs: 600_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
         },
       },
       {
@@ -327,7 +327,7 @@ describe("KnowledgeBaseService", () => {
         ingest: {
           allowedExtensions: [".txt"],
           maxFileSizeMb: 20,
-          pendingTtlMs: 600_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
         },
       },
       {
@@ -398,7 +398,7 @@ describe("KnowledgeBaseService", () => {
         ingest: {
           allowedExtensions: [".txt"],
           maxFileSizeMb: 20,
-          pendingTtlMs: 600_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
         },
       },
       {
@@ -469,7 +469,7 @@ describe("KnowledgeBaseService", () => {
         ingest: {
           allowedExtensions: [".txt"],
           maxFileSizeMb: 20,
-          pendingTtlMs: 600_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
         },
       },
       {
@@ -535,7 +535,7 @@ describe("KnowledgeBaseService", () => {
         ingest: {
           allowedExtensions: [".txt", ".md"],
           maxFileSizeMb: 20,
-          pendingTtlMs: 600_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
         },
       },
       {
@@ -615,7 +615,7 @@ describe("KnowledgeBaseService", () => {
         ingest: {
           allowedExtensions: [".txt"],
           maxFileSizeMb: 20,
-          pendingTtlMs: 600_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
         },
       },
       {
@@ -683,7 +683,7 @@ describe("KnowledgeBaseService", () => {
         ingest: {
           allowedExtensions: [".txt"],
           maxFileSizeMb: 20,
-          pendingTtlMs: 600_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
         },
       },
       {
@@ -743,7 +743,7 @@ describe("KnowledgeBaseService", () => {
         ingest: {
           allowedExtensions: [".txt"],
           maxFileSizeMb: 20,
-          pendingTtlMs: 600_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
         },
       },
       {
@@ -819,7 +819,7 @@ describe("KnowledgeBaseService", () => {
         ingest: {
           allowedExtensions: [".txt"],
           maxFileSizeMb: 20,
-          pendingTtlMs: 600_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
         },
       },
       {
@@ -897,7 +897,7 @@ describe("KnowledgeBaseService", () => {
         ingest: {
           allowedExtensions: [".txt"],
           maxFileSizeMb: 20,
-          pendingTtlMs: 600_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
         },
       },
       {
@@ -978,7 +978,7 @@ describe("KnowledgeBaseService", () => {
         ingest: {
           allowedExtensions: [".txt"],
           maxFileSizeMb: 20,
-          pendingTtlMs: 600_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 3,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 3,
         },
       },
       {
@@ -1054,7 +1054,7 @@ describe("KnowledgeBaseService", () => {
         ingest: {
           allowedExtensions: [".txt"],
           maxFileSizeMb: 20,
-          pendingTtlMs: 600_000, concurrency: 1, maxExtractChunks: 30, maxExtractQas: 500,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 1, maxExtractChunks: 30, maxExtractQas: 500,
         },
       },
       {
@@ -1122,7 +1122,7 @@ describe("KnowledgeBaseService", () => {
         ingest: {
           allowedExtensions: [".txt"],
           maxFileSizeMb: 20,
-          pendingTtlMs: 600_000, concurrency: 1, maxExtractChunks: 2, maxExtractQas: 500,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 1, maxExtractChunks: 2, maxExtractQas: 500,
         },
       },
       {
@@ -1186,7 +1186,7 @@ describe("KnowledgeBaseService", () => {
       ingest: {
         allowedExtensions: [".txt"],
         maxFileSizeMb: 20,
-        pendingTtlMs: 600_000, concurrency: 1, maxExtractChunks: 2, maxExtractQas: 500,
+        pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 1, maxExtractChunks: 2, maxExtractQas: 500,
       },
     };
     const resources = {
@@ -1270,7 +1270,7 @@ describe("KnowledgeBaseService", () => {
         ingest: {
           allowedExtensions: [".txt"],
           maxFileSizeMb: 20,
-          pendingTtlMs: 600_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
         },
       },
       {

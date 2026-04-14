@@ -26,7 +26,7 @@ export class FeishuApiClient {
     return { messageId: body.data.message_id };
   }
 
-  async replyMessage(messageId: string, payload: FeishuPostPayload): Promise<{ messageId: string }> {
+  async replyMessage(messageId: string, payload: FeishuPostPayload, options?: { replyInThread?: boolean }): Promise<{ messageId: string }> {
     const token = await this.getTenantToken();
     const response = await withRetry(() => fetch(`https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/reply`, {
       method: "POST",
@@ -34,7 +34,7 @@ export class FeishuApiClient {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(options?.replyInThread ? { ...payload, reply_in_thread: true } : payload),
     }));
     const body = (await response.json()) as { code: number; msg?: string; data?: { message_id?: string } };
     if (!response.ok || body.code !== 0 || !body.data?.message_id) {
