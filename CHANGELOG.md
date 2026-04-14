@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.14 - 2026-04-14
+
+### Fixed
+- Fixed ordinary file handling to reject unsupported file types and oversized uploads before entering the normal follow-up flow.
+
 ## 0.1.13 - 2026-04-14
 
 ### Added

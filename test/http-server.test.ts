@@ -34,6 +34,7 @@ vi.mock("@larksuiteoapi/node-sdk", () => {
 
 import { startBridgeHttpServer, type BridgeHttpServer } from "../src/http/server.js";
 import type { AppConfig } from "../src/config/schema.js";
+import { APP_VERSION } from "../src/version.js";
 
 describe("startBridgeHttpServer", () => {
   const servers: BridgeHttpServer[] = [];
@@ -59,7 +60,7 @@ describe("startBridgeHttpServer", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(expect.objectContaining({
       ok: true,
-      bridgeVersion: "0.1.12",
+      bridgeVersion: APP_VERSION,
       queueLimit: 3,
       cardActionsEnabled: false,
       cardActionsPath: "/webhook/card",

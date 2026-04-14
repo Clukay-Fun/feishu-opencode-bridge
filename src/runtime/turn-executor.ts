@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 import type { PendingPermissionInteraction } from "../bridge/state.js";
+import type { ModuleManager } from "../bridge/module.js";
 import { transitionTurn } from "../bridge/state-machine.js";
 import { TurnWatchdog } from "../bridge/watchdog.js";
 import type { BridgeTurn } from "../bridge/turn.js";
@@ -80,10 +81,7 @@ export type TurnExecutorContext = {
       value: Record<string, unknown>;
     }>;
   };
-  memory: {
-    buildRecallBlock(openId: string, plainText: string): Promise<string>;
-    enqueueLearn(openId: string, userText: string, assistantText: string): void;
-  } | null;
+  moduleManager: Pick<ModuleManager, "collectBeforeTurnBlocks" | "runAfterTurnHooks">;
   getSessionWindow(conversationKey: string, chatType?: string): SessionWindowRecord;
   ensureSession(source: Pick<BridgeTurn, "chatId" | "chatType" | "conversationKey" | "threadKey">): Promise<string>;
   maybeUpdateSessionLabel(turn: BridgeTurn & { sessionId: string }): Promise<void>;
@@ -136,7 +134,11 @@ export class TurnExecutor {
       this.context.logger.logTranscript("opencode-reply", { sessionId, turnId: turn.turnId }, reply);
       await this.context.maybeUpdateSessionLabel(turn as BridgeTurn & { sessionId: string });
       if (reply) {
-        this.context.memory?.enqueueLearn(turn.senderOpenId, turn.plainText, reply);
+        await this.context.moduleManager.runAfterTurnHooks({
+          turn: turn as BridgeTurn & { sessionId: string },
+          reply,
+          window: this.context.getSessionWindow(turn.conversationKey, turn.chatType),
+        });
       }
       if (!card && reply) {
         await this.sendTurnFallbackMarkdown(turn.chatId, reply, turn.inboundMessageId);
@@ -167,10 +169,11 @@ export class TurnExecutor {
     const bridgeSystemPrompt = this.context.config.bridge.injectSystemState
       ? buildBridgeSystemPrompt(turn, this.context.getSessionWindow(turn.conversationKey, turn.chatType))
       : undefined;
-    const memoryRecall = this.context.memory
-      ? await this.context.memory.buildRecallBlock(turn.senderOpenId, turn.plainText)
-      : "";
-    const systemPrompt = composeSystemPrompt(bridgeSystemPrompt, memoryRecall);
+    const moduleSystemBlocks = await this.context.moduleManager.collectBeforeTurnBlocks({
+      turn,
+      window: this.context.getSessionWindow(turn.conversationKey, turn.chatType),
+    });
+    const systemPrompt = composeSystemPrompt(bridgeSystemPrompt, ...moduleSystemBlocks);
 
     return new Promise<string>((resolve, reject) => {
       let assistantMessageId: string | null = null;
