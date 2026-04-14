@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.11 - 2026-04-14
+
+### Fixed
+- Fixed fallback final replies so direct markdown responses stay attached to the original Feishu message thread when process cards cannot be created.
+
 ## 0.1.10 - 2026-04-14
 
 ### Added

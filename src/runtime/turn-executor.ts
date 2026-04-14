@@ -139,7 +139,7 @@ export class TurnExecutor {
         this.context.memory?.enqueueLearn(turn.senderOpenId, turn.plainText, reply);
       }
       if (!card && reply) {
-        await this.sendTurnFallbackMarkdown(turn.chatId, reply);
+        await this.sendTurnFallbackMarkdown(turn.chatId, reply, turn.inboundMessageId);
       }
       await this.context.turnCardManager.flushStreamUpdate(turn.turnId, reply, true);
       await this.context.turnCardManager.updateTurnCard(turn.turnId, { status: "已完成", update: `最终回复已生成（${reply.length} 字）`, target: "step" });
@@ -149,7 +149,7 @@ export class TurnExecutor {
       const detail = normalizeTurnFailureDetail(error);
       this.context.logger.log("bridge/queue", "run turn failed", { chatId: turn.chatId, conversationKey, turnId: turn.turnId, detail }, "error");
       if (!hasProcessCard) {
-        await this.sendTurnFallbackMarkdown(turn.chatId, `处理失败：${escapeMarkdownText(detail)}`);
+        await this.sendTurnFallbackMarkdown(turn.chatId, `处理失败：${escapeMarkdownText(detail)}`, turn.inboundMessageId);
       }
       await this.context.turnCardManager.updateTurnCard(turn.turnId, { status: detail.includes("超时") ? "已超时" : "处理失败", update: detail, target: "step" });
       queue.replaceActive(transitionTurn(turn, detail.includes("超时") ? "timeout" : "aborted"));
@@ -533,13 +533,13 @@ export class TurnExecutor {
     return messages.find((message) => message.info.id === messageId && message.info.role === "assistant") ?? null;
   }
 
-  private async sendTurnFallbackMarkdown(chatId: string, markdown: string): Promise<void> {
+  private async sendTurnFallbackMarkdown(chatId: string, markdown: string, replyToMessageId: string): Promise<void> {
     await this.context.sendPayload(chatId, buildPostMarkdownPayload(markdown), {
       event: "fallback final message sent",
       transcriptType: "outbound-final",
       textPreview: createTextPreview(markdown),
       len: markdown.length,
-    });
+    }, { replyToMessageId });
   }
 }
 

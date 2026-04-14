@@ -9,6 +9,7 @@ import { createLogger, createTextPreview } from "../src/logging/logger.js";
 describe("logger", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it("creates previews", () => {
@@ -132,6 +133,7 @@ describe("logger", () => {
 
     const content = await readFile(path.join(dir, "bridge-2026-04-12.log"), "utf8");
     expect(content).toContain("scope");
+    expect(content).toContain("message");
   });
 });
 
