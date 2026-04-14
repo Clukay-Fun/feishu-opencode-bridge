@@ -194,6 +194,28 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "threadKey" | "senderOpenId">,
     command: KnowledgeCommand,
   ): Promise<boolean> {
+    if (
+      message.chatType === "p2p"
+      && (
+        command.kind === "knowledge-query"
+        || command.kind === "knowledge-mode-start"
+        || command.kind === "knowledge-mode-end"
+      )
+    ) {
+      const window = this.deps.getSessionWindow(message.conversationKey, message.chatType);
+      if (window.interactionMode === "knowledge") {
+        const nextWindow = setInteractionMode(window, "default", this.deps.config.bridge.maxSessionsPerWindow);
+        await this.deps.saveSessionWindow(message.conversationKey, nextWindow);
+      }
+      await this.sendNotice(message, {
+        title: "私聊里直接提问即可",
+        template: "blue",
+        icon: "search_outlined",
+        message: "私聊不再使用 `/legal-query*` 切换知识库模式。直接发送问题即可，由 OpenCode 自主决定是否使用知识库；如需批量入库，请使用 `/kb-ingest-start`。",
+      });
+      return true;
+    }
+
     if (command.kind === "knowledge-query") {
       if (!this.deps.knowledge) {
         await this.sendNotice(message, {
@@ -364,7 +386,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
   }
 
   private async handleKnowledgeQueryMessage(message: IncomingChatMessage): Promise<boolean> {
-    if (message.messageType === "file" || !this.deps.knowledge) {
+    if (message.chatType === "p2p" || message.messageType === "file" || !this.deps.knowledge) {
       return false;
     }
 

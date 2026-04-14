@@ -4,6 +4,10 @@ vi.mock("mammoth", () => ({
   extractRawText: vi.fn(async () => ({ value: "第一段内容\n\n第二段内容" })),
 }));
 
+vi.mock("../src/knowledge/pdf-markdown.js", () => ({
+  spawnPdfToMarkdown: vi.fn(),
+}));
+
 vi.mock("pdf-parse", () => ({
   PDFParse: class {
     async getText() {
@@ -22,6 +26,7 @@ vi.mock("pdf-parse", () => ({
 }));
 
 import { chunkKnowledgeSections, groupKnowledgeSectionsByChapter, parseKnowledgeFile } from "../src/knowledge/parser.js";
+import { spawnPdfToMarkdown } from "../src/knowledge/pdf-markdown.js";
 
 describe("parseKnowledgeFile", () => {
   it("parses txt sections", async () => {
@@ -46,11 +51,29 @@ describe("parseKnowledgeFile", () => {
   });
 
   it("parses pdf pages via pdf-parse", async () => {
+    vi.mocked(spawnPdfToMarkdown).mockRejectedValueOnce(new Error("python unavailable"));
     const parsed = await parseKnowledgeFile("demo.pdf", Buffer.from("fake"));
     expect(parsed.normalizedMarkdown).toBe("第一页内容\n\n---\n\n第二页内容");
+    expect(parsed.parserUsed).toBe("pdf-parse");
     expect(parsed.sections).toEqual([
       { location: "第 1 页", text: "第一页内容" },
       { location: "第 2 页", text: "第二页内容" },
+    ]);
+  });
+
+  it("prefers python markdown output for pdf files when available", async () => {
+    vi.mocked(spawnPdfToMarkdown).mockResolvedValueOnce({
+      markdown: "# 第一章\n\n这是提取后的正文",
+      parserUsed: "pymupdf4llm",
+    });
+
+    const parsed = await parseKnowledgeFile("demo.pdf", Buffer.from("fake"));
+
+    expect(parsed.normalizedMarkdown).toBe("# 第一章\n\n这是提取后的正文");
+    expect(parsed.parserUsed).toBe("pymupdf4llm");
+    expect(parsed.sections).toEqual([
+      { location: "段落 1", text: "# 第一章" },
+      { location: "段落 2", text: "这是提取后的正文" },
     ]);
   });
 });

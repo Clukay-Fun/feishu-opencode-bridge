@@ -15,6 +15,12 @@ export type KnowledgeDocumentRecord = {
   createdAt: number;
 };
 
+export type KnowledgeDocumentSummary = KnowledgeDocumentRecord & {
+  entryCount: number;
+  extractChunkCount: number;
+  lastEntryCreatedAt?: number | undefined;
+};
+
 export type KnowledgeEntryRecord = {
   id: number;
   documentId: number;
@@ -57,6 +63,23 @@ type KnowledgeEntryRow = {
   embedding_model: string | null;
   embedding_json: string | null;
   created_at: number;
+};
+
+type KnowledgeDocumentRow = {
+  id: number;
+  source_type: string;
+  title: string;
+  file_name: string;
+  checksum: string;
+  status: string;
+  bitable_record_id: string | null;
+  created_at: number;
+};
+
+type KnowledgeDocumentSummaryRow = KnowledgeDocumentRow & {
+  entry_count: number;
+  extract_chunk_count: number;
+  last_entry_created_at: number | null;
 };
 
 type KnowledgeExtractChunkRow = {
@@ -222,6 +245,49 @@ export class KnowledgeDb {
     `).run({ id, status });
   }
 
+  listDocuments(options?: {
+    limit?: number | undefined;
+    statuses?: string[] | undefined;
+  }): KnowledgeDocumentSummary[] {
+    const filters = options?.statuses?.filter(Boolean) ?? [];
+    const whereClause = filters.length > 0
+      ? `WHERE d.status IN (${filters.map((_, index) => `@status${index}`).join(", ")})`
+      : "";
+    const params = Object.fromEntries(filters.map((status, index) => [`status${index}`, status]));
+    const limit = options?.limit ?? 20;
+    const rows = this.db.prepare(`
+      SELECT
+        d.*,
+        COUNT(DISTINCT e.id) AS entry_count,
+        COUNT(DISTINCT c.id) AS extract_chunk_count,
+        MAX(e.created_at) AS last_entry_created_at
+      FROM knowledge_documents d
+      LEFT JOIN knowledge_entries e ON e.document_id = d.id
+      LEFT JOIN knowledge_extract_chunks c ON c.document_id = d.id
+      ${whereClause}
+      GROUP BY d.id
+      ORDER BY d.created_at DESC, d.id DESC
+      LIMIT @limit
+    `).all({ ...params, limit }) as KnowledgeDocumentSummaryRow[];
+    return rows.map((row) => toDocumentSummary(row));
+  }
+
+  getDocumentById(id: number): KnowledgeDocumentSummary | null {
+    const row = this.db.prepare(`
+      SELECT
+        d.*,
+        COUNT(DISTINCT e.id) AS entry_count,
+        COUNT(DISTINCT c.id) AS extract_chunk_count,
+        MAX(e.created_at) AS last_entry_created_at
+      FROM knowledge_documents d
+      LEFT JOIN knowledge_entries e ON e.document_id = d.id
+      LEFT JOIN knowledge_extract_chunks c ON c.document_id = d.id
+      WHERE d.id = @id
+      GROUP BY d.id
+    `).get({ id }) as KnowledgeDocumentSummaryRow | undefined;
+    return row ? toDocumentSummary(row) : null;
+  }
+
   listExtractedChunks(documentId: number): KnowledgeExtractChunkRecord[] {
     const rows = this.db.prepare(`
       SELECT
@@ -370,6 +436,34 @@ export class KnowledgeDb {
     return rows.map((row) => toEntryRecord(row));
   }
 
+  listEntriesByDocument(documentId: number, limit?: number): KnowledgeEntryRecord[] {
+    const sql = limit === undefined
+      ? `
+        SELECT *
+        FROM knowledge_entries
+        WHERE document_id = @documentId
+        ORDER BY id DESC
+      `
+      : `
+        SELECT *
+        FROM knowledge_entries
+        WHERE document_id = @documentId
+        ORDER BY id DESC
+        LIMIT @limit
+      `;
+    const rows = this.db.prepare(sql).all(limit === undefined ? { documentId } : { documentId, limit }) as KnowledgeEntryRow[];
+    return rows.map((row) => toEntryRecord(row));
+  }
+
+  listAllDocuments(): KnowledgeDocumentRecord[] {
+    const rows = this.db.prepare(`
+      SELECT *
+      FROM knowledge_documents
+      ORDER BY id DESC
+    `).all() as KnowledgeDocumentRow[];
+    return rows.map((row) => toDocumentRecord(row));
+  }
+
   close(): void {
     this.db.close();
   }
@@ -464,6 +558,28 @@ function toEntryRecord(row: KnowledgeEntryRow): KnowledgeEntryRecord {
     embeddingModel: row.embedding_model ?? undefined,
     embedding: parseNumericArray(row.embedding_json),
     createdAt: row.created_at,
+  };
+}
+
+function toDocumentRecord(row: KnowledgeDocumentRow): KnowledgeDocumentRecord {
+  return {
+    id: row.id,
+    sourceType: row.source_type,
+    title: row.title,
+    fileName: row.file_name,
+    checksum: row.checksum,
+    status: row.status,
+    bitableRecordId: row.bitable_record_id ?? undefined,
+    createdAt: row.created_at,
+  };
+}
+
+function toDocumentSummary(row: KnowledgeDocumentSummaryRow): KnowledgeDocumentSummary {
+  return {
+    ...toDocumentRecord(row),
+    entryCount: Number(row.entry_count ?? 0),
+    extractChunkCount: Number(row.extract_chunk_count ?? 0),
+    lastEntryCreatedAt: row.last_entry_created_at ?? undefined,
   };
 }
 

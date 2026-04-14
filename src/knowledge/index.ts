@@ -1,12 +1,26 @@
 import crypto from "node:crypto";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 
 import type { AppConfig } from "../config/schema.js";
 import type { Logger } from "../logging/logger.js";
 import { OpenAICompatibleEmbeddingClient, type EmbeddingProviderClient } from "../memory/embedding-retriever.js";
 import type { OpenCodeClient, OpenCodeModelRef, OpenCodePromptRequest } from "../opencode/client.js";
 import { extractAssistantText } from "../runtime/app-helpers.js";
-import { chunkKnowledgeSections, groupKnowledgeSectionsByChapter, parseKnowledgeFile } from "./parser.js";
-import { KnowledgeDb, type KnowledgeEntryCandidate } from "./db.js";
+import {
+  chunkKnowledgeSections,
+  groupKnowledgeSectionsByChapter,
+  parseKnowledgeFile,
+  type KnowledgeParserUsed,
+} from "./parser.js";
+import {
+  KnowledgeDb,
+  type KnowledgeDocumentSummary,
+  type KnowledgeEntryCandidate,
+  type KnowledgeEntryRecord,
+} from "./db.js";
+
+export type { KnowledgeDocumentSummary, KnowledgeEntryRecord } from "./db.js";
 
 export type KnowledgeQueryResult = {
   question: string;
@@ -22,6 +36,38 @@ export type KnowledgeIngestResult = {
   durationMs: number;
   bitableUrl?: string | undefined;
   warning?: string | undefined;
+};
+
+export type KnowledgeParsedFileResult = {
+  sourceFile: string;
+  markdown: string;
+  sectionCount: number;
+  parserUsed: KnowledgeParserUsed;
+};
+
+export type KnowledgeExtractPreviewResult = {
+  sourceFile: string;
+  parserUsed: KnowledgeParserUsed;
+  sectionCount: number;
+  chunkCount: number;
+  rawExtractedCount: number;
+  dedupedCount: number;
+  extractedCount: number;
+  warning?: string | undefined;
+  items: Array<ExtractedQaCandidate>;
+};
+
+export type KnowledgeDocumentDetail = KnowledgeDocumentSummary & {
+  tagCounts: Record<string, number>;
+  sampleEntries: KnowledgeEntryRecord[];
+};
+
+export type KnowledgeStatsResult = {
+  documentCount: number;
+  entryCount: number;
+  statusCounts: Record<string, number>;
+  tagCounts: Record<string, number>;
+  recentDocuments: KnowledgeDocumentSummary[];
 };
 
 export type KnowledgeFileRef = {
@@ -54,7 +100,13 @@ export type KnowledgeIngestOptions = {
 export interface KnowledgeBasePort {
   query(question: string): Promise<KnowledgeQueryResult>;
   ingestFile(file: KnowledgeFileRef, options?: KnowledgeIngestOptions): Promise<KnowledgeIngestResult>;
+  ingestLocalFile?(filePath: string, options?: KnowledgeIngestOptions): Promise<KnowledgeIngestResult>;
   ingestWebPage?(request: KnowledgeWebPageIngestRequest, options?: KnowledgeIngestOptions): Promise<KnowledgeIngestResult>;
+  parseLocalFile?(filePath: string): Promise<KnowledgeParsedFileResult>;
+  previewLocalFileExtraction?(filePath: string, options?: { maxQas?: number | undefined; onProgress?: KnowledgeIngestOptions["onProgress"] }): Promise<KnowledgeExtractPreviewResult>;
+  listDocuments?(options?: { limit?: number | undefined; status?: string | undefined }): Promise<KnowledgeDocumentSummary[]>;
+  getDocument?(id: number): Promise<KnowledgeDocumentDetail | null>;
+  getStats?(): Promise<KnowledgeStatsResult>;
   syncMirror(): Promise<void>;
   close(): void;
 }
@@ -181,6 +233,172 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
       sourceUrl: request.url,
       messageId: request.messageId,
     }, options);
+  }
+
+  async ingestLocalFile(filePath: string, options?: KnowledgeIngestOptions): Promise<KnowledgeIngestResult> {
+    const resolvedPath = path.resolve(filePath);
+    const fileName = path.basename(resolvedPath);
+    await this.reportProgress(options, {
+      step: "read",
+      status: "running",
+      detail: "正在读取本地文件",
+    });
+    const buffer = await readFile(resolvedPath);
+    validateUploadedFile(fileName, buffer, this.config.ingest.allowedExtensions, this.config.ingest.maxFileSizeMb);
+    return await this.ingestBuffer({
+      fileName,
+      buffer,
+      sourceType: "local-file",
+    }, options);
+  }
+
+  async parseLocalFile(filePath: string): Promise<KnowledgeParsedFileResult> {
+    const resolvedPath = path.resolve(filePath);
+    const fileName = path.basename(resolvedPath);
+    const buffer = await readFile(resolvedPath);
+    validateUploadedFile(fileName, buffer, this.config.ingest.allowedExtensions, this.config.ingest.maxFileSizeMb);
+    const parsed = await parseKnowledgeFile(fileName, buffer);
+    return {
+      sourceFile: fileName,
+      markdown: parsed.normalizedMarkdown,
+      sectionCount: parsed.sections.length,
+      parserUsed: parsed.parserUsed,
+    };
+  }
+
+  async previewLocalFileExtraction(
+    filePath: string,
+    options?: { maxQas?: number | undefined; onProgress?: KnowledgeIngestOptions["onProgress"] },
+  ): Promise<KnowledgeExtractPreviewResult> {
+    const resolvedPath = path.resolve(filePath);
+    const fileName = path.basename(resolvedPath);
+    const buffer = await readFile(resolvedPath);
+    validateUploadedFile(fileName, buffer, this.config.ingest.allowedExtensions, this.config.ingest.maxFileSizeMb);
+    const parsedDocument = await parseKnowledgeFile(fileName, buffer);
+    const chapterGrouping = groupKnowledgeSectionsByChapter(parsedDocument.sections);
+    const extractionSections = chapterGrouping.chapters.length > 0
+      ? chapterGrouping.chapters.filter((chapter) => !chapter.skipped).flatMap((chapter) => chapter.sections)
+      : parsedDocument.sections;
+    const extractionMarkdown = extractionSections.map((section) => section.text).join("\n\n");
+    const qaDocument = detectStructuredQaDocument(extractionMarkdown, extractionSections);
+    let rawExtractedCount = 0;
+    let dedupedCount = 0;
+    let finalCandidates: ExtractedQaCandidate[] = [];
+    let chunkCount = 0;
+    let warning = joinWarnings(
+      chapterGrouping.skippedTitles.length > 0 ? buildSkippedChaptersWarning(chapterGrouping.skippedTitles) : undefined,
+    );
+
+    if (qaDocument.matched) {
+      await this.reportProgress({ onProgress: options?.onProgress }, {
+        step: "extract",
+        status: "running",
+        detail: `已识别问答体文档（共 ${qaDocument.pairs.length} 组）`,
+      });
+      const enrichedCandidates = await this.enrichDetectedQaPairs(fileName, qaDocument.pairs, { onProgress: options?.onProgress });
+      rawExtractedCount = enrichedCandidates.length;
+      const dedupedCandidates = dedupeExtractedCandidates(enrichedCandidates);
+      finalCandidates = await this.semanticDedupeCandidates(dedupedCandidates, { onProgress: options?.onProgress });
+      dedupedCount = rawExtractedCount - finalCandidates.length;
+    } else {
+      const allChunks = chapterGrouping.chapters.length > 0
+        ? chapterGrouping.chapters
+          .filter((chapter) => !chapter.skipped)
+          .flatMap((chapter) => chunkKnowledgeSections(chapter.sections))
+        : chunkKnowledgeSections(extractionSections);
+      chunkCount = allChunks.length;
+      const maxExtractChunks = this.config.ingest.maxExtractChunks;
+      const batchCount = Math.max(1, Math.ceil(allChunks.length / maxExtractChunks));
+      if (batchCount > 1) {
+        warning = joinWarnings(warning, buildChunkBatchingWarning(maxExtractChunks, allChunks.length, batchCount));
+      }
+      const extractedByChunk: Array<ChunkExtractionState> = new Array(allChunks.length);
+      const chunkBatches = sliceIntoBatches(allChunks.map((chunk, index) => ({ chunk, index })), maxExtractChunks);
+      for (const [batchIndex, batch] of chunkBatches.entries()) {
+        await this.reportProgress({ onProgress: options?.onProgress }, {
+          step: "extract",
+          status: "running",
+          detail: batchCount > 1
+            ? `正在提交第 ${batchIndex + 1}/${batchCount} 批模型提取任务（本批 ${batch.length} 段，并发 ${this.config.ingest.concurrency}）`
+            : `正在提交模型提取任务（共 ${batch.length} 段，并发 ${this.config.ingest.concurrency}）`,
+        });
+        await runWithConcurrency(batch, this.config.ingest.concurrency, async ({ chunk, index }) => {
+          const items = await this.extractQaWithRetry(
+            fileName,
+            chunk.location,
+            chunk.text,
+            chunk.prevContext,
+            index,
+            allChunks.length,
+            { onProgress: options?.onProgress },
+          );
+          extractedByChunk[index] = { chunk, items };
+        });
+      }
+      rawExtractedCount = extractedByChunk.reduce((sum, item) => sum + item.items.length, 0);
+      const dedupedCandidates = dedupeExtractedCandidates(extractedByChunk.flatMap((item) => item.items.map((qa) => ({
+        ...qa,
+        pageSection: item.chunk.location,
+      }))));
+      finalCandidates = await this.semanticDedupeCandidates(dedupedCandidates, { onProgress: options?.onProgress });
+      dedupedCount = rawExtractedCount - finalCandidates.length;
+    }
+
+    const maxQas = options?.maxQas ?? this.config.ingest.maxExtractQas;
+    if (finalCandidates.length > maxQas) {
+      finalCandidates = [...finalCandidates]
+        .sort((left, right) => scoreExtractedCandidate(right) - scoreExtractedCandidate(left))
+        .slice(0, maxQas);
+      warning = joinWarnings(warning, buildMaxExtractQasWarning(maxQas));
+    }
+
+    return {
+      sourceFile: fileName,
+      parserUsed: parsedDocument.parserUsed,
+      sectionCount: parsedDocument.sections.length,
+      chunkCount,
+      rawExtractedCount,
+      dedupedCount,
+      extractedCount: finalCandidates.length,
+      warning,
+      items: finalCandidates,
+    };
+  }
+
+  async listDocuments(options?: { limit?: number | undefined; status?: string | undefined }): Promise<KnowledgeDocumentSummary[]> {
+    return this.db.listDocuments({
+      limit: options?.limit,
+      statuses: normalizeDocumentStatusFilter(options?.status),
+    });
+  }
+
+  async getDocument(id: number): Promise<KnowledgeDocumentDetail | null> {
+    const document = this.db.getDocumentById(id);
+    if (!document) {
+      return null;
+    }
+    const entries = this.db.listEntriesByDocument(id);
+    const sampleEntries = entries.slice(0, 10);
+    const tagCounts = summarizeTagCounts(entries);
+    return {
+      ...document,
+      tagCounts,
+      sampleEntries,
+    };
+  }
+
+  async getStats(): Promise<KnowledgeStatsResult> {
+    const documents = this.db.listAllDocuments();
+    const entries = this.db.listAllEntries();
+    const statusCounts = summarizeStatusCounts(documents);
+    const tagCounts = summarizeTagCounts(entries);
+    return {
+      documentCount: documents.length,
+      entryCount: entries.length,
+      statusCounts,
+      tagCounts,
+      recentDocuments: this.db.listDocuments({ limit: 5 }),
+    };
   }
 
   private async ingestBuffer(input: {
@@ -1385,6 +1603,44 @@ function buildIngestWarning(extractedCount: number): string | undefined {
     return `该文件提取了 ${extractedCount} 条问答，建议人工抽查质量。`;
   }
   return undefined;
+}
+
+function normalizeDocumentStatusFilter(status: string | undefined): string[] | undefined {
+  const normalized = status?.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized === "active") {
+    return ["ingested", "synced"];
+  }
+  if (normalized === "failed") {
+    return ["write-failed"];
+  }
+  if (normalized === "extracting") {
+    return ["extracting", "writing", "extracted"];
+  }
+  return [status!.trim()];
+}
+
+function summarizeTagCounts(entries: Array<Pick<KnowledgeEntryRecord, "tags">>): Record<string, number> {
+  const tagCounts = new Map<string, number>();
+  for (const entry of entries) {
+    for (const tag of entry.tags) {
+      if (!tag.trim()) {
+        continue;
+      }
+      tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+    }
+  }
+  return Object.fromEntries([...tagCounts.entries()].sort((left, right) => right[1] - left[1]));
+}
+
+function summarizeStatusCounts(documents: Array<Pick<KnowledgeDocumentSummary, "status">>): Record<string, number> {
+  const statusCounts = new Map<string, number>();
+  for (const document of documents) {
+    statusCounts.set(document.status, (statusCounts.get(document.status) ?? 0) + 1);
+  }
+  return Object.fromEntries([...statusCounts.entries()].sort((left, right) => right[1] - left[1]));
 }
 
 async function runWithConcurrency<T>(
