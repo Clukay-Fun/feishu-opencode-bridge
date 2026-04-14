@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.13 - 2026-04-14
+
+### Added
+- Added an Apache 2.0 `LICENSE` file for the repository.
+
 ## 0.1.12 - 2026-04-14
 
 ### Added
