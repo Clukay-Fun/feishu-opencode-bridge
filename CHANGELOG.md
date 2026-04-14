@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.17 - 2026-04-15
+
+### Added
+- Added local DOCX contract-template rendering with reusable template metadata, template field guides, and regression coverage for contract-draft post-processing.
+- Added guided contract-draft onboarding flows plus the bundled civil entrustment template files needed for local draft generation.
+
+### Changed
+- Updated contract-assistant runtime handling so draft requests can render local Word files, surface warnings, and reuse richer template-aware prompts.
+- Updated sanitization and notice-card rendering to better mask organization identities and keep notice cards icon-free by default.
+
 ## 0.1.16 - 2026-04-14
 
 ### Added

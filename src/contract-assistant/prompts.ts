@@ -1,22 +1,63 @@
-export function buildContractDraftPrompt(request: string): string {
+export function buildContractDraftPrompt(
+  request: string,
+  templateName: string,
+  templateMainText: string,
+  templateRiskNoticeText: string | undefined,
+  fieldGuideText: string | undefined,
+): string {
   return [
-    "你是律所业务助手，负责根据用户需求起草一份可编辑的合同草稿。",
+    "你是律所合同起草助手，负责基于指定模板生成一份可编辑的合同草稿。",
     "请基于用户输入产出 JSON 对象，不要输出额外说明。",
     "",
     "输出字段：",
     "- docTitle: 文档标题",
+    "- feeMode: 收费模式，取值 stage_fixed 或 base_plus_risk",
     "- markdown: 合同 Markdown 正文，不要包含与标题重复的一级标题",
+    "- templateData: 用于 Word 模板填充的结构化字段",
     "- record: 合同台账字段，尽量补全",
+    "",
+    "templateData 可包含这些字段：",
+    "client_name、client_representative、client_id_code、client_address、client_email、client_phone、counterparty_name、case_cause、lead_lawyer、sign_date、fee_mode、engage_arbitration、engage_first_instance、engage_second_instance、engage_enforcement、engage_settlement、fee_arbitration_clause、fee_first_instance_clause、fee_second_instance_clause、fee_enforcement_clause、base_fee_clause、risk_fee_clause、risk_fee_followup_clause_1、risk_fee_followup_clause_2、dispute_resolution_clause、special_terms",
     "",
     "record 可包含这些字段：",
     "项目名称、律所合同号、客户名称、合同类型、具体类型/案由、签约日期、合同金额、付款节点、联系人、联系方式、客户收件地址、信用代码/身份证、备注",
     "",
     "规则：",
-    "1. 合同正文要完整，至少包含当事人、服务范围/标的、费用、付款节点、违约责任、争议解决。",
-    "2. 如果用户没有给全参数，可以在正文中用“【待补】”占位。",
-    "3. 付款安排统一整理到 `付款节点` 文本字段，不要拆成分期数组。",
-    "4. 金额字段输出数字；日期优先输出 YYYY-MM-DD。",
+    "1. 必须以模板结构为基础起草，不要自由发明完全不同的章节结构。",
+    "2. 对用户未提供的关键字段，用“【待补】”占位，不要编造。",
+    "3. 如果判断收费模式为 stage_fixed，则不要输出《风险代理告知书》。",
+    "4. 如果判断收费模式为 base_plus_risk，则在正文末尾附上《风险代理告知书》部分。",
+    "5. 付款安排统一整理到 `付款节点` 文本字段，不要拆成分期数组。",
+    "6. 金额字段输出数字；日期优先输出 YYYY-MM-DD。",
+    "7. 输出的 Markdown 适合直接创建飞书文档，标题层级清晰，条款使用有序段落或小标题表达。",
+    "8. templateData 里的 clause 字段请直接输出可落进模板的完整句子，不要只给数字。",
+    "9. templateData 中的布尔字段请输出 true/false。",
     "",
+    `模板名称：${templateName}`,
+    "",
+    "主合同模板：",
+    "---模板开始---",
+    templateMainText,
+    "---模板结束---",
+    "",
+    templateRiskNoticeText
+      ? [
+        "风险告知书模板：",
+        "---风险附件开始---",
+        templateRiskNoticeText,
+        "---风险附件结束---",
+        "",
+      ].join("\n")
+      : "风险告知书模板：无\n",
+    fieldGuideText
+      ? [
+        "字段说明：",
+        "---字段说明开始---",
+        fieldGuideText,
+        "---字段说明结束---",
+        "",
+      ].join("\n")
+      : "字段说明：无\n",
     `用户需求：${request}`,
   ].join("\n");
 }
@@ -115,4 +156,3 @@ export function buildCaseUpdatePrompt(request: string): string {
     `用户输入：${request}`,
   ].join("\n");
 }
-

@@ -1,4 +1,6 @@
 import { DEFAULT_LABOR_SKILL_CONFIG, type AppConfig } from "../config/schema.js";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import type { RuntimeModule, RuntimeModuleHandleResult, RuntimeModuleMessageContext } from "../bridge/module.js";
 import {
   buildNoticeCardPayload,
@@ -41,6 +43,7 @@ type PendingLaborInteraction = {
   chatType: string;
   conversationKey: string;
   requesterOpenId: string;
+  expiresAt: number;
   anchorMessageId: string;
   rootMessageId: string;
   deliveryMode: "group_thread" | "p2p_reply";
@@ -70,9 +73,25 @@ export class LaborRuntimeModule implements RuntimeModule {
   private readonly featureConfig;
   private readonly interactions = new Map<string, PendingLaborInteraction>();
   private readonly timers = new Map<string, NodeJS.Timeout>();
+  private readonly stateFilePath: string;
+  private persistChain: Promise<void> = Promise.resolve();
 
   constructor(private readonly deps: LaborRuntimeModuleDeps) {
     this.featureConfig = deps.config.laborSkill ?? DEFAULT_LABOR_SKILL_CONFIG;
+    this.stateFilePath = path.join(deps.config.storage.dataDir, "labor-runtime-state.json");
+  }
+
+  async start(): Promise<void> {
+    await this.restoreState();
+  }
+
+  async stop(): Promise<void> {
+    await this.flushPersist();
+    for (const timer of this.timers.values()) {
+      clearTimeout(timer);
+    }
+    this.timers.clear();
+    this.interactions.clear();
   }
 
   async handleMessage(context: RuntimeModuleMessageContext): Promise<RuntimeModuleHandleResult> {
@@ -166,6 +185,7 @@ export class LaborRuntimeModule implements RuntimeModule {
       chatType: message.chatType,
       conversationKey: message.conversationKey,
       requesterOpenId: message.senderOpenId,
+      expiresAt: Date.now() + this.featureConfig.ingest.pendingTtlMs,
       anchorMessageId: ready.messageId,
       rootMessageId: message.messageId,
       deliveryMode,
@@ -173,6 +193,7 @@ export class LaborRuntimeModule implements RuntimeModule {
       notes: [],
       files: [],
     });
+    this.schedulePersist();
 
     const timer = setTimeout(() => {
       void this.expireInteraction(message.conversationKey);
@@ -188,6 +209,7 @@ export class LaborRuntimeModule implements RuntimeModule {
         fileName: message.file.fileName,
         size: message.file.size,
       });
+      this.schedulePersist();
       await this.sendNotice(message, {
         title: "已收到材料",
         template: "blue",
@@ -199,6 +221,7 @@ export class LaborRuntimeModule implements RuntimeModule {
 
     if (message.plainText.trim()) {
       pending.notes.push(message.plainText.trim());
+      this.schedulePersist();
       await this.sendNotice(message, {
         title: "已记录补充说明",
         template: "blue",
@@ -372,6 +395,7 @@ export class LaborRuntimeModule implements RuntimeModule {
       clearTimeout(timer);
       this.timers.delete(conversationKey);
     }
+    this.schedulePersist();
   }
 
   private clearRequesterInteractions(chatId: string, requesterOpenId: string): void {
@@ -488,6 +512,62 @@ export class LaborRuntimeModule implements RuntimeModule {
       textPreview: createTextPreview(options.message),
       len: options.message.length,
     }, delivery ?? { replyToMessageId: message.messageId });
+  }
+
+  private async restoreState(): Promise<void> {
+    const interactions = await this.readPersistedInteractions();
+    const now = Date.now();
+    let changed = false;
+    for (const interaction of interactions) {
+      if (interaction.expiresAt <= now) {
+        changed = true;
+        continue;
+      }
+      this.interactions.set(interaction.conversationKey, interaction);
+      this.restoreTimer(interaction.conversationKey, interaction.expiresAt - now);
+    }
+    if (changed) {
+      this.schedulePersist();
+      await this.flushPersist();
+    }
+  }
+
+  private restoreTimer(conversationKey: string, timeoutMs: number): void {
+    const timer = setTimeout(() => {
+      void this.expireInteraction(conversationKey);
+    }, Math.max(1, timeoutMs));
+    this.timers.set(conversationKey, timer);
+  }
+
+  private async readPersistedInteractions(): Promise<PendingLaborInteraction[]> {
+    try {
+      const raw = await readFile(this.stateFilePath, "utf8");
+      const parsed = JSON.parse(raw) as { version?: number; interactions?: PendingLaborInteraction[] };
+      return Array.isArray(parsed.interactions) ? parsed.interactions : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private schedulePersist(): void {
+    this.persistChain = this.persistChain
+      .catch(() => undefined)
+      .then(async () => {
+        await mkdir(path.dirname(this.stateFilePath), { recursive: true });
+        await writeFile(this.stateFilePath, JSON.stringify({
+          version: 1,
+          interactions: [...this.interactions.values()],
+        }, null, 2), "utf8");
+      })
+      .catch((error) => {
+        this.deps.logger.log("labor/state", "persist state failed", {
+          detail: error instanceof Error ? error.message : String(error),
+        }, "warn");
+      });
+  }
+
+  private async flushPersist(): Promise<void> {
+    await this.persistChain;
   }
 }
 

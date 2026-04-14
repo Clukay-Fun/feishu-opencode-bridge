@@ -312,7 +312,7 @@ export function buildNoticeCardPayload(view: NoticeCardView): FeishuPostPayload 
         view.message,
         view.messageIconToken,
         view.messageIconColor,
-        view.showMessageIcon === undefined ? {} : { showIcon: view.showMessageIcon },
+        { showIcon: view.showMessageIcon ?? false },
       ),
     ],
   });

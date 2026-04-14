@@ -422,4 +422,17 @@ describe("buildPostPayload", () => {
     const content = JSON.parse(payload.content) as any;
     expect(content.body.elements[0].columns[0].elements[0].icon).toBeUndefined();
   });
+
+  it("renders a notice card without body icon by default", () => {
+    const payload = buildNoticeCardPayload({
+      title: "提示",
+      template: "blue",
+      iconToken: "info_outlined",
+      message: "这是一个默认提示卡片。",
+      messageIconToken: "info_outlined",
+      messageIconColor: "blue",
+    });
+    const content = JSON.parse(payload.content) as any;
+    expect(content.body.elements[0].columns[0].elements[0].icon).toBeUndefined();
+  });
 });

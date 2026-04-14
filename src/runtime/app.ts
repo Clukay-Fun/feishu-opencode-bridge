@@ -204,6 +204,7 @@ export class BridgeApp {
     this.contractAssistant = contractAssistantConfig.enabled
       ? new ContractAssistantService(
         contractAssistantConfig,
+        config.storage.dataDir,
         this.outbound as OutboundPort & KnowledgeResourcePort,
         this.opencode as OpenCodeClient,
         logger,
