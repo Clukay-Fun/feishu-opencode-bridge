@@ -492,7 +492,7 @@ describe("BridgeApp command surface", () => {
     expect(extractInteractiveHeader(getReplyPayloads(outbound).at(-1))).toBe("已彻底删除多个会话");
   });
 
-  it("toggles knowledge mode through dedicated commands", async () => {
+  it("keeps /legal-query* as guidance-only commands in private chat", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
       knowledge: {
@@ -530,9 +530,9 @@ describe("BridgeApp command surface", () => {
       command: { kind: "knowledge-mode-start" },
     });
 
-    expect(appAny.sessionMap["oc_p2p_1"]?.interactionMode).toBe("knowledge");
-    expect(appAny.knowledgeIngestInteractions.has("oc_p2p_1")).toBe(false);
-    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("已进入知识库模式");
+    expect(appAny.sessionMap["oc_p2p_1"]?.interactionMode).toBeUndefined();
+    expect(appAny.knowledgeIngestInteractions.has("oc_p2p_1")).toBe(true);
+    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("私聊里直接提问即可");
 
     await callHandleCommand(app, {
       kind: "command",
@@ -540,7 +540,8 @@ describe("BridgeApp command surface", () => {
     });
 
     expect(appAny.sessionMap["oc_p2p_1"]).toBeUndefined();
-    expect(extractInteractiveHeader(getReplyPayloads(outbound).at(-1))).toBe("已退出知识库模式");
+    expect(appAny.knowledgeIngestInteractions.has("oc_p2p_1")).toBe(true);
+    expect(extractInteractiveHeader(getReplyPayloads(outbound).at(-1))).toBe("私聊里直接提问即可");
   });
 
   it("creates a dedicated ingest session and restores the previous session on exit", async () => {

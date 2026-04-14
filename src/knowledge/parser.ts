@@ -1,3 +1,16 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import { spawnPdfToMarkdown } from "./pdf-markdown.js";
+
+export type KnowledgeParserUsed =
+  | "plain-text"
+  | "mammoth"
+  | "pymupdf4llm"
+  | "docling"
+  | "pdf-parse";
+
 export type ParsedKnowledgeSection = {
   location: string;
   text: string;
@@ -12,6 +25,7 @@ export type ParsedKnowledgeChunk = {
 export type ParsedKnowledgeDocument = {
   normalizedMarkdown: string;
   sections: ParsedKnowledgeSection[];
+  parserUsed: KnowledgeParserUsed;
 };
 
 export type ParsedKnowledgeChapter = {
@@ -30,6 +44,7 @@ export async function parseKnowledgeFile(
     return {
       normalizedMarkdown,
       sections: normalizeSectionsFromMarkdown(normalizedMarkdown, "文本"),
+      parserUsed: "plain-text",
     };
   }
   if (extension === ".docx") {
@@ -39,24 +54,54 @@ export async function parseKnowledgeFile(
     return {
       normalizedMarkdown,
       sections: normalizeSectionsFromMarkdown(normalizedMarkdown, "段落"),
+      parserUsed: "mammoth",
     };
   }
   if (extension === ".pdf") {
-    const pdfModule = await import("pdf-parse");
-    const parser = new pdfModule.PDFParse({ data: buffer });
-    const result = await parser.getText({});
-    await parser.destroy().catch(() => undefined);
-    const pages = result.pages.map((page) => normalizePageText(page.text)).filter(Boolean);
-    const normalizedMarkdown = pages.join("\n\n---\n\n");
-    const sections = pages.length > 0
-      ? pages.map((text, index) => ({ location: `第 ${index + 1} 页`, text }))
-      : normalizeSectionsFromMarkdown(normalizePlainMarkdown(result.text), "页");
-    return {
-      normalizedMarkdown,
-      sections,
-    };
+    const pythonParsed = await parsePdfWithPython(buffer).catch(() => null);
+    if (pythonParsed) {
+      return pythonParsed;
+    }
+    return await parsePdfWithPdfParse(buffer);
   }
   throw new Error(`暂不支持的文件格式：${extension || "unknown"}`);
+}
+
+async function parsePdfWithPython(buffer: Buffer): Promise<ParsedKnowledgeDocument> {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "bridge-knowledge-pdf-"));
+  const inputPath = path.join(tempDir, "input.pdf");
+  try {
+    await writeFile(inputPath, buffer);
+    const parsed = await spawnPdfToMarkdown(inputPath);
+    const normalizedMarkdown = normalizePlainMarkdown(parsed.markdown);
+    if (!normalizedMarkdown) {
+      throw new Error("Python PDF 转 Markdown 未提取到正文");
+    }
+    return {
+      normalizedMarkdown,
+      sections: normalizeSectionsFromMarkdown(normalizedMarkdown, "段落"),
+      parserUsed: parsed.parserUsed,
+    };
+  } finally {
+    await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+async function parsePdfWithPdfParse(buffer: Buffer): Promise<ParsedKnowledgeDocument> {
+  const pdfModule = await import("pdf-parse");
+  const parser = new pdfModule.PDFParse({ data: buffer });
+  const result = await parser.getText({});
+  await parser.destroy().catch(() => undefined);
+  const pages = result.pages.map((page) => normalizePageText(page.text)).filter(Boolean);
+  const normalizedMarkdown = pages.join("\n\n---\n\n");
+  const sections = pages.length > 0
+    ? pages.map((text, index) => ({ location: `第 ${index + 1} 页`, text }))
+    : normalizeSectionsFromMarkdown(normalizePlainMarkdown(result.text), "页");
+  return {
+    normalizedMarkdown,
+    sections,
+    parserUsed: "pdf-parse",
+  };
 }
 
 export function chunkKnowledgeSections(

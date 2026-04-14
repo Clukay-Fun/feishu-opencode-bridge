@@ -11,42 +11,46 @@ import type { ChatWhitelist } from "../src/store/whitelist.js";
 import { FakeOpenCodeClient, FakeOpenCodeEventStream } from "./integration/fakes.js";
 
 describe("knowledge base bridge flow", () => {
-  it("uses knowledge results for auto-detected legal questions without creating an OpenCode turn", async () => {
+  it("routes private legal questions through a normal OpenCode turn instead of bridge-side auto detection", async () => {
     const outbound = createOutbound();
+    const eventStream = new FakeOpenCodeEventStream();
+    const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "这是普通 OpenCode 回复。" });
+    const knowledgeQuery = vi.fn(async (question: string) => ({
+      question,
+      results: [{
+        id: 1,
+        documentId: 1,
+        question,
+        answer: "试用期最长不超过六个月。",
+        tags: ["劳动"],
+        statute: "《劳动合同法》第 19 条",
+        sourceFile: "劳动合同法手册.pdf",
+        pageSection: "第 23 页",
+        createdAt: Date.now(),
+        score: 0.95,
+      }],
+    }));
     const app = new BridgeApp(baseConfig({ autoDetect: true }), outbound, logger(), createWhitelist(), {
       knowledge: {
-        async query(question: string) {
-          return {
-            question,
-            results: [{
-              id: 1,
-              documentId: 1,
-              question,
-              answer: "试用期最长不超过六个月。",
-              tags: ["劳动"],
-              statute: "《劳动合同法》第 19 条",
-              sourceFile: "劳动合同法手册.pdf",
-              pageSection: "第 23 页",
-              createdAt: Date.now(),
-              score: 0.95,
-            }],
-          };
-        },
+        query: knowledgeQuery,
         async ingestFile() {
           throw new Error("not used");
         },
         async syncMirror() {},
         close() {},
       },
+      opencode,
+      eventStream,
       memory: null,
     });
 
     await app.handleIncomingMessage(createTextMessage("劳动合同试用期最长多久？"));
 
-    const appAny = app as unknown as { sessionMap: Record<string, unknown> };
-    expect(appAny.sessionMap).toEqual({});
-    const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
-    expect(JSON.stringify(replyPayloads)).toContain("劳动合同法手册.pdf");
+    await vi.waitFor(() => {
+      const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+      expect(JSON.stringify(updatedPayloads)).toContain("这是普通 OpenCode 回复。");
+    });
+    expect(knowledgeQuery).not.toHaveBeenCalled();
   });
 
   it("starts ingest mode and keeps consuming files until /kb-ingest-end", async () => {
@@ -118,7 +122,7 @@ describe("knowledge base bridge flow", () => {
     expect(JSON.stringify(replyPayloads)).toContain("本次共处理");
   });
 
-  it("asks for intent when receiving a file outside ingest mode and can process it as a normal turn", async () => {
+  it("keeps regular files as local-path inputs for OpenCode instead of pre-parsing them in bridge", async () => {
     const outbound = {
       ...createOutbound(),
       downloadMessageResource: vi.fn(async () => ({
@@ -129,6 +133,7 @@ describe("knowledge base bridge flow", () => {
     };
     const eventStream = new FakeOpenCodeEventStream();
     const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "文件总结完成。" });
+    const promptAsync = vi.spyOn(opencode, "promptAsync");
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
       knowledge: null,
       opencode,
@@ -149,8 +154,15 @@ describe("knowledge base bridge flow", () => {
     const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
     const updatePayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
     expect(JSON.stringify(replyPayloads)).toContain("已收到文件");
-    expect(JSON.stringify(replyPayloads)).toContain("/kb-ingest-start");
+    expect(JSON.stringify(replyPayloads)).toContain("把这个文件入库");
     expect(outbound.downloadMessageResource).toHaveBeenCalledWith("om_file_plain", "file_plain", "file");
+    const request = promptAsync.mock.calls[0]?.[1];
+    expect(request).toBeDefined();
+    const promptText = request?.parts.map((part) => part.text ?? "").join("\n") ?? "";
+    expect(promptText).toContain("本地路径：");
+    expect(promptText).toContain("说明.txt");
+    expect(promptText).toContain("不要默认把文件写入知识库");
+    expect(promptText).not.toContain("这是一个需要总结的普通文件。");
     expect(JSON.stringify(updatePayloads)).toContain("文件总结完成");
   });
 
@@ -208,29 +220,11 @@ describe("knowledge base bridge flow", () => {
     expect(outbound.downloadMessageResource).not.toHaveBeenCalled();
   });
 
-  it("queries the knowledge base directly while knowledge mode is enabled, then falls back to OpenCode after exit", async () => {
+  it("treats /legal-query* as guidance only in private chat and keeps later messages on the normal OpenCode path", async () => {
     const outbound = createOutbound();
     const eventStream = new FakeOpenCodeEventStream();
     const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "这是普通 OpenCode 回复。" });
-    const knowledgeQuery = vi.fn(async (question: string) => (
-      question.includes("试用期")
-        ? {
-          question,
-          results: [{
-            id: 1,
-            documentId: 1,
-            question,
-            answer: "试用期最长不超过六个月。",
-            tags: ["劳动"],
-            statute: "《劳动合同法》第 19 条",
-            sourceFile: "劳动合同法手册.pdf",
-            pageSection: "第 23 页",
-            createdAt: Date.now(),
-            score: 0.95,
-          }],
-        }
-        : { question, results: [] }
-    ));
+    const knowledgeQuery = vi.fn(async () => ({ question: "", results: [] }));
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
       knowledge: {
         query: knowledgeQuery,
@@ -246,8 +240,7 @@ describe("knowledge base bridge flow", () => {
     });
 
     await app.handleIncomingMessage(createTextMessage("/legal-query-start"));
-    await app.handleIncomingMessage(createTextMessage("劳动合同试用期最长多久？", "om_2"));
-    await app.handleIncomingMessage(createTextMessage("解除劳动合同这个问题知识库里没有吗？", "om_3"));
+    await app.handleIncomingMessage(createTextMessage("/legal-query 劳动合同试用期最长多久？", "om_2"));
     await app.handleIncomingMessage(createTextMessage("/legal-query-end", "om_4"));
     await app.handleIncomingMessage(createTextMessage("帮我总结一下今天的工作", "om_5"));
 
@@ -260,17 +253,16 @@ describe("knowledge base bridge flow", () => {
       ...(outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]),
     ];
 
-    expect(knowledgeQuery).toHaveBeenCalledTimes(2);
-    expect(outboundTexts[0]).toContain("已进入知识库模式");
-    expect(outboundTexts[1]).toContain("劳动合同法手册.pdf");
-    expect(outboundTexts[2]).toContain("未找到与");
-    expect(outboundTexts[3]).toContain("已退出知识库模式");
+    expect(knowledgeQuery).not.toHaveBeenCalled();
+    expect(outboundTexts[0]).toContain("私聊里直接提问即可");
+    expect(outboundTexts[1]).toContain("私聊不再使用 `/legal-query*`");
+    expect(outboundTexts[2]).toContain("私聊不再使用 `/legal-query*`");
     expect(JSON.stringify(allPayloads)).toContain("这是普通 OpenCode 回复");
-    expect(appAny.sessionMap["oc_p2p_1"]?.interactionMode).toBe("default");
+    expect(appAny.sessionMap["oc_p2p_1"]?.interactionMode ?? "default").toBe("default");
     expect(appAny.sessionMap["oc_p2p_1"]?.sessions).toHaveLength(1);
   });
 
-  it("lets non-legal text use normal chat while knowledge query mode is enabled", async () => {
+  it("does not let /legal-query-start enable bridge-side knowledge mode in private chat", async () => {
     const outbound = createOutbound();
     const eventStream = new FakeOpenCodeEventStream();
     const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "你好，我在。" });
@@ -297,6 +289,8 @@ describe("knowledge base bridge flow", () => {
       expect(JSON.stringify(updatedPayloads)).toContain("你好，我在。");
     });
     expect(knowledgeQuery).not.toHaveBeenCalled();
+    const appAny = app as unknown as { sessionMap: Record<string, { interactionMode?: string }> };
+    expect(appAny.sessionMap["oc_p2p_1"]?.interactionMode ?? "default").toBe("default");
   });
 
   it("uses OpenCode-assisted web ingestion from natural language while ingest mode is enabled", async () => {

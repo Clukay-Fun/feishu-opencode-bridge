@@ -1,3 +1,7 @@
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { QueueRegistry } from "../bridge/queue.js";
 import { type PendingInteraction, type PendingKnowledgeIngestInteraction, type PendingPermissionInteraction } from "../bridge/state.js";
 import { ModuleManager } from "../bridge/module.js";
@@ -15,7 +19,6 @@ import {
   KnowledgeBaseService,
   type KnowledgeBasePort,
 } from "../knowledge/index.js";
-import { parseKnowledgeFile } from "../knowledge/parser.js";
 import { KnowledgeRuntimeModule } from "../knowledge/runtime-module.js";
 import { MemoryService } from "../memory/index.js";
 import { MemoryRuntimeModule } from "../memory/runtime-module.js";
@@ -387,8 +390,8 @@ export class BridgeApp {
         message: [
           `文件：${message.file.fileName}`,
           "",
-          "如果要入库，请发送 `/kb-ingest-start` 后重新上传文件。",
-          "如果只是要我识别、总结或分析这个文件，请直接回复你的需求，例如：`总结这个文件`。",
+          "如果只处理这个文件，可直接回复例如：`总结这个文件` 或 `把这个文件入库`。",
+          "如果要连续批量入库，请发送 `/kb-ingest-start` 后重新上传文件。",
         ].join("\n"),
         messageIconToken: "file-link-docx_outlined",
         messageIconColor: "blue",
@@ -551,7 +554,7 @@ export class BridgeApp {
       await this.sendMarkdown(message.chatId, "请发送文字说明你希望我如何处理这个文件。", message.messageId);
       return true;
     }
-    const processed = await this.prepareFileForOpenCodeTurn(pending, instruction, message.messageId).catch(async (error) => {
+    const processed = await this.prepareFileForOpenCodeTurn(pending, instruction).catch(async (error) => {
       const detail = error instanceof Error ? error.message : String(error);
       await this.sendPayload(message.chatId, buildNoticeCardPayload({
         title: "文件读取失败",
@@ -644,7 +647,6 @@ export class BridgeApp {
   private async prepareFileForOpenCodeTurn(
     pending: Extract<PendingInteraction, { kind: "file-await-instruction" }>,
     instruction: string,
-    replyMessageId: string,
   ): Promise<{ prompt: string }> {
     const resources = this.outbound as OutboundPort & Partial<KnowledgeResourcePort>;
     if (!resources.downloadMessageResource) {
@@ -652,29 +654,30 @@ export class BridgeApp {
     }
     const downloaded = await resources.downloadMessageResource(pending.file.messageId, pending.file.fileKey, "file");
     this.validateRegularFileInput(downloaded.fileName, downloaded.buffer.byteLength);
-    const parsed = await parseKnowledgeFile(downloaded.fileName, downloaded.buffer);
-    if (!parsed.normalizedMarkdown.trim()) {
-      throw new Error("文件中未提取到可用文本。");
-    }
-    const maxChars = 20_000;
-    const content = parsed.normalizedMarkdown.length > maxChars
-      ? `${parsed.normalizedMarkdown.slice(0, maxChars)}\n\n[内容较长，已截取前 ${maxChars} 字符供本次处理。若要完整入库，请使用 /kb-ingest-start。]`
-      : parsed.normalizedMarkdown;
+    const localPath = await this.saveUploadedFileForTurn(downloaded.fileName, downloaded.buffer);
     return {
       prompt: [
         "用户上传了一个文件，并要求你按下述需求处理。",
-        "请基于文件内容回答，不要默认把文件写入知识库。",
+        "bridge 已将附件下载到本地绝对路径；你与 bridge 在同一台机器上，可按需直接读取该路径。",
+        "不要默认把文件写入知识库。",
+        "只有当用户明确要求“入库 / 加入知识库 / 导入知识库”时，才使用知识库本地命令。",
         "",
         `用户需求：${instruction}`,
         `文件名：${downloaded.fileName}`,
         `MIME：${downloaded.mimeType}`,
-        `来源消息：${replyMessageId}`,
+        `本地路径：${localPath}`,
+        `来源文件消息：${pending.file.messageId}`,
         "",
-        "---文件内容开始---",
-        content,
-        "---文件内容结束---",
+        "如果用户只是要总结、识别、分析、改写或提问，请直接基于该文件完成任务。",
       ].join("\n"),
     };
+  }
+
+  private async saveUploadedFileForTurn(fileName: string, buffer: Buffer): Promise<string> {
+    const tempDir = await mkdtemp(path.join(tmpdir(), "bridge-turn-file-"));
+    const targetPath = path.join(tempDir, sanitizeUploadedFileName(fileName));
+    await writeFile(targetPath, buffer);
+    return targetPath;
   }
 
   private validateRegularFileInput(fileName: string, sizeBytes?: number): void {
@@ -1011,4 +1014,12 @@ export class BridgeApp {
     this.logger.logTranscript(options.transcriptType, { chatId, messageId: result.messageId }, prettyPrintPayload(payload));
     return result;
   }
+}
+
+function sanitizeUploadedFileName(fileName: string): string {
+  const parsed = path.parse(fileName);
+  const base = parsed.name.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  const safeName = base || "uploaded-file";
+  const safeExt = parsed.ext.replace(/[^a-zA-Z0-9.]+/g, "");
+  return `${safeName}${safeExt}`;
 }

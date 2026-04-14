@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -1089,6 +1089,141 @@ describe("KnowledgeBaseService", () => {
     expect(result.extractedCount).toBe(1);
     expect(progress.some((item) => item.detail?.includes("正在重试"))).toBe(true);
     expect(requests.filter((request) => ((request as { parts?: Array<{ text?: string }> }).parts?.[0]?.text ?? "").includes("法律知识提取专家"))).toHaveLength(2);
+    service.close();
+  });
+
+  it("exposes document detail and stats views after ingest", async () => {
+    stubEmbeddingFetch();
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-"));
+    tempDirs.push(dir);
+    const service = new KnowledgeBaseService(
+      {
+        enabled: true,
+        autoDetect: { enabled: false, minConfidence: 0.75 },
+        query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
+        storage: {
+          sqlitePath: join(dir, "knowledge.db"),
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+            documentTableId: "tbl_docs",
+          },
+        },
+        embeddingProvider: {
+          baseUrl: new URL("https://example.com/v1/"),
+          apiKey: "token",
+          model: "text-embedding",
+        },
+        models: {},
+        ingest: {
+          allowedExtensions: [".txt"],
+          maxFileSizeMb: 20,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+        },
+      },
+      {
+        async downloadMessageResource() {
+          return {
+            fileName: "劳动合同.txt",
+            mimeType: "text/plain",
+            buffer: Buffer.from("试用期最长不超过六个月。", "utf8"),
+          };
+        },
+        async createBitableRecord(_appToken, tableId) {
+          return `${tableId}_${Date.now()}`;
+        },
+        async listBitableRecords() {
+          return [];
+        },
+      },
+      createOpenCodeStub(),
+      logger(),
+    );
+
+    await service.ingestFile({
+      messageId: "om_file_stats",
+      fileKey: "file_stats",
+      fileName: "劳动合同.txt",
+    });
+
+    const documents = await service.listDocuments({ limit: 10 });
+    const detail = await service.getDocument(documents[0]!.id);
+    const stats = await service.getStats();
+
+    expect(documents[0]).toEqual(expect.objectContaining({
+      fileName: "劳动合同.txt",
+      status: "ingested",
+      entryCount: 1,
+    }));
+    expect(detail).toEqual(expect.objectContaining({
+      fileName: "劳动合同.txt",
+      tagCounts: { 劳动: 1 },
+    }));
+    expect(stats).toEqual(expect.objectContaining({
+      documentCount: 1,
+      entryCount: 1,
+      statusCounts: expect.objectContaining({ ingested: 1 }),
+      tagCounts: expect.objectContaining({ 劳动: 1 }),
+    }));
+    service.close();
+  });
+
+  it("previews extraction from a local file without writing knowledge records", async () => {
+    stubEmbeddingFetch();
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-"));
+    tempDirs.push(dir);
+    const localPath = join(dir, "preview.txt");
+    writeFileSync(localPath, "试用期最长不超过六个月。", "utf8");
+    const createBitableRecord = vi.fn(async (_appToken: string, tableId: string) => `${tableId}_${Date.now()}`);
+    const service = new KnowledgeBaseService(
+      {
+        enabled: true,
+        autoDetect: { enabled: false, minConfidence: 0.75 },
+        query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
+        storage: {
+          sqlitePath: join(dir, "knowledge.db"),
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+            documentTableId: "tbl_docs",
+          },
+        },
+        embeddingProvider: {
+          baseUrl: new URL("https://example.com/v1/"),
+          apiKey: "token",
+          model: "text-embedding",
+        },
+        models: {},
+        ingest: {
+          allowedExtensions: [".txt"],
+          maxFileSizeMb: 20,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+        },
+      },
+      {
+        async downloadMessageResource() {
+          throw new Error("not used");
+        },
+        createBitableRecord,
+        async listBitableRecords() {
+          return [];
+        },
+      },
+      createOpenCodeStub(),
+      logger(),
+    );
+
+    const preview = await service.previewLocalFileExtraction(localPath, { maxQas: 5 });
+    const stats = await service.getStats();
+
+    expect(preview).toEqual(expect.objectContaining({
+      sourceFile: "preview.txt",
+      extractedCount: 1,
+      rawExtractedCount: 1,
+      dedupedCount: 0,
+    }));
+    expect(createBitableRecord).not.toHaveBeenCalled();
+    expect(stats.documentCount).toBe(0);
     service.close();
   });
 

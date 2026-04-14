@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.15 - 2026-04-14
+
+### Added
+- Added local knowledge-base CLI entrypoints for querying, file and URL ingest, extraction preview, document inspection, stats, and doctor checks.
+- Added local knowledge document list/detail/stats views and a repository skill that teaches private-chat knowledge CLI usage.
+- Added Python-backed PDF-to-Markdown parsing support with parser provenance reporting and dedicated regression coverage.
+
+### Changed
+- Updated private-chat legal-query commands to act as guidance-only entrypoints instead of bridge-side knowledge-mode switching.
+- Updated ordinary file follow-up turns to pass local file paths into OpenCode instead of pre-parsing file contents inside the bridge.
+
 ## 0.1.14 - 2026-04-14
 
 ### Fixed
