@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 import type { PendingPermissionInteraction } from "../bridge/state.js";
+import type { ModuleManager } from "../bridge/module.js";
 import { transitionTurn } from "../bridge/state-machine.js";
 import { TurnWatchdog } from "../bridge/watchdog.js";
 import type { BridgeTurn } from "../bridge/turn.js";
@@ -80,10 +81,7 @@ export type TurnExecutorContext = {
       value: Record<string, unknown>;
     }>;
   };
-  memory: {
-    buildRecallBlock(openId: string, plainText: string): Promise<string>;
-    enqueueLearn(openId: string, userText: string, assistantText: string): void;
-  } | null;
+  moduleManager: Pick<ModuleManager, "collectBeforeTurnBlocks" | "runAfterTurnHooks">;
   getSessionWindow(conversationKey: string, chatType?: string): SessionWindowRecord;
   ensureSession(source: Pick<BridgeTurn, "chatId" | "chatType" | "conversationKey" | "threadKey">): Promise<string>;
   maybeUpdateSessionLabel(turn: BridgeTurn & { sessionId: string }): Promise<void>;
@@ -136,10 +134,14 @@ export class TurnExecutor {
       this.context.logger.logTranscript("opencode-reply", { sessionId, turnId: turn.turnId }, reply);
       await this.context.maybeUpdateSessionLabel(turn as BridgeTurn & { sessionId: string });
       if (reply) {
-        this.context.memory?.enqueueLearn(turn.senderOpenId, turn.plainText, reply);
+        await this.context.moduleManager.runAfterTurnHooks({
+          turn: turn as BridgeTurn & { sessionId: string },
+          reply,
+          window: this.context.getSessionWindow(turn.conversationKey, turn.chatType),
+        });
       }
       if (!card && reply) {
-        await this.sendTurnFallbackMarkdown(turn.chatId, reply);
+        await this.sendTurnFallbackMarkdown(turn.chatId, reply, turn.inboundMessageId);
       }
       await this.context.turnCardManager.flushStreamUpdate(turn.turnId, reply, true);
       await this.context.turnCardManager.updateTurnCard(turn.turnId, { status: "已完成", update: `最终回复已生成（${reply.length} 字）`, target: "step" });
@@ -149,7 +151,7 @@ export class TurnExecutor {
       const detail = normalizeTurnFailureDetail(error);
       this.context.logger.log("bridge/queue", "run turn failed", { chatId: turn.chatId, conversationKey, turnId: turn.turnId, detail }, "error");
       if (!hasProcessCard) {
-        await this.sendTurnFallbackMarkdown(turn.chatId, `处理失败：${escapeMarkdownText(detail)}`);
+        await this.sendTurnFallbackMarkdown(turn.chatId, `处理失败：${escapeMarkdownText(detail)}`, turn.inboundMessageId);
       }
       await this.context.turnCardManager.updateTurnCard(turn.turnId, { status: detail.includes("超时") ? "已超时" : "处理失败", update: detail, target: "step" });
       queue.replaceActive(transitionTurn(turn, detail.includes("超时") ? "timeout" : "aborted"));
@@ -167,10 +169,11 @@ export class TurnExecutor {
     const bridgeSystemPrompt = this.context.config.bridge.injectSystemState
       ? buildBridgeSystemPrompt(turn, this.context.getSessionWindow(turn.conversationKey, turn.chatType))
       : undefined;
-    const memoryRecall = this.context.memory
-      ? await this.context.memory.buildRecallBlock(turn.senderOpenId, turn.plainText)
-      : "";
-    const systemPrompt = composeSystemPrompt(bridgeSystemPrompt, memoryRecall);
+    const moduleSystemBlocks = await this.context.moduleManager.collectBeforeTurnBlocks({
+      turn,
+      window: this.context.getSessionWindow(turn.conversationKey, turn.chatType),
+    });
+    const systemPrompt = composeSystemPrompt(bridgeSystemPrompt, ...moduleSystemBlocks);
 
     return new Promise<string>((resolve, reject) => {
       let assistantMessageId: string | null = null;
@@ -533,13 +536,13 @@ export class TurnExecutor {
     return messages.find((message) => message.info.id === messageId && message.info.role === "assistant") ?? null;
   }
 
-  private async sendTurnFallbackMarkdown(chatId: string, markdown: string): Promise<void> {
+  private async sendTurnFallbackMarkdown(chatId: string, markdown: string, replyToMessageId: string): Promise<void> {
     await this.context.sendPayload(chatId, buildPostMarkdownPayload(markdown), {
       event: "fallback final message sent",
       transcriptType: "outbound-final",
       textPreview: createTextPreview(markdown),
       len: markdown.length,
-    });
+    }, { replyToMessageId });
   }
 }
 

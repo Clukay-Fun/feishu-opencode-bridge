@@ -1,11 +1,8 @@
-import type { PendingInteraction, PendingKnowledgeIngestInteraction, PendingPermissionInteraction } from "../bridge/state.js";
+import type { PendingInteraction, PendingPermissionInteraction } from "../bridge/state.js";
 import type { RoutedText } from "../bridge/router.js";
 import {
-  buildKnowledgeQueryEmptyPayload,
-  buildKnowledgeQueryPayload,
   buildModelListCardPayload,
   buildNoticeCardPayload,
-  buildKnowledgeIngestReadyPayload,
   buildLeaveCommandCardPayload,
   buildSessionListCardPayload,
   buildSessionTransitionCardPayload,
@@ -13,7 +10,6 @@ import {
   buildWhoCommandCardPayload,
   type FeishuPostPayload,
 } from "../feishu/formatter.js";
-import type { KnowledgeBasePort } from "../knowledge/index.js";
 import type { TranscriptType } from "../logging/logger.js";
 import type { OpenCodeMessage, OpenCodeProvidersResponse, OpenCodeSession, OpenCodeSessionStatus } from "../opencode/client.js";
 import type { SessionWindowRecord } from "../store/mappings.js";
@@ -35,7 +31,6 @@ import {
   normalizeSessionWindowRecord,
   removeSession,
   setActiveSession,
-  setInteractionMode,
   updateSessionLabel,
 } from "./session-windows.js";
 
@@ -52,12 +47,6 @@ export type BridgeAppContext = {
     bridge: {
       sessionListLimit: number;
       maxSessionsPerWindow: number;
-    };
-    knowledgeBase: {
-      ingest: {
-        pendingTtlMs: number;
-        sessionIdleMs: number;
-      };
     };
   };
   opencode: {
@@ -87,7 +76,6 @@ export type BridgeAppContext = {
     resolveInteraction(interaction: PendingPermissionInteraction, resolution: PermissionResolution): Promise<void>;
     buildResolutionPayload(resolution: PermissionResolution): FeishuPostPayload;
   };
-  knowledge: KnowledgeBasePort | null;
   getSessionWindow(conversationKey: string, chatType: string): SessionWindowRecord;
   createAndBindSession(message: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey">): Promise<{ sessionId: string; label: string }>;
   sendPayload(
@@ -99,14 +87,11 @@ export type BridgeAppContext = {
   sendMarkdown(chatId: string, markdown: string, replyToMessageId?: string): Promise<void>;
   setPendingInteraction(conversationKey: string, interaction: PendingInteraction): void;
   clearPendingInteraction(conversationKey: string, keepNonExpiring: boolean): void;
-  getKnowledgeIngestInteraction(conversationKey: string): PendingKnowledgeIngestInteraction | null;
-  clearKnowledgeIngestPending(conversationKey: string, chatType: string): Promise<boolean>;
   listOpenCodeSessionsById(): Promise<Map<string, OpenCodeSession>>;
   saveSessionWindow(conversationKey: string, window: SessionWindowRecord): Promise<void>;
   getSessionMessageCount(sessionId: string): Promise<number>;
   ensureSession(source: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey">): Promise<string>;
   isSessionBusy(conversationKey: string, sessionId: string): boolean;
-  whitelistBind(chatId: string, openId: string): Promise<void>;
   resolveSessionCommandTarget(
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey">,
     index: number | undefined,
@@ -122,6 +107,27 @@ export type BridgeAppContext = {
     | { ok: false; message: string }
   >;
 };
+
+const BRIDGE_OWNED_COMMAND_KINDS = new Set<Extract<RoutedText, { kind: "command" }>["command"]["kind"]>([
+  "new",
+  "status",
+  "abort",
+  "models",
+  "leave",
+  "who",
+  "sessions",
+  "sessions-all",
+  "sessions-select",
+  "close",
+  "delete",
+  "allow",
+  "deny",
+  "passthrough",
+]);
+
+export function isBridgeOwnedCommand(command: Extract<RoutedText, { kind: "command" }>["command"]): boolean {
+  return BRIDGE_OWNED_COMMAND_KINDS.has(command.kind);
+}
 
 export class CommandHandler {
   constructor(private readonly context: BridgeAppContext) {}
@@ -224,188 +230,6 @@ export class CommandHandler {
         textPreview: "可用模型",
         len: 4,
       }, { replyToMessageId: message.messageId });
-      return;
-    }
-
-    if (command.kind === "knowledge-query") {
-      if (!this.context.knowledge) {
-        await this.sendNotice(message, {
-          title: "知识库未启用",
-          template: "yellow",
-          icon: "maybe_outlined",
-          message: "当前未启用法律知识库，请联系部署者补充 knowledgeBase 配置。",
-        });
-        return;
-      }
-      try {
-        const result = await this.context.knowledge.query(command.question);
-        await this.context.sendPayload(
-          message.chatId,
-          result.results.length > 0 ? buildKnowledgeQueryPayload(result) : buildKnowledgeQueryEmptyPayload(command.question),
-          {
-            event: "knowledge query sent",
-            transcriptType: "outbound-final",
-            textPreview: command.question,
-            len: command.question.length,
-          },
-          { replyToMessageId: message.messageId },
-        );
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        await this.sendNotice(message, {
-          title: "知识检索失败",
-          template: "red",
-          icon: "error_filled",
-          message: detail,
-        });
-      }
-      return;
-    }
-
-    if (command.kind === "knowledge-ingest") {
-      if (!this.context.knowledge) {
-        await this.sendNotice(message, {
-          title: "知识库未启用",
-          template: "yellow",
-          icon: "maybe_outlined",
-          message: "当前未启用法律知识库，请联系部署者补充 knowledgeBase 配置。",
-        });
-        return;
-      }
-      const currentPending = this.context.getKnowledgeIngestInteraction(message.conversationKey);
-      if (currentPending?.kind === "knowledge-ingest-await-file" && currentPending.requesterOpenId === message.senderOpenId) {
-        await this.sendNotice(message, {
-          title: "已在知识入库模式",
-          template: "blue",
-          icon: "upload_outlined",
-          message: "请继续上传 PDF / DOCX / TXT 文件；发送 `/kb-ingest-end` 可退出。",
-        });
-        return;
-      }
-      const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
-      const previousSession = getActiveSession(window);
-      const entry = await this.context.createAndBindSession(message);
-      const ingestLabel = "知识入库";
-      const nextWindow = updateSessionLabel(
-        this.context.getSessionWindow(message.conversationKey, message.chatType),
-        entry.sessionId,
-        ingestLabel,
-        this.context.config.bridge.maxSessionsPerWindow,
-      );
-      await this.context.saveSessionWindow(message.conversationKey, nextWindow);
-      const deliveryMode = message.chatType === "p2p" ? "p2p_reply" : "group_thread";
-      const ready = await this.context.sendPayload(message.chatId, buildKnowledgeIngestReadyPayload(), {
-        event: "knowledge ingest pending",
-        transcriptType: "outbound-final",
-        textPreview: "已进入知识入库模式",
-        len: 9,
-      }, { replyToMessageId: message.messageId, replyInThread: deliveryMode === "group_thread" });
-      this.context.setPendingInteraction(message.conversationKey, {
-        kind: "knowledge-ingest-await-file",
-        chatId: message.chatId,
-        chatType: message.chatType,
-        conversationKey: message.conversationKey,
-        requesterOpenId: message.senderOpenId,
-        replyToMessageId: ready.messageId,
-        rootMessageId: message.messageId,
-        anchorMessageId: ready.messageId,
-        deliveryMode,
-        ingestSessionId: entry.sessionId,
-        previousActiveSessionId: previousSession?.sessionId ?? null,
-        expiresAt: Date.now() + this.context.config.knowledgeBase.ingest.sessionIdleMs,
-      });
-      if (message.chatType !== "p2p") {
-        await this.context.whitelistBind(message.chatId, message.senderOpenId);
-      }
-      return;
-    }
-
-    if (command.kind === "knowledge-ingest-end") {
-      const pending = this.context.getKnowledgeIngestInteraction(message.conversationKey);
-      if (pending?.kind !== "knowledge-ingest-await-file") {
-        await this.sendNotice(message, {
-          title: "当前未开启知识入库模式",
-          template: "grey",
-          icon: "info-hollow_filled",
-          message: "发送 `/kb-ingest-start` 可进入知识入库模式。",
-        });
-        return;
-      }
-      if (pending.requesterOpenId !== message.senderOpenId) {
-        await this.sendNotice(message, {
-          title: "无法结束入库模式",
-          template: "yellow",
-          icon: "maybe_outlined",
-          message: "当前入库模式仅允许发起人结束。",
-        });
-        return;
-      }
-      await this.context.clearKnowledgeIngestPending(message.conversationKey, message.chatType);
-      await this.sendNotice(message, {
-        title: "已退出知识入库模式",
-        template: "green",
-        icon: "yes_filled",
-        message: "后续文件消息将不再自动入库；如需继续入库，请发送 `/kb-ingest-start`。",
-      });
-      return;
-    }
-
-    if (command.kind === "knowledge-mode-start") {
-      if (!this.context.knowledge) {
-        await this.sendNotice(message, {
-          title: "知识库未启用",
-          template: "yellow",
-          icon: "maybe_outlined",
-          message: "当前未启用法律知识库，请联系部署者补充 knowledgeBase 配置。",
-        });
-        return;
-      }
-      const clearedIngestPending = await this.context.clearKnowledgeIngestPending(message.conversationKey, message.chatType);
-      const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
-      if (window.interactionMode === "knowledge") {
-        await this.sendNotice(message, {
-          title: "已在知识库模式",
-          template: "blue",
-          icon: "search_outlined",
-          message: clearedIngestPending
-            ? "已退出知识入库模式；当前仍是知识库模式。接下来直接发送问题即可检索知识库，发送 `/legal-query-end` 可退出。"
-            : "接下来直接发送问题即可检索知识库，发送 `/legal-query-end` 可退出。",
-        });
-        return;
-      }
-      const nextWindow = setInteractionMode(window, "knowledge", this.context.config.bridge.maxSessionsPerWindow);
-      await this.context.saveSessionWindow(message.conversationKey, nextWindow);
-      await this.sendNotice(message, {
-        title: "已进入知识库模式",
-        template: "indigo",
-        icon: "search_outlined",
-        message: clearedIngestPending
-          ? "已退出知识入库模式，并切换到知识库查询模式。接下来直接发送问题即可检索知识库，发送 `/legal-query-end` 可退出。"
-          : "接下来直接发送问题即可检索知识库，发送 `/legal-query-end` 可退出。",
-      });
-      return;
-    }
-
-    if (command.kind === "knowledge-mode-end") {
-      await this.context.clearKnowledgeIngestPending(message.conversationKey, message.chatType);
-      const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
-      if (window.interactionMode !== "knowledge") {
-        await this.sendNotice(message, {
-          title: "当前未开启知识库模式",
-          template: "grey",
-          icon: "info-hollow_filled",
-          message: "当前仍是普通对话模式，发送 `/legal-query-start` 可进入知识库模式。",
-        });
-        return;
-      }
-      const nextWindow = setInteractionMode(window, "default", this.context.config.bridge.maxSessionsPerWindow);
-      await this.context.saveSessionWindow(message.conversationKey, nextWindow);
-      await this.sendNotice(message, {
-        title: "已退出知识库模式",
-        template: "green",
-        icon: "chat_outlined",
-        message: "后续消息将恢复为普通 OpenCode 对话，仍可用 `/legal-query <问题>` 单次查询。",
-      });
       return;
     }
 
@@ -771,6 +595,9 @@ export class CommandHandler {
       return;
     }
 
+    if (command.kind !== "passthrough") {
+      return;
+    }
     const sessionId = await this.context.ensureSession(message);
     const result = await this.context.opencode.runCommand(sessionId, { command: command.name, arguments: command.arguments });
     const text = extractAssistantText(result) || "命令已执行。";

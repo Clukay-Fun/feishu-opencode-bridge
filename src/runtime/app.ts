@@ -1,32 +1,24 @@
 import { QueueRegistry } from "../bridge/queue.js";
 import { type PendingInteraction, type PendingKnowledgeIngestInteraction, type PendingPermissionInteraction } from "../bridge/state.js";
+import { ModuleManager } from "../bridge/module.js";
 import { routeIncomingText, type RoutedText } from "../bridge/router.js";
 import type { BridgeTurn } from "../bridge/turn.js";
 import {
-  buildKnowledgeIngestProcessingPayload,
-  buildKnowledgeIngestPayload,
-  buildKnowledgeIngestSessionFinalPayload,
-  buildKnowledgeIngestSessionPayload,
-  buildKnowledgeQueryEmptyPayload,
-  buildKnowledgeQueryPayload,
   buildNoticeCardPayload,
   buildPostMarkdownPayload,
   buildQueueNoticePayload,
   type FeishuPostPayload,
-  type ToolUpdateView,
   toInteractiveCardContent,
 } from "../feishu/formatter.js";
 import { createTextPreview, type Logger, type TranscriptType } from "../logging/logger.js";
-import { detectKnowledgeWebIngest, detectLegalQuestion } from "../knowledge/detector.js";
 import {
   KnowledgeBaseService,
   type KnowledgeBasePort,
-  type KnowledgeIngestResult,
-  type KnowledgeIngestProgressStep,
-  type KnowledgeIngestProgressUpdate,
 } from "../knowledge/index.js";
 import { parseKnowledgeFile } from "../knowledge/parser.js";
+import { KnowledgeRuntimeModule } from "../knowledge/runtime-module.js";
 import { MemoryService } from "../memory/index.js";
+import { MemoryRuntimeModule } from "../memory/runtime-module.js";
 import {
   OpenCodeClient,
   type OpenCodeSession,
@@ -34,7 +26,6 @@ import {
 } from "../opencode/client.js";
 import { getEventSessionId, OpenCodeEventStream, type OpenCodeEvent } from "../opencode/events.js";
 import { MappingStore, type MappingRecord, type SessionBindingRecord, type SessionWindowRecord } from "../store/mappings.js";
-import { ActiveKnowledgeIngestStore, type ActiveKnowledgeIngestRecordMap } from "../store/active-ingests.js";
 import type { WhitelistStore } from "../store/whitelist.js";
 import type { AppConfig } from "../config/schema.js";
 import {
@@ -49,7 +40,7 @@ import {
   toOpencodePromptText,
 } from "./app-helpers.js";
 import { PermissionManager } from "./permission-manager.js";
-import { CommandHandler } from "./command-handler.js";
+import { CommandHandler, isBridgeOwnedCommand } from "./command-handler.js";
 import { TurnCardManager } from "./turn-card-manager.js";
 import { TurnExecutor } from "./turn-executor.js";
 import { SlidingWindowRateLimiter } from "./rate-limiter.js";
@@ -135,6 +126,8 @@ type OpenCodePort = Pick<OpenCodeClient,
 
 type OpenCodeEventStreamPort = Pick<OpenCodeEventStream, "start" | "stop" | "subscribe" | "getConnectionState">;
 
+const REGULAR_FILE_ALLOWED_EXTENSIONS = [".pdf", ".docx", ".txt", ".md"] as const;
+
 export type PermissionCardActionValue = {
   kind: "permission";
   conversationKey: string;
@@ -145,61 +138,20 @@ export type PermissionCardActionValue = {
   nonce: string;
 };
 
-type KnowledgeIngestQueueItem = {
-  conversationKey: string;
-  chatId: string;
-  requesterOpenId: string;
-  processingMessageId: string;
-  progressState: KnowledgeIngestProgressState;
-} & (
-  | {
-    kind: "file";
-    messageId: string;
-    fileKey: string;
-    fileName: string;
-    size?: number | undefined;
-  }
-  | {
-    kind: "web";
-    messageId: string;
-    url: string;
-    instruction: string;
-  }
-);
-
-type KnowledgeIngestQueueState = {
-  active: boolean;
-  closing: boolean;
-  currentLabel?: string | undefined;
-  pending: KnowledgeIngestQueueItem[];
-};
-
-type KnowledgeIngestSessionStats = {
-  startedAt: number;
-  completedCount: number;
-  failedCount: number;
-  totalExtractedCount: number;
-  totalDedupedCount: number;
-  bitableUrl?: string | undefined;
-};
-
 export class BridgeApp {
   private readonly queues: QueueRegistry;
   private readonly mappings: MappingStore;
-  private readonly activeKnowledgeIngests: ActiveKnowledgeIngestStore;
   private readonly opencode: OpenCodePort;
   private readonly eventStream: OpenCodeEventStreamPort;
   private readonly permissionManager: PermissionManager;
   private readonly turnCardManager: TurnCardManager;
   private readonly turnExecutor: TurnExecutor;
+  private readonly moduleManager: ModuleManager;
+  private readonly knowledgeModule: KnowledgeRuntimeModule;
   private readonly rateLimiter = new SlidingWindowRateLimiter(20, 60_000);
   private sessionMap: MappingRecord = {};
-  private activeKnowledgeIngestMap: ActiveKnowledgeIngestRecordMap = {};
   private readonly runningChats = new Map<string, Promise<void>>();
-  private readonly runningKnowledgeIngests = new Map<string, { requesterOpenId: string }>();
-  private readonly knowledgeIngestQueues = new Map<string, KnowledgeIngestQueueState>();
-  private readonly knowledgeIngestSessionStats = new Map<string, KnowledgeIngestSessionStats>();
-  private readonly knowledgeIngestInteractions = new Map<string, PendingKnowledgeIngestInteraction>();
+  private readonly knowledgeIngestInteractions: Map<string, PendingKnowledgeIngestInteraction>;
   private readonly pendingInteractions = new Map<string, PendingInteraction>();
   private readonly pendingInteractionTimers = new Map<string, NodeJS.Timeout>();
   private readonly sessionStatuses = new Map<string, OpenCodeSessionStatus>();
@@ -216,7 +168,6 @@ export class BridgeApp {
   ) {
     this.queues = new QueueRegistry(config.bridge.queueLimit, logger);
     this.mappings = new MappingStore(config.storage.dataDir, config.storage.mappingsFile, 200, logger);
-    this.activeKnowledgeIngests = new ActiveKnowledgeIngestStore(config.storage.dataDir);
     this.opencode = deps?.opencode ?? new OpenCodeClient(config.opencode.baseUrl);
     this.eventStream = deps?.eventStream ?? new OpenCodeEventStream(config.opencode.baseUrl, logger);
     this.memory = deps && "memory" in deps
@@ -256,6 +207,23 @@ export class BridgeApp {
       toCardContent: (payload) => this.toCardContent(payload),
     });
     this.turnCardManager = new TurnCardManager(this.outbound, this.logger, this.config.feishu.behavior.replyInThread);
+    this.moduleManager = new ModuleManager();
+    this.knowledgeModule = new KnowledgeRuntimeModule({
+      config: this.config,
+      logger: this.logger,
+      knowledge: this.knowledge,
+      sendPayload: async (chatId, payload, options, delivery) => await this.sendPayload(chatId, payload, options, delivery),
+      updatePayload: async (chatId, messageId, payload, options) => await this.updatePayload(chatId, messageId, payload, options),
+      getSessionWindow: (conversationKey, chatType) => this.getSessionWindow(conversationKey, chatType),
+      saveSessionWindow: async (conversationKey, window) => await this.saveSessionWindow(conversationKey, window),
+      createAndBindSession: async (source) => await this.createAndBindSession(source),
+      whitelistBind: async (chatId, openId) => await this.whitelist.bind(chatId, openId),
+    });
+    this.knowledgeIngestInteractions = this.knowledgeModule.interactions;
+    this.moduleManager.register(this.knowledgeModule);
+    if (this.memory) {
+      this.moduleManager.register(new MemoryRuntimeModule(this.memory));
+    }
     this.turnExecutor = new TurnExecutor({
       config: this.config,
       logger: this.logger,
@@ -265,7 +233,7 @@ export class BridgeApp {
       sessionStatuses: this.sessionStatuses,
       turnCardManager: this.turnCardManager,
       permissionManager: this.permissionManager,
-      memory: this.memory,
+      moduleManager: this.moduleManager,
       getSessionWindow: (conversationKey, chatType) => this.getSessionWindow(conversationKey, chatType),
       ensureSession: async (source) => await this.ensureSession(source),
       maybeUpdateSessionLabel: async (turn) => await this.maybeUpdateSessionLabel(turn),
@@ -278,24 +246,13 @@ export class BridgeApp {
 
   async start(): Promise<void> {
     this.sessionMap = await this.mappings.load();
-    this.activeKnowledgeIngestMap = await this.activeKnowledgeIngests.load();
     const health = await this.opencode.health();
     const project = await this.opencode.getCurrentProject();
     if (project.worktree !== this.config.opencode.directory) {
       throw new Error(`opencode serve 当前在 ${project.worktree}，bridge 配置的是 ${this.config.opencode.directory}，请在正确目录重启 opencode serve`);
     }
     await this.syncStoredSessionLabels();
-    await this.interruptPersistedKnowledgeIngests();
-    await this.memory?.start();
-    if (this.knowledge) {
-      try {
-        await this.knowledge.syncMirror();
-      } catch (error) {
-        this.logger.log("knowledge/sync", "mirror sync skipped", {
-          detail: error instanceof Error ? error.message : String(error),
-        }, "warn");
-      }
-    }
+    await this.moduleManager.start();
 
     await this.eventStream.start();
     this.globalEventUnsubscribe = this.eventStream.subscribe(async (event) => {
@@ -318,8 +275,7 @@ export class BridgeApp {
     }
     this.pendingInteractionTimers.clear();
     this.turnCardManager.stop();
-    await this.memory?.stop();
-    this.knowledge?.close();
+    await this.moduleManager.stop();
     await this.eventStream.stop();
   }
 
@@ -365,42 +321,52 @@ export class BridgeApp {
     const routed = message.messageType === "file"
       ? null
       : routeIncomingText(message.plainText);
-    const activeKnowledgeIngest = this.findKnowledgeIngestInteraction(message);
-    if (activeKnowledgeIngest) {
-      if (routed?.kind === "command" && routed.command.kind === "knowledge-ingest-end") {
-        await this.endKnowledgeIngestInteraction(message, activeKnowledgeIngest);
-        return;
-      }
-
-      const consumed = await this.handlePendingInteraction(message, activeKnowledgeIngest);
-      if (consumed) return;
-    }
-
     if (routed?.kind === "command") {
-      const backgroundKnowledgeIngest = this.getKnowledgeIngestInteraction(message.conversationKey);
-      if (
-        routed.command.kind === "knowledge-ingest-end"
-        && backgroundKnowledgeIngest?.kind === "knowledge-ingest-await-file"
-      ) {
-        await this.endKnowledgeIngestInteraction(message, backgroundKnowledgeIngest, { replyToMessageId: message.messageId });
-        return;
-      }
       await this.handleCommand(message, routed);
       return;
     }
 
     const pending = this.pendingInteractions.get(message.conversationKey);
-    const backgroundKnowledgeIngest = this.getKnowledgeIngestInteraction(message.conversationKey);
-    if (backgroundKnowledgeIngest) {
-      await this.restoreOrCreateNormalSessionForBackgroundIngest(message, backgroundKnowledgeIngest);
+    if (pending && this.isCorePendingInteraction(pending)) {
+      const consumed = await this.handlePendingInteraction(message, pending);
+      if (consumed) {
+        return;
+      }
     }
 
-    if (pending) {
-      const consumed = await this.handlePendingInteraction(message, pending);
-      if (consumed) return;
+    const moduleResult = await this.moduleManager.handleMessage({ message, routed, pendingInteraction: pending ?? null });
+    if (moduleResult.claimed) {
+      return;
+    }
+
+    if (pending?.kind === "file-await-instruction") {
+      const consumed = await this.handleFileInstructionPending(message, pending);
+      if (consumed) {
+        return;
+      }
     }
 
     if (message.messageType === "file") {
+      try {
+        this.validateRegularFileInput(message.file.fileName, message.file.size);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        await this.sendPayload(message.chatId, buildNoticeCardPayload({
+          title: "文件暂不支持",
+          template: "red",
+          iconToken: "error_filled",
+          message: detail,
+          messageIconToken: "error_filled",
+          messageIconColor: "red",
+          showMessageIcon: false,
+        }), {
+          event: "file rejected",
+          transcriptType: "outbound-final",
+          textPreview: detail,
+          len: detail.length,
+        }, { replyToMessageId: message.messageId });
+        return;
+      }
       this.setPendingInteraction(message.conversationKey, {
         kind: "file-await-instruction",
         chatId: message.chatId,
@@ -434,76 +400,6 @@ export class BridgeApp {
         len: 14,
       }, { replyToMessageId: message.messageId });
       return;
-    }
-
-    const window = this.getSessionWindow(message.conversationKey, message.chatType);
-    const knowledgeModeDetection = window.interactionMode === "knowledge"
-      ? detectLegalQuestion(message.plainText)
-      : null;
-    if (
-      this.knowledge
-      && window.interactionMode === "knowledge"
-      && knowledgeModeDetection?.matched
-      && knowledgeModeDetection.confidence >= this.config.knowledgeBase.autoDetect.minConfidence
-    ) {
-      try {
-        const result = await this.knowledge.query(message.plainText);
-        await this.sendPayload(
-          message.chatId,
-          result.results.length > 0 ? buildKnowledgeQueryPayload(result) : buildKnowledgeQueryEmptyPayload(message.plainText),
-          {
-            event: "knowledge query sent",
-            transcriptType: "outbound-final",
-            textPreview: message.plainText,
-            len: message.plainText.length,
-          },
-          { replyToMessageId: message.messageId },
-        );
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        await this.sendPayload(message.chatId, buildNoticeCardPayload({
-          title: "知识检索失败",
-          template: "red",
-          iconToken: "error_filled",
-          message: detail,
-          messageIconToken: "error_filled",
-          messageIconColor: "red",
-        }), {
-          event: "knowledge query failed",
-          transcriptType: "outbound-final",
-          textPreview: detail,
-          len: detail.length,
-        }, { replyToMessageId: message.messageId });
-      }
-      return;
-    }
-
-    if (this.knowledge && this.config.knowledgeBase.autoDetect.enabled) {
-      const detection = detectLegalQuestion(message.plainText);
-      if (detection.matched && detection.confidence >= this.config.knowledgeBase.autoDetect.minConfidence) {
-        try {
-          const result = await this.knowledge.query(message.plainText);
-          if (result.results.length > 0) {
-            await this.sendPayload(
-              message.chatId,
-              buildKnowledgeQueryPayload(result),
-              {
-                event: "knowledge query sent",
-                transcriptType: "outbound-final",
-                textPreview: message.plainText,
-                len: message.plainText.length,
-              },
-              { replyToMessageId: message.messageId },
-            );
-            return;
-          }
-        } catch (error) {
-          this.logger.log("knowledge/query", "auto-detect query failed", {
-            detail: error instanceof Error ? error.message : String(error),
-            confidence: detection.confidence,
-          }, "warn");
-        }
-      }
     }
 
     if (!await this.ensureServerAvailableForMessage(message)) {
@@ -565,33 +461,33 @@ export class BridgeApp {
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "threadKey" | "senderOpenId">,
     routed: Extract<RoutedText, { kind: "command" }>,
   ): Promise<void> {
-    return new CommandHandler({
-      config: this.config,
-      opencode: this.opencode,
-      whitelist: this.whitelist,
-      queues: this.queues,
-      eventStream: this.eventStream,
-      sessionStatuses: this.sessionStatuses,
-      pendingInteractions: this.pendingInteractions,
-      permissionManager: this.permissionManager,
-      knowledge: this.knowledge,
-      getSessionWindow: (conversationKey, chatType) => this.getSessionWindow(conversationKey, chatType),
-      createAndBindSession: async (source) => await this.createAndBindSession(source),
-      sendPayload: async (chatId, payload, options, delivery) => await this.sendPayload(chatId, payload, options, delivery),
-      sendMarkdown: async (chatId, markdown, replyToMessageId) => await this.sendMarkdown(chatId, markdown, replyToMessageId),
-      setPendingInteraction: (conversationKey, interaction) => this.setPendingInteraction(conversationKey, interaction),
-      clearPendingInteraction: (conversationKey, keepNonExpiring) => this.clearPendingInteraction(conversationKey, keepNonExpiring),
-      getKnowledgeIngestInteraction: (conversationKey) => this.getKnowledgeIngestInteraction(conversationKey),
-      clearKnowledgeIngestPending: async (conversationKey, chatType) => await this.clearKnowledgeIngestPending(conversationKey, chatType),
-      listOpenCodeSessionsById: async () => await this.listOpenCodeSessionsById(),
-      saveSessionWindow: async (conversationKey, window) => await this.saveSessionWindow(conversationKey, window),
-      getSessionMessageCount: async (sessionId) => await this.getSessionMessageCount(sessionId),
-      isSessionBusy: (conversationKey, sessionId) => this.isSessionBusy(conversationKey, sessionId),
-      whitelistBind: async (chatId, openId) => await this.whitelist.bind(chatId, openId),
-      resolveSessionCommandTarget: async (msg, index) => await this.resolveSessionCommandTarget(msg, index),
-      resolveSessionCommandTargets: async (msg, range) => await this.resolveSessionCommandTargets(msg, range),
-      ensureSession: async (source: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey">) => await this.ensureSession(source),
-    }).handleCommand(message, routed);
+    if (isBridgeOwnedCommand(routed.command)) {
+      return await new CommandHandler({
+        config: this.config,
+        opencode: this.opencode,
+        whitelist: this.whitelist,
+        queues: this.queues,
+        eventStream: this.eventStream,
+        sessionStatuses: this.sessionStatuses,
+        pendingInteractions: this.pendingInteractions,
+        permissionManager: this.permissionManager,
+        getSessionWindow: (conversationKey, chatType) => this.getSessionWindow(conversationKey, chatType),
+        createAndBindSession: async (source) => await this.createAndBindSession(source),
+        sendPayload: async (chatId, payload, options, delivery) => await this.sendPayload(chatId, payload, options, delivery),
+        sendMarkdown: async (chatId, markdown, replyToMessageId) => await this.sendMarkdown(chatId, markdown, replyToMessageId),
+        setPendingInteraction: (conversationKey, interaction) => this.setPendingInteraction(conversationKey, interaction),
+        clearPendingInteraction: (conversationKey, keepNonExpiring) => this.clearPendingInteraction(conversationKey, keepNonExpiring),
+        listOpenCodeSessionsById: async () => await this.listOpenCodeSessionsById(),
+        saveSessionWindow: async (conversationKey, window) => await this.saveSessionWindow(conversationKey, window),
+        getSessionMessageCount: async (sessionId) => await this.getSessionMessageCount(sessionId),
+        isSessionBusy: (conversationKey, sessionId) => this.isSessionBusy(conversationKey, sessionId),
+        resolveSessionCommandTarget: async (msg, index) => await this.resolveSessionCommandTarget(msg, index),
+        resolveSessionCommandTargets: async (msg, range) => await this.resolveSessionCommandTargets(msg, range),
+        ensureSession: async (source: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey">) => await this.ensureSession(source),
+      }).handleCommand(message, routed);
+    }
+
+    await this.moduleManager.handleMessage({ message: message as IncomingChatMessage, routed });
   }
 
   private async handlePendingInteraction(message: IncomingChatMessage, pending: PendingInteraction): Promise<boolean> {
@@ -631,339 +527,94 @@ export class BridgeApp {
       return true;
     }
 
-    if (pending.kind === "knowledge-ingest-await-file") {
-      return await this.enqueueKnowledgeIngestInput(message, pending);
-    }
-
-    if (pending.kind === "file-await-instruction") {
-      if (message.senderOpenId !== pending.requesterOpenId) {
-        await this.sendMarkdown(message.chatId, "当前文件处理仅允许文件发送者继续说明需求。", message.messageId);
-        return true;
-      }
-      if (message.messageType === "file") {
-        await this.sendMarkdown(message.chatId, "已收到上一个文件，请先发送文字说明你希望我如何处理；如需入库，请发送 `/kb-ingest-start`。", message.messageId);
-        return true;
-      }
-      const instruction = message.plainText.trim();
-      if (!instruction) {
-        await this.sendMarkdown(message.chatId, "请发送文字说明你希望我如何处理这个文件。", message.messageId);
-        return true;
-      }
-      const processed = await this.prepareFileForOpenCodeTurn(pending, instruction, message.messageId).catch(async (error) => {
-        const detail = error instanceof Error ? error.message : String(error);
-        await this.sendPayload(message.chatId, buildNoticeCardPayload({
-          title: "文件读取失败",
-          template: "red",
-          iconToken: "error_filled",
-          message: detail,
-          messageIconToken: "error_filled",
-          messageIconColor: "red",
-          showMessageIcon: false,
-        }), {
-          event: "file instruction failed",
-          transcriptType: "outbound-final",
-          textPreview: detail,
-          len: detail.length,
-        }, { replyToMessageId: message.messageId });
-        return null;
-      });
-      if (!processed) {
-        this.clearPendingInteraction(message.conversationKey, false);
-        return true;
-      }
-      this.clearPendingInteraction(message.conversationKey, false);
-      if (!await this.ensureServerAvailableForMessage(message)) {
-        return true;
-      }
-      const queue = this.queues.get(message.conversationKey);
-      const turn: BridgeTurn = {
-        turnId: crypto.randomUUID(),
-        chatId: message.chatId,
-        conversationKey: message.conversationKey,
-        threadKey: message.threadKey,
-        chatType: message.chatType,
-        senderOpenId: message.senderOpenId,
-        inboundMessageId: message.messageId,
-        plainText: `${instruction}\n\n[文件] ${pending.file.fileName}`,
-        text: processed.prompt,
-      };
-      const result = queue.enqueue(turn);
-      if (!result.accepted) {
-        await this.sendPayload(message.chatId, buildQueueNoticePayload(result.notice ?? { message: "当前不可用。" }), {
-          event: "final message sent",
-          transcriptType: "outbound-final",
-          textPreview: result.notice?.message ?? "当前不可用。",
-          len: (result.notice?.message ?? "当前不可用。").length,
-        }, { replyToMessageId: message.messageId });
-        return true;
-      }
-      if (!this.runningChats.has(message.conversationKey)) {
-        const runner = this.processChat(message.conversationKey).finally(() => {
-          this.runningChats.delete(message.conversationKey);
-        });
-        this.runningChats.set(message.conversationKey, runner);
-        await runner;
-      }
-      return true;
-    }
-
     return false;
   }
 
-  private async enqueueKnowledgeIngestInput(message: IncomingChatMessage, pending: PendingKnowledgeIngestInteraction): Promise<boolean> {
+  private isCorePendingInteraction(pending: PendingInteraction): boolean {
+    return pending.kind === "question" || pending.kind === "permission";
+  }
+
+  private async handleFileInstructionPending(
+    message: IncomingChatMessage,
+    pending: Extract<PendingInteraction, { kind: "file-await-instruction" }>,
+  ): Promise<boolean> {
     if (message.senderOpenId !== pending.requesterOpenId) {
-      await this.sendKnowledgeIngestMarkdown(pending, "当前入库任务仅允许发起人继续上传文件。");
+      await this.sendMarkdown(message.chatId, "当前文件处理仅允许文件发送者继续说明需求。", message.messageId);
       return true;
     }
-    if (!this.knowledge) {
-      await this.sendKnowledgeIngestMarkdown(pending, "当前未启用法律知识库，请联系部署者补充 knowledgeBase 配置。");
-      return true;
-    }
-
-    let sourceLabel: string;
-    let itemInput:
-      | Omit<Extract<KnowledgeIngestQueueItem, { kind: "file" }>, "processingMessageId" | "progressState">
-      | Omit<Extract<KnowledgeIngestQueueItem, { kind: "web" }>, "processingMessageId" | "progressState">;
     if (message.messageType === "file") {
-      sourceLabel = message.file.fileName;
-      itemInput = {
-        kind: "file",
-        conversationKey: pending.conversationKey,
-        chatId: message.chatId,
-        requesterOpenId: pending.requesterOpenId,
-        messageId: message.messageId,
-        fileKey: message.file.fileKey,
-        fileName: message.file.fileName,
-        size: message.file.size,
-      };
-    } else {
-      const webIngest = detectKnowledgeWebIngest(message.plainText, { requireIngestIntent: false });
-      if (!webIngest.matched || !webIngest.url || !this.knowledge.ingestWebPage) {
-        await this.sendKnowledgeIngestMarkdown(pending, "请继续上传 PDF / DOCX / TXT / MD 文件，或直接发送网页 URL / 带 URL 的入库请求；发送 `/kb-ingest-end` 退出。");
-        return true;
-      }
-      sourceLabel = webIngest.url;
-      itemInput = {
-        kind: "web",
-        conversationKey: pending.conversationKey,
-        chatId: message.chatId,
-        requesterOpenId: pending.requesterOpenId,
-        messageId: message.messageId,
-        url: webIngest.url,
-        instruction: message.plainText,
-      };
-    }
-
-    const queue = this.getKnowledgeIngestQueue(pending.conversationKey);
-    if (queue.closing) {
-      await this.sendKnowledgeIngestMarkdown(pending, "已收到结束指令，当前队列处理完成后会自动结束。");
+      await this.sendMarkdown(message.chatId, "已收到上一个文件，请先发送文字说明你希望我如何处理；如需入库，请发送 `/kb-ingest-start`。", message.messageId);
       return true;
     }
-    const queuedCount = queue.pending.length + (queue.active ? 1 : 0);
-    if (queuedCount >= this.config.bridge.queueLimit) {
-      await this.sendKnowledgeIngestMarkdown(pending, "已达上限，请等待当前文件处理完成。");
+    const instruction = message.plainText.trim();
+    if (!instruction) {
+      await this.sendMarkdown(message.chatId, "请发送文字说明你希望我如何处理这个文件。", message.messageId);
       return true;
     }
-
-    const progressState = createKnowledgeIngestProgressState(sourceLabel);
-    const processing = await this.sendPayload(message.chatId, buildKnowledgeIngestProcessingPayload(progressState), {
-      event: itemInput.kind === "web" ? "knowledge web ingest queued" : "knowledge ingest queued",
-      transcriptType: "outbound-final",
-      textPreview: sourceLabel,
-      len: sourceLabel.length,
-    }, this.getKnowledgeIngestDelivery(pending));
-    queue.pending.push({
-      ...itemInput,
-      processingMessageId: processing.messageId,
-      progressState,
+    const processed = await this.prepareFileForOpenCodeTurn(pending, instruction, message.messageId).catch(async (error) => {
+      const detail = error instanceof Error ? error.message : String(error);
+      await this.sendPayload(message.chatId, buildNoticeCardPayload({
+        title: "文件读取失败",
+        template: "red",
+        iconToken: "error_filled",
+        message: detail,
+        messageIconToken: "error_filled",
+        messageIconColor: "red",
+        showMessageIcon: false,
+      }), {
+        event: "file instruction failed",
+        transcriptType: "outbound-final",
+        textPreview: detail,
+        len: detail.length,
+      }, { replyToMessageId: message.messageId });
+      return null;
     });
-    this.refreshKnowledgeIngestPending(pending.conversationKey, pending);
-    await this.updateKnowledgeIngestSessionSummary(pending.conversationKey);
-    void this.processKnowledgeIngestQueue(pending.conversationKey);
+    if (!processed) {
+      this.clearPendingInteraction(message.conversationKey, false);
+      return true;
+    }
+    this.clearPendingInteraction(message.conversationKey, false);
+    if (!await this.ensureServerAvailableForMessage(message)) {
+      return true;
+    }
+    const queue = this.queues.get(message.conversationKey);
+    const turn: BridgeTurn = {
+      turnId: crypto.randomUUID(),
+      chatId: message.chatId,
+      conversationKey: message.conversationKey,
+      threadKey: message.threadKey,
+      chatType: message.chatType,
+      senderOpenId: message.senderOpenId,
+      inboundMessageId: message.messageId,
+      plainText: `${instruction}\n\n[文件] ${pending.file.fileName}`,
+      text: processed.prompt,
+    };
+    const result = queue.enqueue(turn);
+    if (!result.accepted) {
+      await this.sendPayload(message.chatId, buildQueueNoticePayload(result.notice ?? { message: "当前不可用。" }), {
+        event: "final message sent",
+        transcriptType: "outbound-final",
+        textPreview: result.notice?.message ?? "当前不可用。",
+        len: (result.notice?.message ?? "当前不可用。").length,
+      }, { replyToMessageId: message.messageId });
+      return true;
+    }
+    if (!this.runningChats.has(message.conversationKey)) {
+      const runner = this.processChat(message.conversationKey).finally(() => {
+        this.runningChats.delete(message.conversationKey);
+      });
+      this.runningChats.set(message.conversationKey, runner);
+      await runner;
+    }
     return true;
   }
 
-  private async processKnowledgeIngestQueue(conversationKey: string): Promise<void> {
-    const queue = this.knowledgeIngestQueues.get(conversationKey);
-    if (!queue || queue.active) {
-      return;
-    }
-    queue.active = true;
-    try {
-      let item = queue.pending.shift();
-      while (item) {
-        const currentItem = item;
-        const pending = this.getKnowledgeIngestInteraction(conversationKey);
-        if (!pending || !this.knowledge) {
-          break;
-        }
-        queue.currentLabel = getKnowledgeIngestQueueItemLabel(currentItem);
-        await this.updateKnowledgeIngestSessionSummary(conversationKey);
-        this.setRunningKnowledgeIngest(conversationKey, currentItem.requesterOpenId);
-        try {
-          if (currentItem.kind === "web") {
-            const result = await this.knowledge.ingestWebPage!({
-              url: currentItem.url,
-              instruction: currentItem.instruction,
-              messageId: currentItem.messageId,
-            }, {
-              onProgress: async (update) => await this.updateKnowledgeIngestProgress(currentItem.chatId, currentItem.processingMessageId, currentItem.progressState, update),
-            });
-            this.refreshKnowledgeIngestPending(conversationKey, pending);
-            await this.updatePayload(currentItem.chatId, currentItem.processingMessageId, buildKnowledgeIngestPayload(result), {
-              event: "knowledge web ingest updated",
-              transcriptType: "outbound-final",
-              textPreview: result.sourceFile,
-              len: result.sourceFile.length,
-            });
-            this.recordKnowledgeIngestResult(conversationKey, result);
-          } else {
-            const result = await this.knowledge.ingestFile({
-              messageId: currentItem.messageId,
-              fileKey: currentItem.fileKey,
-              fileName: currentItem.fileName,
-              size: currentItem.size,
-            }, {
-              onProgress: async (update) => await this.updateKnowledgeIngestProgress(currentItem.chatId, currentItem.processingMessageId, currentItem.progressState, update),
-            });
-            this.refreshKnowledgeIngestPending(conversationKey, pending);
-            await this.updatePayload(currentItem.chatId, currentItem.processingMessageId, buildKnowledgeIngestPayload(result), {
-              event: "knowledge ingest updated",
-              transcriptType: "outbound-final",
-              textPreview: result.sourceFile,
-              len: result.sourceFile.length,
-            });
-            this.recordKnowledgeIngestResult(conversationKey, result);
-          }
-        } catch (error) {
-          this.recordKnowledgeIngestFailure(conversationKey);
-          const detail = error instanceof Error ? error.message : String(error);
-          await this.updatePayload(currentItem.chatId, currentItem.processingMessageId, buildNoticeCardPayload({
-            title: currentItem.kind === "web" ? "网页入库失败" : "知识入库失败",
-            template: "red",
-            iconToken: "error_filled",
-            message: detail,
-            messageIconToken: "error_filled",
-            messageIconColor: "red",
-            showMessageIcon: false,
-          }), {
-            event: currentItem.kind === "web" ? "knowledge web ingest failed" : "knowledge ingest failed",
-            transcriptType: "outbound-final",
-            textPreview: detail,
-            len: detail.length,
-          });
-        } finally {
-          this.clearRunningKnowledgeIngest(conversationKey);
-        }
-        queue.currentLabel = undefined;
-        await this.updateKnowledgeIngestSessionSummary(conversationKey);
-        item = queue.pending.shift();
-      }
-    } finally {
-      queue.active = false;
-      queue.currentLabel = undefined;
-      let shouldUpdateSummary = true;
-      if (queue.pending.length === 0) {
-        if (queue.closing) {
-          shouldUpdateSummary = false;
-          const pending = this.getKnowledgeIngestInteraction(conversationKey);
-          if (pending) {
-            await this.sendKnowledgeIngestFinalSummary(pending);
-            await this.clearKnowledgeIngestPending(conversationKey, pending.chatType);
-          } else {
-            this.knowledgeIngestQueues.delete(conversationKey);
-          }
-        } else {
-          this.knowledgeIngestQueues.delete(conversationKey);
-          shouldUpdateSummary = false;
-        }
-      }
-      if (shouldUpdateSummary) {
-        await this.updateKnowledgeIngestSessionSummary(conversationKey);
-      }
-    }
+  getKnowledgeIngestInteraction(conversationKey: string): PendingKnowledgeIngestInteraction | null {
+    return this.knowledgeModule.getInteraction(conversationKey);
   }
 
-  private getKnowledgeIngestQueue(conversationKey: string): KnowledgeIngestQueueState {
-    const existing = this.knowledgeIngestQueues.get(conversationKey);
-    if (existing) {
-      return existing;
-    }
-    const queue: KnowledgeIngestQueueState = { active: false, closing: false, pending: [] };
-    this.knowledgeIngestQueues.set(conversationKey, queue);
-    return queue;
-  }
-
-  private getKnowledgeIngestSessionStats(conversationKey: string): KnowledgeIngestSessionStats {
-    const existing = this.knowledgeIngestSessionStats.get(conversationKey);
-    if (existing) {
-      return existing;
-    }
-    const stats: KnowledgeIngestSessionStats = {
-      startedAt: Date.now(),
-      completedCount: 0,
-      failedCount: 0,
-      totalExtractedCount: 0,
-      totalDedupedCount: 0,
-    };
-    this.knowledgeIngestSessionStats.set(conversationKey, stats);
-    return stats;
-  }
-
-  private recordKnowledgeIngestResult(conversationKey: string, result: KnowledgeIngestResult): void {
-    const stats = this.getKnowledgeIngestSessionStats(conversationKey);
-    const rawExtractedCount = result.rawExtractedCount ?? result.extractedCount;
-    stats.completedCount += 1;
-    stats.totalExtractedCount += result.extractedCount;
-    stats.totalDedupedCount += result.dedupedCount ?? Math.max(0, rawExtractedCount - result.extractedCount);
-    stats.bitableUrl = result.bitableUrl ?? stats.bitableUrl;
-  }
-
-  private recordKnowledgeIngestFailure(conversationKey: string): void {
-    const stats = this.getKnowledgeIngestSessionStats(conversationKey);
-    stats.failedCount += 1;
-  }
-
-  private async updateKnowledgeIngestSessionSummary(conversationKey: string): Promise<void> {
-    const pending = this.getKnowledgeIngestInteraction(conversationKey);
-    if (!pending) {
-      return;
-    }
-    const stats = this.getKnowledgeIngestSessionStats(conversationKey);
-    const queue = this.knowledgeIngestQueues.get(conversationKey);
-    await this.updatePayload(pending.chatId, pending.anchorMessageId, buildKnowledgeIngestSessionPayload({
-      completedCount: stats.completedCount,
-      failedCount: stats.failedCount,
-      queuedCount: queue?.pending.length ?? 0,
-      currentLabel: queue?.currentLabel,
-      totalExtractedCount: stats.totalExtractedCount,
-      totalDedupedCount: stats.totalDedupedCount,
-      elapsedMs: Date.now() - stats.startedAt,
-      bitableUrl: stats.bitableUrl,
-    }), {
-      event: "knowledge ingest session summary updated",
-      transcriptType: "outbound-final",
-      textPreview: "知识入库会话汇总",
-      len: 10,
-    });
-  }
-
-  private async sendKnowledgeIngestFinalSummary(pending: PendingKnowledgeIngestInteraction): Promise<void> {
-    const stats = this.getKnowledgeIngestSessionStats(pending.conversationKey);
-    await this.sendPayload(pending.chatId, buildKnowledgeIngestSessionFinalPayload({
-      completedCount: stats.completedCount,
-      failedCount: stats.failedCount,
-      queuedCount: 0,
-      totalExtractedCount: stats.totalExtractedCount,
-      totalDedupedCount: stats.totalDedupedCount,
-      elapsedMs: Date.now() - stats.startedAt,
-      bitableUrl: stats.bitableUrl,
-    }), {
-      event: "knowledge ingest session final summary sent",
-      transcriptType: "outbound-final",
-      textPreview: "知识入库完成汇总",
-      len: 10,
-    }, this.getKnowledgeIngestDelivery(pending));
+  async clearKnowledgeIngestPending(conversationKey: string, chatType: string): Promise<boolean> {
+    return await this.knowledgeModule.clearPending(conversationKey, chatType);
   }
 
   private async ensureSession(source: Pick<BridgeTurn, "chatId" | "chatType" | "conversationKey" | "threadKey">): Promise<string> {
@@ -1000,6 +651,7 @@ export class BridgeApp {
       throw new Error("当前运行环境不支持下载飞书文件。");
     }
     const downloaded = await resources.downloadMessageResource(pending.file.messageId, pending.file.fileKey, "file");
+    this.validateRegularFileInput(downloaded.fileName, downloaded.buffer.byteLength);
     const parsed = await parseKnowledgeFile(downloaded.fileName, downloaded.buffer);
     if (!parsed.normalizedMarkdown.trim()) {
       throw new Error("文件中未提取到可用文本。");
@@ -1023,6 +675,20 @@ export class BridgeApp {
         "---文件内容结束---",
       ].join("\n"),
     };
+  }
+
+  private validateRegularFileInput(fileName: string, sizeBytes?: number): void {
+    const extension = fileName.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? "";
+    if (!REGULAR_FILE_ALLOWED_EXTENSIONS.includes(extension as typeof REGULAR_FILE_ALLOWED_EXTENSIONS[number])) {
+      throw new Error(`仅支持 ${REGULAR_FILE_ALLOWED_EXTENSIONS.join(" / ")} 文件`);
+    }
+    if (typeof sizeBytes !== "number") {
+      return;
+    }
+    const maxSizeBytes = this.config.knowledgeBase.ingest.maxFileSizeMb * 1024 * 1024;
+    if (sizeBytes > maxSizeBytes) {
+      throw new Error(`文件过大，请控制在 ${this.config.knowledgeBase.ingest.maxFileSizeMb}MB 以内`);
+    }
   }
 
   private async ensureServerAvailableForMessage(message: Pick<IncomingChatMessage, "chatId" | "messageId">): Promise<boolean> {
@@ -1055,151 +721,6 @@ export class BridgeApp {
         this.sessionStatuses.set(sessionId, { type: "idle" });
       }
     }
-  }
-
-  private async interruptPersistedKnowledgeIngests(): Promise<void> {
-    const records = Object.values(this.activeKnowledgeIngestMap);
-    if (records.length === 0) {
-      return;
-    }
-
-    for (const record of records) {
-      await this.restorePreviousSessionForBackgroundIngest(record.conversationKey, record.chatType, record).catch((error) => {
-        this.logger.log("knowledge/ingest", "failed to restore interrupted ingest session", {
-          conversationKey: record.conversationKey,
-          detail: error instanceof Error ? error.message : String(error),
-        }, "warn");
-      });
-      await this.sendPayload(record.chatId, buildNoticeCardPayload({
-        title: "入库任务已中断",
-        template: "yellow",
-        iconToken: "maybe_outlined",
-        message: "入库任务因服务重启中断，请重新发送 `/kb-ingest-start`。",
-        messageIconToken: "maybe_outlined",
-        messageIconColor: "yellow",
-        showMessageIcon: false,
-      }), {
-        event: "knowledge ingest interrupted",
-        transcriptType: "outbound-final",
-        textPreview: "入库任务因服务重启中断",
-        len: 12,
-      }, {
-        replyToMessageId: record.anchorMessageId,
-        replyInThread: record.deliveryMode === "group_thread",
-      }).catch((error) => {
-        this.logger.log("knowledge/ingest", "failed to notify interrupted ingest", {
-          conversationKey: record.conversationKey,
-          detail: error instanceof Error ? error.message : String(error),
-        }, "warn");
-      });
-    }
-
-    this.activeKnowledgeIngestMap = {};
-    await this.activeKnowledgeIngests.saveRecords(this.activeKnowledgeIngestMap);
-  }
-
-  private findKnowledgeIngestInteraction(message: IncomingChatMessage): PendingKnowledgeIngestInteraction | null {
-    const direct = this.getKnowledgeIngestInteraction(message.conversationKey);
-    if (direct && this.isMessageInKnowledgeIngestChain(message, direct)) {
-      return direct;
-    }
-
-    for (const pending of this.knowledgeIngestInteractions.values()) {
-      if (pending.conversationKey === message.conversationKey) {
-        continue;
-      }
-      if (this.isMessageInKnowledgeIngestChain(message, pending)) {
-        return pending;
-      }
-    }
-
-    return null;
-  }
-
-  private isMessageInKnowledgeIngestChain(message: IncomingChatMessage, pending: PendingKnowledgeIngestInteraction): boolean {
-    if (message.chatId !== pending.chatId) {
-      return false;
-    }
-    if (message.chatType === "p2p") {
-      return message.rootId === pending.anchorMessageId
-        || message.parentId === pending.anchorMessageId
-        || message.rootId === pending.rootMessageId
-        || message.parentId === pending.rootMessageId;
-    }
-    const candidates = new Set([
-      message.rootId,
-      message.parentId,
-      message.threadKey,
-    ].filter((value): value is string => Boolean(value)));
-    return message.conversationKey === pending.conversationKey
-      || candidates.has(pending.anchorMessageId)
-      || candidates.has(pending.rootMessageId);
-  }
-
-  private async endKnowledgeIngestInteraction(
-    message: Pick<IncomingChatMessage, "messageId" | "senderOpenId">,
-    pending: PendingKnowledgeIngestInteraction,
-    delivery?: { replyToMessageId: string },
-  ): Promise<void> {
-    if (pending.requesterOpenId !== message.senderOpenId) {
-      await this.sendPayload(pending.chatId, buildNoticeCardPayload({
-        title: "无法结束入库模式",
-        template: "yellow",
-        iconToken: "maybe_outlined",
-        message: "当前入库模式仅允许发起人结束。",
-        messageIconToken: "maybe_outlined",
-        messageIconColor: "yellow",
-        showMessageIcon: false,
-      }), {
-        event: "knowledge ingest end rejected",
-        transcriptType: "outbound-final",
-        textPreview: "当前入库模式仅允许发起人结束。",
-        len: 16,
-      }, delivery ?? this.getKnowledgeIngestDelivery(pending));
-      return;
-    }
-    const queue = this.knowledgeIngestQueues.get(pending.conversationKey);
-    let endedImmediately = true;
-    if (queue && (queue.active || queue.pending.length > 0)) {
-      endedImmediately = false;
-      queue.closing = true;
-      await this.sendKnowledgeIngestMarkdown(pending, "已收到结束指令，将处理完当前队列后结束。");
-      await this.updateKnowledgeIngestSessionSummary(pending.conversationKey);
-    } else {
-      await this.sendKnowledgeIngestFinalSummary(pending);
-      await this.clearKnowledgeIngestPending(pending.conversationKey, pending.chatType);
-    }
-    if (!delivery || !endedImmediately) {
-      return;
-    }
-    await this.sendPayload(pending.chatId, buildNoticeCardPayload({
-      title: "已退出知识入库模式",
-      template: "green",
-      iconToken: "yes_filled",
-      message: "后续文件消息将不再自动入库；如需继续入库，请发送 `/kb-ingest-start`。",
-      messageIconToken: "yes_filled",
-      messageIconColor: "green",
-      showMessageIcon: false,
-    }), {
-      event: "knowledge ingest ended",
-      transcriptType: "outbound-final",
-      textPreview: "已退出知识入库模式",
-      len: 9,
-    }, delivery);
-  }
-
-  async clearKnowledgeIngestPending(conversationKey: string, chatType: string): Promise<boolean> {
-    const pending = this.getKnowledgeIngestInteraction(conversationKey);
-    if (!pending) {
-      return false;
-    }
-    if (pending.previousActiveSessionId) {
-      await this.restorePreviousSessionForBackgroundIngest(conversationKey, chatType, pending);
-    }
-    this.clearKnowledgeIngestInteraction(conversationKey);
-    this.knowledgeIngestQueues.delete(conversationKey);
-    this.knowledgeIngestSessionStats.delete(conversationKey);
-    return true;
   }
 
   private getSessionWindow(conversationKey: string, chatType?: string): SessionWindowRecord {
@@ -1282,11 +803,6 @@ export class BridgeApp {
   }
 
   private setPendingInteraction(conversationKey: string, interaction: PendingInteraction): void {
-    if (interaction.kind === "knowledge-ingest-await-file") {
-      this.setKnowledgeIngestInteraction(conversationKey, interaction);
-      return;
-    }
-
     this.clearPendingInteraction(conversationKey, false);
     this.pendingInteractions.set(conversationKey, interaction);
 
@@ -1316,21 +832,9 @@ export class BridgeApp {
 
   }
 
-  private setKnowledgeIngestInteraction(conversationKey: string, interaction: PendingKnowledgeIngestInteraction): void {
-    this.clearKnowledgeIngestInteraction(conversationKey, { keepActiveKnowledgeIngest: true });
-    this.knowledgeIngestInteractions.set(conversationKey, interaction);
-    this.getKnowledgeIngestSessionStats(conversationKey);
-    const timer = setTimeout(() => {
-      void this.handleKnowledgeIngestTimeout(conversationKey, interaction);
-    }, Math.max(0, interaction.expiresAt - Date.now()));
-    this.pendingInteractionTimers.set(this.getKnowledgeIngestTimerKey(conversationKey), timer);
-    this.saveActiveKnowledgeIngest(interaction);
-  }
-
   private clearPendingInteraction(
     conversationKey: string,
     keepNonExpiring: boolean,
-    options?: { keepActiveKnowledgeIngest?: boolean },
   ): void {
     const timeout = this.pendingInteractionTimers.get(conversationKey);
     if (timeout) {
@@ -1345,40 +849,7 @@ export class BridgeApp {
       }
     }
 
-    const current = this.pendingInteractions.get(conversationKey);
     this.pendingInteractions.delete(conversationKey);
-    if (current?.kind === "knowledge-ingest-await-file" && !options?.keepActiveKnowledgeIngest) {
-      this.deleteActiveKnowledgeIngest(conversationKey);
-    }
-  }
-
-  private clearKnowledgeIngestInteraction(
-    conversationKey: string,
-    options?: { keepActiveKnowledgeIngest?: boolean },
-  ): void {
-    const timerKey = this.getKnowledgeIngestTimerKey(conversationKey);
-    const timeout = this.pendingInteractionTimers.get(timerKey);
-    if (timeout) {
-      clearTimeout(timeout);
-      this.pendingInteractionTimers.delete(timerKey);
-    }
-    this.knowledgeIngestInteractions.delete(conversationKey);
-    if (!options?.keepActiveKnowledgeIngest) {
-      this.deleteActiveKnowledgeIngest(conversationKey);
-    }
-  }
-
-  getKnowledgeIngestInteraction(conversationKey: string): PendingKnowledgeIngestInteraction | null {
-    const interaction = this.knowledgeIngestInteractions.get(conversationKey);
-    if (interaction) {
-      return interaction;
-    }
-    const legacy = this.pendingInteractions.get(conversationKey);
-    return legacy?.kind === "knowledge-ingest-await-file" ? legacy : null;
-  }
-
-  private getKnowledgeIngestTimerKey(conversationKey: string): string {
-    return `knowledge-ingest:${conversationKey}`;
   }
 
   private clearTurnOwnedPendingInteraction(conversationKey: string, turnId: string): void {
@@ -1402,37 +873,6 @@ export class BridgeApp {
     }
 
     await this.permissionManager.expireInteraction(current, true);
-  }
-
-  private async handleKnowledgeIngestTimeout(conversationKey: string, pending: PendingKnowledgeIngestInteraction): Promise<void> {
-    const current = this.getKnowledgeIngestInteraction(conversationKey);
-    if (
-      !current
-      || current.anchorMessageId !== pending.anchorMessageId
-      || current.expiresAt > Date.now()
-    ) {
-      return;
-    }
-    if (this.runningKnowledgeIngests.has(conversationKey)) {
-      this.refreshKnowledgeIngestPending(conversationKey, current);
-      return;
-    }
-    await this.sendKnowledgeIngestFinalSummary(current);
-    await this.clearKnowledgeIngestPending(conversationKey, current.chatType);
-    await this.sendPayload(current.chatId, buildNoticeCardPayload({
-      title: "入库任务已超时",
-      template: "yellow",
-      iconToken: "maybe_outlined",
-      message: "长时间未收到新的入库素材，已结束当前入库任务。需要继续时请重新发送 `/kb-ingest-start`。",
-      messageIconToken: "maybe_outlined",
-      messageIconColor: "yellow",
-      showMessageIcon: false,
-    }), {
-      event: "knowledge ingest timed out",
-      transcriptType: "outbound-final",
-      textPreview: "入库任务已超时",
-      len: 7,
-    }, this.getKnowledgeIngestDelivery(current));
   }
 
   private isSessionBusy(conversationKey: string, sessionId: string): boolean {
@@ -1544,22 +984,6 @@ export class BridgeApp {
     }, replyToMessageId ? { replyToMessageId } : undefined);
   }
 
-  private async sendKnowledgeIngestMarkdown(pending: PendingKnowledgeIngestInteraction, markdown: string): Promise<void> {
-    await this.sendPayload(pending.chatId, buildPostMarkdownPayload(markdown), {
-      event: "knowledge ingest notice sent",
-      transcriptType: "outbound-final",
-      textPreview: createTextPreview(markdown),
-      len: markdown.length,
-    }, this.getKnowledgeIngestDelivery(pending));
-  }
-
-  private getKnowledgeIngestDelivery(pending: PendingKnowledgeIngestInteraction): { replyToMessageId: string; replyInThread: boolean } {
-    return {
-      replyToMessageId: pending.anchorMessageId,
-      replyInThread: pending.deliveryMode === "group_thread",
-    };
-  }
-
   private async sendPayload(
     chatId: string,
     payload: FeishuPostPayload,
@@ -1586,195 +1010,5 @@ export class BridgeApp {
     this.logger.log("feishu/reply", options.event, { chatId, messageId: result.messageId, textPreview: options.textPreview, len: options.len });
     this.logger.logTranscript(options.transcriptType, { chatId, messageId: result.messageId }, prettyPrintPayload(payload));
     return result;
-  }
-
-  private setRunningKnowledgeIngest(conversationKey: string, requesterOpenId: string): void {
-    this.runningKnowledgeIngests.set(conversationKey, { requesterOpenId });
-  }
-
-  private clearRunningKnowledgeIngest(conversationKey: string): void {
-    this.runningKnowledgeIngests.delete(conversationKey);
-  }
-
-  private refreshKnowledgeIngestPending(
-    conversationKey: string,
-    pending: PendingKnowledgeIngestInteraction,
-  ): void {
-    const current = this.getKnowledgeIngestInteraction(conversationKey);
-    if (!current || current.anchorMessageId !== pending.anchorMessageId) {
-      return;
-    }
-    this.setKnowledgeIngestInteraction(conversationKey, {
-      ...current,
-      expiresAt: Date.now() + this.config.knowledgeBase.ingest.sessionIdleMs,
-    });
-  }
-
-  private saveActiveKnowledgeIngest(pending: PendingKnowledgeIngestInteraction): void {
-    this.activeKnowledgeIngestMap[pending.conversationKey] = {
-      chatId: pending.chatId,
-      chatType: pending.chatType,
-      conversationKey: pending.conversationKey,
-      requesterOpenId: pending.requesterOpenId,
-      rootMessageId: pending.rootMessageId,
-      anchorMessageId: pending.anchorMessageId,
-      deliveryMode: pending.deliveryMode,
-      ingestSessionId: pending.ingestSessionId,
-      previousActiveSessionId: pending.previousActiveSessionId,
-      expiresAt: pending.expiresAt,
-    };
-    void this.activeKnowledgeIngests.saveRecords(this.activeKnowledgeIngestMap).catch((error) => {
-      this.logger.log("knowledge/ingest", "failed to persist active ingest", {
-        conversationKey: pending.conversationKey,
-        detail: error instanceof Error ? error.message : String(error),
-      }, "warn");
-    });
-  }
-
-  private deleteActiveKnowledgeIngest(conversationKey: string): void {
-    if (!(conversationKey in this.activeKnowledgeIngestMap)) {
-      return;
-    }
-    delete this.activeKnowledgeIngestMap[conversationKey];
-    void this.activeKnowledgeIngests.saveRecords(this.activeKnowledgeIngestMap).catch((error) => {
-      this.logger.log("knowledge/ingest", "failed to clear active ingest", {
-        conversationKey,
-        detail: error instanceof Error ? error.message : String(error),
-      }, "warn");
-    });
-  }
-
-  private async restorePreviousSessionForBackgroundIngest(
-    conversationKey: string,
-    chatType: string,
-    pending: Pick<PendingKnowledgeIngestInteraction, "previousActiveSessionId">,
-  ): Promise<void> {
-    if (!pending.previousActiveSessionId) {
-      return;
-    }
-    const window = this.getSessionWindow(conversationKey, chatType);
-    if (window.activeSessionId === pending.previousActiveSessionId) {
-      return;
-    }
-    if (!window.sessions.some((session) => session.sessionId === pending.previousActiveSessionId)) {
-      return;
-    }
-    const nextWindow = setActiveSession(
-      window,
-      pending.previousActiveSessionId,
-      Date.now(),
-      this.config.bridge.maxSessionsPerWindow,
-    );
-    await this.saveSessionWindow(conversationKey, nextWindow);
-  }
-
-  private async restoreOrCreateNormalSessionForBackgroundIngest(
-    message: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey">,
-    pending: Pick<PendingKnowledgeIngestInteraction, "previousActiveSessionId" | "ingestSessionId">,
-  ): Promise<void> {
-    if (pending.previousActiveSessionId) {
-      await this.restorePreviousSessionForBackgroundIngest(message.conversationKey, message.chatType, pending);
-      return;
-    }
-    if (!pending.ingestSessionId) {
-      return;
-    }
-    const window = this.getSessionWindow(message.conversationKey, message.chatType);
-    if (window.activeSessionId !== pending.ingestSessionId) {
-      return;
-    }
-    await this.createAndBindSession(message);
-  }
-
-  private async sendKnowledgeIngestBusyNotice(
-    pending: PendingKnowledgeIngestInteraction,
-  ): Promise<void> {
-    await this.sendPayload(pending.chatId, buildNoticeCardPayload({
-      title: "知识入库处理中",
-      template: "blue",
-      iconToken: "upload_outlined",
-      message: "当前正在处理知识入库任务。\n新的入库文件或入库链接请等待当前任务完成后再发送。\n发送 `/kb-ingest-end` 可退出入库模式；普通对话可直接发送。",
-      messageIconToken: "upload_outlined",
-      messageIconColor: "blue",
-      showMessageIcon: false,
-    }), {
-      event: "knowledge ingest busy",
-      transcriptType: "outbound-final",
-      textPreview: "当前正在处理知识入库任务。",
-      len: 43,
-    }, this.getKnowledgeIngestDelivery(pending));
-  }
-
-  private async updateKnowledgeIngestProgress(
-    chatId: string,
-    messageId: string,
-    state: KnowledgeIngestProgressState,
-    update: KnowledgeIngestProgressUpdate,
-  ): Promise<void> {
-    applyKnowledgeIngestProgress(state, update);
-    const payload = buildKnowledgeIngestProcessingPayload(state);
-    try {
-      await this.updatePayload(chatId, messageId, payload, {
-        event: "knowledge ingest progress updated",
-        transcriptType: "outbound-final",
-        textPreview: `${state.sourceLabel} ${state.steps.map((step) => `${step.label}:${step.detail}`).join(" | ")}`,
-        len: state.steps.map((step) => `${step.label}:${step.detail}`).join("\n").length,
-      });
-    } catch (error) {
-      this.logger.log("feishu/reply", "knowledge ingest progress update failed", {
-        chatId,
-        messageId,
-        detail: error instanceof Error ? error.message : String(error),
-      }, "warn");
-    }
-  }
-}
-
-type KnowledgeIngestProgressState = {
-  sourceLabel: string;
-  steps: ToolUpdateView[];
-};
-
-function createKnowledgeIngestProgressState(sourceLabel: string): KnowledgeIngestProgressState {
-  return {
-    sourceLabel,
-    steps: [
-      { label: "读取内容", detail: "等待开始", status: "pending" },
-      { label: "提取问答", detail: "等待开始", status: "pending" },
-      { label: "写入知识库", detail: "等待开始", status: "pending" },
-    ],
-  };
-}
-
-function getKnowledgeIngestQueueItemLabel(item: KnowledgeIngestQueueItem): string {
-  return item.kind === "web" ? item.url : item.fileName;
-}
-
-function applyKnowledgeIngestProgress(state: KnowledgeIngestProgressState, update: KnowledgeIngestProgressUpdate): void {
-  const label = mapKnowledgeProgressLabel(update.step);
-  const step = state.steps.find((item) => item.label === label);
-  if (!step) {
-    return;
-  }
-  step.status = update.status;
-  if (update.detail) {
-    step.detail = update.detail;
-  } else if (update.status === "completed") {
-    step.detail = "已完成";
-  } else if (update.status === "running") {
-    step.detail = "处理中";
-  } else if (update.status === "error") {
-    step.detail = "执行失败";
-  }
-}
-
-function mapKnowledgeProgressLabel(step: KnowledgeIngestProgressStep): ToolUpdateView["label"] {
-  switch (step) {
-    case "read":
-      return "读取内容";
-    case "extract":
-      return "提取问答";
-    case "write":
-      return "写入知识库";
   }
 }

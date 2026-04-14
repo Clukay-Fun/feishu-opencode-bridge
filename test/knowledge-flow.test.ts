@@ -154,6 +154,60 @@ describe("knowledge base bridge flow", () => {
     expect(JSON.stringify(updatePayloads)).toContain("文件总结完成");
   });
 
+  it("rejects unsupported file types before entering the normal file flow", async () => {
+    const outbound = {
+      ...createOutbound(),
+      downloadMessageResource: vi.fn(),
+    };
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
+      knowledge: null,
+      memory: null,
+    });
+    const appAny = app as unknown as { pendingInteractions: Map<string, unknown> };
+
+    await app.handleIncomingMessage({
+      ...createTextMessage("归档.zip", "om_file_zip"),
+      messageType: "file",
+      file: {
+        fileKey: "file_zip",
+        fileName: "归档.zip",
+        size: 1_024,
+      },
+    });
+
+    const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+    expect(JSON.stringify(replyPayloads)).toContain("仅支持 .pdf / .docx / .txt / .md 文件");
+    expect(appAny.pendingInteractions.has("oc_p2p_1")).toBe(false);
+    expect(outbound.downloadMessageResource).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized files before entering the normal file flow", async () => {
+    const outbound = {
+      ...createOutbound(),
+      downloadMessageResource: vi.fn(),
+    };
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
+      knowledge: null,
+      memory: null,
+    });
+    const appAny = app as unknown as { pendingInteractions: Map<string, unknown> };
+
+    await app.handleIncomingMessage({
+      ...createTextMessage("超大文件.pdf", "om_file_large"),
+      messageType: "file",
+      file: {
+        fileKey: "file_large",
+        fileName: "超大文件.pdf",
+        size: 25 * 1024 * 1024,
+      },
+    });
+
+    const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+    expect(JSON.stringify(replyPayloads)).toContain("文件过大，请控制在 20MB 以内");
+    expect(appAny.pendingInteractions.has("oc_p2p_1")).toBe(false);
+    expect(outbound.downloadMessageResource).not.toHaveBeenCalled();
+  });
+
   it("queries the knowledge base directly while knowledge mode is enabled, then falls back to OpenCode after exit", async () => {
     const outbound = createOutbound();
     const eventStream = new FakeOpenCodeEventStream();
