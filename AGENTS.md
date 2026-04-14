@@ -13,6 +13,15 @@
 - Plain Post is only for passthrough text output, ultra-short confirmations, and card fallback. Bridge-owned commands, structured lists, and system notices must use cards instead.
 - Do not simulate session creation, switching, closing, or renaming inside the agent response.
 - Use `lark-cli` only when the user explicitly asks to operate on Feishu or Lark resources.
+- When the user asks to operate on Feishu or Lark resources, prefer `lark-cli` and the installed `lark-*` skills over ad-hoc code exploration or custom bridge-side implementations.
+- Knowledge CLI fast path:
+  - When the user asks to query the knowledge base, do not search the codebase for the entrypoint.
+  - Go straight to `npm run --silent kb -- query --question "<问题>"`.
+  - For local file ingest, go straight to `npm run --silent kb -- ingest file --path "<绝对路径>"`.
+  - For URL ingest, go straight to `npm run --silent kb -- ingest url --url "<URL>"`.
+  - For PDF parsing diagnostics, go straight to `npm run --silent kb -- parse pdf --path "<绝对路径>"`.
+  - For knowledge-base diagnostics, go straight to `npm run --silent kb -- doctor`.
+  - Prefer the CLI entrypoint over repository exploration unless the user explicitly asks to inspect or modify the knowledge-base implementation.
 - Treat bridge-injected system state as authoritative for the current window, active session, and visible sessions.
 - Long-term user facts may be injected into `system` as a `[Memory Recall]` block; treat them as stable background context, not current window state.
 - For GitHub pull requests, use Chinese titles and descriptions by default.

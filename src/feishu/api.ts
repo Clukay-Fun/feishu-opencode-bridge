@@ -120,6 +120,25 @@ export class FeishuApiClient {
     throw new Error(`Feishu createBitableRecord failed: ${firstAttempt.msg}`);
   }
 
+  async updateBitableRecord(appToken: string, tableId: string, recordId: string, fields: Record<string, unknown>): Promise<void> {
+    const token = await this.getTenantToken();
+    const response = await withRetry(() => fetch(
+      `https://open.feishu.cn/open-apis/bitable/v1/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/records/${encodeURIComponent(recordId)}`,
+      {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ fields }),
+      },
+    ));
+    const body = (await response.json()) as { code: number; msg?: string };
+    if (!response.ok || body.code !== 0) {
+      throw new Error(`Feishu updateBitableRecord failed: ${body.msg ?? response.statusText}`);
+    }
+  }
+
   async listBitableRecords(appToken: string, tableId: string): Promise<Array<{ recordId: string; fields: Record<string, unknown> }>> {
     const token = await this.getTenantToken();
     const results: Array<{ recordId: string; fields: Record<string, unknown> }> = [];

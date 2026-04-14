@@ -176,6 +176,48 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
         maxExtractQas: parsed.knowledgeBase.ingest.maxExtractQas,
       },
     },
+    contractAssistant: {
+      enabled: parsed.contractAssistant.enabled,
+      storage: {
+        baseToken: parsed.contractAssistant.storage.baseToken,
+        contractTableId: parsed.contractAssistant.storage.contractTableId,
+        invoiceTableId: parsed.contractAssistant.storage.invoiceTableId,
+        caseTableId: parsed.contractAssistant.storage.caseTableId,
+      },
+      models: {
+        default: parsed.contractAssistant.models.default,
+        draft: parsed.contractAssistant.models.draft,
+        extract: parsed.contractAssistant.models.extract,
+        invoice: parsed.contractAssistant.models.invoice,
+        caseManage: parsed.contractAssistant.models.caseManage,
+      },
+      ingest: {
+        contractAllowedExtensions: parsed.contractAssistant.ingest.contractAllowedExtensions.map((value) => value.trim().toLowerCase()),
+        invoiceAllowedExtensions: parsed.contractAssistant.ingest.invoiceAllowedExtensions.map((value) => value.trim().toLowerCase()),
+        maxFileSizeMb: parsed.contractAssistant.ingest.maxFileSizeMb,
+        pendingTtlMs: parsed.contractAssistant.ingest.pendingTtlMs,
+      },
+      reminder: {
+        enabled: parsed.contractAssistant.reminder.enabled,
+        targetChatIds: parsed.contractAssistant.reminder.targetChatIds,
+        hour: parsed.contractAssistant.reminder.hour,
+        minute: parsed.contractAssistant.reminder.minute,
+        lookaheadDays: parsed.contractAssistant.reminder.lookaheadDays,
+      },
+    },
+    laborSkill: {
+      enabled: parsed.laborSkill.enabled,
+      models: {
+        default: parsed.laborSkill.models.default,
+        extract: parsed.laborSkill.models.extract,
+        analyze: parsed.laborSkill.models.analyze,
+      },
+      ingest: {
+        allowedExtensions: parsed.laborSkill.ingest.allowedExtensions.map((value) => value.trim().toLowerCase()),
+        maxFileSizeMb: parsed.laborSkill.ingest.maxFileSizeMb,
+        pendingTtlMs: parsed.laborSkill.ingest.pendingTtlMs,
+      },
+    },
   };
 }
 

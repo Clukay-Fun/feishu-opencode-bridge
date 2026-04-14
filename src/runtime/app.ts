@@ -20,6 +20,10 @@ import {
   type KnowledgeBasePort,
 } from "../knowledge/index.js";
 import { KnowledgeRuntimeModule } from "../knowledge/runtime-module.js";
+import { ContractAssistantService } from "../contract-assistant/index.js";
+import { ContractAssistantRuntimeModule } from "../contract-assistant/runtime-module.js";
+import { LaborSkillService } from "../labor/index.js";
+import { LaborRuntimeModule } from "../labor/runtime-module.js";
 import { MemoryService } from "../memory/index.js";
 import { MemoryRuntimeModule } from "../memory/runtime-module.js";
 import {
@@ -30,7 +34,7 @@ import {
 import { getEventSessionId, OpenCodeEventStream, type OpenCodeEvent } from "../opencode/events.js";
 import { MappingStore, type MappingRecord, type SessionBindingRecord, type SessionWindowRecord } from "../store/mappings.js";
 import type { WhitelistStore } from "../store/whitelist.js";
-import type { AppConfig } from "../config/schema.js";
+import { DEFAULT_CONTRACT_ASSISTANT_CONFIG, DEFAULT_LABOR_SKILL_CONFIG, type AppConfig } from "../config/schema.js";
 import {
   buildSessionRangeIndices,
   buildSessionTitle,
@@ -101,6 +105,7 @@ type KnowledgeResourcePort = {
   }>;
   createBitableRecord(appToken: string, tableId: string, fields: Record<string, unknown>): Promise<string>;
   listBitableRecords(appToken: string, tableId: string): Promise<Array<{ recordId: string; fields: Record<string, unknown> }>>;
+  updateBitableRecord(appToken: string, tableId: string, recordId: string, fields: Record<string, unknown>): Promise<void>;
 };
 
 type BridgeAppDeps = {
@@ -160,6 +165,8 @@ export class BridgeApp {
   private readonly sessionStatuses = new Map<string, OpenCodeSessionStatus>();
   private readonly memory: MemoryService | null;
   private readonly knowledge: KnowledgeBasePort | null;
+  private readonly contractAssistant: ContractAssistantService | null;
+  private readonly laborSkill: LaborSkillService | null;
   private globalEventUnsubscribe: (() => void) | null = null;
 
   constructor(
@@ -193,6 +200,26 @@ export class BridgeApp {
           logger,
         )
         : null;
+    const contractAssistantConfig = config.contractAssistant ?? DEFAULT_CONTRACT_ASSISTANT_CONFIG;
+    this.contractAssistant = contractAssistantConfig.enabled
+      ? new ContractAssistantService(
+        contractAssistantConfig,
+        this.outbound as OutboundPort & KnowledgeResourcePort,
+        this.opencode as OpenCodeClient,
+        logger,
+      )
+      : null;
+    const laborSkillConfig = config.laborSkill ?? DEFAULT_LABOR_SKILL_CONFIG;
+    this.laborSkill = laborSkillConfig.enabled
+      ? new LaborSkillService(
+        laborSkillConfig,
+        config.storage.dataDir,
+        this.outbound as OutboundPort & KnowledgeResourcePort,
+        this.opencode as OpenCodeClient,
+        logger,
+        this.knowledge,
+      )
+      : null;
     this.permissionManager = new PermissionManager({
       replyPermission: async (sessionId, permissionId, policy, remember) => {
         return await this.opencode.replyPermission(sessionId, permissionId, policy, remember);
@@ -224,6 +251,21 @@ export class BridgeApp {
     });
     this.knowledgeIngestInteractions = this.knowledgeModule.interactions;
     this.moduleManager.register(this.knowledgeModule);
+    this.moduleManager.register(new ContractAssistantRuntimeModule({
+      config: this.config,
+      logger: this.logger,
+      service: this.contractAssistant,
+      sendPayload: async (chatId, payload, options, delivery) => await this.sendPayload(chatId, payload, options, delivery),
+      updatePayload: async (chatId, messageId, payload, options) => await this.updatePayload(chatId, messageId, payload, options),
+    }));
+    this.moduleManager.register(new LaborRuntimeModule({
+      config: this.config,
+      logger: this.logger,
+      knowledge: this.knowledge,
+      service: this.laborSkill,
+      sendPayload: async (chatId, payload, options, delivery) => await this.sendPayload(chatId, payload, options, delivery),
+      updatePayload: async (chatId, messageId, payload, options) => await this.updatePayload(chatId, messageId, payload, options),
+    }));
     if (this.memory) {
       this.moduleManager.register(new MemoryRuntimeModule(this.memory));
     }
@@ -464,6 +506,13 @@ export class BridgeApp {
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "threadKey" | "senderOpenId">,
     routed: Extract<RoutedText, { kind: "command" }>,
   ): Promise<void> {
+    if (routed.command.kind === "passthrough") {
+      const moduleResult = await this.moduleManager.handleMessage({ message: message as IncomingChatMessage, routed });
+      if (moduleResult.claimed) {
+        return;
+      }
+    }
+
     if (isBridgeOwnedCommand(routed.command)) {
       return await new CommandHandler({
         config: this.config,

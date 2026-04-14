@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.16 - 2026-04-14
+
+### Added
+- Added contract assistant workflows for contract drafting, contract extraction, invoice recognition, case management, and reminder-oriented Bitable updates.
+- Added a reusable evidence extraction pipeline with spreadsheet support plus new labor workflow modules, prompts, and tests.
+- Added updated demo and planning docs for contract assistant and labor workflow rollout.
+
+### Changed
+- Updated runtime/config/router wiring so contract assistant and labor workflows can coexist with the bridge and knowledge-base flows.
+- Updated sanitization, Feishu API helpers, and repository skills/documentation to match the new legal-workflow direction.
+
 ## 0.1.15 - 2026-04-14
 
 ### Added

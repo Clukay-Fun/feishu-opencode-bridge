@@ -58,6 +58,88 @@ const KnowledgeBaseModelsSchema = z.object({
   extract: KnowledgeBaseModelRefSchema.optional(),
   rerank: KnowledgeBaseModelRefSchema.optional(),
 }).default({});
+const ContractAssistantModelRefSchema = z.string()
+  .trim()
+  .regex(/^[^/\s]+\/[^/\s].+$/, "contractAssistant.models.* 必须使用 <provider>/<model> 格式");
+const LaborSkillModelRefSchema = z.string()
+  .trim()
+  .regex(/^[^/\s]+\/[^/\s].+$/, "laborSkill.models.* 必须使用 <provider>/<model> 格式");
+const ContractAssistantConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  storage: z.object({
+    baseToken: z.string().default(""),
+    contractTableId: z.string().default(""),
+    invoiceTableId: z.string().default(""),
+    caseTableId: z.string().default(""),
+  }).default({}),
+  models: z.object({
+    default: ContractAssistantModelRefSchema.optional(),
+    draft: ContractAssistantModelRefSchema.optional(),
+    extract: ContractAssistantModelRefSchema.optional(),
+    invoice: ContractAssistantModelRefSchema.optional(),
+    caseManage: ContractAssistantModelRefSchema.optional(),
+  }).default({}),
+  ingest: z.object({
+    contractAllowedExtensions: z.array(z.string().min(1)).default([".pdf", ".docx", ".txt", ".md"]),
+    invoiceAllowedExtensions: z.array(z.string().min(1)).default([".pdf", ".png", ".jpg", ".jpeg", ".txt", ".md"]),
+    maxFileSizeMb: z.number().positive().default(20),
+    pendingTtlMs: z.number().int().positive().default(600_000),
+  }).default({}),
+  reminder: z.object({
+    enabled: z.boolean().default(false),
+    targetChatIds: z.array(z.string().min(1)).default([]),
+    hour: z.number().int().min(0).max(23).default(9),
+    minute: z.number().int().min(0).max(59).default(0),
+    lookaheadDays: z.number().int().positive().default(7),
+  }).default({}),
+}).default({});
+export type ContractAssistantConfig = z.infer<typeof ContractAssistantConfigSchema>;
+export const DEFAULT_CONTRACT_ASSISTANT_CONFIG: ContractAssistantConfig = {
+  enabled: false,
+  storage: {
+    baseToken: "",
+    contractTableId: "",
+    invoiceTableId: "",
+    caseTableId: "",
+  },
+  models: {},
+  ingest: {
+    contractAllowedExtensions: [".pdf", ".docx", ".txt", ".md"],
+    invoiceAllowedExtensions: [".pdf", ".png", ".jpg", ".jpeg", ".txt", ".md"],
+    maxFileSizeMb: 20,
+    pendingTtlMs: 600_000,
+  },
+  reminder: {
+    enabled: false,
+    targetChatIds: [],
+    hour: 9,
+    minute: 0,
+    lookaheadDays: 7,
+  },
+};
+const LaborSkillConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  models: z.object({
+    default: LaborSkillModelRefSchema.optional(),
+    extract: LaborSkillModelRefSchema.optional(),
+    analyze: LaborSkillModelRefSchema.optional(),
+  }).default({}),
+  ingest: z.object({
+    allowedExtensions: z.array(z.string().min(1)).default([".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp", ".xls", ".xlsx", ".csv"]),
+    maxFileSizeMb: z.number().positive().default(20),
+    pendingTtlMs: z.number().int().positive().default(600_000),
+  }).default({}),
+}).default({});
+export type LaborSkillConfig = z.infer<typeof LaborSkillConfigSchema>;
+export const DEFAULT_LABOR_SKILL_CONFIG: LaborSkillConfig = {
+  enabled: false,
+  models: {},
+  ingest: {
+    allowedExtensions: [".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp", ".xls", ".xlsx", ".csv"],
+    maxFileSizeMb: 20,
+    pendingTtlMs: 600_000,
+  },
+};
 const KnowledgeBaseConfigSchema = z.object({
   enabled: z.boolean().default(false),
   autoDetect: KnowledgeBaseAutoDetectSchema,
@@ -164,6 +246,8 @@ export const ConfigSchema = z.object({
   }).default({}),
   memory: MemoryConfigSchema.default({}),
   knowledgeBase: KnowledgeBaseConfigSchema,
+  contractAssistant: ContractAssistantConfigSchema,
+  laborSkill: LaborSkillConfigSchema,
 }).superRefine((value, context) => {
   if (value.memory.retriever === "embedding" && !value.embeddings.provider && !value.memory.embeddingProvider) {
     context.addIssue({
@@ -174,52 +258,81 @@ export const ConfigSchema = z.object({
   }
 
   if (!value.knowledgeBase.enabled) {
-    return;
+    // keep validating other feature blocks
+  } else {
+    if (
+      value.knowledgeBase.storage.bitable.sourceFileField?.type === "hyperlink"
+      && !value.knowledgeBase.storage.bitable.sourceFileField.urlTemplate
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["knowledgeBase", "storage", "bitable", "sourceFileField", "urlTemplate"],
+        message: "sourceFileField.type=hyperlink 时必须提供 urlTemplate",
+      });
+    }
+
+    if (
+      value.knowledgeBase.storage.bitable.statuteField?.type === "hyperlink"
+      && !value.knowledgeBase.storage.bitable.statuteField.urlTemplate
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["knowledgeBase", "storage", "bitable", "statuteField", "urlTemplate"],
+        message: "statuteField.type=hyperlink 时必须提供 urlTemplate",
+      });
+    }
+
+    if (!value.knowledgeBase.storage.bitable.appToken) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["knowledgeBase", "storage", "bitable", "appToken"],
+        message: "knowledgeBase.enabled=true 时必须提供 knowledgeBase.storage.bitable.appToken",
+      });
+    }
+
+    if (!value.knowledgeBase.storage.bitable.tableId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["knowledgeBase", "storage", "bitable", "tableId"],
+        message: "knowledgeBase.enabled=true 时必须提供 knowledgeBase.storage.bitable.tableId",
+      });
+    }
+
+    if (!value.knowledgeBase.embeddingProvider && !value.embeddings.provider && !value.memory.embeddingProvider) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["knowledgeBase", "embeddingProvider"],
+        message: "knowledgeBase.enabled=true 时必须提供 knowledgeBase.embeddingProvider，或复用 embeddings.provider / memory.embeddingProvider",
+      });
+    }
   }
 
-  if (
-    value.knowledgeBase.storage.bitable.sourceFileField?.type === "hyperlink"
-    && !value.knowledgeBase.storage.bitable.sourceFileField.urlTemplate
-  ) {
+  if (value.contractAssistant.enabled && !value.contractAssistant.storage.baseToken) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
-      path: ["knowledgeBase", "storage", "bitable", "sourceFileField", "urlTemplate"],
-      message: "sourceFileField.type=hyperlink 时必须提供 urlTemplate",
+      path: ["contractAssistant", "storage", "baseToken"],
+      message: "contractAssistant.enabled=true 时必须提供 contractAssistant.storage.baseToken",
     });
   }
-
-  if (
-    value.knowledgeBase.storage.bitable.statuteField?.type === "hyperlink"
-    && !value.knowledgeBase.storage.bitable.statuteField.urlTemplate
-  ) {
+  if (value.contractAssistant.enabled && !value.contractAssistant.storage.contractTableId) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
-      path: ["knowledgeBase", "storage", "bitable", "statuteField", "urlTemplate"],
-      message: "statuteField.type=hyperlink 时必须提供 urlTemplate",
+      path: ["contractAssistant", "storage", "contractTableId"],
+      message: "contractAssistant.enabled=true 时必须提供 contractAssistant.storage.contractTableId",
     });
   }
-
-  if (!value.knowledgeBase.storage.bitable.appToken) {
+  if (value.contractAssistant.enabled && !value.contractAssistant.storage.invoiceTableId) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
-      path: ["knowledgeBase", "storage", "bitable", "appToken"],
-      message: "knowledgeBase.enabled=true 时必须提供 knowledgeBase.storage.bitable.appToken",
+      path: ["contractAssistant", "storage", "invoiceTableId"],
+      message: "contractAssistant.enabled=true 时必须提供 contractAssistant.storage.invoiceTableId",
     });
   }
-
-  if (!value.knowledgeBase.storage.bitable.tableId) {
+  if (value.contractAssistant.enabled && !value.contractAssistant.storage.caseTableId) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
-      path: ["knowledgeBase", "storage", "bitable", "tableId"],
-      message: "knowledgeBase.enabled=true 时必须提供 knowledgeBase.storage.bitable.tableId",
-    });
-  }
-
-  if (!value.knowledgeBase.embeddingProvider && !value.embeddings.provider && !value.memory.embeddingProvider) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["knowledgeBase", "embeddingProvider"],
-      message: "knowledgeBase.enabled=true 时必须提供 knowledgeBase.embeddingProvider，或复用 embeddings.provider / memory.embeddingProvider",
+      path: ["contractAssistant", "storage", "caseTableId"],
+      message: "contractAssistant.enabled=true 时必须提供 contractAssistant.storage.caseTableId",
     });
   }
 });
@@ -367,6 +480,48 @@ export type AppConfig = {
       concurrency: number;
       maxExtractChunks: number;
       maxExtractQas: number;
+    };
+  };
+  contractAssistant?: {
+    enabled: boolean;
+    storage: {
+      baseToken: string;
+      contractTableId: string;
+      invoiceTableId: string;
+      caseTableId: string;
+    };
+    models: {
+      default?: string | undefined;
+      draft?: string | undefined;
+      extract?: string | undefined;
+      invoice?: string | undefined;
+      caseManage?: string | undefined;
+    };
+    ingest: {
+      contractAllowedExtensions: string[];
+      invoiceAllowedExtensions: string[];
+      maxFileSizeMb: number;
+      pendingTtlMs: number;
+    };
+    reminder: {
+      enabled: boolean;
+      targetChatIds: string[];
+      hour: number;
+      minute: number;
+      lookaheadDays: number;
+    };
+  };
+  laborSkill?: {
+    enabled: boolean;
+    models: {
+      default?: string | undefined;
+      extract?: string | undefined;
+      analyze?: string | undefined;
+    };
+    ingest: {
+      allowedExtensions: string[];
+      maxFileSizeMb: number;
+      pendingTtlMs: number;
     };
   };
 };

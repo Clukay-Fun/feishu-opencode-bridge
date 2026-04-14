@@ -116,10 +116,24 @@
 用 lark-task 创建一个待办，标题叫“整理 4/20 提交材料”，截止到本周五。
 ```
 
+### 场景 D · 劳动 Skill 输出案件分析文档
+
+```text
+进入劳动分析流程，基于一组劳动争议材料输出一份飞书工作台文档，正文包含案件摘要、证据链总表、时间线、争议焦点与风险、法律依据，并自动插入时间线画板、证据关系图、请求项思维导图和补证流程图；同时挂出证据台账 Base。
+```
+
+演示参考文档：
+
+- https://www.feishu.cn/docx/WaAVdy0KLo0QKzxxobUcunfUnBJ
+
+演示参考 Base：
+
+- https://pcn3o8owp0yw.feishu.cn/base/RlmYbgs7aaVFk8sNkGvc1hICnYe
+
 ### Expected
 
 - 至少成功演示其中 2 个
-- 第 3 个可作为备选
+- 第 3 个和第 4 个可作为备选
 - 重点强调 bridge 不直接操作飞书资源，而是把 OpenCode 和 `lark-cli` 串成一个会话化工作流
 
 ## Recording Notes
