@@ -45,11 +45,16 @@ export type PendingSessionDeleteConfirmationInteraction = {
 export type PendingKnowledgeIngestInteraction = {
   kind: "knowledge-ingest-await-file";
   chatId: string;
+  chatType: string;
   conversationKey: string;
   requesterOpenId: string;
   replyToMessageId: string;
+  rootMessageId: string;
+  anchorMessageId: string;
+  deliveryMode: "group_thread" | "p2p_reply";
   ingestSessionId?: string | undefined;
   previousActiveSessionId?: string | null | undefined;
+  expiresAt: number;
 };
 
 export type PendingFileInstructionInteraction = {

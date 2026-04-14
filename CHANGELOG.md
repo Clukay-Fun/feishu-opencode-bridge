@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.10 - 2026-04-14
+
+### Added
+- Added persisted active knowledge-ingest session state so in-flight ingest sessions can be restored and tracked separately from normal pending interactions.
+
+### Changed
+- Updated knowledge-ingest flow to use session-level queue summaries, queued item processing, and explicit session idle configuration.
+- Updated Feishu reply delivery so ingest and permission replies can opt into threaded replies when needed.
+
 ## 0.1.9 - 2026-04-14
 
 ### Fixed

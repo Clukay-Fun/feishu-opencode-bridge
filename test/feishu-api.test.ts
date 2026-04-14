@@ -63,6 +63,27 @@ describe("FeishuApiClient", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
+  it("sends reply_in_thread only when explicitly requested", async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ code: 0, tenant_access_token: "token_1" }))
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { message_id: "om_thread" } }))
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { message_id: "om_reply" } }));
+    vi.stubGlobal("fetch", fetch);
+    const client = new FeishuApiClient("app", "secret");
+    const payload = {
+      msg_type: "post" as const,
+      content: JSON.stringify({ text: "hello" }),
+    };
+
+    await expect(client.replyMessage("om_anchor", payload, { replyInThread: true })).resolves.toEqual({ messageId: "om_thread" });
+    await expect(client.replyMessage("om_anchor", payload, { replyInThread: false })).resolves.toEqual({ messageId: "om_reply" });
+
+    const threadedBody = JSON.parse(fetch.mock.calls[1]?.[1]?.body as string);
+    const p2pBody = JSON.parse(fetch.mock.calls[2]?.[1]?.body as string);
+    expect(threadedBody.reply_in_thread).toBe(true);
+    expect(p2pBody).not.toHaveProperty("reply_in_thread");
+  });
+
   it("retries createBitableRecord with a single-select tag value when 标签 is configured as single select", async () => {
     vi.useFakeTimers();
     const fetch = vi.fn()

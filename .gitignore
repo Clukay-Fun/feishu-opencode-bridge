@@ -4,4 +4,5 @@ logs/
 data/
 config.json
 mappings.json
+active-knowledge-ingests.json
 .DS_Store

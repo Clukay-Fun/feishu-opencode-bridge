@@ -1,6 +1,6 @@
 import type { QueueNotice } from "../bridge/turn.js";
 import type { KnowledgeIngestResult, KnowledgeQueryResult } from "../knowledge/index.js";
-import { column, columnSet, markdown, standardIcon } from "./card-builder.js";
+import { column, columnSet, markdown, standardIcon, type IconDef } from "./card-builder.js";
 
 export type FeishuPostPayload = {
   msg_type: "post" | "interactive";
@@ -99,6 +99,17 @@ export type KnowledgeQueryEmptyCardView = {
 export type KnowledgeIngestProgressCardView = {
   sourceLabel: string;
   steps: ReadonlyArray<ToolUpdateView>;
+};
+
+export type KnowledgeIngestSessionSummaryView = {
+  completedCount: number;
+  failedCount: number;
+  queuedCount: number;
+  currentLabel?: string | undefined;
+  totalExtractedCount: number;
+  totalDedupedCount: number;
+  elapsedMs?: number | undefined;
+  bitableUrl?: string | undefined;
 };
 
 export type PermissionActionButton = {
@@ -365,12 +376,56 @@ export function buildKnowledgeQueryEmptyPayload(question: string): FeishuPostPay
 }
 
 export function buildKnowledgeIngestReadyPayload(): FeishuPostPayload {
+  return buildKnowledgeIngestSessionPayload({
+    completedCount: 0,
+    failedCount: 0,
+    queuedCount: 0,
+    totalExtractedCount: 0,
+    totalDedupedCount: 0,
+  });
+}
+
+export function buildKnowledgeIngestSessionPayload(view: KnowledgeIngestSessionSummaryView): FeishuPostPayload {
+  const bodyParts = [
+    `**已完成**\n${view.completedCount} 个素材`,
+    `**处理中**\n${view.currentLabel ? escapeText(view.currentLabel) : "无"}`,
+    `**排队中**\n${view.queuedCount} 个素材`,
+    `**总入库**\n${view.totalExtractedCount} 条问答`,
+  ];
+  if (view.failedCount > 0) {
+    bodyParts.push(`**失败**\n${view.failedCount} 个素材`);
+  }
   return buildInteractivePayload({
-    title: "知识入库",
+    title: "知识入库会话",
     template: "blue",
     iconToken: "upload_outlined",
     bodyElements: [
-      buildNoticeBodyBlock("已进入知识入库模式。请上传 PDF / DOCX / TXT / MD 文件，或直接发送网页 URL；我会连续提取问答并写入知识库。发送 `/kb-ingest-end` 可退出。", "upload_outlined", "blue", { showIcon: false }),
+      buildNoticeBodyBlock(bodyParts.join("\n\n"), "upload_outlined", "blue", { showIcon: false }),
+      buildDivider(),
+      buildFooterTipBlock("发送文件或网页链接继续入库；发送 `/kb-ingest-end` 结束。", "info_outlined", "grey", "notation"),
+    ],
+  });
+}
+
+export function buildKnowledgeIngestSessionFinalPayload(view: KnowledgeIngestSessionSummaryView): FeishuPostPayload {
+  const bodyParts = [
+    `**本次共处理**\n${view.completedCount + view.failedCount} 个素材`,
+    `**总入库**\n${view.totalExtractedCount} 条问答`,
+    `**去重合并**\n${view.totalDedupedCount} 条`,
+    `**失败**\n${view.failedCount} 个素材`,
+    `**耗时**\n${formatDurationMs(view.elapsedMs ?? 0)}`,
+  ];
+  if (view.bitableUrl) {
+    bodyParts.push(`[查看多维表格](${escapeText(view.bitableUrl)})`);
+  }
+  return buildInteractivePayload({
+    title: "知识入库完成",
+    template: view.failedCount > 0 ? "yellow" : "green",
+    iconToken: view.failedCount > 0 ? "maybe_outlined" : "book_outlined",
+    bodyElements: [
+      buildNoticeBodyBlock(bodyParts.join("\n\n"), "book_outlined", "green", { showIcon: false }),
+      buildDivider(),
+      buildFooterTipBlock("以上内容仅供参考，不构成法律意见。", "warning_outlined", "orange", "notation"),
     ],
   });
 }
@@ -413,14 +468,27 @@ export function buildKnowledgeIngestPayload(view: KnowledgeIngestResult): Feishu
 }
 
 export function buildKnowledgeIngestProcessingPayload(view: KnowledgeIngestProgressCardView): FeishuPostPayload {
+  const currentStep = view.steps.find((step) => step.status === "running")
+    ?? view.steps.find((step) => step.status === "error")
+    ?? view.steps.find((step) => step.status === "pending")
+    ?? view.steps[view.steps.length - 1];
+  const completedCount = view.steps.filter((step) => step.status === "completed").length;
+  const totalCount = Math.max(1, view.steps.length);
+  const currentText = currentStep
+    ? `**当前步骤**\n${escapeText(currentStep.label)}：${escapeText(currentStep.detail)}`
+    : "**当前步骤**\n准备开始";
   return buildInteractivePayload({
     title: "知识入库处理中",
     template: "blue",
     iconToken: "upload_outlined",
     bodyElements: [
-      buildNoticeBodyBlock(`**当前对象**\n${escapeText(view.sourceLabel)}`, "upload_outlined", "blue", { showIcon: false }),
+      buildNoticeBodyBlock([
+        `**当前对象**\n${escapeText(view.sourceLabel)}`,
+        `**整体进度**\n${completedCount}/${totalCount} 步完成`,
+        currentText,
+      ].join("\n\n"), "upload_outlined", "blue", { showIcon: false }),
       buildDivider(),
-      buildToolBlock(buildToolElements(view.steps)),
+      buildKnowledgeIngestStepBlock(view.steps),
       buildDivider(),
       buildFooterTipBlock("以上内容仅供参考，不构成法律意见。", "warning_outlined", "orange", "notation"),
     ],
@@ -651,6 +719,22 @@ function buildToolElements(lines: ReadonlyArray<ToolUpdateView>): Array<Record<s
   }));
 }
 
+function buildKnowledgeIngestStepBlock(steps: ReadonlyArray<ToolUpdateView>): Record<string, unknown> {
+  return {
+    ...columnSet([
+      {
+        ...column(steps.map((step, index) => markdown(formatKnowledgeIngestStep(step, index), {
+          icon: mapKnowledgeIngestStepIcon(step.status),
+        })), { bg: "grey-50", weight: 1 }),
+        padding: "12px 12px 12px 12px",
+        vertical_spacing: "8px",
+      },
+    ]),
+    flex_mode: "stretch",
+    horizontal_spacing: "12px",
+  };
+}
+
 function buildStatusCurrentSessionBlock(session: StatusCommandCardView["currentSession"]): Record<string, unknown> {
   return columnSet([
     column([
@@ -835,6 +919,50 @@ function mapToolIcon(status: ToolUpdateView["status"]): Record<string, string> {
       return standardIcon("loading_outlined", "blue") as Record<string, string>;
     default:
       return standardIcon("info_outlined", "grey") as Record<string, string>;
+  }
+}
+
+function formatKnowledgeIngestStep(step: ToolUpdateView, index: number): string {
+  return `**${index + 1}. ${escapeText(step.label)}**\n${formatKnowledgeIngestStepStatus(step.status)} · ${escapeText(step.detail)}`;
+}
+
+function formatKnowledgeIngestStepStatus(status: ToolUpdateView["status"]): string {
+  switch (status) {
+    case "completed":
+      return "已完成";
+    case "running":
+      return "进行中";
+    case "error":
+      return "失败";
+    case "pending":
+      return "等待中";
+    default:
+      return "未知状态";
+  }
+}
+
+function formatDurationMs(durationMs: number): string {
+  const seconds = Math.max(1, Math.round(durationMs / 1000));
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return remainingSeconds > 0 ? `${minutes} 分 ${remainingSeconds} 秒` : `${minutes} 分`;
+}
+
+function mapKnowledgeIngestStepIcon(status: ToolUpdateView["status"]): IconDef {
+  switch (status) {
+    case "completed":
+      return { token: "yes_outlined", color: "green" };
+    case "running":
+      return { token: "loading_outlined", color: "blue" };
+    case "error":
+      return { token: "more-close_outlined", color: "red" };
+    case "pending":
+      return { token: "time_outlined", color: "grey" };
+    default:
+      return { token: "info_outlined", color: "grey" };
   }
 }
 

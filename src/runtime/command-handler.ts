@@ -1,4 +1,4 @@
-import type { PendingInteraction, PendingPermissionInteraction } from "../bridge/state.js";
+import type { PendingInteraction, PendingKnowledgeIngestInteraction, PendingPermissionInteraction } from "../bridge/state.js";
 import type { RoutedText } from "../bridge/router.js";
 import {
   buildKnowledgeQueryEmptyPayload,
@@ -53,6 +53,12 @@ export type BridgeAppContext = {
       sessionListLimit: number;
       maxSessionsPerWindow: number;
     };
+    knowledgeBase: {
+      ingest: {
+        pendingTtlMs: number;
+        sessionIdleMs: number;
+      };
+    };
   };
   opencode: {
     getSessionStatuses(): Promise<Record<string, OpenCodeSessionStatus>>;
@@ -88,11 +94,13 @@ export type BridgeAppContext = {
     chatId: string,
     payload: FeishuPostPayload,
     options: { event: string; transcriptType: TranscriptType; textPreview: string; len: number },
-    delivery?: { replyToMessageId: string },
+    delivery?: { replyToMessageId: string; replyInThread?: boolean },
   ): Promise<{ messageId: string }>;
   sendMarkdown(chatId: string, markdown: string, replyToMessageId?: string): Promise<void>;
   setPendingInteraction(conversationKey: string, interaction: PendingInteraction): void;
   clearPendingInteraction(conversationKey: string, keepNonExpiring: boolean): void;
+  getKnowledgeIngestInteraction(conversationKey: string): PendingKnowledgeIngestInteraction | null;
+  clearKnowledgeIngestPending(conversationKey: string, chatType: string): Promise<boolean>;
   listOpenCodeSessionsById(): Promise<Map<string, OpenCodeSession>>;
   saveSessionWindow(conversationKey: string, window: SessionWindowRecord): Promise<void>;
   getSessionMessageCount(sessionId: string): Promise<number>;
@@ -264,7 +272,7 @@ export class CommandHandler {
         });
         return;
       }
-      const currentPending = this.context.pendingInteractions.get(message.conversationKey);
+      const currentPending = this.context.getKnowledgeIngestInteraction(message.conversationKey);
       if (currentPending?.kind === "knowledge-ingest-await-file" && currentPending.requesterOpenId === message.senderOpenId) {
         await this.sendNotice(message, {
           title: "已在知识入库模式",
@@ -285,29 +293,35 @@ export class CommandHandler {
         this.context.config.bridge.maxSessionsPerWindow,
       );
       await this.context.saveSessionWindow(message.conversationKey, nextWindow);
-      this.context.setPendingInteraction(message.conversationKey, {
-        kind: "knowledge-ingest-await-file",
-        chatId: message.chatId,
-        conversationKey: message.conversationKey,
-        requesterOpenId: message.senderOpenId,
-        replyToMessageId: message.messageId,
-        ingestSessionId: entry.sessionId,
-        previousActiveSessionId: previousSession?.sessionId ?? null,
-      });
-      if (message.chatType !== "p2p") {
-        await this.context.whitelistBind(message.chatId, message.senderOpenId);
-      }
-      await this.context.sendPayload(message.chatId, buildKnowledgeIngestReadyPayload(), {
+      const deliveryMode = message.chatType === "p2p" ? "p2p_reply" : "group_thread";
+      const ready = await this.context.sendPayload(message.chatId, buildKnowledgeIngestReadyPayload(), {
         event: "knowledge ingest pending",
         transcriptType: "outbound-final",
         textPreview: "已进入知识入库模式",
         len: 9,
-      }, { replyToMessageId: message.messageId });
+      }, { replyToMessageId: message.messageId, replyInThread: deliveryMode === "group_thread" });
+      this.context.setPendingInteraction(message.conversationKey, {
+        kind: "knowledge-ingest-await-file",
+        chatId: message.chatId,
+        chatType: message.chatType,
+        conversationKey: message.conversationKey,
+        requesterOpenId: message.senderOpenId,
+        replyToMessageId: ready.messageId,
+        rootMessageId: message.messageId,
+        anchorMessageId: ready.messageId,
+        deliveryMode,
+        ingestSessionId: entry.sessionId,
+        previousActiveSessionId: previousSession?.sessionId ?? null,
+        expiresAt: Date.now() + this.context.config.knowledgeBase.ingest.sessionIdleMs,
+      });
+      if (message.chatType !== "p2p") {
+        await this.context.whitelistBind(message.chatId, message.senderOpenId);
+      }
       return;
     }
 
     if (command.kind === "knowledge-ingest-end") {
-      const pending = this.context.pendingInteractions.get(message.conversationKey);
+      const pending = this.context.getKnowledgeIngestInteraction(message.conversationKey);
       if (pending?.kind !== "knowledge-ingest-await-file") {
         await this.sendNotice(message, {
           title: "当前未开启知识入库模式",
@@ -326,7 +340,7 @@ export class CommandHandler {
         });
         return;
       }
-      await this.clearKnowledgeIngestPending(message.conversationKey, message.chatType);
+      await this.context.clearKnowledgeIngestPending(message.conversationKey, message.chatType);
       await this.sendNotice(message, {
         title: "已退出知识入库模式",
         template: "green",
@@ -346,7 +360,7 @@ export class CommandHandler {
         });
         return;
       }
-      const clearedIngestPending = await this.clearKnowledgeIngestPending(message.conversationKey, message.chatType);
+      const clearedIngestPending = await this.context.clearKnowledgeIngestPending(message.conversationKey, message.chatType);
       const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
       if (window.interactionMode === "knowledge") {
         await this.sendNotice(message, {
@@ -373,7 +387,7 @@ export class CommandHandler {
     }
 
     if (command.kind === "knowledge-mode-end") {
-      await this.clearKnowledgeIngestPending(message.conversationKey, message.chatType);
+      await this.context.clearKnowledgeIngestPending(message.conversationKey, message.chatType);
       const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
       if (window.interactionMode !== "knowledge") {
         await this.sendNotice(message, {
@@ -794,27 +808,5 @@ export class CommandHandler {
       icon: "maybe_outlined",
       message: "当前会话正在执行任务，请先发送 `/abort`。",
     });
-  }
-
-  private async clearKnowledgeIngestPending(conversationKey: string, chatType: string): Promise<boolean> {
-    const pending = this.context.pendingInteractions.get(conversationKey);
-    if (pending?.kind === "knowledge-ingest-await-file") {
-      if (pending.previousActiveSessionId) {
-        const window = this.context.getSessionWindow(conversationKey, chatType);
-        const previousExists = window.sessions.some((session) => session.sessionId === pending.previousActiveSessionId);
-        if (previousExists) {
-          const nextWindow = setActiveSession(
-            window,
-            pending.previousActiveSessionId,
-            Date.now(),
-            this.context.config.bridge.maxSessionsPerWindow,
-          );
-          await this.context.saveSessionWindow(conversationKey, nextWindow);
-        }
-      }
-      this.context.clearPendingInteraction(conversationKey, false);
-      return true;
-    }
-    return false;
   }
 }

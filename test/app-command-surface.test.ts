@@ -510,13 +510,19 @@ describe("BridgeApp command surface", () => {
     const appAny = app as unknown as {
       sessionMap: Record<string, SessionWindowRecord>;
       pendingInteractions: Map<string, PendingInteraction>;
+      knowledgeIngestInteractions: Map<string, PendingInteraction>;
     };
-    appAny.pendingInteractions.set("oc_p2p_1", {
+    appAny.knowledgeIngestInteractions.set("oc_p2p_1", {
       kind: "knowledge-ingest-await-file",
       chatId: "oc_p2p_1",
+      chatType: "p2p",
       conversationKey: "oc_p2p_1",
       requesterOpenId: "ou_123",
       replyToMessageId: "om_1",
+      rootMessageId: "om_1",
+      anchorMessageId: "om_anchor",
+      deliveryMode: "p2p_reply",
+      expiresAt: Date.now() + 600_000,
     });
 
     await callHandleCommand(app, {
@@ -525,7 +531,7 @@ describe("BridgeApp command surface", () => {
     });
 
     expect(appAny.sessionMap["oc_p2p_1"]?.interactionMode).toBe("knowledge");
-    expect(appAny.pendingInteractions.has("oc_p2p_1")).toBe(false);
+    expect(appAny.knowledgeIngestInteractions.has("oc_p2p_1")).toBe(false);
     expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("已进入知识库模式");
 
     await callHandleCommand(app, {
@@ -561,6 +567,7 @@ describe("BridgeApp command surface", () => {
       opencode: { createSession: typeof createSession };
       sessionMap: Record<string, SessionWindowRecord>;
       pendingInteractions: Map<string, PendingInteraction>;
+      knowledgeIngestInteractions: Map<string, PendingInteraction>;
     };
     appAny.opencode = { createSession };
     appAny.sessionMap["oc_p2p_1"] = {
@@ -580,7 +587,7 @@ describe("BridgeApp command surface", () => {
     expect(appAny.sessionMap["oc_p2p_1"]?.activeSessionId).toBe("ses_ingest");
     expect(appAny.sessionMap["oc_p2p_1"]?.sessions.map((session) => session.sessionId)).toEqual(["ses_ingest", "ses_chat"]);
     expect(appAny.sessionMap["oc_p2p_1"]?.sessions.find((session) => session.sessionId === "ses_ingest")?.label).toBe("知识入库");
-    expect(appAny.pendingInteractions.get("oc_p2p_1")).toEqual(expect.objectContaining({
+    expect(appAny.knowledgeIngestInteractions.get("oc_p2p_1")).toEqual(expect.objectContaining({
       kind: "knowledge-ingest-await-file",
       ingestSessionId: "ses_ingest",
       previousActiveSessionId: "ses_chat",
@@ -592,7 +599,7 @@ describe("BridgeApp command surface", () => {
     });
 
     expect(appAny.sessionMap["oc_p2p_1"]?.activeSessionId).toBe("ses_chat");
-    expect(appAny.pendingInteractions.has("oc_p2p_1")).toBe(false);
+    expect(appAny.knowledgeIngestInteractions.has("oc_p2p_1")).toBe(false);
   });
 
   it("blocks close when the current session is still running", async () => {
@@ -986,7 +993,7 @@ function baseConfig(): AppConfig {
       },
       embeddingProvider: undefined,
       models: {},
-      ingest: { allowedExtensions: [".pdf", ".docx", ".txt"], maxFileSizeMb: 20, pendingTtlMs: 600_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500 },
+      ingest: { allowedExtensions: [".pdf", ".docx", ".txt"], maxFileSizeMb: 20, pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500 },
     },
     logging: {
       dir: process.cwd(),

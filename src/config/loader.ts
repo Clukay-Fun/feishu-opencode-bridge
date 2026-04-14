@@ -170,6 +170,7 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
         allowedExtensions: parsed.knowledgeBase.ingest.allowedExtensions.map((value) => value.trim().toLowerCase()),
         maxFileSizeMb: parsed.knowledgeBase.ingest.maxFileSizeMb,
         pendingTtlMs: parsed.knowledgeBase.ingest.pendingTtlMs,
+        sessionIdleMs: parsed.knowledgeBase.ingest.sessionIdleMs,
         concurrency: parsed.knowledgeBase.ingest.concurrency,
         maxExtractChunks: parsed.knowledgeBase.ingest.maxExtractChunks,
         maxExtractQas: parsed.knowledgeBase.ingest.maxExtractQas,
