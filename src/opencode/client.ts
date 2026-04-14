@@ -61,9 +61,15 @@ export type OpenCodePromptPart = {
   [key: string]: unknown;
 };
 
+export type OpenCodeModelRef = {
+  modelID: string;
+  providerID?: string;
+  [key: string]: unknown;
+};
+
 export type OpenCodePromptRequest = {
   messageID?: string;
-  model?: string | Record<string, unknown>;
+  model?: OpenCodeModelRef | Record<string, unknown>;
   agent?: string;
   noReply?: boolean;
   system?: string;
@@ -74,7 +80,7 @@ export type OpenCodePromptRequest = {
 export type OpenCodeCommandRequest = {
   messageID?: string;
   agent?: string;
-  model?: string | Record<string, unknown>;
+  model?: OpenCodeModelRef | Record<string, unknown>;
   command: string;
   arguments: string[];
 };

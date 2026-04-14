@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildBridgeSystemPrompt, buildPromptRequest, composeSystemPrompt, resolveDisplayLabel } from "../src/runtime/app-helpers.js";
+import { buildBridgeSystemPrompt, buildPromptRequest, composeSystemPrompt, resolveDisplayLabel, upsertToolUpdate } from "../src/runtime/app-helpers.js";
 
 describe("runtime prompt helpers", () => {
   it("adds system state when provided", () => {
@@ -53,5 +53,21 @@ describe("runtime prompt helpers", () => {
       id: "ses_1",
       title: "Feishu chat title",
     }, "ses_1", "ses_1")).toBe("Feishu chat title");
+  });
+
+  it("keeps all tool updates instead of trimming old entries", () => {
+    let updates: Array<{ key: string; view: { label: string; detail: string; status: "pending" | "running" | "completed" | "error" | "unknown" } }> = [];
+
+    for (let index = 0; index < 9; index += 1) {
+      updates = upsertToolUpdate(updates, `tool-${index}`, {
+        label: `工具 ${index}`,
+        detail: `detail-${index}`,
+        status: "completed",
+      });
+    }
+
+    expect(updates).toHaveLength(9);
+    expect(updates[0]?.view.label).toBe("工具 0");
+    expect(updates[8]?.view.label).toBe("工具 8");
   });
 });

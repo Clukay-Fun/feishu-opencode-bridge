@@ -28,6 +28,7 @@ It is a bridge layer that gives OpenCode a stable runtime surface inside Feishu:
 - Group whitelist binding with `/who` and `/leave`
 - `single` and `multi` session modes per window type
 - Optional long-term memory with fact extraction, SQLite/FTS5 storage, embedding-based retrieval, and Obsidian `profile.md` sync
+- Optional legal knowledge base with `/legal-query-start` mode switching, `/legal-query` one-shot search, OpenCode-assisted URL ingestion, and `/kb-ingest-start` / `/kb-ingest-end` file ingestion
 - Slash command passthrough to OpenCode for commands the bridge does not own
 - Startup preflight for Feishu auth, OpenCode health, providers, and callback config
 - JSON-backed stores for session mappings and group bindings
@@ -108,6 +109,19 @@ Important sections:
   queueing, session mode, and timeout behavior
 - `memory`
   optional long-term memory storage and retrieval settings
+- `knowledgeBase`
+  optional legal knowledge base, local SQLite mirror, Feishu Bitable storage, and file ingestion settings
+
+### Knowledge Base Bitable Permissions
+
+When `knowledgeBase.enabled` is `true`, the bridge reads and writes Feishu Bitable through the Feishu app configured by `feishu.appId` / `feishu.appSecret`, not through your personal browser session.
+
+Before starting the bridge, make sure both permission layers are ready:
+
+- In the Feishu developer console for the same app ID, enable the Bitable record read/write scopes needed by your deployment, then publish a new app version.
+- In the target Bitable, open `...` -> `More` -> `Add document app`, and add the same Feishu app as a document app for that Base.
+
+If the app is not added to the Base, startup mirror sync or ingestion can fail with errors such as `RolePermNotAllow`, even if you can open the Base yourself.
 
 ### Button Callback Config
 
@@ -155,9 +169,26 @@ Bridge-owned commands:
 - `/delete <start-end> confirm`
 - `/who`
 - `/leave`
+- `/legal-query-start`
+- `/legal-query-end`
+- `/legal-query <question>`
+- `/kb-ingest-start`
+- `/kb-ingest-end`
 - `/allow once`
 - `/allow always`
 - `/deny`
+
+Legal knowledge base mode:
+
+```text
+/legal-query-start
+What is the maximum probation period for an employee?
+/legal-query-end
+```
+
+Use `/legal-query <question>` for a one-shot knowledge base search. While legal knowledge mode is enabled, ordinary questions are searched in the knowledge base.
+
+For ingestion, send `/kb-ingest-start`. In ingest mode, you can upload PDF / DOCX / TXT / MD files, or send a URL message with an explicit ingestion intent such as “read https://example.com/law and add it to the knowledge base”. URL ingestion is handled through an OpenCode-assisted Markdown ingestion path. Send `/kb-ingest-end` when finished.
 
 Any other slash command is forwarded to OpenCode.
 

@@ -345,7 +345,7 @@ export function isFinalStatus(status: string): boolean {
 
 export function upsertToolUpdate(updates: Array<{ key: string; view: ToolUpdateView }>, key: string, view: ToolUpdateView): Array<{ key: string; view: ToolUpdateView }> {
   const existingIndex = updates.findIndex((item) => item.key === key);
-  if (existingIndex === -1) return [...updates, { key, view }].slice(-8);
+  if (existingIndex === -1) return [...updates, { key, view }];
   return updates.map((item, index) => (index === existingIndex ? { key, view } : item));
 }
 

@@ -13,6 +13,7 @@ import type {
   PermissionPolicy,
 } from "../../src/opencode/client.js";
 import type { OpenCodeEvent } from "../../src/opencode/events.js";
+import { extractAssistantText } from "../../src/runtime/app-helpers.js";
 
 type EventListener = (event: OpenCodeEvent) => void | Promise<void>;
 
@@ -204,6 +205,24 @@ export class FakeOpenCodeClient {
     return { accepted: true };
   }
 
+  async postMessageSync(sessionId: string, request: OpenCodePromptRequest): Promise<OpenCodeMessage> {
+    await this.promptAsync(sessionId, request);
+    const messages = this.messages.get(sessionId) ?? [];
+    if (messages.length > 0) {
+      return messages[messages.length - 1]!;
+    }
+    return {
+      info: {
+        id: `sync_${sessionId}`,
+        role: "assistant",
+        sessionID: sessionId,
+        finish: "stop",
+        time: { created: Date.now(), completed: Date.now() },
+      },
+      parts: [buildTextPart(`part_sync_${sessionId}`, `sync_${sessionId}`, sessionId, extractAssistantText(messages.at(-1) ?? null) || "[]")],
+    };
+  }
+
   async abort(): Promise<boolean> { return true; }
 
   async listProviders(): Promise<OpenCodeProvidersResponse> { return { providers: [], default: {} }; }
@@ -303,6 +322,7 @@ export function createOutbound() {
 
 export function createWhitelist() {
   return {
+    async bind() {},
     isBound() { return false; },
     async unbind() { return false; },
     count() { return 0; },

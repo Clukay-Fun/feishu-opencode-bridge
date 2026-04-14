@@ -3,13 +3,26 @@ import { type PendingInteraction, type PendingPermissionInteraction } from "../b
 import { routeIncomingText, type RoutedText } from "../bridge/router.js";
 import type { BridgeTurn } from "../bridge/turn.js";
 import {
+  buildKnowledgeIngestProcessingPayload,
+  buildKnowledgeIngestPayload,
+  buildKnowledgeQueryEmptyPayload,
+  buildKnowledgeQueryPayload,
   buildNoticeCardPayload,
   buildPostMarkdownPayload,
   buildQueueNoticePayload,
   type FeishuPostPayload,
+  type ToolUpdateView,
   toInteractiveCardContent,
 } from "../feishu/formatter.js";
 import { createTextPreview, type Logger, type TranscriptType } from "../logging/logger.js";
+import { detectKnowledgeWebIngest, detectLegalQuestion } from "../knowledge/detector.js";
+import {
+  KnowledgeBaseService,
+  type KnowledgeBasePort,
+  type KnowledgeIngestProgressStep,
+  type KnowledgeIngestProgressUpdate,
+} from "../knowledge/index.js";
+import { parseKnowledgeFile } from "../knowledge/parser.js";
 import { MemoryService } from "../memory/index.js";
 import {
   OpenCodeClient,
@@ -48,12 +61,11 @@ import {
   updateSessionLabel,
 } from "./session-windows.js";
 
-export type IncomingChatMessage = {
+type IncomingChatMessageBase = {
   chatId: string;
   chatType: string;
   senderOpenId: string;
   messageId: string;
-  messageType: string;
   rawContent: string;
   plainText: string;
   rootId?: string | undefined;
@@ -62,16 +74,42 @@ export type IncomingChatMessage = {
   conversationKey: string;
 };
 
+export type IncomingTextMessage = IncomingChatMessageBase & {
+  messageType: "text" | "post";
+};
+
+export type IncomingFileMessage = IncomingChatMessageBase & {
+  messageType: "file";
+  file: {
+    fileKey: string;
+    fileName: string;
+    size?: number | undefined;
+  };
+};
+
+export type IncomingChatMessage = IncomingTextMessage | IncomingFileMessage;
+
 type OutboundPort = {
   sendMessage(chatId: string, payload: FeishuPostPayload): Promise<{ messageId: string }>;
   replyMessage(messageId: string, payload: FeishuPostPayload): Promise<{ messageId: string }>;
   updateMessage(messageId: string, payload: FeishuPostPayload): Promise<{ messageId: string }>;
 };
 
+type KnowledgeResourcePort = {
+  downloadMessageResource(messageId: string, fileKey: string, type: "file"): Promise<{
+    fileName: string;
+    mimeType: string;
+    buffer: Buffer;
+  }>;
+  createBitableRecord(appToken: string, tableId: string, fields: Record<string, unknown>): Promise<string>;
+  listBitableRecords(appToken: string, tableId: string): Promise<Array<{ recordId: string; fields: Record<string, unknown> }>>;
+};
+
 type BridgeAppDeps = {
   opencode?: OpenCodePort;
   eventStream?: OpenCodeEventStreamPort;
   memory?: MemoryService | null;
+  knowledge?: KnowledgeBasePort | null;
 };
 
 type OpenCodePort = Pick<OpenCodeClient,
@@ -88,6 +126,7 @@ type OpenCodePort = Pick<OpenCodeClient,
     | "runCommand"
     | "replyPermission"
     | "replyQuestion"
+    | "postMessageSync"
   >;
 
 type OpenCodeEventStreamPort = Pick<OpenCodeEventStream, "start" | "stop" | "subscribe" | "getConnectionState">;
@@ -113,24 +152,45 @@ export class BridgeApp {
   private readonly rateLimiter = new SlidingWindowRateLimiter(20, 60_000);
   private sessionMap: MappingRecord = {};
   private readonly runningChats = new Map<string, Promise<void>>();
+  private readonly runningKnowledgeIngests = new Map<string, { requesterOpenId: string }>();
   private readonly pendingInteractions = new Map<string, PendingInteraction>();
   private readonly pendingInteractionTimers = new Map<string, NodeJS.Timeout>();
   private readonly sessionStatuses = new Map<string, OpenCodeSessionStatus>();
   private readonly memory: MemoryService | null;
+  private readonly knowledge: KnowledgeBasePort | null;
   private globalEventUnsubscribe: (() => void) | null = null;
 
   constructor(
     private readonly config: AppConfig,
     private readonly outbound: OutboundPort,
     private readonly logger: Logger,
-    private readonly whitelist: Pick<WhitelistStore, "count" | "isBound" | "unbind">,
+    private readonly whitelist: Pick<WhitelistStore, "bind" | "count" | "isBound" | "unbind">,
     deps?: BridgeAppDeps,
   ) {
     this.queues = new QueueRegistry(config.bridge.queueLimit, logger);
     this.mappings = new MappingStore(config.storage.dataDir, config.storage.mappingsFile, 200, logger);
     this.opencode = deps?.opencode ?? new OpenCodeClient(config.opencode.baseUrl);
     this.eventStream = deps?.eventStream ?? new OpenCodeEventStream(config.opencode.baseUrl, logger);
-    this.memory = deps && "memory" in deps ? (deps.memory ?? null) : config.memory.enabled ? new MemoryService(config.memory, this.opencode as OpenCodeClient, logger) : null;
+    this.memory = deps && "memory" in deps
+      ? (deps.memory ?? null)
+      : config.memory.enabled
+        ? new MemoryService(
+          config.memory,
+          config.embeddings ?? { provider: undefined, similarityThreshold: 0.75 },
+          this.opencode as OpenCodeClient,
+          logger,
+        )
+        : null;
+    this.knowledge = deps && "knowledge" in deps
+      ? (deps.knowledge ?? null)
+      : config.knowledgeBase.enabled
+        ? new KnowledgeBaseService(
+          config.knowledgeBase,
+          this.outbound as OutboundPort & KnowledgeResourcePort,
+          this.opencode as OpenCodeClient,
+          logger,
+        )
+        : null;
     this.permissionManager = new PermissionManager({
       replyPermission: async (sessionId, permissionId, policy, remember) => {
         return await this.opencode.replyPermission(sessionId, permissionId, policy, remember);
@@ -177,6 +237,15 @@ export class BridgeApp {
     }
     await this.syncStoredSessionLabels();
     await this.memory?.start();
+    if (this.knowledge) {
+      try {
+        await this.knowledge.syncMirror();
+      } catch (error) {
+        this.logger.log("knowledge/sync", "mirror sync skipped", {
+          detail: error instanceof Error ? error.message : String(error),
+        }, "warn");
+      }
+    }
 
     await this.eventStream.start();
     this.globalEventUnsubscribe = this.eventStream.subscribe(async (event) => {
@@ -200,6 +269,7 @@ export class BridgeApp {
     this.pendingInteractionTimers.clear();
     this.turnCardManager.stop();
     await this.memory?.stop();
+    this.knowledge?.close();
     await this.eventStream.stop();
   }
 
@@ -242,16 +312,137 @@ export class BridgeApp {
       messageType: message.messageType,
     }, message.plainText);
 
-    const routed = routeIncomingText(message.plainText);
-    if (routed.kind === "command") {
+    const routed = message.messageType === "file"
+      ? null
+      : routeIncomingText(message.plainText);
+    if (routed?.kind === "command") {
       await this.handleCommand(message, routed);
       return;
     }
 
+    const runningKnowledgeIngest = this.runningKnowledgeIngests.get(message.conversationKey);
     const pending = this.pendingInteractions.get(message.conversationKey);
-    if (pending) {
+    const backgroundIngestAllowsNormalText = runningKnowledgeIngest
+      && pending?.kind === "knowledge-ingest-await-file"
+      && message.messageType !== "file"
+      && !detectKnowledgeWebIngest(message.plainText, { requireIngestIntent: false }).matched;
+    if (runningKnowledgeIngest && !backgroundIngestAllowsNormalText) {
+      await this.sendKnowledgeIngestBusyNotice(message);
+      return;
+    }
+    if (backgroundIngestAllowsNormalText && pending?.kind === "knowledge-ingest-await-file") {
+      await this.restorePreviousSessionForBackgroundIngest(message.conversationKey, message.chatType, pending);
+    }
+
+    if (pending && !backgroundIngestAllowsNormalText) {
       const consumed = await this.handlePendingInteraction(message, pending);
       if (consumed) return;
+    }
+
+    if (message.messageType === "file") {
+      this.setPendingInteraction(message.conversationKey, {
+        kind: "file-await-instruction",
+        chatId: message.chatId,
+        conversationKey: message.conversationKey,
+        requesterOpenId: message.senderOpenId,
+        replyToMessageId: message.messageId,
+        file: {
+          messageId: message.messageId,
+          fileKey: message.file.fileKey,
+          fileName: message.file.fileName,
+          size: message.file.size,
+        },
+      });
+      await this.sendPayload(message.chatId, buildNoticeCardPayload({
+        title: "已收到文件",
+        template: "blue",
+        iconToken: "file-link-docx_outlined",
+        message: [
+          `文件：${message.file.fileName}`,
+          "",
+          "如果要入库，请发送 `/kb-ingest-start` 后重新上传文件。",
+          "如果只是要我识别、总结或分析这个文件，请直接回复你的需求，例如：`总结这个文件`。",
+        ].join("\n"),
+        messageIconToken: "file-link-docx_outlined",
+        messageIconColor: "blue",
+        showMessageIcon: false,
+      }), {
+        event: "file instruction requested",
+        transcriptType: "outbound-final",
+        textPreview: "已收到文件，请说明处理方式。",
+        len: 14,
+      }, { replyToMessageId: message.messageId });
+      return;
+    }
+
+    const window = this.getSessionWindow(message.conversationKey, message.chatType);
+    const knowledgeModeDetection = window.interactionMode === "knowledge"
+      ? detectLegalQuestion(message.plainText)
+      : null;
+    if (
+      this.knowledge
+      && window.interactionMode === "knowledge"
+      && knowledgeModeDetection?.matched
+      && knowledgeModeDetection.confidence >= this.config.knowledgeBase.autoDetect.minConfidence
+    ) {
+      try {
+        const result = await this.knowledge.query(message.plainText);
+        await this.sendPayload(
+          message.chatId,
+          result.results.length > 0 ? buildKnowledgeQueryPayload(result) : buildKnowledgeQueryEmptyPayload(message.plainText),
+          {
+            event: "knowledge query sent",
+            transcriptType: "outbound-final",
+            textPreview: message.plainText,
+            len: message.plainText.length,
+          },
+          { replyToMessageId: message.messageId },
+        );
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        await this.sendPayload(message.chatId, buildNoticeCardPayload({
+          title: "知识检索失败",
+          template: "red",
+          iconToken: "error_filled",
+          message: detail,
+          messageIconToken: "error_filled",
+          messageIconColor: "red",
+        }), {
+          event: "knowledge query failed",
+          transcriptType: "outbound-final",
+          textPreview: detail,
+          len: detail.length,
+        }, { replyToMessageId: message.messageId });
+      }
+      return;
+    }
+
+    if (this.knowledge && this.config.knowledgeBase.autoDetect.enabled) {
+      const detection = detectLegalQuestion(message.plainText);
+      if (detection.matched && detection.confidence >= this.config.knowledgeBase.autoDetect.minConfidence) {
+        try {
+          const result = await this.knowledge.query(message.plainText);
+          if (result.results.length > 0) {
+            await this.sendPayload(
+              message.chatId,
+              buildKnowledgeQueryPayload(result),
+              {
+                event: "knowledge query sent",
+                transcriptType: "outbound-final",
+                textPreview: message.plainText,
+                len: message.plainText.length,
+              },
+              { replyToMessageId: message.messageId },
+            );
+            return;
+          }
+        } catch (error) {
+          this.logger.log("knowledge/query", "auto-detect query failed", {
+            detail: error instanceof Error ? error.message : String(error),
+            confidence: detection.confidence,
+          }, "warn");
+        }
+      }
     }
 
     if (!await this.ensureServerAvailableForMessage(message)) {
@@ -322,6 +513,7 @@ export class BridgeApp {
       sessionStatuses: this.sessionStatuses,
       pendingInteractions: this.pendingInteractions,
       permissionManager: this.permissionManager,
+      knowledge: this.knowledge,
       getSessionWindow: (conversationKey, chatType) => this.getSessionWindow(conversationKey, chatType),
       createAndBindSession: async (source) => await this.createAndBindSession(source),
       sendPayload: async (chatId, payload, options, delivery) => await this.sendPayload(chatId, payload, options, delivery),
@@ -332,6 +524,7 @@ export class BridgeApp {
       saveSessionWindow: async (conversationKey, window) => await this.saveSessionWindow(conversationKey, window),
       getSessionMessageCount: async (sessionId) => await this.getSessionMessageCount(sessionId),
       isSessionBusy: (conversationKey, sessionId) => this.isSessionBusy(conversationKey, sessionId),
+      whitelistBind: async (chatId, openId) => await this.whitelist.bind(chatId, openId),
       resolveSessionCommandTarget: async (msg, index) => await this.resolveSessionCommandTarget(msg, index),
       resolveSessionCommandTargets: async (msg, range) => await this.resolveSessionCommandTargets(msg, range),
       ensureSession: async (source: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey">) => await this.ensureSession(source),
@@ -340,6 +533,10 @@ export class BridgeApp {
 
   private async handlePendingInteraction(message: IncomingChatMessage, pending: PendingInteraction): Promise<boolean> {
     if (pending.kind === "question") {
+      if (message.messageType === "file") {
+        await this.sendMarkdown(message.chatId, "当前正在等待文本回答，请直接发送文字内容。", message.messageId);
+        return true;
+      }
       try {
         await this.opencode.replyQuestion(pending.requestId, [message.plainText]);
         this.clearPendingInteraction(message.conversationKey, false);
@@ -371,6 +568,203 @@ export class BridgeApp {
       return true;
     }
 
+    if (pending.kind === "knowledge-ingest-await-file") {
+      if (message.senderOpenId !== pending.requesterOpenId) {
+        await this.sendMarkdown(message.chatId, "当前入库任务仅允许发起人继续上传文件。", message.messageId);
+        return true;
+      }
+      if (!this.knowledge) {
+        await this.sendMarkdown(message.chatId, "当前未启用法律知识库，请联系部署者补充 knowledgeBase 配置。", message.messageId);
+        return true;
+      }
+      if (message.messageType !== "file") {
+        const webIngest = detectKnowledgeWebIngest(message.plainText, { requireIngestIntent: false });
+        if (!webIngest.matched || !webIngest.url || !this.knowledge.ingestWebPage) {
+          await this.sendMarkdown(message.chatId, "请继续上传 PDF / DOCX / TXT / MD 文件，或直接发送网页 URL / 带 URL 的入库请求；发送 `/kb-ingest-end` 退出。", message.messageId);
+          return true;
+        }
+        this.setRunningKnowledgeIngest(message.conversationKey, pending.requesterOpenId);
+        const progressState = createKnowledgeIngestProgressState(webIngest.url);
+        const processing = await this.sendPayload(
+          message.chatId,
+          buildKnowledgeIngestProcessingPayload(progressState),
+          {
+            event: "knowledge web ingest processing sent",
+            transcriptType: "outbound-final",
+            textPreview: webIngest.url,
+            len: webIngest.url.length,
+          },
+          { replyToMessageId: message.messageId },
+        );
+        try {
+          const result = await this.knowledge.ingestWebPage({
+            url: webIngest.url,
+            instruction: message.plainText,
+            messageId: message.messageId,
+          }, {
+            onProgress: async (update) => await this.updateKnowledgeIngestProgress(message.chatId, processing.messageId, progressState, update),
+          });
+          this.maybeRefreshKnowledgeIngestPending(message.conversationKey, pending, message.messageId);
+          await this.updatePayload(
+            message.chatId,
+            processing.messageId,
+            buildKnowledgeIngestPayload(result),
+            {
+              event: "knowledge web ingest updated",
+              transcriptType: "outbound-final",
+              textPreview: result.sourceFile,
+              len: result.sourceFile.length,
+            },
+          );
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          await this.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+            title: "网页入库失败",
+            template: "red",
+            iconToken: "error_filled",
+            message: detail,
+            messageIconToken: "error_filled",
+            messageIconColor: "red",
+            showMessageIcon: false,
+          }), {
+            event: "knowledge web ingest failed",
+            transcriptType: "outbound-final",
+            textPreview: detail,
+            len: detail.length,
+          });
+        } finally {
+          this.clearRunningKnowledgeIngest(message.conversationKey);
+        }
+        return true;
+      }
+      this.setRunningKnowledgeIngest(message.conversationKey, pending.requesterOpenId);
+      const progressState = createKnowledgeIngestProgressState(message.file.fileName);
+      const processing = await this.sendPayload(
+        message.chatId,
+        buildKnowledgeIngestProcessingPayload(progressState),
+        {
+          event: "knowledge ingest processing sent",
+          transcriptType: "outbound-final",
+          textPreview: message.file.fileName,
+          len: message.file.fileName.length,
+        },
+        { replyToMessageId: message.messageId },
+      );
+      try {
+        const result = await this.knowledge.ingestFile({
+          messageId: message.messageId,
+          fileKey: message.file.fileKey,
+          fileName: message.file.fileName,
+          size: message.file.size,
+        }, {
+          onProgress: async (update) => await this.updateKnowledgeIngestProgress(message.chatId, processing.messageId, progressState, update),
+        });
+        this.maybeRefreshKnowledgeIngestPending(message.conversationKey, pending, message.messageId);
+        await this.updatePayload(
+          message.chatId,
+          processing.messageId,
+          buildKnowledgeIngestPayload(result),
+          {
+            event: "knowledge ingest updated",
+            transcriptType: "outbound-final",
+            textPreview: result.sourceFile,
+            len: result.sourceFile.length,
+          },
+        );
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        await this.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+          title: "知识入库失败",
+          template: "red",
+          iconToken: "error_filled",
+          message: detail,
+          messageIconToken: "error_filled",
+          messageIconColor: "red",
+          showMessageIcon: false,
+        }), {
+          event: "knowledge ingest failed",
+          transcriptType: "outbound-final",
+          textPreview: detail,
+          len: detail.length,
+        });
+      } finally {
+        this.clearRunningKnowledgeIngest(message.conversationKey);
+      }
+      return true;
+    }
+
+    if (pending.kind === "file-await-instruction") {
+      if (message.senderOpenId !== pending.requesterOpenId) {
+        await this.sendMarkdown(message.chatId, "当前文件处理仅允许文件发送者继续说明需求。", message.messageId);
+        return true;
+      }
+      if (message.messageType === "file") {
+        await this.sendMarkdown(message.chatId, "已收到上一个文件，请先发送文字说明你希望我如何处理；如需入库，请发送 `/kb-ingest-start`。", message.messageId);
+        return true;
+      }
+      const instruction = message.plainText.trim();
+      if (!instruction) {
+        await this.sendMarkdown(message.chatId, "请发送文字说明你希望我如何处理这个文件。", message.messageId);
+        return true;
+      }
+      const processed = await this.prepareFileForOpenCodeTurn(pending, instruction, message.messageId).catch(async (error) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        await this.sendPayload(message.chatId, buildNoticeCardPayload({
+          title: "文件读取失败",
+          template: "red",
+          iconToken: "error_filled",
+          message: detail,
+          messageIconToken: "error_filled",
+          messageIconColor: "red",
+          showMessageIcon: false,
+        }), {
+          event: "file instruction failed",
+          transcriptType: "outbound-final",
+          textPreview: detail,
+          len: detail.length,
+        }, { replyToMessageId: message.messageId });
+        return null;
+      });
+      if (!processed) {
+        this.clearPendingInteraction(message.conversationKey, false);
+        return true;
+      }
+      this.clearPendingInteraction(message.conversationKey, false);
+      if (!await this.ensureServerAvailableForMessage(message)) {
+        return true;
+      }
+      const queue = this.queues.get(message.conversationKey);
+      const turn: BridgeTurn = {
+        turnId: crypto.randomUUID(),
+        chatId: message.chatId,
+        conversationKey: message.conversationKey,
+        threadKey: message.threadKey,
+        chatType: message.chatType,
+        senderOpenId: message.senderOpenId,
+        inboundMessageId: message.messageId,
+        plainText: `${instruction}\n\n[文件] ${pending.file.fileName}`,
+        text: processed.prompt,
+      };
+      const result = queue.enqueue(turn);
+      if (!result.accepted) {
+        await this.sendPayload(message.chatId, buildQueueNoticePayload(result.notice ?? { message: "当前不可用。" }), {
+          event: "final message sent",
+          transcriptType: "outbound-final",
+          textPreview: result.notice?.message ?? "当前不可用。",
+          len: (result.notice?.message ?? "当前不可用。").length,
+        }, { replyToMessageId: message.messageId });
+        return true;
+      }
+      if (!this.runningChats.has(message.conversationKey)) {
+        const runner = this.processChat(message.conversationKey).finally(() => {
+          this.runningChats.delete(message.conversationKey);
+        });
+        this.runningChats.set(message.conversationKey, runner);
+        await runner;
+      }
+      return true;
+    }
+
     return false;
   }
 
@@ -396,6 +790,41 @@ export class BridgeApp {
 
     const entry = await this.createAndBindSession(source);
     return entry.sessionId;
+  }
+
+  private async prepareFileForOpenCodeTurn(
+    pending: Extract<PendingInteraction, { kind: "file-await-instruction" }>,
+    instruction: string,
+    replyMessageId: string,
+  ): Promise<{ prompt: string }> {
+    const resources = this.outbound as OutboundPort & Partial<KnowledgeResourcePort>;
+    if (!resources.downloadMessageResource) {
+      throw new Error("当前运行环境不支持下载飞书文件。");
+    }
+    const downloaded = await resources.downloadMessageResource(pending.file.messageId, pending.file.fileKey, "file");
+    const parsed = await parseKnowledgeFile(downloaded.fileName, downloaded.buffer);
+    if (!parsed.normalizedMarkdown.trim()) {
+      throw new Error("文件中未提取到可用文本。");
+    }
+    const maxChars = 20_000;
+    const content = parsed.normalizedMarkdown.length > maxChars
+      ? `${parsed.normalizedMarkdown.slice(0, maxChars)}\n\n[内容较长，已截取前 ${maxChars} 字符供本次处理。若要完整入库，请使用 /kb-ingest-start。]`
+      : parsed.normalizedMarkdown;
+    return {
+      prompt: [
+        "用户上传了一个文件，并要求你按下述需求处理。",
+        "请基于文件内容回答，不要默认把文件写入知识库。",
+        "",
+        `用户需求：${instruction}`,
+        `文件名：${downloaded.fileName}`,
+        `MIME：${downloaded.mimeType}`,
+        `来源消息：${replyMessageId}`,
+        "",
+        "---文件内容开始---",
+        content,
+        "---文件内容结束---",
+      ].join("\n"),
+    };
   }
 
   private async ensureServerAvailableForMessage(message: Pick<IncomingChatMessage, "chatId" | "messageId">): Promise<boolean> {
@@ -436,7 +865,7 @@ export class BridgeApp {
   }
 
   private async saveSessionWindow(conversationKey: string, window: SessionWindowRecord): Promise<void> {
-    if (window.sessions.length === 0) {
+    if (window.sessions.length === 0 && window.interactionMode !== "knowledge") {
       delete this.sessionMap[conversationKey];
     } else {
       this.sessionMap[conversationKey] = window;
@@ -534,7 +963,9 @@ export class BridgeApp {
         this.clearPendingInteraction(conversationKey, false);
       }, Math.max(0, interaction.expiresAt - Date.now()));
       this.pendingInteractionTimers.set(conversationKey, timer);
+      return;
     }
+
   }
 
   private clearPendingInteraction(conversationKey: string, keepNonExpiring: boolean): void {
@@ -699,5 +1130,152 @@ export class BridgeApp {
     this.logger.log("feishu/reply", options.event, { chatId, messageId: result.messageId, textPreview: options.textPreview, len: options.len });
     this.logger.logTranscript(options.transcriptType, { chatId, messageId: result.messageId }, prettyPrintPayload(payload));
     return result;
+  }
+
+  private async updatePayload(
+    chatId: string,
+    messageId: string,
+    payload: FeishuPostPayload,
+    options: { event: string; transcriptType: TranscriptType; textPreview: string; len: number },
+  ): Promise<{ messageId: string }> {
+    const result = await this.outbound.updateMessage(messageId, payload);
+    this.logger.log("feishu/reply", options.event, { chatId, messageId: result.messageId, textPreview: options.textPreview, len: options.len });
+    this.logger.logTranscript(options.transcriptType, { chatId, messageId: result.messageId }, prettyPrintPayload(payload));
+    return result;
+  }
+
+  private setRunningKnowledgeIngest(conversationKey: string, requesterOpenId: string): void {
+    this.runningKnowledgeIngests.set(conversationKey, { requesterOpenId });
+  }
+
+  private clearRunningKnowledgeIngest(conversationKey: string): void {
+    this.runningKnowledgeIngests.delete(conversationKey);
+  }
+
+  private maybeRefreshKnowledgeIngestPending(
+    conversationKey: string,
+    pending: Extract<PendingInteraction, { kind: "knowledge-ingest-await-file" }>,
+    replyToMessageId: string,
+  ): void {
+    const current = this.pendingInteractions.get(conversationKey);
+    if (current?.kind !== "knowledge-ingest-await-file" || current.requesterOpenId !== pending.requesterOpenId) {
+      return;
+    }
+    this.setPendingInteraction(conversationKey, {
+      ...current,
+      replyToMessageId,
+    });
+  }
+
+  private async restorePreviousSessionForBackgroundIngest(
+    conversationKey: string,
+    chatType: string,
+    pending: Extract<PendingInteraction, { kind: "knowledge-ingest-await-file" }>,
+  ): Promise<void> {
+    if (!pending.previousActiveSessionId) {
+      return;
+    }
+    const window = this.getSessionWindow(conversationKey, chatType);
+    if (window.activeSessionId === pending.previousActiveSessionId) {
+      return;
+    }
+    if (!window.sessions.some((session) => session.sessionId === pending.previousActiveSessionId)) {
+      return;
+    }
+    const nextWindow = setActiveSession(
+      window,
+      pending.previousActiveSessionId,
+      Date.now(),
+      this.config.bridge.maxSessionsPerWindow,
+    );
+    await this.saveSessionWindow(conversationKey, nextWindow);
+  }
+
+  private async sendKnowledgeIngestBusyNotice(
+    message: Pick<IncomingChatMessage, "chatId" | "messageId">,
+  ): Promise<void> {
+    await this.sendPayload(message.chatId, buildNoticeCardPayload({
+      title: "知识入库处理中",
+      template: "blue",
+      iconToken: "upload_outlined",
+      message: "当前正在处理知识入库任务。\n新的入库文件或入库链接请等待当前任务完成后再发送。\n发送 `/kb-ingest-end` 可退出入库模式；普通对话可直接发送。",
+      messageIconToken: "upload_outlined",
+      messageIconColor: "blue",
+      showMessageIcon: false,
+    }), {
+      event: "knowledge ingest busy",
+      transcriptType: "outbound-final",
+      textPreview: "当前正在处理知识入库任务。",
+      len: 43,
+    }, { replyToMessageId: message.messageId });
+  }
+
+  private async updateKnowledgeIngestProgress(
+    chatId: string,
+    messageId: string,
+    state: KnowledgeIngestProgressState,
+    update: KnowledgeIngestProgressUpdate,
+  ): Promise<void> {
+    applyKnowledgeIngestProgress(state, update);
+    const payload = buildKnowledgeIngestProcessingPayload(state);
+    try {
+      await this.updatePayload(chatId, messageId, payload, {
+        event: "knowledge ingest progress updated",
+        transcriptType: "outbound-final",
+        textPreview: `${state.sourceLabel} ${state.steps.map((step) => `${step.label}:${step.detail}`).join(" | ")}`,
+        len: state.steps.map((step) => `${step.label}:${step.detail}`).join("\n").length,
+      });
+    } catch (error) {
+      this.logger.log("feishu/reply", "knowledge ingest progress update failed", {
+        chatId,
+        messageId,
+        detail: error instanceof Error ? error.message : String(error),
+      }, "warn");
+    }
+  }
+}
+
+type KnowledgeIngestProgressState = {
+  sourceLabel: string;
+  steps: ToolUpdateView[];
+};
+
+function createKnowledgeIngestProgressState(sourceLabel: string): KnowledgeIngestProgressState {
+  return {
+    sourceLabel,
+    steps: [
+      { label: "读取内容", detail: "等待开始", status: "pending" },
+      { label: "提取问答", detail: "等待开始", status: "pending" },
+      { label: "写入知识库", detail: "等待开始", status: "pending" },
+    ],
+  };
+}
+
+function applyKnowledgeIngestProgress(state: KnowledgeIngestProgressState, update: KnowledgeIngestProgressUpdate): void {
+  const label = mapKnowledgeProgressLabel(update.step);
+  const step = state.steps.find((item) => item.label === label);
+  if (!step) {
+    return;
+  }
+  step.status = update.status;
+  if (update.detail) {
+    step.detail = update.detail;
+  } else if (update.status === "completed") {
+    step.detail = "已完成";
+  } else if (update.status === "running") {
+    step.detail = "处理中";
+  } else if (update.status === "error") {
+    step.detail = "执行失败";
+  }
+}
+
+function mapKnowledgeProgressLabel(step: KnowledgeIngestProgressStep): ToolUpdateView["label"] {
+  switch (step) {
+    case "read":
+      return "读取内容";
+    case "extract":
+      return "提取问答";
+    case "write":
+      return "写入知识库";
   }
 }

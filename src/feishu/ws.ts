@@ -61,6 +61,11 @@ type TextParseResult = {
   plainText: string;
   hasAnyMention: boolean;
   hasExactBotMention: boolean;
+  file?: {
+    fileKey: string;
+    fileName: string;
+    size?: number | undefined;
+  } | undefined;
 };
 
 type IncomingMessageInspection =
@@ -85,7 +90,7 @@ type IncomingMessageInspection =
     fields?: Record<string, unknown>;
   };
 
-const SUPPORTED_MESSAGE_TYPES = new Set(["text", "post"]);
+const SUPPORTED_MESSAGE_TYPES = new Set(["text", "post", "file"]);
 const RECENT_MESSAGE_TTL_MS = 24 * 60 * 60 * 1000;
 
 type FeishuIngressOptions = {
@@ -442,20 +447,25 @@ function parseIncomingMessage(payload: FeishuReceiveEvent, options: FeishuIngres
     };
   }
 
+  const common = {
+    chatId,
+    chatType,
+    senderOpenId,
+    messageId,
+    messageType,
+    rawContent: message.content ?? "",
+    plainText,
+    rootId: nonEmptyString(message.root_id),
+    parentId: nonEmptyString(message.parent_id),
+    threadKey,
+    conversationKey: buildConversationKey(chatType, chatId, threadKey),
+  };
+
   return {
     accepted: true,
-    incoming: {
-      chatId,
-      chatType,
-      senderOpenId,
-      messageId,
-      messageType,
-      rawContent: message.content ?? "",
-      plainText,
-      rootId: nonEmptyString(message.root_id),
-      parentId: nonEmptyString(message.parent_id),
-      threadKey,
-      conversationKey: buildConversationKey(chatType, chatId, threadKey),
+    incoming: parsed.file ? { ...common, messageType: "file", file: parsed.file } : {
+      ...common,
+      messageType: messageType as "text" | "post",
     },
     hasAnyMention: parsed.hasAnyMention,
     hasExactBotMention: parsed.hasExactBotMention,
@@ -522,6 +532,10 @@ function parseMessageContent(
 
   if (messageType === "post") {
     return parsePostMessage(rawContent, mentions, botOpenIds, botMentionNames);
+  }
+
+  if (messageType === "file") {
+    return parseFileMessage(rawContent);
   }
 
   return null;
@@ -599,6 +613,38 @@ function parsePostMessage(rawContent: string, mentions: NormalizedMention[], bot
     };
   } catch {
     return { plainText: "", hasAnyMention: false, hasExactBotMention: false };
+  }
+}
+
+function parseFileMessage(rawContent: string): TextParseResult {
+  try {
+    const parsed = JSON.parse(rawContent) as Record<string, unknown>;
+    const fileKey = nonEmptyStringFromKeys(parsed, ["file_key", "fileKey", "key"]);
+    const fileName = nonEmptyStringFromKeys(parsed, ["file_name", "name"]);
+    const sizeRaw = parsed.file_size ?? parsed.size;
+    const size = typeof sizeRaw === "number" && Number.isFinite(sizeRaw)
+      ? sizeRaw
+      : typeof sizeRaw === "string" && Number.isFinite(Number(sizeRaw))
+        ? Number(sizeRaw)
+        : undefined;
+    return {
+      plainText: fileName ?? "",
+      hasAnyMention: false,
+      hasExactBotMention: false,
+      file: fileKey && fileName
+        ? {
+          fileKey,
+          fileName,
+          size,
+        }
+        : undefined,
+    };
+  } catch {
+    return {
+      plainText: "",
+      hasAnyMention: false,
+      hasExactBotMention: false,
+    };
   }
 }
 

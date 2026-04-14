@@ -492,6 +492,109 @@ describe("BridgeApp command surface", () => {
     expect(extractInteractiveHeader(getReplyPayloads(outbound).at(-1))).toBe("已彻底删除多个会话");
   });
 
+  it("toggles knowledge mode through dedicated commands", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
+      knowledge: {
+        async query() {
+          return { question: "", results: [] };
+        },
+        async ingestFile() {
+          throw new Error("not used");
+        },
+        async syncMirror() {},
+        close() {},
+      },
+      memory: null,
+    });
+    const appAny = app as unknown as {
+      sessionMap: Record<string, SessionWindowRecord>;
+      pendingInteractions: Map<string, PendingInteraction>;
+    };
+    appAny.pendingInteractions.set("oc_p2p_1", {
+      kind: "knowledge-ingest-await-file",
+      chatId: "oc_p2p_1",
+      conversationKey: "oc_p2p_1",
+      requesterOpenId: "ou_123",
+      replyToMessageId: "om_1",
+    });
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "knowledge-mode-start" },
+    });
+
+    expect(appAny.sessionMap["oc_p2p_1"]?.interactionMode).toBe("knowledge");
+    expect(appAny.pendingInteractions.has("oc_p2p_1")).toBe(false);
+    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("已进入知识库模式");
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "knowledge-mode-end" },
+    });
+
+    expect(appAny.sessionMap["oc_p2p_1"]).toBeUndefined();
+    expect(extractInteractiveHeader(getReplyPayloads(outbound).at(-1))).toBe("已退出知识库模式");
+  });
+
+  it("creates a dedicated ingest session and restores the previous session on exit", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
+      knowledge: {
+        async query() {
+          return { question: "", results: [] };
+        },
+        async ingestFile() {
+          throw new Error("not used");
+        },
+        async syncMirror() {},
+        close() {},
+      },
+      memory: null,
+    });
+    const createSession = vi.fn(async () => ({
+      id: "ses_ingest",
+      title: "知识入库",
+      time: { created: Date.now(), updated: Date.now() },
+    }));
+    const appAny = app as unknown as {
+      opencode: { createSession: typeof createSession };
+      sessionMap: Record<string, SessionWindowRecord>;
+      pendingInteractions: Map<string, PendingInteraction>;
+    };
+    appAny.opencode = { createSession };
+    appAny.sessionMap["oc_p2p_1"] = {
+      mode: "multi",
+      activeSessionId: "ses_chat",
+      sessions: [
+        { sessionId: "ses_chat", label: "普通对话", createdAt: 1, lastUsedAt: 1 },
+      ],
+    };
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "knowledge-ingest" },
+    });
+
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(appAny.sessionMap["oc_p2p_1"]?.activeSessionId).toBe("ses_ingest");
+    expect(appAny.sessionMap["oc_p2p_1"]?.sessions.map((session) => session.sessionId)).toEqual(["ses_ingest", "ses_chat"]);
+    expect(appAny.sessionMap["oc_p2p_1"]?.sessions.find((session) => session.sessionId === "ses_ingest")?.label).toBe("知识入库");
+    expect(appAny.pendingInteractions.get("oc_p2p_1")).toEqual(expect.objectContaining({
+      kind: "knowledge-ingest-await-file",
+      ingestSessionId: "ses_ingest",
+      previousActiveSessionId: "ses_chat",
+    }));
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "knowledge-ingest-end" },
+    });
+
+    expect(appAny.sessionMap["oc_p2p_1"]?.activeSessionId).toBe("ses_chat");
+    expect(appAny.pendingInteractions.has("oc_p2p_1")).toBe(false);
+  });
+
   it("blocks close when the current session is still running", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
@@ -610,6 +713,48 @@ describe("BridgeApp command surface", () => {
 
     expect(outbound.sendMessage).toHaveBeenCalledTimes(1);
     expect(extractMarkdown(getSendPayloads(outbound)[0])).toContain("处理失败：服务暂时不可用");
+  });
+
+  it("maps token refresh failures to an actionable provider login hint", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const appAny = app as unknown as {
+      turnExecutor: {
+        context: {
+          ensureSession: (source: Record<string, unknown>) => Promise<string>;
+          turnCardManager: {
+            createTurnCard: (chatId: string, turnId: string, sessionId: string, replyToMessageId: string) => Promise<null>;
+          };
+        };
+        executeTurn: (conversationKey: string, turn: Record<string, unknown>) => Promise<string>;
+      };
+      runTurn: (conversationKey: string) => Promise<void>;
+      queues: {
+        get(key: string): {
+          enqueue: (turn: Record<string, unknown>) => { accepted: boolean };
+        };
+      };
+    };
+    appAny.turnExecutor.context.ensureSession = vi.fn(async () => "ses_1");
+    appAny.turnExecutor.context.turnCardManager.createTurnCard = vi.fn(async () => null);
+    appAny.turnExecutor.executeTurn = vi.fn(async () => {
+      throw new Error("Token refresh failed: 401");
+    });
+    appAny.queues.get("oc_p2p_1").enqueue({
+      turnId: "turn_1",
+      chatId: "oc_p2p_1",
+      conversationKey: "oc_p2p_1",
+      threadKey: "om_1",
+      senderOpenId: "ou_123",
+      inboundMessageId: "om_1",
+      plainText: "hello",
+      text: "hello",
+    });
+
+    await appAny.runTurn("oc_p2p_1");
+
+    expect(outbound.sendMessage).toHaveBeenCalledTimes(1);
+    expect(extractMarkdown(getSendPayloads(outbound)[0])).toContain("请重新执行 `opencode providers login`");
   });
 
   it("keeps session selection state after an unrelated turn finishes", async () => {
@@ -749,6 +894,10 @@ type AppCommandSurfaceTestRoute = {
   command:
     | { kind: "abort" }
     | { kind: "models"; provider?: string | undefined }
+    | { kind: "knowledge-ingest" }
+    | { kind: "knowledge-mode-start" }
+    | { kind: "knowledge-mode-end" }
+    | { kind: "knowledge-ingest-end" }
     | { kind: "sessions-all" }
     | { kind: "sessions-select"; index: number }
     | { kind: "close"; index?: number | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined }
@@ -819,7 +968,6 @@ function baseConfig(): AppConfig {
       sourcePreviewLength: 50,
       shutdownDrainTimeoutMs: 5_000,
       retriever: "recent",
-      embeddingSimilarityThreshold: 0.75,
       embeddingProvider: undefined,
       obsidian: {
         enabled: false,
@@ -827,6 +975,18 @@ function baseConfig(): AppConfig {
         syncCron: "0 2 * * *",
         enableWikiLinks: false,
       },
+    },
+    knowledgeBase: {
+      enabled: false,
+      autoDetect: { enabled: false, minConfidence: 0.75 },
+      query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
+      storage: {
+        sqlitePath: "knowledge-base.db",
+        bitable: { appToken: "", tableId: "", documentTableId: undefined },
+      },
+      embeddingProvider: undefined,
+      models: {},
+      ingest: { allowedExtensions: [".pdf", ".docx", ".txt"], maxFileSizeMb: 20, pendingTtlMs: 600_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500 },
     },
     logging: {
       dir: process.cwd(),
@@ -875,7 +1035,7 @@ function createIncomingMessage(messageId: string) {
     chatType: "p2p",
     senderOpenId: "ou_123",
     messageId,
-    messageType: "text",
+    messageType: "text" as const,
     rawContent: "hello",
     plainText: "hello",
     threadKey: messageId,

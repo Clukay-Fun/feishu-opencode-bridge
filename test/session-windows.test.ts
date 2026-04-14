@@ -21,6 +21,7 @@ describe("session windows", () => {
   it("keeps only one active session in single mode", () => {
     const record: SessionWindowRecord = {
       mode: "single",
+      interactionMode: "knowledge",
       activeSessionId: "ses_old",
       sessions: [
         { sessionId: "ses_old", label: "old", createdAt: 1, lastUsedAt: 1 },
@@ -31,6 +32,7 @@ describe("session windows", () => {
     const normalized = normalizeSessionWindowRecord(record, "single", 20);
     expect(normalized.sessions).toHaveLength(1);
     expect(normalized.activeSessionId).toBe("ses_old");
+    expect(normalized.interactionMode).toBe("knowledge");
   });
 
   it("adds and switches sessions in multi mode", () => {

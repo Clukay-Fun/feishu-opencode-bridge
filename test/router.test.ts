@@ -109,6 +109,41 @@ describe("routeIncomingText", () => {
     });
   });
 
+  it("routes knowledge base commands", () => {
+    expect(routeIncomingText("/kb-ingest")).toEqual({
+      kind: "command",
+      command: { kind: "knowledge-ingest" },
+    });
+    expect(routeIncomingText("/kb-ingest-start")).toEqual({
+      kind: "command",
+      command: { kind: "knowledge-ingest" },
+    });
+    expect(routeIncomingText("/kb-ingest-end")).toEqual({
+      kind: "command",
+      command: { kind: "knowledge-ingest-end" },
+    });
+    expect(routeIncomingText("/legal-query-start")).toEqual({
+      kind: "command",
+      command: { kind: "knowledge-mode-start" },
+    });
+    expect(routeIncomingText("/legal-query-end")).toEqual({
+      kind: "command",
+      command: { kind: "knowledge-mode-end" },
+    });
+    expect(routeIncomingText("/legal-query 员工试用期最长多久？")).toEqual({
+      kind: "command",
+      command: { kind: "knowledge-query", question: "员工试用期最长多久？" },
+    });
+    expect(routeIncomingText("/知识入库")).toEqual({
+      kind: "command",
+      command: { kind: "knowledge-ingest" },
+    });
+    expect(routeIncomingText("/法律咨询 员工试用期最长多久？")).toEqual({
+      kind: "command",
+      command: { kind: "knowledge-query", question: "员工试用期最长多久？" },
+    });
+  });
+
   it("routes /model to the provider listing command and keeps model subcommands as passthrough", () => {
     expect(routeIncomingText("/model")).toEqual({
       kind: "command",

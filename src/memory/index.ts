@@ -19,6 +19,7 @@ type LearnTask = {
 };
 
 type MemoryServiceConfig = AppConfig["memory"];
+type EmbeddingsConfig = NonNullable<AppConfig["embeddings"]>;
 
 export class MemoryService {
   private readonly db: MemoryDb;
@@ -34,6 +35,7 @@ export class MemoryService {
 
   constructor(
     private readonly config: MemoryServiceConfig,
+    private readonly embeddingsConfig: EmbeddingsConfig,
     client: OpenCodeClient,
     private readonly logger: Logger,
     extractor?: MemoryExtractor,
@@ -42,17 +44,17 @@ export class MemoryService {
     this.extractor = extractor ?? new OpenCodeMemoryExtractor(client, logger);
 
     const recentRetriever = new RecentRetriever(this.db);
-    if (config.retriever === "embedding" && config.embeddingProvider) {
+    if (config.retriever === "embedding" && embeddingsConfig.provider) {
       this.embeddingClient = new OpenAICompatibleEmbeddingClient(
-        config.embeddingProvider.baseUrl,
-        config.embeddingProvider.apiKey,
-        config.embeddingProvider.model,
+        embeddingsConfig.provider.baseUrl,
+        embeddingsConfig.provider.apiKey,
+        embeddingsConfig.provider.model,
       );
       this.retriever = new EmbeddingRetriever(
         this.db,
         this.embeddingClient,
         recentRetriever,
-        config.embeddingSimilarityThreshold,
+        embeddingsConfig.similarityThreshold,
         logger,
       );
     } else {

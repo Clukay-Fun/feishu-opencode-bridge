@@ -42,8 +42,34 @@ export type PendingSessionDeleteConfirmationInteraction = {
   expiresAt: number;
 };
 
+export type PendingKnowledgeIngestInteraction = {
+  kind: "knowledge-ingest-await-file";
+  chatId: string;
+  conversationKey: string;
+  requesterOpenId: string;
+  replyToMessageId: string;
+  ingestSessionId?: string | undefined;
+  previousActiveSessionId?: string | null | undefined;
+};
+
+export type PendingFileInstructionInteraction = {
+  kind: "file-await-instruction";
+  chatId: string;
+  conversationKey: string;
+  requesterOpenId: string;
+  replyToMessageId: string;
+  file: {
+    messageId: string;
+    fileKey: string;
+    fileName: string;
+    size?: number | undefined;
+  };
+};
+
 export type PendingInteraction =
   | PendingQuestionInteraction
   | PendingPermissionInteraction
   | PendingSessionSelectionInteraction
-  | PendingSessionDeleteConfirmationInteraction;
+  | PendingSessionDeleteConfirmationInteraction
+  | PendingKnowledgeIngestInteraction
+  | PendingFileInstructionInteraction;
