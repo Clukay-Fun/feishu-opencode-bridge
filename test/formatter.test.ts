@@ -187,6 +187,25 @@ describe("buildPostPayload", () => {
     expect(content.body.elements[3].columns[0].elements[0].content).toContain("共 8 条消息");
   });
 
+  it("renders a preserved current row without strike-through for precreated sessions", () => {
+    const payload = buildSessionTransitionCardPayload({
+      title: "已创建新会话",
+      iconToken: "add-bold_outlined",
+      previousLabel: "日常聊天",
+      previousTitle: "保持当前",
+      preservePrevious: true,
+      currentLabel: "发票识别",
+      currentTitle: "新会话",
+      footer: "可基于这条回复创建话题，在线程里继续",
+    });
+    const content = JSON.parse(payload.content) as any;
+    expect(content.body.elements[0].background_style).toBe("green-50");
+    expect(content.body.elements[0].columns[0].width).toBe("84px");
+    expect(content.body.elements[0].columns[1].elements[0].content).toBe("**日常聊天**");
+    expect(content.body.elements[1].background_style).toBe("grey-50");
+    expect(content.body.elements[1].columns[0].width).toBe("84px");
+  });
+
   it("renders a bound who command card", () => {
     const payload = buildWhoCommandCardPayload({ boundCount: 2, isBound: true });
     const content = JSON.parse(payload.content) as any;
@@ -280,6 +299,7 @@ describe("buildPostPayload", () => {
   it("renders a knowledge query card with sources and disclaimer", () => {
     const payload = buildKnowledgeQueryPayload({
       question: "员工试用期最长多久？",
+      bitableUrl: "https://example.com/base/app?table=tbl",
       results: [{
         id: 1,
         documentId: 1,
@@ -299,6 +319,8 @@ describe("buildPostPayload", () => {
     expect(serialized).toContain("试用期最长不超过 6 个月");
     expect(serialized).toContain("劳动合同法实务指南.pdf");
     expect(serialized).toContain("以上内容仅供参考，不构成法律意见");
+    expect(serialized).toContain("查看知识库");
+    expect(serialized).toContain("https://example.com/base/app?table=tbl");
     expect(content.body.elements[0].columns[0].elements[0].icon).toBeUndefined();
     expect(content.body.elements[2].columns[0].elements[0].icon).toBeUndefined();
     expect(serialized).toContain("warning_outlined");

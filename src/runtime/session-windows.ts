@@ -1,5 +1,7 @@
 import type { InteractionMode, SessionBindingRecord, SessionMode, SessionWindowRecord } from "../store/mappings.js";
 
+const SESSION_LABEL_MAX_LENGTH = 24;
+
 export type SessionModeConfig = {
   p2p: SessionMode;
   group: SessionMode;
@@ -46,7 +48,7 @@ export function normalizeSessionWindowRecord(
 export function createSessionEntry(sessionId: string, now: number, label = "新会话"): SessionBindingRecord {
   return {
     sessionId,
-    label,
+    label: normalizeSessionLabel(label),
     createdAt: now,
     lastUsedAt: now,
   };
@@ -90,6 +92,20 @@ export function addSession(
   }, window.mode, maxSessions);
 }
 
+export function addSessionWithoutActivating(
+  window: SessionWindowRecord,
+  session: SessionBindingRecord,
+  maxSessions: number,
+): SessionWindowRecord {
+  const hasActiveSession = Boolean(window.activeSessionId);
+  return normalizeSessionWindowRecord({
+    mode: window.mode,
+    interactionMode: resolveInteractionMode(window),
+    activeSessionId: hasActiveSession ? window.activeSessionId : session.sessionId,
+    sessions: [session, ...window.sessions.filter((item) => item.sessionId !== session.sessionId)],
+  }, window.mode, maxSessions);
+}
+
 export function removeSession(
   window: SessionWindowRecord,
   sessionId: string,
@@ -113,7 +129,7 @@ export function updateSessionLabel(
   label: string,
   maxSessions: number,
 ): SessionWindowRecord {
-  const normalizedLabel = label.trim();
+  const normalizedLabel = normalizeSessionLabel(label);
   if (!normalizedLabel) {
     return window;
   }
@@ -175,4 +191,17 @@ function findSessionById(sessions: SessionBindingRecord[], sessionId: string | n
 
 function resolveInteractionMode(window: SessionWindowRecord): InteractionMode {
   return window.interactionMode === "knowledge" ? "knowledge" : "default";
+}
+
+function normalizeSessionLabel(label: string): string {
+  const normalized = label.trim().replace(/\s+/g, " ");
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.length <= SESSION_LABEL_MAX_LENGTH) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, SESSION_LABEL_MAX_LENGTH - 3)}...`;
 }

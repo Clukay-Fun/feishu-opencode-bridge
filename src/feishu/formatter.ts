@@ -56,7 +56,10 @@ export type SessionTransitionCardView = {
   title: string;
   iconToken: string;
   previousLabel?: string | null;
+  previousTitle?: string;
+  preservePrevious?: boolean;
   currentLabel: string;
+  currentTitle?: string;
   footer: string;
 };
 
@@ -202,9 +205,17 @@ export function buildSessionListCardPayload(view: SessionListCardView): FeishuPo
 export function buildSessionTransitionCardPayload(view: SessionTransitionCardView): FeishuPostPayload {
   const bodyElements: Array<Record<string, unknown>> = [];
   if (view.previousLabel) {
-    bodyElements.push(buildSessionTransitionRow("离开", `~~${escapeText(view.previousLabel)}~~`, "grey-50"));
+    bodyElements.push(buildSessionTransitionRow(
+      view.previousTitle ?? "离开",
+      view.preservePrevious ? `**${escapeText(view.previousLabel)}**` : `~~${escapeText(view.previousLabel)}~~`,
+      view.preservePrevious ? "green-50" : "grey-50",
+    ));
   }
-  bodyElements.push(buildSessionTransitionRow("当前", `**${escapeText(view.currentLabel)}**`, "green-50"));
+  bodyElements.push(buildSessionTransitionRow(
+    view.currentTitle ?? "当前",
+    `**${escapeText(view.currentLabel)}**`,
+    view.preservePrevious ? "grey-50" : "green-50",
+  ));
   bodyElements.push(buildDivider());
   bodyElements.push(buildFooterTipBlock(view.footer, "calendar-add_outlined", "green", "notation"));
 
@@ -338,6 +349,9 @@ export function buildPermissionRequestCardPayload(view: PermissionRequestCardVie
 }
 
 export function buildKnowledgeQueryPayload(view: KnowledgeQueryResult): FeishuPostPayload {
+  const footerTip = view.bitableUrl
+    ? `以上内容仅供参考，不构成法律意见。\n\n[查看知识库](${escapeText(view.bitableUrl)})`
+    : "以上内容仅供参考，不构成法律意见。";
   return buildInteractivePayload({
     title: "法律咨询",
     template: "indigo",
@@ -357,7 +371,7 @@ export function buildKnowledgeQueryPayload(view: KnowledgeQueryResult): FeishuPo
           : [buildNoticeBodyBlock(parts, "book_outlined", "blue", { showIcon: false })];
       }),
       buildDivider(),
-      buildFooterTipBlock("以上内容仅供参考，不构成法律意见。", "warning_outlined", "orange", "notation"),
+      buildFooterTipBlock(footerTip, "warning_outlined", "orange", "notation"),
     ],
   });
 }
@@ -896,7 +910,7 @@ function buildSessionTransitionRow(prefix: string, content: string, backgroundSt
     ...columnSet([
       {
         ...column([{ ...markdown(prefix), text_align: "center" }]),
-        width: "50px",
+        width: "84px",
       },
       column([markdown(content)], { weight: 1 }),
     ]),

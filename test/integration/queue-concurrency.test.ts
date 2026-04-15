@@ -51,18 +51,19 @@ describe("integration/queue-concurrency", () => {
 
     const replyPayloads = outbound.replyMessage.mock.calls.map((call) => call[1]);
     const repliesText = JSON.stringify(replyPayloads);
-    expect(repliesText).toContain("排在第1位");
-    expect(repliesText).toContain("排在第2位");
+    expect(repliesText).toContain("正在忙");
 
     const updated = JSON.stringify(outbound.updateMessage.mock.calls.map((call) => call[1]));
     expect(updated.indexOf("第一条回复")).toBeLessThan(updated.indexOf("第二条回复"));
     expect(updated.indexOf("第二条回复")).toBeLessThan(updated.indexOf("第三条回复"));
 
     const appAny = app as unknown as {
-      queues: { get(key: string): { current(): unknown; pendingCount(): number } };
+      queues: { listByPrefix(prefix: string): Array<{ current(): unknown; pendingCount(): number }> };
     };
-    expect(appAny.queues.get("oc_p2p_1").current()).toBeNull();
-    expect(appAny.queues.get("oc_p2p_1").pendingCount()).toBe(0);
+    for (const queue of appAny.queues.listByPrefix("oc_p2p_1")) {
+      expect(queue.current()).toBeNull();
+      expect(queue.pendingCount()).toBe(0);
+    }
   });
 });
 

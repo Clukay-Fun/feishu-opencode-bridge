@@ -701,7 +701,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     const processing = await this.sendNotice(message, {
       title: "发票识别中",
       template: "blue",
-      icon: "bill_outlined",
+      icon: "file-link-docx_outlined",
       message: `正在识别《${file.fileName}》中的发票字段，并写入发票记录。`,
     });
     try {

@@ -12,6 +12,14 @@ describe("routeIncomingText", () => {
       kind: "command",
       command: { kind: "new" },
     });
+    expect(routeIncomingText("/new 劳动争议分析")).toEqual({
+      kind: "command",
+      command: { kind: "new", title: "劳动争议分析" },
+    });
+    expect(routeIncomingText("/rename 合同起草")).toEqual({
+      kind: "command",
+      command: { kind: "rename", title: "合同起草" },
+    });
   });
 
   it("routes /sessions <index> without accepting bare numbers", () => {

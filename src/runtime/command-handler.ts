@@ -12,7 +12,7 @@ import {
 } from "../feishu/formatter.js";
 import type { TranscriptType } from "../logging/logger.js";
 import type { OpenCodeMessage, OpenCodeProvidersResponse, OpenCodeSession, OpenCodeSessionStatus } from "../opencode/client.js";
-import type { SessionWindowRecord } from "../store/mappings.js";
+import type { SessionBindingRecord, SessionWindowRecord } from "../store/mappings.js";
 import type { IncomingChatMessage } from "./app.js";
 import {
   buildModelCardView,
@@ -61,11 +61,9 @@ export type BridgeAppContext = {
     isBound(chatId: string, openId: string): boolean;
     unbind(chatId: string, openId: string): Promise<boolean>;
   };
-  queues: {
-    get(key: string): {
-      peek(): { sessionId?: string } | null | undefined;
-      pendingCount(): number;
-    };
+  getQueueState(conversationKey: string, sessionId?: string | null): {
+    activeTurn: { sessionId?: string } | null;
+    pendingCount: number;
   };
   eventStream: {
     getConnectionState(): string;
@@ -77,7 +75,10 @@ export type BridgeAppContext = {
     buildResolutionPayload(resolution: PermissionResolution): FeishuPostPayload;
   };
   getSessionWindow(conversationKey: string, chatType: string): SessionWindowRecord;
-  createAndBindSession(message: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey">): Promise<{ sessionId: string; label: string }>;
+  createAndBindSession(message: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey">, preferredLabel?: string): Promise<SessionBindingRecord>;
+  createDetachedSession(message: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey">, preferredLabel?: string): Promise<SessionBindingRecord>;
+  bindSessionWithoutActivating(message: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey">, entry: SessionBindingRecord): Promise<SessionBindingRecord>;
+  registerPendingNewSessionAnchor(replyMessageId: string, sourceConversationKey: string, entry: SessionBindingRecord): Promise<void>;
   sendPayload(
     chatId: string,
     payload: FeishuPostPayload,
@@ -110,6 +111,7 @@ export type BridgeAppContext = {
 
 const BRIDGE_OWNED_COMMAND_KINDS = new Set<Extract<RoutedText, { kind: "command" }>["command"]["kind"]>([
   "new",
+  "rename",
   "status",
   "abort",
   "models",
@@ -136,17 +138,56 @@ export class CommandHandler {
     const { command } = routed;
     if (command.kind === "new") {
       const previousSession = getActiveSession(this.context.getSessionWindow(message.conversationKey, message.chatType));
-      const entry = await this.context.createAndBindSession(message);
-      await this.context.sendPayload(message.chatId, buildSessionTransitionCardPayload({
+      const preferredLabel = command.title?.trim() || undefined;
+      const entry = previousSession
+        ? await this.context.bindSessionWithoutActivating(message, await this.context.createDetachedSession(message, preferredLabel))
+        : await this.context.createAndBindSession(message, preferredLabel);
+      const result = await this.context.sendPayload(message.chatId, buildSessionTransitionCardPayload({
         title: "已创建新会话",
         iconToken: "add-bold_outlined",
         previousLabel: previousSession?.label ?? null,
+        ...(previousSession ? { previousTitle: "保持当前" } : {}),
+        ...(previousSession ? { preservePrevious: true } : {}),
         currentLabel: entry.label,
-        footer: "刚刚创建 · 发送第一条消息开始",
+        ...(previousSession ? { currentTitle: "新会话" } : {}),
+        footer: previousSession ? "可基于这条回复创建话题，在线程里继续" : "刚刚创建 · 发送第一条消息开始",
       }), {
         event: "final message sent",
         transcriptType: "outbound-final",
         textPreview: "已创建新会话",
+        len: 6,
+      }, { replyToMessageId: message.messageId });
+      if (previousSession) {
+        await this.context.registerPendingNewSessionAnchor(result.messageId, message.conversationKey, entry);
+      }
+      return;
+    }
+
+    if (command.kind === "rename") {
+      const nextLabel = command.title.trim();
+      if (!nextLabel) {
+        await this.context.sendMarkdown(message.chatId, "请在 `/rename` 后输入新的会话标题。", message.messageId);
+        return;
+      }
+      const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
+      const currentSession = getActiveSession(window);
+      if (!currentSession) {
+        await this.context.sendMarkdown(message.chatId, "当前窗口暂无会话，请先发送 `/new`。", message.messageId);
+        return;
+      }
+      const nextWindow = updateSessionLabel(window, currentSession.sessionId, nextLabel, this.context.config.bridge.maxSessionsPerWindow);
+      const renamedSession = getActiveSession(nextWindow);
+      await this.context.saveSessionWindow(message.conversationKey, nextWindow);
+      await this.context.sendPayload(message.chatId, buildSessionTransitionCardPayload({
+        title: "已重命名会话",
+        iconToken: "edit_outlined",
+        previousLabel: currentSession.label,
+        currentLabel: renamedSession?.label ?? nextLabel,
+        footer: "仅更新 bridge 当前窗口中的显示名称",
+      }), {
+        event: "final message sent",
+        transcriptType: "outbound-final",
+        textPreview: "已重命名会话",
         len: 6,
       }, { replyToMessageId: message.messageId });
       return;
@@ -160,10 +201,9 @@ export class CommandHandler {
         }
       }
 
-      const queue = this.context.queues.get(message.conversationKey);
-      const active = queue.peek();
       const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
       const currentSession = getActiveSession(window);
+      const queueState = this.context.getQueueState(message.conversationKey, currentSession?.sessionId ?? null);
       const status = currentSession ? this.context.sessionStatuses.get(currentSession.sessionId)?.type ?? "unknown" : "unbound";
       await this.context.sendPayload(message.chatId, buildStatusCommandCardPayload({
         currentSession: currentSession ? { sessionId: currentSession.sessionId, label: currentSession.label } : null,
@@ -171,8 +211,8 @@ export class CommandHandler {
         sessionMode: window.mode,
         interactionMode: window.interactionMode === "knowledge" ? "知识库模式" : "普通对话",
         sessionState: status,
-        queueState: active ? "处理中" : "空闲",
-        pendingCount: queue.pendingCount(),
+        queueState: queueState.activeTurn ? "处理中" : "空闲",
+        pendingCount: queueState.pendingCount,
         windowCount: window.sessions.length,
       }), {
         event: "final message sent",
@@ -184,8 +224,10 @@ export class CommandHandler {
     }
 
     if (command.kind === "abort") {
-      const queue = this.context.queues.get(message.conversationKey);
-      const activeTurn = queue.peek();
+      const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
+      const currentSession = getActiveSession(window);
+      const queueState = this.context.getQueueState(message.conversationKey, currentSession?.sessionId ?? null);
+      const activeTurn = queueState.activeTurn;
       if (!activeTurn) {
         await this.sendNotice(message, {
           title: "无任务可中止",
@@ -196,8 +238,6 @@ export class CommandHandler {
         return;
       }
 
-      const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
-      const currentSession = getActiveSession(window);
       const sessionId = activeTurn.sessionId ?? currentSession?.sessionId;
       if (sessionId) {
         await this.context.opencode.abort(sessionId);

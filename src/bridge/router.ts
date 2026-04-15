@@ -2,7 +2,8 @@ export type RoutedText =
   | {
     kind: "command";
     command:
-      | { kind: "new" }
+      | { kind: "new"; title?: string | undefined }
+      | { kind: "rename"; title: string }
       | { kind: "status" }
       | { kind: "abort" }
       | { kind: "models"; provider?: string | undefined }
@@ -34,8 +35,18 @@ export function routeIncomingText(text: string): RoutedText {
   const rawCommand = parts[0]?.slice(1) ?? "";
   const args = parts.slice(1);
 
-  if (rawCommand === "new" && args.length === 0) {
-    return { kind: "command", command: { kind: "new" } };
+  if (rawCommand === "new") {
+    return {
+      kind: "command",
+      command: args.length > 0 ? { kind: "new", title: args.join(" ").trim() } : { kind: "new" },
+    };
+  }
+
+  if ((rawCommand === "rename" || rawCommand === "title") && args.length > 0) {
+    return {
+      kind: "command",
+      command: { kind: "rename", title: args.join(" ").trim() },
+    };
   }
 
   if (rawCommand === "status" && args.length === 0) {

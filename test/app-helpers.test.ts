@@ -70,4 +70,11 @@ describe("runtime prompt helpers", () => {
     expect(updates[0]?.view.label).toBe("工具 0");
     expect(updates[8]?.view.label).toBe("工具 8");
   });
+
+  it("rehydrates obviously polluted bridge labels from session metadata", () => {
+    expect(resolveDisplayLabel({
+      id: "ses_1",
+      title: "Feishu chat title",
+    }, "显示所有会话", "ses_1")).toBe("Feishu chat title");
+  });
 });

@@ -141,8 +141,8 @@ describe("group chat support", () => {
       plainText: "大家好",
       rootId: undefined,
       parentId: undefined,
-      threadKey: "om_1",
-      conversationKey: "oc_group_1:om_1",
+      threadKey: "main",
+      conversationKey: "oc_group_1:main",
     });
   });
 
@@ -383,7 +383,7 @@ describe("group chat support", () => {
     });
   });
 
-  it("keeps p2p conversation keys flat and leaves prompts unchanged", () => {
+  it("separates p2p mainline and thread windows while keeping prompts unchanged", () => {
     const normalized = normalizeIncomingMessage({
       message: {
         chat_id: "oc_p2p_1",
@@ -399,7 +399,32 @@ describe("group chat support", () => {
       },
     }, makeOptions());
 
-    expect(normalized?.conversationKey).toBe("oc_p2p_1");
+    expect(normalized?.threadKey).toBe("main");
+    expect(normalized?.conversationKey).toBe("oc_p2p_1:main");
+    expect(toOpencodePromptText({
+      chatType: normalized?.chatType ?? "p2p",
+      senderOpenId: normalized?.senderOpenId ?? "ou_123",
+      plainText: normalized?.plainText ?? "",
+    })).toBe("请帮我看看这个报错");
+
+    const threaded = normalizeIncomingMessage({
+      message: {
+        chat_id: "oc_p2p_1",
+        chat_type: "p2p",
+        message_id: "om_p2p_2",
+        root_id: "om_reply_anchor",
+        message_type: "text",
+        content: JSON.stringify({ text: "在线程里继续" }),
+      },
+      sender: {
+        sender_id: {
+          open_id: "ou_123",
+        },
+      },
+    }, makeOptions());
+
+    expect(threaded?.threadKey).toBe("om_reply_anchor");
+    expect(threaded?.conversationKey).toBe("oc_p2p_1:om_reply_anchor");
     expect(toOpencodePromptText({
       chatType: normalized?.chatType ?? "p2p",
       senderOpenId: normalized?.senderOpenId ?? "ou_123",
@@ -417,6 +442,22 @@ describe("group chat support", () => {
 
   it("computes thread and conversation keys deterministically", () => {
     expect(computeThreadKey({
+      chatType: "p2p",
+      messageId: "om_4",
+    })).toBe("main");
+
+    expect(computeThreadKey({
+      chatType: "p2p",
+      messageId: "om_4",
+      rootId: "om_reply_anchor",
+    })).toBe("om_reply_anchor");
+
+    expect(computeThreadKey({
+      chatType: "group",
+      messageId: "om_5",
+    })).toBe("main");
+
+    expect(computeThreadKey({
       chatType: "group",
       messageId: "om_5",
       rootId: "om_root",
@@ -429,6 +470,9 @@ describe("group chat support", () => {
       parentId: "om_parent",
     })).toBe("om_parent");
 
+    expect(buildConversationKey("p2p", "oc_p2p_1", "main")).toBe("oc_p2p_1:main");
+    expect(buildConversationKey("p2p", "oc_p2p_1", "om_reply_anchor")).toBe("oc_p2p_1:om_reply_anchor");
+    expect(buildConversationKey("group", "oc_group_3", "main")).toBe("oc_group_3:main");
     expect(buildConversationKey("topic_group", "oc_group_3", "om_root")).toBe("oc_group_3:om_root");
   });
 

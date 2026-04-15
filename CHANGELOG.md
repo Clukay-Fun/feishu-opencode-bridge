@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.20 - 2026-04-15
+
+### Added
+- Added turn-executor regression coverage and a demo-packaging strategy note for the competition presentation phase.
+
+### Changed
+- Polished bridge command handling, queue/session behavior, Feishu card formatting, and runtime reply delivery for more stable demo flows.
+- Updated knowledge, labor, and contract-assistant runtime surfaces to align with the presentation-focused stabilization pass.
+
 ## 0.1.19 - 2026-04-15
 
 ### Added

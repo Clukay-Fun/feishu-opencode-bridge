@@ -53,6 +53,7 @@ import { TurnExecutor } from "./turn-executor.js";
 import { SlidingWindowRateLimiter } from "./rate-limiter.js";
 import {
   addSession,
+  addSessionWithoutActivating,
   createSessionEntry,
   getActiveSession,
   getVisibleSessions,
@@ -135,6 +136,20 @@ type OpenCodePort = Pick<OpenCodeClient,
 type OpenCodeEventStreamPort = Pick<OpenCodeEventStream, "start" | "stop" | "subscribe" | "getConnectionState">;
 
 const REGULAR_FILE_ALLOWED_EXTENSIONS = [".pdf", ".docx", ".txt", ".md"] as const;
+const PENDING_NEW_SESSION_TTL_MS = 10 * 60_000;
+
+type PendingNewSessionAnchor = {
+  replyMessageId: string;
+  sourceConversationKey: string;
+  entry: SessionBindingRecord;
+  expiresAt: number;
+};
+
+type SessionSource = Pick<BridgeTurn, "chatId" | "conversationKey" | "threadKey"> & {
+  chatType?: string | undefined;
+  rootId?: string | undefined;
+  parentId?: string | undefined;
+};
 
 export type PermissionCardActionValue = {
   kind: "permission";
@@ -163,6 +178,7 @@ export class BridgeApp {
   private readonly pendingInteractions = new Map<string, PendingInteraction>();
   private readonly pendingInteractionTimers = new Map<string, NodeJS.Timeout>();
   private readonly sessionStatuses = new Map<string, OpenCodeSessionStatus>();
+  private readonly pendingNewSessionAnchors = new Map<string, PendingNewSessionAnchor>();
   private readonly memory: MemoryService | null;
   private readonly knowledge: KnowledgeBasePort | null;
   private readonly contractAssistant: ContractAssistantService | null;
@@ -452,7 +468,9 @@ export class BridgeApp {
       return;
     }
 
-    const queue = this.queues.get(message.conversationKey);
+    const sessionId = await this.ensureSession(message);
+    const executionKey = this.buildExecutionKey(message.conversationKey, sessionId);
+    const queue = this.queues.get(executionKey);
     const turn: BridgeTurn = {
       turnId: crypto.randomUUID(),
       chatId: message.chatId,
@@ -463,6 +481,7 @@ export class BridgeApp {
       inboundMessageId: message.messageId,
       plainText: message.plainText,
       text: toOpencodePromptText(message),
+      sessionId,
     };
 
     const result = queue.enqueue(turn);
@@ -486,11 +505,11 @@ export class BridgeApp {
       return;
     }
 
-    if (!this.runningChats.has(message.conversationKey)) {
-      const runner = this.processChat(message.conversationKey).finally(() => {
-        this.runningChats.delete(message.conversationKey);
+    if (!this.runningChats.has(executionKey)) {
+      const runner = this.processChat(executionKey).finally(() => {
+        this.runningChats.delete(executionKey);
       });
-      this.runningChats.set(message.conversationKey, runner);
+      this.runningChats.set(executionKey, runner);
       await runner;
     }
   }
@@ -501,6 +520,33 @@ export class BridgeApp {
 
   private async runTurn(conversationKey: string): Promise<void> {
     await this.turnExecutor.runTurn(conversationKey);
+  }
+
+  private buildExecutionKey(conversationKey: string, sessionId: string): string {
+    return `${conversationKey}::${sessionId}`;
+  }
+
+  private getQueueState(conversationKey: string, sessionId?: string | null): { activeTurn: BridgeTurn | null; pendingCount: number } {
+    if (sessionId) {
+      const queue = this.queues.getIfExists(this.buildExecutionKey(conversationKey, sessionId))
+        ?? this.queues.getIfExists(conversationKey);
+      return {
+        activeTurn: queue?.peek() ?? null,
+        pendingCount: queue?.pendingCount() ?? 0,
+      };
+    }
+
+    for (const queue of this.queues.listByPrefix(conversationKey)) {
+      const activeTurn = queue.peek();
+      if (activeTurn) {
+        return {
+          activeTurn,
+          pendingCount: queue.pendingCount(),
+        };
+      }
+    }
+
+    return { activeTurn: null, pendingCount: 0 };
   }
 
   private async handleCommand(
@@ -519,13 +565,18 @@ export class BridgeApp {
         config: this.config,
         opencode: this.opencode,
         whitelist: this.whitelist,
-        queues: this.queues,
+        getQueueState: (conversationKey, sessionId) => this.getQueueState(conversationKey, sessionId),
         eventStream: this.eventStream,
         sessionStatuses: this.sessionStatuses,
         pendingInteractions: this.pendingInteractions,
         permissionManager: this.permissionManager,
         getSessionWindow: (conversationKey, chatType) => this.getSessionWindow(conversationKey, chatType),
-        createAndBindSession: async (source) => await this.createAndBindSession(source),
+        createAndBindSession: async (source, preferredLabel) => await this.createAndBindSession(source, preferredLabel),
+        createDetachedSession: async (source, preferredLabel) => await this.createDetachedSession(source, preferredLabel),
+        bindSessionWithoutActivating: async (source, entry) => await this.bindSessionWithoutActivating(source, entry),
+        registerPendingNewSessionAnchor: async (replyMessageId, sourceConversationKey, entry) => {
+          this.registerPendingNewSessionAnchor(replyMessageId, sourceConversationKey, entry);
+        },
         sendPayload: async (chatId, payload, options, delivery) => await this.sendPayload(chatId, payload, options, delivery),
         sendMarkdown: async (chatId, markdown, replyToMessageId) => await this.sendMarkdown(chatId, markdown, replyToMessageId),
         setPendingInteraction: (conversationKey, interaction) => this.setPendingInteraction(conversationKey, interaction),
@@ -552,7 +603,7 @@ export class BridgeApp {
       try {
         await this.opencode.replyQuestion(pending.requestId, [message.plainText]);
         this.clearPendingInteraction(message.conversationKey, false);
-        const currentTurnId = this.queues.get(message.conversationKey).peek()?.turnId;
+        const currentTurnId = pending.turnId;
         if (currentTurnId) {
           await this.turnCardManager.updateTurnCard(currentTurnId, { status: "处理中", update: "已收到你的回答，继续处理中...", target: "step" });
         }
@@ -630,7 +681,9 @@ export class BridgeApp {
     if (!await this.ensureServerAvailableForMessage(message)) {
       return true;
     }
-    const queue = this.queues.get(message.conversationKey);
+    const sessionId = await this.ensureSession(message);
+    const executionKey = this.buildExecutionKey(message.conversationKey, sessionId);
+    const queue = this.queues.get(executionKey);
     const turn: BridgeTurn = {
       turnId: crypto.randomUUID(),
       chatId: message.chatId,
@@ -641,6 +694,7 @@ export class BridgeApp {
       inboundMessageId: message.messageId,
       plainText: `${instruction}\n\n[文件] ${pending.file.fileName}`,
       text: processed.prompt,
+      sessionId,
     };
     const result = queue.enqueue(turn);
     if (!result.accepted) {
@@ -652,11 +706,11 @@ export class BridgeApp {
       }, { replyToMessageId: message.messageId });
       return true;
     }
-    if (!this.runningChats.has(message.conversationKey)) {
-      const runner = this.processChat(message.conversationKey).finally(() => {
-        this.runningChats.delete(message.conversationKey);
+    if (!this.runningChats.has(executionKey)) {
+      const runner = this.processChat(executionKey).finally(() => {
+        this.runningChats.delete(executionKey);
       });
-      this.runningChats.set(message.conversationKey, runner);
+      this.runningChats.set(executionKey, runner);
       await runner;
     }
     return true;
@@ -670,8 +724,11 @@ export class BridgeApp {
     return await this.knowledgeModule.clearPending(conversationKey, chatType);
   }
 
-  private async ensureSession(source: Pick<BridgeTurn, "chatId" | "chatType" | "conversationKey" | "threadKey">): Promise<string> {
+  private async ensureSession(
+    source: SessionSource,
+  ): Promise<string> {
     const openCodeSessions = await this.listOpenCodeSessionsById();
+    await this.maybeAdoptPendingNewSessionAnchor(source, openCodeSessions);
     let window = this.getSessionWindow(source.conversationKey, source.chatType);
     let currentSession = getActiveSession(window);
 
@@ -692,6 +749,45 @@ export class BridgeApp {
 
     const entry = await this.createAndBindSession(source);
     return entry.sessionId;
+  }
+
+  private async maybeAdoptPendingNewSessionAnchor(
+    source: Pick<SessionSource, "chatType" | "conversationKey" | "rootId" | "parentId">,
+    openCodeSessions: Map<string, OpenCodeSession>,
+  ): Promise<void> {
+    const anchorMessageId = source.rootId ?? source.parentId;
+    if (!anchorMessageId) {
+      return;
+    }
+
+    const pending = this.pendingNewSessionAnchors.get(anchorMessageId);
+    if (!pending) {
+      return;
+    }
+
+    if (pending.expiresAt <= Date.now()) {
+      this.pendingNewSessionAnchors.delete(anchorMessageId);
+      return;
+    }
+
+    if (pending.sourceConversationKey === source.conversationKey) {
+      return;
+    }
+
+    if (!openCodeSessions.has(pending.entry.sessionId)) {
+      this.pendingNewSessionAnchors.delete(anchorMessageId);
+      return;
+    }
+
+    const window = this.getSessionWindow(source.conversationKey, source.chatType);
+    if (window.sessions.some((session) => session.sessionId === pending.entry.sessionId)) {
+      this.pendingNewSessionAnchors.delete(anchorMessageId);
+      return;
+    }
+
+    const nextWindow = addSession(window, pending.entry, this.config.bridge.maxSessionsPerWindow);
+    await this.saveSessionWindow(source.conversationKey, nextWindow);
+    this.pendingNewSessionAnchors.delete(anchorMessageId);
   }
 
   private async prepareFileForOpenCodeTurn(
@@ -778,27 +874,79 @@ export class BridgeApp {
 
   private getSessionWindow(conversationKey: string, chatType?: string): SessionWindowRecord {
     const mode = resolveSessionMode(chatType, this.config.bridge.sessionModes);
-    return normalizeSessionWindowRecord(this.sessionMap[conversationKey], mode, this.config.bridge.maxSessionsPerWindow);
+    return normalizeSessionWindowRecord(this.sessionMap[this.resolveSessionWindowKey(conversationKey, chatType)], mode, this.config.bridge.maxSessionsPerWindow);
   }
 
   private async saveSessionWindow(conversationKey: string, window: SessionWindowRecord): Promise<void> {
+    const storageKey = this.resolveSessionWindowKey(conversationKey);
+    const legacyKey = this.resolveLegacyP2pWindowKey(conversationKey);
     if (window.sessions.length === 0 && window.interactionMode !== "knowledge") {
-      delete this.sessionMap[conversationKey];
+      delete this.sessionMap[storageKey];
     } else {
-      this.sessionMap[conversationKey] = window;
+      this.sessionMap[storageKey] = window;
+    }
+    if (legacyKey) {
+      delete this.sessionMap[legacyKey];
     }
     await this.mappings.save(this.sessionMap);
   }
 
+  private resolveSessionWindowKey(conversationKey: string, chatType?: string): string {
+    if (chatType === "p2p" && conversationKey.endsWith(":main") && !this.sessionMap[conversationKey]) {
+      const legacyKey = this.resolveLegacyP2pWindowKey(conversationKey);
+      if (legacyKey && this.sessionMap[legacyKey]) {
+        this.sessionMap[conversationKey] = this.sessionMap[legacyKey];
+        delete this.sessionMap[legacyKey];
+      }
+    }
+
+    return conversationKey;
+  }
+
+  private resolveLegacyP2pWindowKey(conversationKey: string): string | null {
+    if (!conversationKey.endsWith(":main")) {
+      return null;
+    }
+    return conversationKey.slice(0, -":main".length);
+  }
+
   private async createAndBindSession(
-    source: Pick<BridgeTurn, "chatId" | "chatType" | "conversationKey" | "threadKey">,
+    source: SessionSource,
+    preferredLabel?: string,
   ): Promise<SessionBindingRecord> {
-    const session = await this.opencode.createSession(buildSessionTitle(source.chatId, source.chatType, source.threadKey));
-    const entry = createSessionEntry(session.id, Date.now(), "新会话");
+    const entry = await this.createDetachedSession(source, preferredLabel);
     const window = this.getSessionWindow(source.conversationKey, source.chatType);
     const nextWindow = addSession(window, entry, this.config.bridge.maxSessionsPerWindow);
     await this.saveSessionWindow(source.conversationKey, nextWindow);
     return entry;
+  }
+
+  private async bindSessionWithoutActivating(
+    source: SessionSource,
+    entry: SessionBindingRecord,
+  ): Promise<SessionBindingRecord> {
+    const window = this.getSessionWindow(source.conversationKey, source.chatType);
+    const nextWindow = addSessionWithoutActivating(window, entry, this.config.bridge.maxSessionsPerWindow);
+    await this.saveSessionWindow(source.conversationKey, nextWindow);
+    return entry;
+  }
+
+  private async createDetachedSession(
+    source: SessionSource,
+    preferredLabel?: string,
+  ): Promise<SessionBindingRecord> {
+    const normalizedLabel = preferredLabel?.trim() || "新会话";
+    const session = await this.opencode.createSession(preferredLabel?.trim() || buildSessionTitle(source.chatId, source.chatType, source.threadKey));
+    return createSessionEntry(session.id, Date.now(), normalizedLabel);
+  }
+
+  private registerPendingNewSessionAnchor(replyMessageId: string, sourceConversationKey: string, entry: SessionBindingRecord): void {
+    this.pendingNewSessionAnchors.set(replyMessageId, {
+      replyMessageId,
+      sourceConversationKey,
+      entry,
+      expiresAt: Date.now() + PENDING_NEW_SESSION_TTL_MS,
+    });
   }
 
   private async maybeUpdateSessionLabel(turn: BridgeTurn & { sessionId: string }): Promise<void> {
@@ -929,7 +1077,8 @@ export class BridgeApp {
   }
 
   private isSessionBusy(conversationKey: string, sessionId: string): boolean {
-    const active = this.queues.get(conversationKey).peek();
+    const active = this.queues.getIfExists(this.buildExecutionKey(conversationKey, sessionId))?.peek()
+      ?? this.queues.getIfExists(conversationKey)?.peek();
     return active?.sessionId === sessionId;
   }
 
