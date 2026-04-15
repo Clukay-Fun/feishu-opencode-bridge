@@ -2,11 +2,12 @@ import type { AppConfig } from "../config/schema.js";
 import type { RuntimeModule, RuntimeModuleHandleResult, RuntimeModuleMessageContext } from "../bridge/module.js";
 import type { PendingKnowledgeIngestInteraction } from "../bridge/state.js";
 import {
+  buildKnowledgeIngestFailurePayload,
   buildKnowledgeIngestPayload,
   buildKnowledgeIngestProcessingPayload,
+  buildKnowledgeIngestQueuedPayload,
   buildKnowledgeIngestReadyPayload,
   buildKnowledgeIngestSessionFinalPayload,
-  buildKnowledgeIngestSessionPayload,
   buildKnowledgeQueryEmptyPayload,
   buildKnowledgeQueryPayload,
   buildNoticeCardPayload,
@@ -83,6 +84,8 @@ type KnowledgeIngestSessionStats = {
   totalExtractedCount: number;
   totalDedupedCount: number;
   bitableUrl?: string | undefined;
+  results: KnowledgeIngestResult[];
+  failures: Array<{ sourceFile: string; reason: string }>;
 };
 
 type KnowledgeRuntimeModuleDeps = {
@@ -521,8 +524,12 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       return true;
     }
 
+    const queuedAhead = queue.pending.length + (queue.active ? 1 : 0);
     const progressState = createKnowledgeIngestProgressState(sourceLabel);
-    const processing = await this.deps.sendPayload(message.chatId, buildKnowledgeIngestProcessingPayload(progressState), {
+    const initialPayload = queuedAhead > 0
+      ? buildKnowledgeIngestQueuedPayload({ sourceLabel, queuedAhead, startedAt: progressState.startedAt })
+      : buildKnowledgeIngestProcessingPayload(progressState);
+    const processing = await this.deps.sendPayload(message.chatId, initialPayload, {
       event: itemInput.kind === "web" ? "knowledge web ingest queued" : "knowledge ingest queued",
       transcriptType: "outbound-final",
       textPreview: sourceLabel,
@@ -534,7 +541,6 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       progressState,
     });
     this.refreshKnowledgeIngestPending(pending.conversationKey, pending);
-    await this.updateKnowledgeIngestSessionSummary(pending.conversationKey);
     void this.processKnowledgeIngestQueue(pending.conversationKey);
     return true;
   }
@@ -554,8 +560,8 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
           break;
         }
         queue.currentLabel = getKnowledgeIngestQueueItemLabel(currentItem);
-        await this.updateKnowledgeIngestSessionSummary(conversationKey);
         this.setRunningKnowledgeIngest(conversationKey, currentItem.requesterOpenId);
+        void this.updateKnowledgeIngestProcessingCard(currentItem);
         try {
           if (currentItem.kind === "web") {
             const result = await this.deps.knowledge.ingestWebPage!({
@@ -592,16 +598,11 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
             this.recordKnowledgeIngestResult(conversationKey, result);
           }
         } catch (error) {
-          this.recordKnowledgeIngestFailure(conversationKey);
           const detail = error instanceof Error ? error.message : String(error);
-          await this.deps.updatePayload(currentItem.chatId, currentItem.processingMessageId, buildNoticeCardPayload({
-            title: currentItem.kind === "web" ? "网页入库失败" : "知识入库失败",
-            template: "red",
-            iconToken: "error_filled",
-            message: detail,
-            messageIconToken: "error_filled",
-            messageIconColor: "red",
-            showMessageIcon: false,
+          this.recordKnowledgeIngestFailure(conversationKey, getKnowledgeIngestQueueItemLabel(currentItem), detail);
+          await this.deps.updatePayload(currentItem.chatId, currentItem.processingMessageId, buildKnowledgeIngestFailurePayload({
+            sourceLabel: getKnowledgeIngestQueueItemLabel(currentItem),
+            reason: detail,
           }), {
             event: currentItem.kind === "web" ? "knowledge web ingest failed" : "knowledge ingest failed",
             transcriptType: "outbound-final",
@@ -612,7 +613,6 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
           this.clearRunningKnowledgeIngest(conversationKey);
         }
         queue.currentLabel = undefined;
-        await this.updateKnowledgeIngestSessionSummary(conversationKey);
         item = queue.pending.shift();
       }
     } finally {
@@ -635,7 +635,10 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
         }
       }
       if (shouldUpdateSummary) {
-        await this.updateKnowledgeIngestSessionSummary(conversationKey);
+        const pending = this.getInteraction(conversationKey);
+        if (pending) {
+          this.refreshKnowledgeIngestPending(conversationKey, pending);
+        }
       }
     }
   }
@@ -661,6 +664,8 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       failedCount: 0,
       totalExtractedCount: 0,
       totalDedupedCount: 0,
+      results: [],
+      failures: [],
     };
     this.knowledgeIngestSessionStats.set(conversationKey, stats);
     return stats;
@@ -673,39 +678,20 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     stats.totalExtractedCount += result.extractedCount;
     stats.totalDedupedCount += result.dedupedCount ?? Math.max(0, rawExtractedCount - result.extractedCount);
     stats.bitableUrl = result.bitableUrl ?? stats.bitableUrl;
+    stats.results.push(result);
   }
 
-  private recordKnowledgeIngestFailure(conversationKey: string): void {
+  private recordKnowledgeIngestFailure(conversationKey: string, sourceFile: string, reason: string): void {
     const stats = this.getKnowledgeIngestSessionStats(conversationKey);
     stats.failedCount += 1;
-  }
-
-  private async updateKnowledgeIngestSessionSummary(conversationKey: string): Promise<void> {
-    const pending = this.getInteraction(conversationKey);
-    if (!pending) {
-      return;
-    }
-    const stats = this.getKnowledgeIngestSessionStats(conversationKey);
-    const queue = this.knowledgeIngestQueues.get(conversationKey);
-    await this.deps.updatePayload(pending.chatId, pending.anchorMessageId, buildKnowledgeIngestSessionPayload({
-      completedCount: stats.completedCount,
-      failedCount: stats.failedCount,
-      queuedCount: queue?.pending.length ?? 0,
-      currentLabel: queue?.currentLabel,
-      totalExtractedCount: stats.totalExtractedCount,
-      totalDedupedCount: stats.totalDedupedCount,
-      elapsedMs: Date.now() - stats.startedAt,
-      bitableUrl: stats.bitableUrl,
-    }), {
-      event: "knowledge ingest session summary updated",
-      transcriptType: "outbound-final",
-      textPreview: "知识入库会话汇总",
-      len: 10,
-    });
+    stats.failures.push({ sourceFile, reason });
   }
 
   private async sendKnowledgeIngestFinalSummary(pending: PendingKnowledgeIngestInteraction): Promise<void> {
     const stats = this.getKnowledgeIngestSessionStats(pending.conversationKey);
+    if (stats.completedCount + stats.failedCount <= 1) {
+      return;
+    }
     await this.deps.sendPayload(pending.chatId, buildKnowledgeIngestSessionFinalPayload({
       completedCount: stats.completedCount,
       failedCount: stats.failedCount,
@@ -714,6 +700,8 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       totalDedupedCount: stats.totalDedupedCount,
       elapsedMs: Date.now() - stats.startedAt,
       bitableUrl: stats.bitableUrl,
+      results: stats.results,
+      failures: stats.failures,
     }), {
       event: "knowledge ingest session final summary sent",
       transcriptType: "outbound-final",
@@ -788,7 +776,6 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       endedImmediately = false;
       queue.closing = true;
       await this.sendKnowledgeIngestMarkdown(pending, "已收到结束指令，将处理完当前队列后结束。");
-      await this.updateKnowledgeIngestSessionSummary(pending.conversationKey);
     } else {
       await this.sendKnowledgeIngestFinalSummary(pending);
       await this.clearPending(pending.conversationKey, pending.chatType);
@@ -1053,6 +1040,23 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     }
   }
 
+  private async updateKnowledgeIngestProcessingCard(item: KnowledgeIngestQueueItem): Promise<void> {
+    try {
+      await this.deps.updatePayload(item.chatId, item.processingMessageId, buildKnowledgeIngestProcessingPayload(item.progressState), {
+        event: "knowledge ingest processing started",
+        transcriptType: "outbound-final",
+        textPreview: getKnowledgeIngestQueueItemLabel(item),
+        len: getKnowledgeIngestQueueItemLabel(item).length,
+      });
+    } catch (error) {
+      this.deps.logger.log("feishu/reply", "knowledge ingest processing card update failed", {
+        chatId: item.chatId,
+        messageId: item.processingMessageId,
+        detail: error instanceof Error ? error.message : String(error),
+      }, "warn");
+    }
+  }
+
   private async sendNotice(
     message: Pick<IncomingChatMessage, "chatId" | "messageId">,
     input: {
@@ -1089,12 +1093,14 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
 
 type KnowledgeIngestProgressState = {
   sourceLabel: string;
+  startedAt: number;
   steps: ToolUpdateView[];
 };
 
 function createKnowledgeIngestProgressState(sourceLabel: string): KnowledgeIngestProgressState {
   return {
     sourceLabel,
+    startedAt: Date.now(),
     steps: [
       { label: "读取内容", detail: "等待开始", status: "pending" },
       { label: "提取问答", detail: "等待开始", status: "pending" },

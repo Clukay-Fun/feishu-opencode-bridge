@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildKnowledgeIngestFailurePayload,
   buildKnowledgeIngestProcessingPayload,
   buildKnowledgeIngestPayload,
+  buildKnowledgeIngestQueuedPayload,
   buildKnowledgeIngestSessionFinalPayload,
   buildKnowledgeIngestSessionPayload,
   buildKnowledgeQueryEmptyPayload,
@@ -89,6 +91,33 @@ describe("buildPostPayload", () => {
     expect(output).toContain("```text");
     expect(output).toContain("飞书事件 -> ws.ts handleEvent()");
     expect(output).not.toContain("-&gt;");
+  });
+
+  it("neutralizes markdown tables in turn output so Feishu cards do not create table elements", () => {
+    const payload = buildTurnStatusCardPayload({
+      title: "已完成",
+      status: "已完成",
+      sessionId: "ses_1234567890",
+      durationText: "约 8s",
+      progressUpdates: ["最终回复已生成"],
+      toolUpdates: [],
+      output: {
+        text: [
+          "| 项目 | 结论 |",
+          "| --- | --- |",
+          "| 劳动关系 | 证据较强 |",
+          "| 加班费 | 需要补证 |",
+        ].join("\n"),
+        paths: [],
+        commands: [],
+      },
+    });
+    const content = JSON.parse(payload.content) as any;
+    const serialized = JSON.stringify(content);
+
+    expect(serialized).not.toContain("| --- | --- |");
+    expect(serialized).toContain("项目 ｜ 结论");
+    expect(serialized).toContain("劳动关系 ｜ 证据较强");
   });
 
   it("renders all tool updates without truncating the toolbar", () => {
@@ -359,22 +388,18 @@ describe("buildPostPayload", () => {
     const serialized = JSON.stringify(content);
     expect(serialized).toContain("知识入库完成");
     expect(serialized).toContain("劳动合同法实务指南.pdf");
-    expect(serialized).toContain("原始提取");
-    expect(serialized).toContain("16 条");
-    expect(serialized).toContain("去重合并");
-    expect(serialized).toContain("4 条");
-    expect(serialized).toContain("最终入库");
-    expect(serialized).toContain("劳动(8)");
-    expect(serialized).toContain("其余 1 个标签已省略");
-    expect(serialized).toContain("查看多维表格");
-    expect(serialized).toContain("12s");
-    expect(content.header.icon.token).toBe("book_outlined");
+    expect(serialized).toContain("入库 12");
+    expect(serialized).toContain("提取 16");
+    expect(serialized).toContain("去重 4");
+    expect(serialized).toContain("标签占比");
+    expect(serialized).toContain("\"tag\":\"劳动\"");
+    expect(serialized).toContain("查看知识库");
+    expect(content.header.icon.token).toBe("yes_filled");
     expect(content.body.elements[0].columns[0].elements[0].icon).toBeUndefined();
     expect(serialized).not.toContain("link_outlined");
-    expect(serialized).toContain("warning_outlined");
   });
 
-  it("renders a knowledge ingest processing card without body icons", () => {
+  it("renders a knowledge ingest processing card", () => {
     const payload = buildKnowledgeIngestProcessingPayload({
       sourceLabel: "劳动合同.txt",
       steps: [
@@ -385,18 +410,40 @@ describe("buildPostPayload", () => {
     });
     const content = JSON.parse(payload.content) as any;
     const serialized = JSON.stringify(content);
-    expect(serialized).toContain("知识入库处理中");
-    expect(serialized).toContain("整体进度");
-    expect(serialized).toContain("0/3 步完成");
-    expect(serialized).toContain("当前步骤");
+    expect(serialized).toContain("知识入库进行中");
+    expect(serialized).toContain("处理文件");
     expect(serialized).toContain("读取内容");
-    expect(serialized).toContain("进行中");
-    expect(serialized).toContain("2. 提取问答");
+    expect(serialized).toContain("进行中...");
+    expect(serialized).toContain("当前进度");
+    expect(serialized).toContain("提取问答");
     expect(serialized).toContain("等待中");
     expect(serialized).toContain("loading_outlined");
     expect(serialized).toContain("time_outlined");
     expect(content.body.elements[0].columns[0].elements[0].icon).toBeUndefined();
-    expect(serialized).toContain("warning_outlined");
+    expect(serialized).toContain("耗时");
+  });
+
+  it("renders knowledge ingest queued and failure cards", () => {
+    const queuedPayload = buildKnowledgeIngestQueuedPayload({
+      sourceLabel: "经济补偿计算规则.docx",
+      queuedAhead: 2,
+      elapsedMs: 10_000,
+    });
+    const failurePayload = buildKnowledgeIngestFailurePayload({
+      sourceLabel: "经济补偿计算规则.docx",
+      reason: "PDF 解析失败",
+    });
+    const queuedSerialized = JSON.stringify(JSON.parse(queuedPayload.content));
+    const failureSerialized = JSON.stringify(JSON.parse(failurePayload.content));
+    expect(queuedSerialized).toContain("知识入库排队中");
+    expect(queuedSerialized).toContain("排队文件");
+    expect(queuedSerialized).toContain("前方队列");
+    expect(queuedSerialized).toContain("2 个素材");
+    expect(queuedSerialized).toContain("耗时：10s");
+    expect(failureSerialized).toContain("入库失败");
+    expect(failureSerialized).toContain("原因");
+    expect(failureSerialized).toContain("PDF 解析失败");
+    expect(failureSerialized).toContain("请检查文件是否损坏或重新上传");
   });
 
   it("renders knowledge ingest session summary and final cards", () => {
@@ -416,6 +463,14 @@ describe("buildPostPayload", () => {
       totalDedupedCount: 38,
       elapsedMs: 222_000,
       bitableUrl: "https://example.com/base/app?table=tbl",
+      results: [{
+        sourceFile: "劳动合同法实务指南.pdf",
+        rawExtractedCount: 16,
+        dedupedCount: 4,
+        extractedCount: 12,
+        tagCounts: { 劳动: 8 },
+        durationMs: 12_000,
+      }],
     });
 
     const sessionSerialized = JSON.stringify(JSON.parse(sessionPayload.content));
@@ -425,12 +480,12 @@ describe("buildPostPayload", () => {
     expect(sessionSerialized).toContain("劳动合同法释义.pdf");
     expect(sessionSerialized).toContain("排队中");
     expect(sessionSerialized).toContain("总入库");
-    expect(finalSerialized).toContain("知识入库完成");
-    expect(finalSerialized).toContain("本次共处理");
-    expect(finalSerialized).toContain("214 条问答");
-    expect(finalSerialized).toContain("去重合并");
-    expect(finalSerialized).toContain("3 分 42 秒");
-    expect(finalSerialized).toContain("查看多维表格");
+    expect(finalSerialized).toContain("本次入库完成");
+    expect(finalSerialized).toContain("劳动合同法实务指南.pdf");
+    expect(finalSerialized).toContain("入库 12");
+    expect(finalSerialized).toContain("提取 16");
+    expect(finalSerialized).toContain("去重 4");
+    expect(finalSerialized).toContain("查看知识库");
   });
 
   it("renders a notice card without body icon when disabled", () => {

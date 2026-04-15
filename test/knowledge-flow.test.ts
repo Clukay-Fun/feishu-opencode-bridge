@@ -112,14 +112,15 @@ describe("knowledge base bridge flow", () => {
 
     const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
     const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
-    expect(JSON.stringify(replyPayloads)).toContain("知识入库处理中");
+    expect(JSON.stringify(replyPayloads)).toContain("知识入库进行中");
+    expect(JSON.stringify(replyPayloads)).toContain("知识入库排队中");
     expect(JSON.stringify(updatedPayloads)).toContain("正在提取问答（1/1）");
     expect(JSON.stringify(updatedPayloads)).toContain("正在写入知识库（2/4）");
     expect(JSON.stringify(updatedPayloads)).toContain("知识入库完成");
-    expect(JSON.stringify(updatedPayloads)).toContain("原始提取");
-    expect(JSON.stringify(updatedPayloads)).toContain("去重合并");
+    expect(JSON.stringify(updatedPayloads)).toContain("提取 6");
+    expect(JSON.stringify(updatedPayloads)).toContain("去重 2");
     expect(JSON.stringify(updatedPayloads)).toContain("劳动合同.txt");
-    expect(JSON.stringify(replyPayloads)).toContain("本次共处理");
+    expect(JSON.stringify(replyPayloads)).toContain("本次入库完成");
   });
 
   it("keeps regular files as local-path inputs for OpenCode instead of pre-parsing them in bridge", async () => {
@@ -336,9 +337,9 @@ describe("knowledge base bridge flow", () => {
       messageId: "om_web",
     }, expect.any(Object));
     expect(knowledgeQuery).not.toHaveBeenCalled();
-    expect(JSON.stringify(replyPayloads)).toContain("知识入库处理中");
+    expect(JSON.stringify(replyPayloads)).toContain("知识入库进行中");
     expect(JSON.stringify(updatedPayloads)).toContain("知识入库完成");
-    expect(JSON.stringify(updatedPayloads)).toContain("最终入库");
+    expect(JSON.stringify(updatedPayloads)).toContain("入库 2");
     expect(JSON.stringify(updatedPayloads)).toContain("劳动合同法网页.md");
   });
 

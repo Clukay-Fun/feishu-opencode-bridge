@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { TurnExecutor, type TurnExecutorContext } from "../src/runtime/turn-executor.js";
 
@@ -70,6 +70,36 @@ describe("TurnExecutor text buffering", () => {
     }, runtime);
 
     expect(runtime.getFinalText()).toBe("完整回答");
+  });
+
+  it("renders a clear text fallback for permission requests", async () => {
+    const context = createContext();
+    let capturedPayload: { content: string } | null = null;
+    const sendPayload: TurnExecutorContext["sendPayload"] = vi.fn(async (_chatId, payload) => {
+      capturedPayload = payload;
+      return { messageId: "om_permission_1" };
+    });
+    context.sendPayload = sendPayload;
+    const executor = new TurnExecutor(context) as unknown as {
+      handleEvent: (turn: Record<string, unknown>, event: Record<string, unknown>, runtime: ReturnType<typeof createRuntime>) => Promise<void>;
+      flushPendingTextEvents: (
+        assistantMessageId: string,
+        pendingTextEvents: Array<{ messageId: string; kind: "delta" | "set"; value: string }>,
+        runtime: { appendFinalText: (delta: string) => Promise<void>; setFinalText: (value: string) => Promise<void> },
+      ) => Promise<void>;
+    };
+    const runtime = createRuntime(executor, []);
+
+    await executor.handleEvent(createTurn(), {
+      type: "permission.asked",
+      properties: { sessionID: "ses_1", id: "per_1", permission: "bash" },
+    }, runtime);
+
+    expect(capturedPayload).not.toBeNull();
+    const content = JSON.parse(capturedPayload!.content) as { zh_cn: { content: Array<Array<{ tag: string; text: string }>> } };
+    const text = content.zh_cn.content[0]?.[0]?.text ?? "";
+    expect(text).toContain("OpenCode 请求权限：`bash`");
+    expect(text).toContain("`/allow always`：始终允许，后续同类权限不再弹出");
   });
 });
 
