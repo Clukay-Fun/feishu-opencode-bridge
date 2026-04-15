@@ -179,6 +179,7 @@ export class BridgeApp {
   private readonly pendingInteractionTimers = new Map<string, NodeJS.Timeout>();
   private readonly sessionStatuses = new Map<string, OpenCodeSessionStatus>();
   private readonly pendingNewSessionAnchors = new Map<string, PendingNewSessionAnchor>();
+  private readonly pendingNewSessionAnchorTimers = new Map<string, NodeJS.Timeout>();
   private readonly memory: MemoryService | null;
   private readonly knowledge: KnowledgeBasePort | null;
   private readonly contractAssistant: ContractAssistantService | null;
@@ -755,18 +756,14 @@ export class BridgeApp {
     source: Pick<SessionSource, "chatType" | "conversationKey" | "rootId" | "parentId">,
     openCodeSessions: Map<string, OpenCodeSession>,
   ): Promise<void> {
-    const anchorMessageId = source.rootId ?? source.parentId;
-    if (!anchorMessageId) {
+    const match = this.findPendingNewSessionAnchor(source);
+    if (!match) {
       return;
     }
-
-    const pending = this.pendingNewSessionAnchors.get(anchorMessageId);
-    if (!pending) {
-      return;
-    }
+    const { messageId: anchorMessageId, pending } = match;
 
     if (pending.expiresAt <= Date.now()) {
-      this.pendingNewSessionAnchors.delete(anchorMessageId);
+      this.clearPendingNewSessionAnchor(anchorMessageId);
       return;
     }
 
@@ -775,19 +772,31 @@ export class BridgeApp {
     }
 
     if (!openCodeSessions.has(pending.entry.sessionId)) {
-      this.pendingNewSessionAnchors.delete(anchorMessageId);
+      this.clearPendingNewSessionAnchor(anchorMessageId);
       return;
     }
 
     const window = this.getSessionWindow(source.conversationKey, source.chatType);
     if (window.sessions.some((session) => session.sessionId === pending.entry.sessionId)) {
-      this.pendingNewSessionAnchors.delete(anchorMessageId);
+      this.clearPendingNewSessionAnchor(anchorMessageId);
       return;
     }
 
     const nextWindow = addSession(window, pending.entry, this.config.bridge.maxSessionsPerWindow);
     await this.saveSessionWindow(source.conversationKey, nextWindow);
-    this.pendingNewSessionAnchors.delete(anchorMessageId);
+    this.clearPendingNewSessionAnchor(anchorMessageId);
+  }
+
+  private findPendingNewSessionAnchor(source: Pick<SessionSource, "rootId" | "parentId">): { messageId: string; pending: PendingNewSessionAnchor } | null {
+    const candidates = [source.rootId, source.parentId]
+      .filter((value): value is string => Boolean(value));
+    for (const messageId of new Set(candidates)) {
+      const pending = this.pendingNewSessionAnchors.get(messageId);
+      if (pending) {
+        return { messageId, pending };
+      }
+    }
+    return null;
   }
 
   private async prepareFileForOpenCodeTurn(
@@ -892,10 +901,14 @@ export class BridgeApp {
   }
 
   private resolveSessionWindowKey(conversationKey: string, chatType?: string): string {
-    if (chatType === "p2p" && conversationKey.endsWith(":main") && !this.sessionMap[conversationKey]) {
+    if (chatType === "p2p" && conversationKey.endsWith(":main")) {
       const legacyKey = this.resolveLegacyP2pWindowKey(conversationKey);
       if (legacyKey && this.sessionMap[legacyKey]) {
-        this.sessionMap[conversationKey] = this.sessionMap[legacyKey];
+        this.sessionMap[conversationKey] = this.mergeSessionWindows(
+          this.sessionMap[conversationKey],
+          this.sessionMap[legacyKey],
+          chatType,
+        );
         delete this.sessionMap[legacyKey];
       }
     }
@@ -908,6 +921,24 @@ export class BridgeApp {
       return null;
     }
     return conversationKey.slice(0, -":main".length);
+  }
+
+  private mergeSessionWindows(
+    current: SessionWindowRecord | undefined,
+    legacy: SessionWindowRecord,
+    chatType?: string,
+  ): SessionWindowRecord {
+    const mode = resolveSessionMode(chatType, this.config.bridge.sessionModes);
+    if (!current) {
+      return normalizeSessionWindowRecord(legacy, mode, this.config.bridge.maxSessionsPerWindow);
+    }
+
+    return normalizeSessionWindowRecord({
+      mode,
+      ...((current.interactionMode ?? legacy.interactionMode) ? { interactionMode: current.interactionMode ?? legacy.interactionMode } : {}),
+      activeSessionId: current.activeSessionId ?? legacy.activeSessionId,
+      sessions: [...current.sessions, ...legacy.sessions],
+    }, mode, this.config.bridge.maxSessionsPerWindow);
   }
 
   private async createAndBindSession(
@@ -941,12 +972,26 @@ export class BridgeApp {
   }
 
   private registerPendingNewSessionAnchor(replyMessageId: string, sourceConversationKey: string, entry: SessionBindingRecord): void {
+    this.clearPendingNewSessionAnchor(replyMessageId);
     this.pendingNewSessionAnchors.set(replyMessageId, {
       replyMessageId,
       sourceConversationKey,
       entry,
       expiresAt: Date.now() + PENDING_NEW_SESSION_TTL_MS,
     });
+    const timer = setTimeout(() => {
+      this.clearPendingNewSessionAnchor(replyMessageId);
+    }, PENDING_NEW_SESSION_TTL_MS);
+    this.pendingNewSessionAnchorTimers.set(replyMessageId, timer);
+  }
+
+  private clearPendingNewSessionAnchor(replyMessageId: string): void {
+    this.pendingNewSessionAnchors.delete(replyMessageId);
+    const timer = this.pendingNewSessionAnchorTimers.get(replyMessageId);
+    if (timer) {
+      clearTimeout(timer);
+      this.pendingNewSessionAnchorTimers.delete(replyMessageId);
+    }
   }
 
   private async maybeUpdateSessionLabel(turn: BridgeTurn & { sessionId: string }): Promise<void> {

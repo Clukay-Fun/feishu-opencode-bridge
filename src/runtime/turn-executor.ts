@@ -454,7 +454,14 @@ export class TurnExecutor {
           buttons: this.context.permissionManager.buildActionButtons(interaction),
           expiresInSeconds: Math.floor(PERMISSION_TTL_MS / 1000),
         })
-        : buildPostMarkdownPayload(`OpenCode 请求权限 \`${escapeMarkdownText(permissionName)}\`，请回复 \`/allow once\`、\`/allow always\` 或 \`/deny\`。`);
+        : buildPostMarkdownPayload([
+          `OpenCode 请求权限：\`${escapeMarkdownText(permissionName)}\``,
+          "",
+          "回复以下任一命令：",
+          "- `/allow once`：仅本次允许",
+          "- `/allow always`：始终允许，后续同类权限不再弹出",
+          "- `/deny`：拒绝",
+        ].join("\n"));
       const sent = await this.context.sendPayload(turn.chatId, permissionPayload, {
         event: "final message sent",
         transcriptType: "outbound-final",

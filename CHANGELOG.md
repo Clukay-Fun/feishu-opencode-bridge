@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.21 - 2026-04-16
+
+### Added
+- Added a labor-dispute demo flow note for the competition presentation and expanded runtime test coverage for the polished card surfaces.
+
+### Changed
+- Polished knowledge-ingest cards with queued, progress, failure, and final-summary states suited for demo recording.
+- Updated labor and runtime reply surfaces so demo-oriented entrypoints, card layout, and streaming updates are clearer and more stable.
+
 ## 0.1.20 - 2026-04-15
 
 ### Added

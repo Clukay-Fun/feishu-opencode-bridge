@@ -102,6 +102,21 @@ export type KnowledgeQueryEmptyCardView = {
 export type KnowledgeIngestProgressCardView = {
   sourceLabel: string;
   steps: ReadonlyArray<ToolUpdateView>;
+  startedAt?: number | undefined;
+  elapsedMs?: number | undefined;
+};
+
+export type KnowledgeIngestQueuedCardView = {
+  sourceLabel: string;
+  queuedAhead: number;
+  startedAt?: number | undefined;
+  elapsedMs?: number | undefined;
+};
+
+export type KnowledgeIngestFailureCardView = {
+  sourceLabel: string;
+  reason: string;
+  suggestion?: string | undefined;
 };
 
 export type KnowledgeIngestSessionSummaryView = {
@@ -113,6 +128,8 @@ export type KnowledgeIngestSessionSummaryView = {
   totalDedupedCount: number;
   elapsedMs?: number | undefined;
   bitableUrl?: string | undefined;
+  results?: KnowledgeIngestResult[] | undefined;
+  failures?: Array<{ sourceFile: string; reason: string }> | undefined;
 };
 
 export type PermissionActionButton = {
@@ -390,12 +407,17 @@ export function buildKnowledgeQueryEmptyPayload(question: string): FeishuPostPay
 }
 
 export function buildKnowledgeIngestReadyPayload(): FeishuPostPayload {
-  return buildKnowledgeIngestSessionPayload({
-    completedCount: 0,
-    failedCount: 0,
-    queuedCount: 0,
-    totalExtractedCount: 0,
-    totalDedupedCount: 0,
+  return buildInteractivePayload({
+    title: "知识入库已开启",
+    template: "indigo",
+    iconToken: "status-meeting_filled",
+    bodyElements: [
+      buildGreyPanel([
+        cardMarkdown("**支持格式** ：PDF / DOCX / TXT / MD\n**模式** ：批量入库", "normal"),
+      ]),
+      cardMarkdown("发送文件或 URL 即可入库\n", "normal"),
+      cardMarkdown("发送 `/kb-ingest-end` 结束本次任务", "normal_v2"),
+    ],
   });
 }
 
@@ -422,24 +444,42 @@ export function buildKnowledgeIngestSessionPayload(view: KnowledgeIngestSessionS
 }
 
 export function buildKnowledgeIngestSessionFinalPayload(view: KnowledgeIngestSessionSummaryView): FeishuPostPayload {
-  const bodyParts = [
-    `**本次共处理**\n${view.completedCount + view.failedCount} 个素材`,
-    `**总入库**\n${view.totalExtractedCount} 条问答`,
-    `**去重合并**\n${view.totalDedupedCount} 条`,
-    `**失败**\n${view.failedCount} 个素材`,
-    `**耗时**\n${formatDurationMs(view.elapsedMs ?? 0)}`,
-  ];
-  if (view.bitableUrl) {
-    bodyParts.push(`[查看多维表格](${escapeText(view.bitableUrl)})`);
+  const bodyElements: Array<Record<string, unknown>> = [];
+  const results = view.results ?? [];
+  const failures = view.failures ?? [];
+
+  if (results.length > 0 || failures.length > 0) {
+    results.forEach((result, index) => {
+      if (bodyElements.length > 0) {
+        bodyElements.push(buildDivider());
+      }
+      bodyElements.push(buildKnowledgeIngestSummaryItem(result, "success"));
+      if (index === results.length - 1 && failures.length === 0) {
+        return;
+      }
+    });
+    failures.forEach((failure) => {
+      if (bodyElements.length > 0) {
+        bodyElements.push(buildDivider());
+      }
+      bodyElements.push(buildKnowledgeIngestFailureSummaryItem(failure));
+    });
+  } else {
+    bodyElements.push(buildStatsRow([
+      `入库 ${view.totalExtractedCount}`,
+      `失败 ${view.failedCount}`,
+      `去重 ${view.totalDedupedCount}`,
+    ]));
   }
+
   return buildInteractivePayload({
-    title: "知识入库完成",
-    template: view.failedCount > 0 ? "yellow" : "green",
-    iconToken: view.failedCount > 0 ? "maybe_outlined" : "book_outlined",
+    title: "本次入库完成",
+    template: "indigo",
+    iconToken: "grid-view_filled",
     bodyElements: [
-      buildNoticeBodyBlock(bodyParts.join("\n\n"), "book_outlined", "green", { showIcon: false }),
+      ...bodyElements,
       buildDivider(),
-      buildFooterTipBlock("以上内容仅供参考，不构成法律意见。", "warning_outlined", "orange", "notation"),
+      ...(view.bitableUrl ? [cardMarkdown(`[查看知识库 →](${escapeText(view.bitableUrl)})`, "normal")] : []),
     ],
   });
 }
@@ -447,64 +487,70 @@ export function buildKnowledgeIngestSessionFinalPayload(view: KnowledgeIngestSes
 export function buildKnowledgeIngestPayload(view: KnowledgeIngestResult): FeishuPostPayload {
   const rawExtractedCount = view.rawExtractedCount ?? view.extractedCount;
   const dedupedCount = view.dedupedCount ?? Math.max(0, rawExtractedCount - view.extractedCount);
-  const sortedTags = Object.entries(view.tagCounts);
-  const visibleTags = sortedTags.slice(0, 10);
-  const hiddenTagCount = Math.max(0, sortedTags.length - visibleTags.length);
-  const tagSummary = visibleTags
-    .map(([tag, count]) => `${escapeText(tag)}(${count})`)
-    .join("、") || "无";
-  const tagSummaryText = hiddenTagCount > 0 ? `${tagSummary}\n\n其余 ${hiddenTagCount} 个标签已省略。` : tagSummary;
-  const bodyParts = [
-    `**源文件**\n${escapeText(view.sourceFile)}`,
-    `**原始提取**\n${rawExtractedCount} 条`,
-    `**去重合并**\n${dedupedCount} 条`,
-    `**最终入库**\n${view.extractedCount} 条`,
-    `**标签分布**\n${tagSummaryText}`,
-    `**耗时**\n${Math.max(1, Math.round(view.durationMs / 1000))}s`,
-  ];
-  if (view.bitableUrl) {
-    bodyParts.push(`[查看多维表格](${escapeText(view.bitableUrl)})`);
-  }
   const bodyElements: Array<Record<string, unknown>> = [
-    buildNoticeBodyBlock(bodyParts.join("\n\n"), "book_outlined", "green", { showIcon: false }),
-    buildDivider(),
-    buildFooterTipBlock("以上内容仅供参考，不构成法律意见。", "warning_outlined", "orange", "notation"),
+    buildTitleLine(`文件：**${escapeText(view.sourceFile)}**`),
+    buildStatsRow([
+      `入库 ${view.extractedCount}`,
+      `提取 ${rawExtractedCount}`,
+      `去重 ${dedupedCount}`,
+    ]),
+    buildTagChartSection(view.tagCounts, view.bitableUrl),
   ];
   if (view.warning) {
-    bodyElements.push(buildFooterTipBlock(escapeText(view.warning), "maybe_outlined", "orange", "notation"));
+    bodyElements.push(buildQuoteLine(escapeText(view.warning)));
   }
   return buildInteractivePayload({
     title: "知识入库完成",
     template: "green",
-    iconToken: "book_outlined",
+    iconToken: "yes_filled",
     bodyElements,
   });
 }
 
-export function buildKnowledgeIngestProcessingPayload(view: KnowledgeIngestProgressCardView): FeishuPostPayload {
-  const currentStep = view.steps.find((step) => step.status === "running")
-    ?? view.steps.find((step) => step.status === "error")
-    ?? view.steps.find((step) => step.status === "pending")
-    ?? view.steps[view.steps.length - 1];
-  const completedCount = view.steps.filter((step) => step.status === "completed").length;
-  const totalCount = Math.max(1, view.steps.length);
-  const currentText = currentStep
-    ? `**当前步骤**\n${escapeText(currentStep.label)}：${escapeText(currentStep.detail)}`
-    : "**当前步骤**\n准备开始";
+export function buildKnowledgeIngestQueuedPayload(view: KnowledgeIngestQueuedCardView): FeishuPostPayload {
   return buildInteractivePayload({
-    title: "知识入库处理中",
-    template: "blue",
-    iconToken: "upload_outlined",
+    title: "知识入库排队中",
+    template: "orange",
+    iconToken: "time_outlined",
     bodyElements: [
-      buildNoticeBodyBlock([
-        `**当前对象**\n${escapeText(view.sourceLabel)}`,
-        `**整体进度**\n${completedCount}/${totalCount} 步完成`,
-        currentText,
-      ].join("\n\n"), "upload_outlined", "blue", { showIcon: false }),
+      buildTitleLine(`排队文件：**${escapeText(view.sourceLabel)}**`),
+      buildGreyPanel([
+        cardMarkdown(`**前方队列**：${view.queuedAhead} 个素材`, "normal"),
+        cardMarkdown("**预计开始**：前序处理完成后自动执行", "normal"),
+      ]),
+      buildQuoteLine("发送 /kb-ingest-end 提前结束入库"),
       buildDivider(),
-      buildKnowledgeIngestStepBlock(view.steps),
+      buildElapsedLine(resolveElapsedText(view)),
+    ],
+  });
+}
+
+export function buildKnowledgeIngestFailurePayload(view: KnowledgeIngestFailureCardView): FeishuPostPayload {
+  return buildInteractivePayload({
+    title: "入库失败",
+    template: "red",
+    iconToken: "error-hollow_filled",
+    bodyElements: [
+      buildTitleLine(`文件：**${escapeText(view.sourceLabel)}**`),
+      buildGreyPanel([
+        cardMarkdown(`**原因**：${escapeText(view.reason)}`, "normal_v2"),
+        cardMarkdown(`**建议**：${escapeText(view.suggestion ?? "请检查文件是否损坏或重新上传")}`, "normal_v2"),
+      ], { padding: "4px 4px 4px 4px" }),
+    ],
+  });
+}
+
+export function buildKnowledgeIngestProcessingPayload(view: KnowledgeIngestProgressCardView): FeishuPostPayload {
+  const stepElements = view.steps.flatMap((step) => buildKnowledgeIngestProgressStepElements(step));
+  return buildInteractivePayload({
+    title: "知识入库进行中",
+    template: "indigo",
+    iconToken: "start_outlined",
+    bodyElements: [
+      buildTitleLine(`处理文件：**${escapeText(view.sourceLabel)}**`),
+      ...stepElements,
       buildDivider(),
-      buildFooterTipBlock("以上内容仅供参考，不构成法律意见。", "warning_outlined", "orange", "notation"),
+      buildElapsedLine(resolveElapsedText(view)),
     ],
   });
 }
@@ -628,6 +674,230 @@ function buildNoticeBodyBlock(
   ]);
 }
 
+function cardMarkdown(content: string, textSize = "normal", opts?: { icon?: IconDef; textAlign?: string }): Record<string, unknown> {
+  return {
+    tag: "markdown",
+    content,
+    text_align: opts?.textAlign ?? "left",
+    text_size: textSize,
+    margin: "0px 0px 0px 0px",
+    ...(opts?.icon ? { icon: standardIcon(opts.icon.token, opts.icon.color) } : {}),
+  };
+}
+
+function buildWeightedColumn(
+  elements: Array<Record<string, unknown>>,
+  opts: {
+    bg?: string;
+    padding?: string;
+    horizontalAlign?: string;
+    verticalAlign?: string;
+    verticalSpacing?: string;
+  } = {},
+): Record<string, unknown> {
+  return {
+    tag: "column",
+    width: "weighted",
+    ...(opts.bg ? { background_style: opts.bg } : {}),
+    elements,
+    padding: opts.padding ?? "12px 12px 12px 12px",
+    direction: "vertical",
+    horizontal_spacing: "8px",
+    vertical_spacing: opts.verticalSpacing ?? "4px",
+    horizontal_align: opts.horizontalAlign ?? "left",
+    vertical_align: opts.verticalAlign ?? "top",
+    weight: 1,
+    margin: "0px 0px 0px 0px",
+  };
+}
+
+function buildStretchColumnSet(columns: Array<Record<string, unknown>>, horizontalSpacing = "12px"): Record<string, unknown> {
+  return {
+    tag: "column_set",
+    flex_mode: "stretch",
+    horizontal_spacing: horizontalSpacing,
+    horizontal_align: "left",
+    columns,
+    margin: "0px 0px 0px 0px",
+  };
+}
+
+function buildTitleLine(content: string, icon?: IconDef): Record<string, unknown> {
+  return buildStretchColumnSet([
+    {
+      ...buildWeightedColumn([
+        cardMarkdown(content, "heading", icon ? { icon } : undefined),
+      ], { padding: "0px 0px 0px 0px", verticalSpacing: "8px" }),
+    },
+  ]);
+}
+
+function buildGreyPanel(elements: Array<Record<string, unknown>>, opts: { padding?: string } = {}): Record<string, unknown> {
+  return buildStretchColumnSet([
+    buildWeightedColumn(elements, {
+      bg: "grey-50",
+      padding: opts.padding ?? "12px 12px 12px 12px",
+      verticalSpacing: "4px",
+    }),
+  ]);
+}
+
+function buildQuoteLine(content: string): Record<string, unknown> {
+  return buildStretchColumnSet([
+    buildWeightedColumn([
+      cardMarkdown(`> ${content}`, "notation"),
+    ], { padding: "0px 0px 0px 0px", verticalSpacing: "8px" }),
+  ], "8px");
+}
+
+function buildElapsedLine(content: string): Record<string, unknown> {
+  return {
+    tag: "div",
+    text: {
+      tag: "plain_text",
+      content,
+      text_size: "notation",
+      text_align: "left",
+      text_color: "grey",
+      lines: 1,
+    },
+    icon: standardIcon("alarm-clock_outlined", "light_grey"),
+    margin: "0px 0px 0px 0px",
+  };
+}
+
+function buildStatsRow(labels: string[]): Record<string, unknown> {
+  return {
+    ...buildStretchColumnSet(labels.map((label) => buildWeightedColumn([
+      cardMarkdown(escapeText(label), "heading", { textAlign: "center" }),
+    ], {
+      bg: "grey-50",
+      horizontalAlign: "center",
+      verticalAlign: "center",
+    }))),
+    flex_mode: "trisect",
+  };
+}
+
+function buildTagChartSection(tagCounts: Record<string, number>, bitableUrl?: string): Record<string, unknown> {
+  const values = Object.entries(tagCounts)
+    .slice(0, 10)
+    .map(([tag, value]) => ({ tag, value }));
+  const elements: Array<Record<string, unknown>> = [];
+  if (values.length > 0) {
+    elements.push({
+      tag: "chart",
+      chart_spec: {
+        type: "pie",
+        title: { text: "标签占比" },
+        data: { values },
+        seriesField: "tag",
+        angleField: "value",
+        label: {
+          visible: true,
+          formatter: "{tag} {value}",
+        },
+        legends: {
+          visible: true,
+          orient: "bottom",
+        },
+      },
+      preview: true,
+      color_theme: "converse",
+      height: "auto",
+      margin: "0px 0px 0px 0px",
+    });
+  } else {
+    elements.push(cardMarkdown("暂无标签数据", "normal"));
+  }
+  if (bitableUrl) {
+    elements.push(buildDivider());
+    elements.push(cardMarkdown(`[查看知识库 →](${escapeText(bitableUrl)})`, "normal"));
+  }
+  return buildStretchColumnSet([
+    buildWeightedColumn(elements, { padding: "0px 0px 0px 0px", verticalSpacing: "8px" }),
+  ], "8px");
+}
+
+function buildKnowledgeIngestProgressStepElements(step: ToolUpdateView): Array<Record<string, unknown>> {
+  const elements: Array<Record<string, unknown>> = [
+    buildGreyPanel([
+      cardMarkdown(`**${escapeText(step.label)}**：${formatKnowledgeIngestInlineStatus(step)}`, "normal", {
+        icon: mapKnowledgeIngestStepIcon(step.status),
+      }),
+    ]),
+  ];
+  const detail = normalizeKnowledgeIngestDetail(step);
+  if (detail) {
+    elements.push(buildQuoteLine(detail));
+  }
+  return elements;
+}
+
+function buildKnowledgeIngestSummaryItem(result: KnowledgeIngestResult, state: "success" | "error"): Record<string, unknown> {
+  const rawExtractedCount = result.rawExtractedCount ?? result.extractedCount;
+  const dedupedCount = result.dedupedCount ?? Math.max(0, rawExtractedCount - result.extractedCount);
+  return buildStretchColumnSet([
+    buildWeightedColumn([
+      buildTitleLine(`文件：**${escapeText(result.sourceFile)}**`, {
+        token: state === "success" ? "succeed-hollow_filled" : "error-hollow_filled",
+        color: state === "success" ? "green" : "red",
+      }),
+      buildStatsRow([
+        `入库 ${result.extractedCount}`,
+        `提取 ${rawExtractedCount}`,
+        `去重 ${dedupedCount}`,
+      ]),
+      buildTagChartSection(result.tagCounts),
+    ], { padding: "0px 0px 0px 0px", verticalSpacing: "8px" }),
+  ], "8px");
+}
+
+function buildKnowledgeIngestFailureSummaryItem(failure: { sourceFile: string; reason: string }): Record<string, unknown> {
+  return buildStretchColumnSet([
+    buildWeightedColumn([
+      buildTitleLine(`文件：**${escapeText(failure.sourceFile)}**`, {
+        token: "error-hollow_filled",
+        color: "red",
+      }),
+      buildQuoteLine(escapeText(failure.reason)),
+    ], { padding: "0px 0px 0px 0px", verticalSpacing: "8px" }),
+  ], "8px");
+}
+
+function resolveElapsedText(view: { elapsedMs?: number | undefined; startedAt?: number | undefined }): string {
+  const elapsedMs = view.elapsedMs ?? (view.startedAt ? Date.now() - view.startedAt : 0);
+  return `耗时：${formatDurationMs(elapsedMs)}`;
+}
+
+function formatKnowledgeIngestInlineStatus(step: ToolUpdateView): string {
+  switch (step.status) {
+    case "completed":
+      return "已完成";
+    case "running":
+      return "进行中...";
+    case "error":
+      return step.label === "写入知识库" ? "写入失败" : "执行失败";
+    case "pending":
+      return "等待中";
+    default:
+      return "未知状态";
+  }
+}
+
+function normalizeKnowledgeIngestDetail(step: ToolUpdateView): string {
+  if (!step.detail || step.detail === "等待开始" || step.detail === "已完成" || step.detail === "处理中" || step.detail === "执行失败") {
+    return "";
+  }
+  if (step.status === "running") {
+    return `当前进度：${escapeText(step.detail)}`;
+  }
+  if (step.status === "error") {
+    return `${escapeText(step.detail)}，发送 /retry 重试`;
+  }
+  return escapeText(step.detail);
+}
+
 function buildPermissionRequestBlock(permissionName: string): Record<string, unknown> {
   return columnSet([
     column([
@@ -731,22 +1001,6 @@ function buildToolElements(lines: ReadonlyArray<ToolUpdateView>): Array<Record<s
     text_size: "normal",
     icon: mapToolIcon(line.status),
   }));
-}
-
-function buildKnowledgeIngestStepBlock(steps: ReadonlyArray<ToolUpdateView>): Record<string, unknown> {
-  return {
-    ...columnSet([
-      {
-        ...column(steps.map((step, index) => markdown(formatKnowledgeIngestStep(step, index), {
-          icon: mapKnowledgeIngestStepIcon(step.status),
-        })), { bg: "grey-50", weight: 1 }),
-        padding: "12px 12px 12px 12px",
-        vertical_spacing: "8px",
-      },
-    ]),
-    flex_mode: "stretch",
-    horizontal_spacing: "12px",
-  };
 }
 
 function buildStatusCurrentSessionBlock(session: StatusCommandCardView["currentSession"]): Record<string, unknown> {
@@ -936,25 +1190,6 @@ function mapToolIcon(status: ToolUpdateView["status"]): Record<string, string> {
   }
 }
 
-function formatKnowledgeIngestStep(step: ToolUpdateView, index: number): string {
-  return `**${index + 1}. ${escapeText(step.label)}**\n${formatKnowledgeIngestStepStatus(step.status)} · ${escapeText(step.detail)}`;
-}
-
-function formatKnowledgeIngestStepStatus(status: ToolUpdateView["status"]): string {
-  switch (status) {
-    case "completed":
-      return "已完成";
-    case "running":
-      return "进行中";
-    case "error":
-      return "失败";
-    case "pending":
-      return "等待中";
-    default:
-      return "未知状态";
-  }
-}
-
 function formatDurationMs(durationMs: number): string {
   const seconds = Math.max(1, Math.round(durationMs / 1000));
   if (seconds < 60) {
@@ -1022,10 +1257,59 @@ function formatOutputLine(line: string): string {
 }
 
 function formatEscapedMarkdownSegment(text: string): string {
-  return escapeText(text)
+  return neutralizeMarkdownTables(escapeText(text))
     .split("\n")
     .map((line) => formatOutputLine(line))
     .join("\n");
+}
+
+function neutralizeMarkdownTables(text: string): string {
+  const lines = text.split("\n");
+  const output: string[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    const nextLine = lines[index + 1] ?? "";
+    if (!isMarkdownTableRow(line) || !isMarkdownTableSeparator(nextLine)) {
+      output.push(line);
+      continue;
+    }
+
+    output.push(formatMarkdownTableRowAsText(line));
+    index += 2;
+    while (index < lines.length && isMarkdownTableRow(lines[index] ?? "")) {
+      output.push(formatMarkdownTableRowAsText(lines[index] ?? ""));
+      index += 1;
+    }
+    index -= 1;
+  }
+
+  return output.join("\n");
+}
+
+function isMarkdownTableRow(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed.includes("|")) {
+    return false;
+  }
+  return splitMarkdownTableCells(trimmed).length >= 2;
+}
+
+function isMarkdownTableSeparator(line: string): boolean {
+  const cells = splitMarkdownTableCells(line.trim());
+  return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+}
+
+function splitMarkdownTableCells(line: string): string[] {
+  return line
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim())
+    .filter((cell) => cell.length > 0);
+}
+
+function formatMarkdownTableRowAsText(line: string): string {
+  return `- ${splitMarkdownTableCells(line).join(" ｜ ")}`;
 }
 
 function splitMarkdownByCodeFence(text: string): Array<{ kind: "text" | "code"; content: string }> {

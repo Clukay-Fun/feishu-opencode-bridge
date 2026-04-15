@@ -131,6 +131,40 @@ describe("BridgeApp command surface", () => {
     expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("发票识别");
   });
 
+  it("merges legacy p2p sessions into an existing :main window", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const appAny = app as unknown as {
+      sessionMap: Record<string, SessionWindowRecord>;
+    };
+    appAny.sessionMap["oc_p2p_1"] = {
+      mode: "multi",
+      activeSessionId: "ses_legacy",
+      sessions: [
+        { sessionId: "ses_legacy", label: "日常聊天2", createdAt: 1, lastUsedAt: 2 },
+      ],
+    };
+    appAny.sessionMap["oc_p2p_1:main"] = {
+      mode: "multi",
+      activeSessionId: "ses_current",
+      sessions: [
+        { sessionId: "ses_current", label: "发票识别", createdAt: 1, lastUsedAt: 3 },
+      ],
+    };
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "sessions" },
+    }, {
+      conversationKey: "oc_p2p_1:main",
+      threadKey: "main",
+    });
+
+    expect(appAny.sessionMap["oc_p2p_1"]).toBeUndefined();
+    expect(appAny.sessionMap["oc_p2p_1:main"]?.activeSessionId).toBe("ses_current");
+    expect(appAny.sessionMap["oc_p2p_1:main"]?.sessions.map((session) => session.sessionId)).toEqual(["ses_current", "ses_legacy"]);
+  });
+
   it("soft-deletes the current session for /close", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
@@ -296,6 +330,95 @@ describe("BridgeApp command surface", () => {
     expect(appAny.sessionMap["oc_p2p_1:om_reply"]?.activeSessionId).toBe("ses_threaded");
     expect(appAny.sessionMap["oc_p2p_1:om_reply"]?.sessions[0]?.label).toBe("劳动争议分析");
     expect(appAny.sessionMap["oc_p2p_1"]?.activeSessionId).toBe("ses_existing");
+  });
+
+  it("hydrates a thread from the /new reply parent id when root id points elsewhere", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const createSession = vi.fn(async (title: string) => ({
+      id: "ses_parent_threaded",
+      title,
+      time: { created: 1, updated: 1 },
+    }));
+    const appAny = app as unknown as {
+      opencode: {
+        health: () => Promise<{ ok: boolean }>;
+        createSession: typeof createSession;
+        listSessions: () => Promise<Array<{ id: string; title: string; time: { created: number; updated: number } }>>;
+        promptAsync: () => Promise<{ id: string }>;
+      };
+      sessionMap: Record<string, SessionWindowRecord>;
+    };
+    appAny.opencode = {
+      ...(appAny.opencode ?? {}),
+      health: async () => ({ ok: true }),
+      createSession,
+      listSessions: async () => [{ id: "ses_parent_threaded", title: "发票识别", time: { created: 1, updated: 1 } }],
+      promptAsync: async () => ({ id: "evt_1" }),
+    };
+    appAny.sessionMap["oc_p2p_1"] = {
+      mode: "multi",
+      activeSessionId: "ses_existing",
+      sessions: [
+        { sessionId: "ses_existing", label: "日常聊天", createdAt: 1, lastUsedAt: 1 },
+      ],
+    };
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "new", title: "发票识别" },
+    });
+
+    await app.handleIncomingMessage({
+      ...createIncomingMessage("om_thread_2"),
+      conversationKey: "oc_p2p_1:om_thread_root",
+      threadKey: "om_thread_root",
+      rootId: "om_thread_root",
+      parentId: "om_reply",
+      plainText: "识别这张发票",
+      rawContent: "识别这张发票",
+    });
+
+    expect(appAny.sessionMap["oc_p2p_1:om_thread_root"]?.activeSessionId).toBe("ses_parent_threaded");
+  });
+
+  it("expires pending /new reply anchors without waiting for a matching message", async () => {
+    vi.useFakeTimers();
+    try {
+      const outbound = createOutbound();
+      const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+      const createSession = vi.fn(async (title: string) => ({
+        id: "ses_expiring",
+        title,
+        time: { created: 1, updated: 1 },
+      }));
+      const appAny = app as unknown as {
+        opencode: { createSession: typeof createSession };
+        sessionMap: Record<string, SessionWindowRecord>;
+        pendingNewSessionAnchors: Map<string, unknown>;
+        pendingNewSessionAnchorTimers: Map<string, unknown>;
+      };
+      appAny.opencode = { ...(appAny.opencode ?? {}), createSession };
+      appAny.sessionMap["oc_p2p_1"] = {
+        mode: "multi",
+        activeSessionId: "ses_existing",
+        sessions: [
+          { sessionId: "ses_existing", label: "日常聊天", createdAt: 1, lastUsedAt: 1 },
+        ],
+      };
+
+      await callHandleCommand(app, {
+        kind: "command",
+        command: { kind: "new", title: "临时会话" },
+      });
+
+      expect(appAny.pendingNewSessionAnchors.has("om_reply")).toBe(true);
+      vi.advanceTimersByTime(10 * 60_000);
+      expect(appAny.pendingNewSessionAnchors.has("om_reply")).toBe(false);
+      expect(appAny.pendingNewSessionAnchorTimers.has("om_reply")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("renames the current session with /rename", async () => {

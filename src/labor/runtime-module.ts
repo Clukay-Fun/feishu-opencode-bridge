@@ -137,19 +137,9 @@ export class LaborRuntimeModule implements RuntimeModule {
       return false;
     }
 
-    if (!this.featureConfig.enabled || !this.deps.service) {
-      await this.sendNotice(message, {
-        title: "劳动 skill 未启用",
-        template: "yellow",
-        icon: "maybe_outlined",
-        message: "当前未启用 laborSkill，请先补充 `laborSkill` 配置。",
-      });
-      return true;
-    }
-
     if (normalized === "劳动分析" || normalized === "labor-start") {
       const title = command.arguments.join(" ").trim() || undefined;
-      await this.startCollection(message, title);
+      await this.startFromEntry(message, title);
       return true;
     }
 
@@ -160,6 +150,23 @@ export class LaborRuntimeModule implements RuntimeModule {
       message: "请先发送 `/劳动分析` 开始收集材料。",
     });
     return true;
+  }
+
+  private async startFromEntry(
+    message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "senderOpenId">,
+    title?: string,
+  ): Promise<void> {
+    if (!this.featureConfig.enabled || !this.deps.service) {
+      await this.sendNotice(message, {
+        title: "劳动 skill 未启用",
+        template: "yellow",
+        icon: "maybe_outlined",
+        message: "当前未启用 laborSkill，请先补充 `laborSkill` 配置。",
+      });
+      return;
+    }
+
+    await this.startCollection(message, title);
   }
 
   private async startCollection(
