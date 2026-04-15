@@ -535,7 +535,7 @@ function normalizeContractRecord(record: Record<string, unknown> | null): Record
   copyString(input, fields, "客户名称");
   copyString(input, fields, "合同类型");
   copyString(input, fields, "具体类型/案由");
-  copyString(input, fields, "签约日期");
+  copyDate(input, fields, "签约日期");
   copyNumber(input, fields, "合同金额");
   copyString(input, fields, "付款节点");
   copyString(input, fields, "联系人");
@@ -601,6 +601,13 @@ function copyNumber(source: Record<string, unknown>, target: Record<string, unkn
     if (Number.isFinite(parsed)) {
       target[key] = parsed;
     }
+  }
+}
+
+function copyDate(source: Record<string, unknown>, target: Record<string, unknown>, key: string): void {
+  const normalized = normalizeBitableDateValue(source[key]);
+  if (typeof normalized === "number") {
+    target[key] = normalized;
   }
 }
 
@@ -684,8 +691,7 @@ async function createLocalWordDocWithDocxtemplater(
   const outputDir = path.join(dataDir, "contract-drafts");
   await mkdir(outputDir, { recursive: true });
   const safeName = sanitizeFileName(title || "合同草稿");
-  const timestamp = buildTimestamp(new Date());
-  const docxPath = path.join(outputDir, `${safeName}-${timestamp}.docx`);
+  const docxPath = await resolveNumberedOutputPath(outputDir, safeName, ".docx");
   const taggedTemplatePath = await ensureTaggedContractTemplate(dataDir, templatePath);
   const templateBuffer = await readFile(taggedTemplatePath);
   const zip = new PizZip(templateBuffer);
@@ -825,10 +831,8 @@ async function createLocalWordDocFromHtml(dataDir: string, title: string, markdo
   const outputDir = path.join(dataDir, "contract-drafts");
   await mkdir(outputDir, { recursive: true });
   const safeName = sanitizeFileName(title || "合同草稿");
-  const timestamp = buildTimestamp(new Date());
-  const basePath = path.join(outputDir, `${safeName}-${timestamp}`);
-  const htmlPath = `${basePath}.html`;
-  const docxPath = `${basePath}.docx`;
+  const docxPath = await resolveNumberedOutputPath(outputDir, safeName, ".docx");
+  const htmlPath = docxPath.replace(/\.docx$/i, ".html");
   const html = renderMarkdownAsHtmlDocument(title, markdown);
   await writeFile(htmlPath, html, "utf8");
   try {
@@ -1039,9 +1043,15 @@ function sanitizeFileName(value: string): string {
   return normalized || "合同草稿";
 }
 
-function buildTimestamp(date: Date): string {
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+export async function resolveNumberedOutputPath(outputDir: string, baseName: string, extension: string): Promise<string> {
+  for (let index = 0; ; index += 1) {
+    const suffix = index === 0 ? "" : `-${index + 1}`;
+    const candidate = path.join(outputDir, `${baseName}${suffix}${extension}`);
+    const exists = await stat(candidate).then(() => true).catch(() => false);
+    if (!exists) {
+      return candidate;
+    }
+  }
 }
 
 function buildContractWordFileTitle(
@@ -1155,6 +1165,46 @@ function formatContractSignDate(value: string | undefined): string {
   const month = matched[2] ?? "01";
   const day = matched[3] ?? "01";
   return `${year}年${month.padStart(2, "0")}月${day.padStart(2, "0")}日`;
+}
+
+export function normalizeBitableDateValue(value: unknown, now: Date = new Date()): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value >= 1e12 ? value : value * 1000;
+  }
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (/^(今天|今日)$/.test(trimmed)) {
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  }
+
+  const normalized = trimmed
+    .replace(/[./]/g, "-")
+    .replace(/年/g, "-")
+    .replace(/月/g, "-")
+    .replace(/日/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const matched = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?: (\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/);
+  if (!matched) {
+    const fallback = Date.parse(trimmed);
+    return Number.isFinite(fallback) ? fallback : undefined;
+  }
+
+  const year = Number(matched[1]);
+  const month = Number(matched[2]);
+  const day = Number(matched[3]);
+  const hour = Number(matched[4] ?? "0");
+  const minute = Number(matched[5] ?? "0");
+  const second = Number(matched[6] ?? "0");
+  const timestamp = new Date(year, month - 1, day, hour, minute, second).getTime();
+  return Number.isFinite(timestamp) ? timestamp : undefined;
 }
 
 function extractPartyFromText(text: string, pattern: RegExp): string | undefined {

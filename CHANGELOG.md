@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.18 - 2026-04-15
+
+### Fixed
+- Fixed contract draft Word export file names so they no longer append timestamps by default and only add numbered suffixes when the target file name already exists.
+- Fixed contract ledger writes to normalize `签约日期` into Bitable-friendly datetime values, including natural-language inputs such as `今天`.
+
 ## 0.1.17 - 2026-04-15
 
 ### Added
