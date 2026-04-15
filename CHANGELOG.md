@@ -4,6 +4,43 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.19 - 2026-04-15
+
+### Added
+- Added Python-backed contract rendering, editing, and parsing helpers plus shared Python tool wrappers for legal document workflows.
+- Added contract workbench export/edit regression coverage and repository checks for the Python toolchain requirements.
+
+### Changed
+- Updated contract-assistant prompts, runtime flow, and template metadata so contract drafting can support richer workbench-style editing and export behavior.
+- Updated knowledge PDF parsing entrypoints to reuse the newer Python conversion path and aligned local CLI/script helpers with the same toolchain.
+
+## 0.1.18 - 2026-04-15
+
+### Fixed
+- Fixed contract draft Word export file names so they no longer append timestamps by default and only add numbered suffixes when the target file name already exists.
+- Fixed contract ledger writes to normalize `签约日期` into Bitable-friendly datetime values, including natural-language inputs such as `今天`.
+
+## 0.1.17 - 2026-04-15
+
+### Added
+- Added local DOCX contract-template rendering with reusable template metadata, template field guides, and regression coverage for contract-draft post-processing.
+- Added guided contract-draft onboarding flows plus the bundled civil entrustment template files needed for local draft generation.
+
+### Changed
+- Updated contract-assistant runtime handling so draft requests can render local Word files, surface warnings, and reuse richer template-aware prompts.
+- Updated sanitization and notice-card rendering to better mask organization identities and keep notice cards icon-free by default.
+
+## 0.1.16 - 2026-04-14
+
+### Added
+- Added contract assistant workflows for contract drafting, contract extraction, invoice recognition, case management, and reminder-oriented Bitable updates.
+- Added a reusable evidence extraction pipeline with spreadsheet support plus new labor workflow modules, prompts, and tests.
+- Added updated demo and planning docs for contract assistant and labor workflow rollout.
+
+### Changed
+- Updated runtime/config/router wiring so contract assistant and labor workflows can coexist with the bridge and knowledge-base flows.
+- Updated sanitization, Feishu API helpers, and repository skills/documentation to match the new legal-workflow direction.
+
 ## 0.1.15 - 2026-04-14
 
 ### Added

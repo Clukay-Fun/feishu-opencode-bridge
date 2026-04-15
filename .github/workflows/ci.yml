@@ -28,8 +28,16 @@ jobs:
           node-version: 20
           cache: npm
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Install dependencies
         run: npm ci
+
+      - name: Install Python dependencies
+        run: python -m pip install -r scripts/python/requirements.txt
 
       - name: Typecheck
         run: npm run typecheck

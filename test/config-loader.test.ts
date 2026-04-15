@@ -228,6 +228,79 @@ describe("loadConfig memory settings", () => {
 
     await expect(loadConfig(configPath)).rejects.toThrow("vaultPath");
   });
+
+  it("fills contract assistant defaults when omitted", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify(baseConfig()), "utf8");
+
+    const config = await loadConfig(configPath);
+
+    expect(config.contractAssistant).toEqual({
+      enabled: false,
+      storage: {
+        baseToken: "",
+        contractTableId: "",
+        invoiceTableId: "",
+        caseTableId: "",
+      },
+      models: {
+        default: undefined,
+        draft: undefined,
+        extract: undefined,
+        invoice: undefined,
+        caseManage: undefined,
+      },
+      ingest: {
+        contractAllowedExtensions: [".pdf", ".docx", ".txt", ".md"],
+        invoiceAllowedExtensions: [".pdf", ".png", ".jpg", ".jpeg", ".txt", ".md"],
+        maxFileSizeMb: 20,
+        pendingTtlMs: 600000,
+      },
+      reminder: {
+        enabled: false,
+        targetChatIds: [],
+        hour: 9,
+        minute: 0,
+        lookaheadDays: 7,
+      },
+    });
+  });
+
+  it("requires base and table ids when contract assistant is enabled", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({
+      ...baseConfig(),
+      contractAssistant: {
+        enabled: true,
+      },
+    }), "utf8");
+
+    await expect(loadConfig(configPath)).rejects.toThrow("contractAssistant.storage.baseToken");
+  });
+
+  it("fills labor skill defaults when omitted", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify(baseConfig()), "utf8");
+
+    const config = await loadConfig(configPath);
+
+    expect(config.laborSkill).toEqual({
+      enabled: false,
+      models: {
+        default: undefined,
+        extract: undefined,
+        analyze: undefined,
+      },
+      ingest: {
+        allowedExtensions: [".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp", ".xls", ".xlsx", ".csv"],
+        maxFileSizeMb: 20,
+        pendingTtlMs: 600000,
+      },
+    });
+  });
 });
 
 function baseConfig(): Record<string, unknown> {
