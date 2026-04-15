@@ -102,6 +102,35 @@ describe("BridgeApp command surface", () => {
     expect(extractMarkdown(getReplyPayloads(outbound)[0])).toContain("无效的会话编号");
   });
 
+  it("migrates legacy p2p main-window sessions from the flat key to the :main key", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const appAny = app as unknown as {
+      sessionMap: Record<string, SessionWindowRecord>;
+    };
+    appAny.sessionMap["oc_p2p_1"] = {
+      mode: "multi",
+      activeSessionId: "ses_legacy",
+      sessions: [
+        { sessionId: "ses_legacy", label: "日常聊天2", createdAt: 1, lastUsedAt: 2 },
+        { sessionId: "ses_other", label: "发票识别", createdAt: 1, lastUsedAt: 1 },
+      ],
+    };
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "sessions" },
+    }, {
+      conversationKey: "oc_p2p_1:main",
+      threadKey: "main",
+    });
+
+    expect(appAny.sessionMap["oc_p2p_1"]).toBeUndefined();
+    expect(appAny.sessionMap["oc_p2p_1:main"]?.activeSessionId).toBe("ses_legacy");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("日常聊天2");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("发票识别");
+  });
+
   it("soft-deletes the current session for /close", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
@@ -124,6 +153,198 @@ describe("BridgeApp command surface", () => {
 
     expect(appAny.sessionMap["oc_p2p_1"].sessions.map((session) => session.sessionId)).toEqual(["ses_1"]);
     expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("已删除会话");
+  });
+
+  it("uses /new title as the new session label", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const createSession = vi.fn(async (title: string) => ({
+      id: "ses_named",
+      title,
+      time: { created: 1, updated: 1 },
+    }));
+    const appAny = app as unknown as {
+      opencode: { createSession: typeof createSession };
+      sessionMap: Record<string, SessionWindowRecord>;
+    };
+    appAny.opencode = { ...(appAny.opencode ?? {}), createSession };
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "new", title: "劳动争议分析" },
+    });
+
+    expect(createSession).toHaveBeenCalledWith("劳动争议分析");
+    expect(appAny.sessionMap["oc_p2p_1"]?.activeSessionId).toBe("ses_named");
+    expect(appAny.sessionMap["oc_p2p_1"]?.sessions[0]?.label).toBe("劳动争议分析");
+    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("已创建新会话");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("劳动争议分析");
+  });
+
+  it("keeps the current window on the existing session and stores a thread anchor when /new is sent from a busy window", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const createSession = vi.fn(async (title: string) => ({
+      id: "ses_threaded",
+      title,
+      time: { created: 1, updated: 1 },
+    }));
+    const appAny = app as unknown as {
+      opencode: { createSession: typeof createSession };
+      sessionMap: Record<string, SessionWindowRecord>;
+      pendingNewSessionAnchors: Map<string, { sourceConversationKey: string; entry: { sessionId: string; label: string } }>;
+    };
+    appAny.opencode = { ...(appAny.opencode ?? {}), createSession };
+    appAny.sessionMap["oc_p2p_1"] = {
+      mode: "multi",
+      activeSessionId: "ses_existing",
+      sessions: [
+        { sessionId: "ses_existing", label: "下午好", createdAt: 1, lastUsedAt: 1 },
+      ],
+    };
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "new", title: "劳动争议分析" },
+    });
+
+    expect(appAny.sessionMap["oc_p2p_1"]?.activeSessionId).toBe("ses_existing");
+    expect(appAny.sessionMap["oc_p2p_1"]?.sessions).toHaveLength(2);
+    expect(appAny.sessionMap["oc_p2p_1"]?.sessions.map((session) => session.sessionId)).toContain("ses_threaded");
+    expect(appAny.pendingNewSessionAnchors.get("om_reply")).toEqual(expect.objectContaining({
+      sourceConversationKey: "oc_p2p_1",
+      entry: expect.objectContaining({ sessionId: "ses_threaded", label: "劳动争议分析" }),
+    }));
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("保持当前");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("新会话");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("在线程里继续");
+  });
+
+  it("truncates long /new titles in bridge labels while keeping the OpenCode title intact", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const createSession = vi.fn(async (title: string) => ({
+      id: "ses_named_long",
+      title,
+      time: { created: 1, updated: 1 },
+    }));
+    const appAny = app as unknown as {
+      opencode: { createSession: typeof createSession };
+      sessionMap: Record<string, SessionWindowRecord>;
+    };
+    appAny.opencode = { ...(appAny.opencode ?? {}), createSession };
+    const longTitle = "这是一个特别特别特别特别特别长的劳动争议分析会话标题用于测试";
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "new", title: longTitle },
+    });
+
+    expect(createSession).toHaveBeenCalledWith(longTitle);
+    expect(appAny.sessionMap["oc_p2p_1"]?.sessions[0]?.label.length).toBe(24);
+    expect(appAny.sessionMap["oc_p2p_1"]?.sessions[0]?.label.endsWith("...")).toBe(true);
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("...");
+  });
+
+  it("hydrates the first thread message from the /new reply anchor", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const createSession = vi.fn(async (title: string) => ({
+      id: "ses_threaded",
+      title,
+      time: { created: 1, updated: 1 },
+    }));
+    const promptAsync = vi.fn(async () => ({ id: "evt_1" }));
+    const appAny = app as unknown as {
+      opencode: {
+        health: () => Promise<{ ok: boolean }>;
+        createSession: typeof createSession;
+        listSessions: () => Promise<Array<{ id: string; title: string; time: { created: number; updated: number } }>>;
+        promptAsync: typeof promptAsync;
+      };
+      sessionMap: Record<string, SessionWindowRecord>;
+    };
+    appAny.opencode = {
+      ...(appAny.opencode ?? {}),
+      health: async () => ({ ok: true }),
+      createSession,
+      listSessions: async () => [{ id: "ses_threaded", title: "劳动争议分析", time: { created: 1, updated: 1 } }],
+      promptAsync,
+    };
+    appAny.sessionMap["oc_p2p_1"] = {
+      mode: "multi",
+      activeSessionId: "ses_existing",
+      sessions: [
+        { sessionId: "ses_existing", label: "下午好", createdAt: 1, lastUsedAt: 1 },
+      ],
+    };
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "new", title: "劳动争议分析" },
+    });
+
+    await app.handleIncomingMessage({
+      ...createIncomingMessage("om_thread_1"),
+      conversationKey: "oc_p2p_1:om_reply",
+      threadKey: "om_reply",
+      rootId: "om_reply",
+      plainText: "继续分析这个劳动争议",
+      rawContent: "继续分析这个劳动争议",
+    });
+
+    expect(appAny.sessionMap["oc_p2p_1:om_reply"]?.activeSessionId).toBe("ses_threaded");
+    expect(appAny.sessionMap["oc_p2p_1:om_reply"]?.sessions[0]?.label).toBe("劳动争议分析");
+    expect(appAny.sessionMap["oc_p2p_1"]?.activeSessionId).toBe("ses_existing");
+  });
+
+  it("renames the current session with /rename", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const appAny = app as unknown as {
+      sessionMap: Record<string, SessionWindowRecord>;
+    };
+    appAny.sessionMap["oc_p2p_1"] = {
+      mode: "multi",
+      activeSessionId: "ses_2",
+      sessions: [
+        { sessionId: "ses_2", label: "当前会话", createdAt: 2, lastUsedAt: 2 },
+        { sessionId: "ses_1", label: "旧会话", createdAt: 1, lastUsedAt: 1 },
+      ],
+    };
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "rename", title: "合同起草" },
+    });
+
+    expect(appAny.sessionMap["oc_p2p_1"]?.sessions.find((session) => session.sessionId === "ses_2")?.label).toBe("合同起草");
+    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("已重命名会话");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("合同起草");
+  });
+
+  it("truncates long /rename titles in bridge labels", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const appAny = app as unknown as {
+      sessionMap: Record<string, SessionWindowRecord>;
+    };
+    appAny.sessionMap["oc_p2p_1"] = {
+      mode: "multi",
+      activeSessionId: "ses_2",
+      sessions: [
+        { sessionId: "ses_2", label: "当前会话", createdAt: 2, lastUsedAt: 2 },
+      ],
+    };
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "rename", title: "这是一个特别特别特别特别特别长的合同起草标题用于测试" },
+    });
+
+    expect(appAny.sessionMap["oc_p2p_1"]?.sessions[0]?.label.length).toBe(24);
+    expect(appAny.sessionMap["oc_p2p_1"]?.sessions[0]?.label.endsWith("...")).toBe(true);
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("...");
   });
 
   it("asks for confirmation before deleting a session from OpenCode", async () => {
@@ -820,6 +1041,68 @@ describe("BridgeApp command surface", () => {
     }));
   });
 
+  it("allows parallel turns after switching to another session in the same window", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const startedSessions: string[] = [];
+    const resolvers = new Map<string, () => void>();
+    const appAny = app as unknown as {
+      sessionMap: Record<string, SessionWindowRecord>;
+      runningChats: Map<string, Promise<void>>;
+      ensureSession: (source: { conversationKey: string }) => Promise<string>;
+      ensureServerAvailableForMessage: (message: { messageId: string }) => Promise<boolean>;
+      turnExecutor: {
+        context: {
+          turnCardManager: {
+            createTurnCard: (chatId: string, turnId: string, sessionId: string, replyToMessageId: string) => Promise<null>;
+          };
+        };
+        executeTurn: (queueKey: string, turn: Record<string, unknown>) => Promise<string>;
+      };
+    };
+
+    appAny.sessionMap["oc_p2p_1"] = {
+      mode: "multi",
+      activeSessionId: "ses_1",
+      sessions: [
+        { sessionId: "ses_1", label: "会话一", createdAt: 1, lastUsedAt: 2 },
+        { sessionId: "ses_2", label: "会话二", createdAt: 1, lastUsedAt: 1 },
+      ],
+    };
+    appAny.ensureServerAvailableForMessage = vi.fn(async () => true);
+    appAny.ensureSession = vi.fn(async (source) => appAny.sessionMap[source.conversationKey]?.activeSessionId ?? "ses_1");
+    appAny.turnExecutor.context.turnCardManager.createTurnCard = vi.fn(async () => null);
+    appAny.turnExecutor.executeTurn = vi.fn(async (_queueKey, turn) => {
+      const sessionId = String(turn.sessionId);
+      startedSessions.push(sessionId);
+      await new Promise<void>((resolve) => {
+        resolvers.set(sessionId, resolve);
+      });
+      return `reply-${sessionId}`;
+    });
+
+    const firstRun = app.handleIncomingMessage(createIncomingMessage("om_1"));
+    await vi.waitFor(() => expect(startedSessions).toEqual(["ses_1"]));
+
+    appAny.sessionMap["oc_p2p_1"] = {
+      ...appAny.sessionMap["oc_p2p_1"],
+      activeSessionId: "ses_2",
+    };
+    const secondRun = app.handleIncomingMessage({
+      ...createIncomingMessage("om_2"),
+      rawContent: "hello 2",
+      plainText: "hello 2",
+    });
+
+    await vi.waitFor(() => expect(startedSessions).toEqual(["ses_1", "ses_2"]));
+    expect(appAny.runningChats.size).toBe(2);
+    expect(JSON.stringify(outbound.replyMessage.mock.calls)).not.toContain("排在第1位");
+
+    resolvers.get("ses_1")?.();
+    resolvers.get("ses_2")?.();
+    await Promise.all([firstRun, secondRun]);
+  });
+
   it("clears question state owned by the finishing turn", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
@@ -906,12 +1189,15 @@ async function callHandleCommand(
 type AppCommandSurfaceTestRoute = {
   kind: "command";
   command:
+    | { kind: "new"; title?: string | undefined }
+    | { kind: "rename"; title: string }
     | { kind: "abort" }
     | { kind: "models"; provider?: string | undefined }
     | { kind: "knowledge-ingest" }
     | { kind: "knowledge-mode-start" }
     | { kind: "knowledge-mode-end" }
     | { kind: "knowledge-ingest-end" }
+    | { kind: "sessions" }
     | { kind: "sessions-all" }
     | { kind: "sessions-select"; index: number }
     | { kind: "close"; index?: number | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined }

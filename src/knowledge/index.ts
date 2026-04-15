@@ -25,6 +25,7 @@ export type { KnowledgeDocumentSummary, KnowledgeEntryRecord } from "./db.js";
 export type KnowledgeQueryResult = {
   question: string;
   results: KnowledgeEntryCandidate[];
+  bitableUrl?: string | undefined;
 };
 
 export type KnowledgeIngestResult = {
@@ -196,6 +197,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     return {
       question,
       results: reranked.slice(0, this.config.query.finalTopN),
+      bitableUrl: resolveKnowledgeBitableViewUrl(this.config),
     };
   }
 

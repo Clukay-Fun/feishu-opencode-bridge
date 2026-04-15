@@ -652,6 +652,7 @@ describe("KnowledgeBaseService", () => {
     await service.syncMirror();
     const result = await service.query("员工试用期最长多久？");
     expect(result.results).toHaveLength(1);
+    expect(result.bitableUrl).toBe("https://feishu.cn/base/app_token?table=tbl_entries");
     expect(result.results[0]?.sourceFile).toBe("劳动合同法手册.pdf");
     expect(result.results[0]?.statute).toBe("《劳动合同法》第 19 条");
     service.close();

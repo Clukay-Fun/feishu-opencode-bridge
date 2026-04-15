@@ -878,8 +878,8 @@ function createGroupTextMessage(text: string, messageId: string, senderOpenId: s
     messageType: "text",
     rawContent: text,
     plainText: text,
-    threadKey: messageId,
-    conversationKey: `oc_group_1:${messageId}`,
+    threadKey: "main",
+    conversationKey: "oc_group_1:main",
   };
 }
 

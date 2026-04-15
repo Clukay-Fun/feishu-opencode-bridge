@@ -726,10 +726,10 @@ function readRecord(value: Record<string, unknown> | null, key: string): Record<
 
 async function updateLaborBoards(boardTokens: string[], result: LaborAggregateResult): Promise<void> {
   const diagrams = [
-    buildTimelineMermaid(result.timeline),
-    buildEvidenceMapMermaid(result),
-    buildClaimsMindmapMermaid(result),
-    buildNextActionsFlowMermaid(result),
+    withWhiteboardDslInstruction(buildTimelineMermaid(result.timeline)),
+    withWhiteboardDslInstruction(buildEvidenceMapMermaid(result)),
+    withWhiteboardDslInstruction(buildClaimsMindmapMermaid(result)),
+    withWhiteboardDslInstruction(buildNextActionsFlowMermaid(result)),
   ];
   for (const [index, boardToken] of boardTokens.slice(0, diagrams.length).entries()) {
     const source = diagrams[index] ?? "";
@@ -749,6 +749,14 @@ async function updateLaborBoards(boardTokens: string[], result: LaborAggregateRe
       "-",
     ], source);
   }
+}
+
+function withWhiteboardDslInstruction(source: string): string {
+  const trimmed = source.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  return `%% 使用飞书白板内置DSL精确控制样式\n${trimmed}`;
 }
 
 function buildTimelineMermaid(rows: LaborAggregateResult["timeline"]): string {

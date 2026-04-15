@@ -77,6 +77,17 @@ export class QueueRegistry {
     this.queues.set(chatId, queue);
     return queue;
   }
+
+  getIfExists(key: string): ChatQueue | null {
+    return this.queues.get(key) ?? null;
+  }
+
+  listByPrefix(prefix: string): ChatQueue[] {
+    const scopedPrefix = `${prefix}::`;
+    return [...this.queues.entries()]
+      .filter(([key]) => key === prefix || key.startsWith(scopedPrefix))
+      .map(([, queue]) => queue);
+  }
 }
 
 export type { EnqueueResult };

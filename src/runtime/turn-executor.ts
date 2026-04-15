@@ -99,16 +99,37 @@ export type TurnExecutorContext = {
 export class TurnExecutor {
   constructor(private readonly context: TurnExecutorContext) {}
 
-  async processChat(conversationKey: string): Promise<void> {
-    const queue = this.context.queues.get(conversationKey);
+  async processChat(queueKey: string): Promise<void> {
+    const queue = this.context.queues.get(queueKey);
     while (queue.current()) {
-      await this.runTurn(conversationKey);
+      await this.runTurn(queueKey);
       queue.finishActive();
     }
   }
 
-  async runTurn(conversationKey: string): Promise<void> {
-    const queue = this.context.queues.get(conversationKey);
+  private async flushPendingTextEvents(
+    assistantMessageId: string,
+    pendingTextEvents: Array<{ messageId: string; kind: "delta" | "set"; value: string }>,
+    runtime: {
+      appendFinalText: (delta: string) => Promise<void>;
+      setFinalText: (value: string) => Promise<void>;
+    },
+  ): Promise<void> {
+    const matchingEvents = pendingTextEvents.filter((event) => event.messageId === assistantMessageId);
+    pendingTextEvents.length = 0;
+
+    for (const event of matchingEvents) {
+      if (event.kind === "set") {
+        await runtime.setFinalText(event.value);
+        continue;
+      }
+
+      await runtime.appendFinalText(event.value);
+    }
+  }
+
+  async runTurn(queueKey: string): Promise<void> {
+    const queue = this.context.queues.get(queueKey);
     const active = queue.peek();
     if (!active) return;
 
@@ -120,7 +141,7 @@ export class TurnExecutor {
       const sessionId = turn.sessionId ?? await this.context.ensureSession(turn);
       turn = { ...turn, sessionId };
       queue.replaceActive(turn);
-      this.context.logger.log("bridge/queue", "turn started", { turnId: turn.turnId, sessionId, chatId: turn.chatId, conversationKey });
+      this.context.logger.log("bridge/queue", "turn started", { turnId: turn.turnId, sessionId, chatId: turn.chatId, conversationKey: turn.conversationKey });
 
       const card = await this.context.turnCardManager.createTurnCard(turn.chatId, turn.turnId, sessionId, turn.inboundMessageId);
       if (card) {
@@ -129,7 +150,7 @@ export class TurnExecutor {
         queue.replaceActive(turn);
       }
 
-      const reply = cleanAssistantReply(await this.executeTurn(conversationKey, turn as BridgeTurn & { sessionId: string }));
+      const reply = cleanAssistantReply(await this.executeTurn(queueKey, turn as BridgeTurn & { sessionId: string }));
       this.context.logger.log("opencode/events", "reply completed", { turnId: turn.turnId, sessionId, len: reply.length });
       this.context.logger.logTranscript("opencode-reply", { sessionId, turnId: turn.turnId }, reply);
       await this.context.maybeUpdateSessionLabel(turn as BridgeTurn & { sessionId: string });
@@ -149,23 +170,23 @@ export class TurnExecutor {
       this.context.logger.log("bridge/queue", "turn completed", { turnId: turn.turnId, duration: Date.now() - (turn.startedAt ?? Date.now()) });
     } catch (error) {
       const detail = normalizeTurnFailureDetail(error);
-      this.context.logger.log("bridge/queue", "run turn failed", { chatId: turn.chatId, conversationKey, turnId: turn.turnId, detail }, "error");
+      this.context.logger.log("bridge/queue", "run turn failed", { chatId: turn.chatId, conversationKey: turn.conversationKey, turnId: turn.turnId, detail }, "error");
       if (!hasProcessCard) {
         await this.sendTurnFallbackMarkdown(turn.chatId, `处理失败：${escapeMarkdownText(detail)}`, turn.inboundMessageId);
       }
       await this.context.turnCardManager.updateTurnCard(turn.turnId, { status: detail.includes("超时") ? "已超时" : "处理失败", update: detail, target: "step" });
       queue.replaceActive(transitionTurn(turn, detail.includes("超时") ? "timeout" : "aborted"));
     } finally {
-      this.context.clearTurnOwnedPendingInteraction(conversationKey, turn.turnId);
+      this.context.clearTurnOwnedPendingInteraction(turn.conversationKey, turn.turnId);
       this.context.turnCardManager.cleanup(turn.turnId);
     }
   }
 
-  private async executeTurn(conversationKey: string, turn: BridgeTurn & { sessionId: string }): Promise<string> {
+  private async executeTurn(queueKey: string, turn: BridgeTurn & { sessionId: string }): Promise<string> {
     const baselineAssistant = await this.getLatestAssistantMessage(turn.sessionId);
     const baselineAssistantId = baselineAssistant?.info.id ?? null;
     const baselineAssistantTimestamp = getMessageTimestamp(baselineAssistant);
-    const queue = this.context.queues.get(conversationKey);
+    const queue = this.context.queues.get(queueKey);
     const bridgeSystemPrompt = this.context.config.bridge.injectSystemState
       ? buildBridgeSystemPrompt(turn, this.context.getSessionWindow(turn.conversationKey, turn.chatType))
       : undefined;
@@ -182,6 +203,7 @@ export class TurnExecutor {
       let fallbackTimer: NodeJS.Timeout | null = null;
       let seenSessionEvent = false;
       const ignoredTextPartIds = new Set<string>();
+      const pendingTextEvents: Array<{ messageId: string; kind: "delta" | "set"; value: string }> = [];
 
       const settleWithError = (error: Error): void => {
         if (settled) return;
@@ -222,8 +244,25 @@ export class TurnExecutor {
           let nextWatchdogGapMs: number | null = null;
           await this.handleEvent(turn, event, {
             getAssistantMessageId: () => assistantMessageId,
-            setAssistantMessageId: (value) => { assistantMessageId = value; },
+            setAssistantMessageId: async (value) => {
+              assistantMessageId = value;
+              if (assistantMessageId) {
+                await this.flushPendingTextEvents(assistantMessageId, pendingTextEvents, {
+                  appendFinalText: async (delta) => {
+                    finalText += delta;
+                    await this.context.turnCardManager.scheduleStreamUpdate(turn.turnId, finalText);
+                  },
+                  setFinalText: async (value) => {
+                    finalText = value;
+                    await this.context.turnCardManager.scheduleStreamUpdate(turn.turnId, finalText);
+                  },
+                });
+              }
+            },
             ignoredTextPartIds,
+            queuePendingTextEvent: (messageId, eventType, value) => {
+              pendingTextEvents.push({ messageId, kind: eventType, value });
+            },
             appendFinalText: async (delta) => {
               finalText += delta;
               await this.context.turnCardManager.scheduleStreamUpdate(turn.turnId, finalText);
@@ -244,7 +283,7 @@ export class TurnExecutor {
           }
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
-          this.context.logger.log("opencode/events", "event listener failed", { chatId: turn.chatId, conversationKey, sessionId: turn.sessionId, detail, type: event.type }, "warn");
+          this.context.logger.log("opencode/events", "event listener failed", { chatId: turn.chatId, conversationKey: turn.conversationKey, sessionId: turn.sessionId, detail, type: event.type }, "warn");
         }
       });
 
@@ -292,8 +331,9 @@ export class TurnExecutor {
     event: OpenCodeEvent,
     runtime: {
       getAssistantMessageId: () => string | null;
-      setAssistantMessageId: (value: string | null) => void;
+      setAssistantMessageId: (value: string | null) => Promise<void>;
       ignoredTextPartIds: Set<string>;
+      queuePendingTextEvent: (messageId: string, eventType: "delta" | "set", value: string) => void;
       appendFinalText: (delta: string) => Promise<void>;
       setFinalText: (value: string) => Promise<void>;
       finish: () => Promise<void>;
@@ -305,7 +345,7 @@ export class TurnExecutor {
     if (event.type === "message.updated") {
       const info = readOptionalRecord(event.properties, "info");
       if (info && readOptionalString(info, "role") === "assistant") {
-        runtime.setAssistantMessageId(readOptionalString(info, "id") ?? runtime.getAssistantMessageId());
+        await runtime.setAssistantMessageId(readOptionalString(info, "id") ?? runtime.getAssistantMessageId());
       }
       return;
     }
@@ -316,7 +356,14 @@ export class TurnExecutor {
       if (runtime.getAssistantMessageId() && messageId && messageId !== runtime.getAssistantMessageId()) return;
       if (partId && runtime.ignoredTextPartIds.has(partId)) return;
       if (readOptionalString(event.properties, "field") === "text") {
-        await runtime.appendFinalText(readOptionalString(event.properties, "delta") ?? "");
+        const delta = readOptionalString(event.properties, "delta") ?? "";
+        if (!runtime.getAssistantMessageId()) {
+          if (messageId) {
+            runtime.queuePendingTextEvent(messageId, "delta", delta);
+          }
+          return;
+        }
+        await runtime.appendFinalText(delta);
       }
       return;
     }
@@ -336,6 +383,12 @@ export class TurnExecutor {
         }
         const text = readOptionalString(part, "text");
         if (text !== undefined) {
+          if (!runtime.getAssistantMessageId()) {
+            if (messageId) {
+              runtime.queuePendingTextEvent(messageId, "set", text);
+            }
+            return;
+          }
           await runtime.setFinalText(text);
         }
         return;

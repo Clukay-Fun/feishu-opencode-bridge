@@ -189,7 +189,16 @@ export function resolveDisplayLabel(session: OpenCodeSession | undefined, curren
 }
 
 export function shouldHydrateLabelFromSessionMeta(currentLabel: string, sessionId: string): boolean {
-  return currentLabel === sessionId;
+  return currentLabel === sessionId || isBridgePollutedSessionLabel(currentLabel);
+}
+
+function isBridgePollutedSessionLabel(currentLabel: string): boolean {
+  return [
+    "显示所有会话",
+    "会话列表",
+    "/sessions",
+    "/sessions all",
+  ].includes(currentLabel.trim());
 }
 
 export function summarizeSessionLabel(plainText: string): string {

@@ -508,15 +508,16 @@ export function computeThreadKey(input: {
   rootId?: string | undefined;
   parentId?: string | undefined;
 }): string {
-  if (input.chatType === "p2p") {
-    return input.messageId;
+  const threadRoot = nonEmptyString(input.rootId) ?? nonEmptyString(input.parentId);
+  if (threadRoot) {
+    return threadRoot;
   }
 
-  return nonEmptyString(input.rootId) ?? nonEmptyString(input.parentId) ?? input.messageId;
+  return input.chatType === "group" || input.chatType === "p2p" ? "main" : input.messageId;
 }
 
 export function buildConversationKey(chatType: string, chatId: string, threadKey: string): string {
-  return chatType === "p2p" ? chatId : `${chatId}:${threadKey}`;
+  return `${chatId}:${threadKey}`;
 }
 
 function parseMessageContent(
