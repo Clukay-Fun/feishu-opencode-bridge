@@ -1,6 +1,8 @@
 import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import Docxtemplater from "docxtemplater";
 import PizZip from "pizzip";
 
@@ -9,6 +11,7 @@ import { parseKnowledgeFile } from "../knowledge/parser.js";
 import type { Logger } from "../logging/logger.js";
 import type { OpenCodeClient, OpenCodeModelRef, OpenCodePromptRequest } from "../opencode/client.js";
 import { extractAssistantText } from "../runtime/app-helpers.js";
+import { spawnPythonTool } from "../utils/python-tool.js";
 import {
   EvidenceExtractService,
   type EvidenceExtractResourcePort,
@@ -19,6 +22,9 @@ import {
   buildCaseUpdatePrompt,
   buildContractDraftPrompt,
   buildContractExtractPrompt,
+  buildContractWorkbenchApplyPrompt,
+  buildContractWorkbenchInitFromDocumentPrompt,
+  buildContractWorkbenchInitFromPromptPrompt,
   buildInvoiceRecognizePrompt,
 } from "./prompts.js";
 
@@ -65,11 +71,96 @@ export type CaseUpdateResult = {
   fields: Record<string, unknown>;
 };
 
+export type ContractClause = {
+  id: string;
+  number: string;
+  title: string;
+  content: string;
+};
+
+export type ContractAppendix = {
+  id: string;
+  title: string;
+  content: string;
+};
+
+export type ContractPartyInfo = {
+  clientName?: string | undefined;
+  counterpartyName?: string | undefined;
+  agencyName?: string | undefined;
+  leadLawyer?: string | undefined;
+  signDate?: string | undefined;
+};
+
+export type ContractHistoryEntry = {
+  version: number;
+  summary: string;
+  at: string;
+};
+
+export type ContractState = {
+  sessionId: string;
+  sourceMode: "template_upload" | "freeform_prompt" | "existing_contract_upload";
+  title: string;
+  parties: ContractPartyInfo;
+  clauses: ContractClause[];
+  appendices: ContractAppendix[];
+  templatePath?: string | undefined;
+  sourceFilePath?: string | undefined;
+  draftPath?: string | undefined;
+  version: number;
+  history: ContractHistoryEntry[];
+  lastRenderedAt?: string | undefined;
+};
+
+export type ContractWorkbenchModelResult = {
+  action: "view" | "update" | "export" | "reject";
+  message: string;
+  updatedState?: ContractState | undefined;
+  viewPayload?: {
+    title?: string | undefined;
+    content: string;
+  } | undefined;
+  exportHint?: {
+    suggestedFileName?: string | undefined;
+  } | undefined;
+};
+
+export type ContractEditOperation =
+  | {
+    type: "delete_clause";
+    clauseNumber?: string | undefined;
+    heading?: string | undefined;
+  }
+  | {
+    type: "replace_content";
+    clauseNumber?: string | undefined;
+    heading?: string | undefined;
+    newContent: string;
+  }
+  | {
+    type: "delete_pages";
+    pageRange: [number, number];
+  }
+  | {
+    type: "delete_by_heading";
+    heading: string;
+  };
+
 type ContractTemplate = {
   name: string;
   docxPath: string;
   fieldGuidePath?: string | undefined;
 };
+
+export type ContractDraftProgressStage =
+  | "parse-request"
+  | "match-template"
+  | "prepare-fields"
+  | "generate-word"
+  | "sync-artifacts";
+
+type ContractDraftProgressCallback = (stage: ContractDraftProgressStage, detail?: string) => Promise<void> | void;
 
 export class ContractAssistantService {
   private readonly evidenceExtractor: EvidenceExtractService;
@@ -84,9 +175,12 @@ export class ContractAssistantService {
     this.evidenceExtractor = new EvidenceExtractService(resources, opencode, logger);
   }
 
-  async draftContract(request: string): Promise<ContractDraftResult> {
+  async draftContract(request: string, onProgress?: ContractDraftProgressCallback): Promise<ContractDraftResult> {
+    await onProgress?.("parse-request", "正在识别模板、程序和收费条件");
+    await onProgress?.("match-template", "正在匹配本地 Word 模板");
     const template = await this.resolveDraftTemplate(request);
     const templateContent = await this.loadTemplateContent(template);
+    await onProgress?.("prepare-fields", `已匹配模板：${template.name}，正在整理关键字段`);
     const parsed = await this.askForJson(buildContractDraftPrompt(
       request,
       template.name,
@@ -102,6 +196,7 @@ export class ContractAssistantService {
     const templateData = readRecord(parsed, "templateData");
     const warnings: string[] = [];
     const fileNameTitle = buildContractWordFileTitle(request, record, template.name);
+    await onProgress?.("generate-word", "正在生成 Word 合同草稿");
     const wordPath = await createLocalWordDoc(
       this.dataDir,
       template.docxPath,
@@ -109,6 +204,7 @@ export class ContractAssistantService {
       markdown,
       buildContractTemplateRenderData(request, record, templateData, feeMode),
     );
+    await onProgress?.("sync-artifacts", "正在同步飞书文档与合同台账");
     const docUrl = await createLarkDoc(docTitle, markdown).catch((error) => {
       warnings.push(`飞书文档创建失败：${error instanceof Error ? error.message : String(error)}`);
       this.logger.log("contract-assistant", "create lark doc failed", {
@@ -169,7 +265,11 @@ export class ContractAssistantService {
       maxExtractedTextLength: 12_000,
       model: resolveModel(this.config, "invoice"),
       createSessionTitle: "[bridge] invoice-recognize",
-      buildPrompt: ({ fileName, localPath, extractedText }) => buildInvoiceRecognizePrompt(fileName, localPath, extractedText || undefined),
+      buildPrompt: ({ fileName, localPath, extractedText }) => resolveInvoiceRecognizePrompt({
+        fileName,
+        localPath,
+        extractedText: extractedText || undefined,
+      }),
     });
     const record = normalizeInvoiceRecord(readRecord(result, "record"));
     const summary = readString(result, "summary") ?? "已识别发票信息。";
@@ -199,7 +299,7 @@ export class ContractAssistantService {
   }
 
   async createCase(request: string): Promise<CaseCreateResult> {
-    const result = await this.askForJson(buildCaseCreatePrompt(request), resolveModel(this.config, "caseManage"));
+    const result = await this.askForJson(await resolveCaseCreatePrompt(request), resolveModel(this.config, "caseManage"));
     const record = normalizeCaseRecord(readRecord(result, "record"));
     const summary = readString(result, "summary") ?? "已整理案件管理字段。";
     const recordId = await this.resources.createBitableRecord(
@@ -211,7 +311,7 @@ export class ContractAssistantService {
   }
 
   async updateCase(request: string): Promise<CaseUpdateResult> {
-    const result = await this.askForJson(buildCaseUpdatePrompt(request), resolveModel(this.config, "caseManage"));
+    const result = await this.askForJson(await resolveCaseUpdatePrompt(request), resolveModel(this.config, "caseManage"));
     const caseNo = readString(result, "caseNo");
     const clientName = readString(result, "clientName");
     const fields = normalizeCaseRecord(readRecord(result, "fields"));
@@ -375,6 +475,339 @@ export class ContractAssistantService {
       fieldGuideText,
     };
   }
+
+  async initializeWorkbenchFromPrompt(sessionId: string, request: string): Promise<{ state: ContractState; message: string }> {
+    const result = await this.askForJson(
+      buildContractWorkbenchInitFromPromptPrompt(request),
+      resolveModel(this.config, "draft"),
+    );
+    const state = normalizeContractState(readRecord(result, "state"), {
+      sessionId,
+      sourceMode: "freeform_prompt",
+      title: "合同草稿",
+    });
+    return {
+      state,
+      message: readString(result, "message") ?? `已根据文字描述初始化合同，共整理 ${state.clauses.length} 条条款。`,
+    };
+  }
+
+  async initializeWorkbenchFromDocument(
+    sessionId: string,
+    file: ContractAssistantFileRef,
+  ): Promise<{ state: ContractState; message: string }> {
+    const preparedFile = await this.evidenceExtractor.prepareFile(file, {
+      allowedExtensions: this.config.ingest.contractAllowedExtensions,
+      maxFileSizeMb: this.config.ingest.maxFileSizeMb,
+      maxExtractedTextLength: 30_000,
+      parseTextExtensions: [".pdf", ".docx", ".txt", ".md"],
+    });
+    let state: ContractState | null = null;
+    let summary: string | undefined;
+
+    if (preparedFile.extension === ".docx") {
+      const parsed = await spawnPythonTool<{
+        title?: string;
+        parties?: Record<string, unknown>;
+        clauses?: Array<Record<string, unknown>>;
+        appendices?: Array<Record<string, unknown>>;
+        rawText?: string;
+        sourceModeHint?: "template_upload" | "existing_contract_upload";
+      }>("contract_parse", {
+        inputPath: preparedFile.localPath,
+      });
+      if (parsed.ok) {
+        const sourceModeHint = parsed.data.sourceModeHint === "template_upload" || parsed.data.sourceModeHint === "existing_contract_upload"
+          ? parsed.data.sourceModeHint
+          : "existing_contract_upload";
+        state = normalizeContractState({
+          title: parsed.data.title,
+          parties: parsed.data.parties,
+          clauses: parsed.data.clauses,
+          appendices: parsed.data.appendices,
+        }, {
+          sessionId,
+          sourceMode: sourceModeHint,
+          title: path.basename(preparedFile.fileName, path.extname(preparedFile.fileName)),
+          sourceFilePath: preparedFile.localPath,
+          templatePath: sourceModeHint === "template_upload" ? preparedFile.localPath : undefined,
+        });
+        summary = `已根据《${preparedFile.fileName}》初始化合同，共整理 ${state.clauses.length} 条条款。`;
+      }
+    }
+
+    if (!state) {
+      const content = preparedFile.extractedText.trim();
+      if (!content) {
+        throw new Error("未能从上传文件中提取到可编辑的合同文本，请尝试上传可复制文本的 Word、PDF 或文本文件。");
+      }
+      const result = await this.askForJson(
+        buildContractWorkbenchInitFromDocumentPrompt(preparedFile.fileName, content),
+        resolveModel(this.config, "draft"),
+      );
+      const sourceMode = readString(readRecord(result, "state"), "sourceMode");
+      const normalizedSourceMode = sourceMode === "template_upload" || sourceMode === "existing_contract_upload"
+        ? sourceMode
+        : "existing_contract_upload";
+      state = normalizeContractState(readRecord(result, "state"), {
+        sessionId,
+        sourceMode: normalizedSourceMode,
+        title: path.basename(preparedFile.fileName, path.extname(preparedFile.fileName)),
+        sourceFilePath: preparedFile.localPath,
+        templatePath: normalizedSourceMode === "template_upload" ? preparedFile.localPath : undefined,
+      });
+      summary = readString(result, "message") ?? `已根据《${preparedFile.fileName}》初始化合同，共整理 ${state.clauses.length} 条条款。`;
+    }
+
+    return {
+      state,
+      message: summary ?? `已根据《${preparedFile.fileName}》初始化合同，共整理 ${state.clauses.length} 条条款。`,
+    };
+  }
+
+  async applyWorkbenchMessage(
+    state: ContractState,
+    recentMessages: string[],
+    userMessage: string,
+  ): Promise<ContractWorkbenchModelResult> {
+    const result = await this.askForJson(
+      buildContractWorkbenchApplyPrompt(
+        JSON.stringify(state, null, 2),
+        recentMessages,
+        userMessage,
+      ),
+      resolveModel(this.config, "draft"),
+    );
+    return normalizeWorkbenchModelResult(result, state);
+  }
+
+  async exportWorkbenchWord(
+    state: ContractState,
+    hint?: { suggestedFileName?: string | undefined },
+  ): Promise<{ wordPath: string }> {
+    const outputDir = path.join(this.dataDir, "contract-drafts");
+    await mkdir(outputDir, { recursive: true });
+
+    const desiredBaseName = sanitizeFileName(
+      hint?.suggestedFileName?.trim()
+      || state.title.trim()
+      || `合同草稿-v${state.version}`,
+    );
+    const outputPath = await resolveNumberedOutputPath(outputDir, desiredBaseName, ".docx");
+    const result = await spawnPythonTool<{ outputPath: string }>("contract_render", {
+      state,
+      outputPath,
+    });
+    if (!result.ok) {
+      throw new Error(result.error);
+    }
+    return { wordPath: result.data.outputPath || outputPath };
+  }
+
+  async editWorkbenchWord(
+    inputPath: string,
+    operations: ContractEditOperation[],
+    hint?: { suggestedFileName?: string | undefined },
+  ): Promise<{ wordPath: string; appliedOps: number; skippedOps: Array<Record<string, unknown>> }> {
+    const outputDir = path.join(this.dataDir, "contract-drafts");
+    await mkdir(outputDir, { recursive: true });
+
+    const desiredBaseName = sanitizeFileName(
+      hint?.suggestedFileName?.trim()
+      || path.basename(inputPath, path.extname(inputPath))
+      || "合同草稿-编辑版",
+    );
+    const outputPath = await resolveNumberedOutputPath(outputDir, desiredBaseName, ".docx");
+    const result = await spawnPythonTool<{
+      outputPath: string;
+      appliedOps: number;
+      skippedOps?: Array<Record<string, unknown>>;
+    }>("contract_edit", {
+      inputPath,
+      outputPath,
+      operations,
+    });
+    if (!result.ok) {
+      throw new Error(result.error);
+    }
+    return {
+      wordPath: result.data.outputPath || outputPath,
+      appliedOps: typeof result.data.appliedOps === "number" ? result.data.appliedOps : 0,
+      skippedOps: Array.isArray(result.data.skippedOps) ? result.data.skippedOps : [],
+    };
+  }
+}
+
+function normalizeWorkbenchModelResult(
+  value: Record<string, unknown>,
+  currentState: ContractState,
+): ContractWorkbenchModelResult {
+  const action = readString(value, "action");
+  const normalizedAction = action === "view" || action === "update" || action === "export" || action === "reject"
+    ? action
+    : "reject";
+  const message = readString(value, "message") ?? (
+    normalizedAction === "reject"
+      ? "当前在合同工作会话中，仅处理合同相关操作；如需其他内容请新开话题。"
+      : "已处理你的合同操作。"
+  );
+  const result: ContractWorkbenchModelResult = {
+    action: normalizedAction,
+    message,
+  };
+  const updatedState = normalizedAction === "update"
+    ? normalizeContractState(readRecord(value, "updatedState"), {
+      sessionId: currentState.sessionId,
+      sourceMode: currentState.sourceMode,
+      title: currentState.title,
+      templatePath: currentState.templatePath,
+      sourceFilePath: currentState.sourceFilePath,
+      draftPath: currentState.draftPath,
+      version: currentState.version,
+      history: currentState.history,
+      lastRenderedAt: currentState.lastRenderedAt,
+    })
+    : undefined;
+  if (updatedState) {
+    result.updatedState = updatedState;
+  }
+  const viewPayload = readRecord(value, "viewPayload");
+  const viewContent = readString(viewPayload, "content");
+  if (viewContent) {
+    result.viewPayload = {
+      title: readString(viewPayload, "title"),
+      content: viewContent,
+    };
+  }
+  const exportHint = readRecord(value, "exportHint");
+  const suggestedFileName = readString(exportHint, "suggestedFileName");
+  if (suggestedFileName) {
+    result.exportHint = { suggestedFileName };
+  }
+  return result;
+}
+
+type NormalizeContractStateOptions = {
+  sessionId: string;
+  sourceMode: ContractState["sourceMode"];
+  title: string;
+  templatePath?: string | undefined;
+  sourceFilePath?: string | undefined;
+  draftPath?: string | undefined;
+  version?: number | undefined;
+  history?: ContractHistoryEntry[] | undefined;
+  lastRenderedAt?: string | undefined;
+};
+
+function normalizeContractState(
+  value: Record<string, unknown> | null,
+  options: NormalizeContractStateOptions,
+): ContractState {
+  const title = readString(value, "title") ?? options.title;
+  const sourceMode = readString(value, "sourceMode");
+  const parties = value ? readRecord(value, "parties") : null;
+  const clauses = normalizeClauseArray(value?.["clauses"]);
+  const appendices = normalizeAppendixArray(value?.["appendices"]);
+  const version = readNumber(value, "version") ?? options.version ?? 1;
+  const history = normalizeHistoryArray(value?.["history"]);
+
+  return {
+    sessionId: options.sessionId,
+    sourceMode: sourceMode === "template_upload" || sourceMode === "freeform_prompt" || sourceMode === "existing_contract_upload"
+      ? sourceMode
+      : options.sourceMode,
+    title: title.trim() || options.title,
+    parties: {
+      clientName: readString(parties, "clientName") ?? readString(parties, "client") ?? "【待补】",
+      counterpartyName: readString(parties, "counterpartyName") ?? readString(parties, "counterparty") ?? "【待补】",
+      agencyName: readString(parties, "agencyName") ?? readString(parties, "agency"),
+      leadLawyer: readString(parties, "leadLawyer"),
+      signDate: readString(parties, "signDate"),
+    },
+    clauses: clauses.length > 0 ? clauses : [{
+      id: "clause-1",
+      number: "第一条",
+      title: "合同主要内容",
+      content: "【待补】",
+    }],
+    appendices,
+    templatePath: readString(value, "templatePath") ?? options.templatePath,
+    sourceFilePath: readString(value, "sourceFilePath") ?? options.sourceFilePath,
+    draftPath: readString(value, "draftPath") ?? options.draftPath,
+    version,
+    history: history.length > 0 ? history : (options.history ?? []),
+    lastRenderedAt: readString(value, "lastRenderedAt") ?? options.lastRenderedAt,
+  };
+}
+
+function normalizeClauseArray(value: unknown): ContractClause[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item, index) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return null;
+      }
+      const record = item as Record<string, unknown>;
+      const number = readString(record, "number") ?? `第${index + 1}条`;
+      const title = readString(record, "title") ?? "未命名条款";
+      const content = readString(record, "content") ?? readString(record, "text") ?? "";
+      return {
+        id: readString(record, "id") ?? `clause-${index + 1}`,
+        number,
+        title,
+        content: content.trim() || "【待补】",
+      } satisfies ContractClause;
+    })
+    .filter((item): item is ContractClause => Boolean(item));
+}
+
+function normalizeAppendixArray(value: unknown): ContractAppendix[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item, index) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return null;
+      }
+      const record = item as Record<string, unknown>;
+      const title = readString(record, "title") ?? `附件${index + 1}`;
+      const content = readString(record, "content") ?? "";
+      if (!content.trim()) {
+        return null;
+      }
+      return {
+        id: readString(record, "id") ?? `appendix-${index + 1}`,
+        title,
+        content: content.trim(),
+      } satisfies ContractAppendix;
+    })
+    .filter((item): item is ContractAppendix => Boolean(item));
+}
+
+function normalizeHistoryArray(value: unknown): ContractHistoryEntry[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return null;
+      }
+      const record = item as Record<string, unknown>;
+      const summary = readString(record, "summary");
+      if (!summary) {
+        return null;
+      }
+      return {
+        version: readNumber(record, "version") ?? 1,
+        summary,
+        at: readString(record, "at") ?? new Date().toISOString(),
+      } satisfies ContractHistoryEntry;
+    })
+    .filter((item): item is ContractHistoryEntry => Boolean(item));
 }
 
 function buildPromptRequest(prompt: string, model?: OpenCodeModelRef): OpenCodePromptRequest {
@@ -427,6 +860,100 @@ export function postProcessContractDraftMarkdown(markdown: string, feeMode: stri
   }
   const cutIndex = attachmentIndex >= 0 ? attachmentIndex : markerIndex;
   return lines.slice(0, cutIndex).join("\n").trim();
+}
+
+function resolveInvoiceRecognizePrompt(input: {
+  fileName: string;
+  localPath: string;
+  extractedText?: string | undefined;
+}): string {
+  return buildPromptFromSkillOverride(
+    "invoice-recognize",
+    ["references/runtime-prompt.txt", "references/prompt.txt"],
+    {
+      fileName: input.fileName,
+      localPath: input.localPath,
+      extractedText: input.extractedText ?? "",
+      extractedTextBlock: input.extractedText
+        ? `补充可提取文本：\n---\n${input.extractedText}\n---`
+        : "补充可提取文本：无",
+    },
+    () => buildInvoiceRecognizePrompt(input.fileName, input.localPath, input.extractedText),
+  );
+}
+
+async function resolveCaseCreatePrompt(request: string): Promise<string> {
+  return await buildPromptFromSkillOverrideAsync(
+    "case-manage",
+    ["references/create-prompt.txt", "references/runtime-create-prompt.txt"],
+    { request },
+    () => buildCaseCreatePrompt(request),
+  );
+}
+
+async function resolveCaseUpdatePrompt(request: string): Promise<string> {
+  return await buildPromptFromSkillOverrideAsync(
+    "case-manage",
+    ["references/update-prompt.txt", "references/runtime-update-prompt.txt"],
+    { request },
+    () => buildCaseUpdatePrompt(request),
+  );
+}
+
+function buildPromptFromSkillOverride(
+  skillName: string,
+  relativePaths: string[],
+  variables: Record<string, string>,
+  fallback: () => string,
+): string {
+  const template = loadSkillPromptTemplateSync(skillName, relativePaths);
+  return template ? renderPromptTemplate(template, variables) : fallback();
+}
+
+async function buildPromptFromSkillOverrideAsync(
+  skillName: string,
+  relativePaths: string[],
+  variables: Record<string, string>,
+  fallback: () => string,
+): Promise<string> {
+  const template = await loadSkillPromptTemplate(skillName, relativePaths);
+  return template ? renderPromptTemplate(template, variables) : fallback();
+}
+
+function loadSkillPromptTemplateSync(skillName: string, relativePaths: string[]): string | undefined {
+  const baseDir = path.join(homedir(), ".opencode", "skills", skillName);
+  for (const relativePath of relativePaths) {
+    const fullPath = path.join(baseDir, relativePath);
+    try {
+      const content = readFileSync(fullPath, "utf8").trim();
+      if (content) {
+        return content;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
+async function loadSkillPromptTemplate(skillName: string, relativePaths: string[]): Promise<string | undefined> {
+  const baseDir = path.join(homedir(), ".opencode", "skills", skillName);
+  for (const relativePath of relativePaths) {
+    const fullPath = path.join(baseDir, relativePath);
+    try {
+      const content = (await readFile(fullPath, "utf8")).trim();
+      if (content) {
+        return content;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
+function renderPromptTemplate(template: string, variables: Record<string, string>): string {
+  return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key: string) => variables[key] ?? "");
 }
 
 function resolveModel(config: ContractAssistantConfig, step: "draft" | "extract" | "invoice" | "caseManage"): OpenCodeModelRef | undefined {

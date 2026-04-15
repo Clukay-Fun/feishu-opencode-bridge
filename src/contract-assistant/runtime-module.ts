@@ -8,11 +8,15 @@ import {
   type FeishuPostPayload,
 } from "../feishu/formatter.js";
 import { createTextPreview, type Logger, type TranscriptType } from "../logging/logger.js";
-import type { IncomingChatMessage } from "../runtime/app.js";
+import type { IncomingChatMessage, IncomingFileMessage } from "../runtime/app.js";
 import type { RoutedText } from "../bridge/router.js";
 import type {
   ContractAssistantService,
+  ContractClause,
   ContractAssistantFileRef,
+  ContractState,
+  ContractDraftProgressStage,
+  ContractWorkbenchModelResult,
 } from "./index.js";
 
 type SendPayload = (
@@ -92,7 +96,18 @@ type PendingDraftInteraction = {
   fields: DraftTemplateField;
 };
 
-type PendingInteraction = PendingUploadInteraction | PendingDraftInteraction;
+type PendingWorkbenchInteraction = {
+  kind: "contract-workbench";
+  chatId: string;
+  conversationKey: string;
+  requesterOpenId: string;
+  anchorMessageId: string;
+  expiresAt: number;
+  state: ContractState | null;
+  recentMessages: string[];
+};
+
+type PendingInteraction = PendingUploadInteraction | PendingDraftInteraction | PendingWorkbenchInteraction;
 
 export class ContractAssistantRuntimeModule implements RuntimeModule {
   readonly name = "contract-assistant";
@@ -137,12 +152,13 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
 
   async handleMessage(context: RuntimeModuleMessageContext): Promise<RuntimeModuleHandleResult> {
     const { message, routed } = context;
+    const pending = this.interactions.get(message.conversationKey) ?? null;
+    const workbench = pending?.kind === "contract-workbench" ? pending : null;
     if (routed?.kind === "command") {
-      const claimed = await this.handleCommand(message, routed.command);
+      const claimed = await this.handleCommand(message, routed.command, workbench);
       return { claimed };
     }
 
-    const pending = this.interactions.get(message.conversationKey) ?? null;
     if (!pending) {
       return { claimed: false };
     }
@@ -153,6 +169,8 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         icon: "maybe_outlined",
         message: pending.kind === "contract-draft-onboard"
           ? "请由当前发起人继续填写起草信息，或重新发送 /起草合同 引导 开启新的引导。"
+          : pending.kind === "contract-workbench"
+            ? "请由当前发起人继续编辑当前合同；如需处理其他合同，请新开话题并发送 /合同起草开始。"
           : "请由当前发起人继续上传文件，或等待任务处理结束。",
       });
       return { claimed: true };
@@ -163,6 +181,11 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       return { claimed: handled };
     }
 
+    if (pending.kind === "contract-workbench") {
+      const handled = await this.handleWorkbenchMessage(message, pending);
+      return { claimed: handled };
+    }
+
     const handled = await this.handlePendingUpload(message, pending);
     return { claimed: handled };
   }
@@ -170,12 +193,62 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
   private async handleCommand(
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "threadKey" | "senderOpenId">,
     command: ContractAssistantCommand,
+    workbench: PendingWorkbenchInteraction | null,
   ): Promise<boolean> {
     if (command.kind !== "passthrough") {
+      if (workbench) {
+        await this.sendWorkbenchReject(message);
+        return true;
+      }
       return false;
     }
 
     const normalized = command.name.trim().toLowerCase();
+    if (normalized === "合同工作台结束" || normalized === "合同起草结束" || normalized === "contract-workbench") {
+      const endRequested = normalized === "合同工作台结束"
+        || normalized === "合同起草结束"
+        || (normalized === "contract-workbench" && command.arguments[0]?.trim().toLowerCase() === "end");
+      if (endRequested) {
+        if (!workbench) {
+          await this.sendNotice(message, {
+            title: "当前没有进行中的合同起草会话",
+            template: "grey",
+            icon: "maybe_outlined",
+            message: "发送 `/合同起草开始` 或 `/contract-workbench` 可开启新的合同起草会话。",
+          });
+          return true;
+        }
+        this.clearInteraction(message.conversationKey);
+        await this.sendNotice(message, {
+          title: "合同起草会话已结束",
+          template: "grey",
+          icon: "switch_outlined",
+          message: "当前合同起草会话已结束。如需继续其他合同，请新开话题或重新发送 `/合同起草开始`。",
+        });
+        return true;
+      }
+    }
+
+    if (normalized === "合同工作台" || normalized === "合同起草开始" || normalized === "contract-workbench") {
+      if (!this.featureConfig.enabled || !this.deps.service) {
+        await this.sendNotice(message, {
+          title: "合同助手未启用",
+          template: "yellow",
+          icon: "maybe_outlined",
+          message: "当前未启用 contract assistant，请先补充 `contractAssistant` 配置。",
+        });
+        return true;
+      }
+      const request = command.arguments.join(" ").trim();
+      await this.startContractWorkbench(message, request || undefined);
+      return true;
+    }
+
+    if (workbench) {
+      await this.sendWorkbenchReject(message);
+      return true;
+    }
+
     if (![
       "contract-draft",
       "起草合同",
@@ -396,6 +469,130 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     return true;
   }
 
+  private async startContractWorkbench(
+    message: Pick<IncomingChatMessage, "chatId" | "messageId" | "conversationKey" | "senderOpenId">,
+    initialRequest?: string | undefined,
+  ): Promise<void> {
+    this.clearWorkbenchSessionsForRequester(message.chatId, message.senderOpenId);
+    const opening = await this.sendNotice(message, {
+      title: "已进入合同起草会话",
+      template: "blue",
+      icon: "edit_outlined",
+      message: [
+        "当前会话仅处理本份合同的查看、删改、补充和导出。",
+        "你现在可以上传模板 Word、上传已有合同，或直接发送文字描述。",
+        "示例：显示第九条 / 删除风险收费部分 / 把争议解决改成法院诉讼 / 重新导出 Word",
+        "如需结束当前会话，请发送 `/合同起草结束`。",
+      ].join("\n"),
+    });
+
+    const interaction: PendingWorkbenchInteraction = {
+      kind: "contract-workbench",
+      chatId: message.chatId,
+      conversationKey: message.conversationKey,
+      requesterOpenId: message.senderOpenId,
+      anchorMessageId: opening.messageId,
+      expiresAt: Date.now() + this.featureConfig.ingest.pendingTtlMs,
+      state: null,
+      recentMessages: [],
+    };
+    this.interactions.set(message.conversationKey, interaction);
+    this.restoreTimer(message.conversationKey, this.featureConfig.ingest.pendingTtlMs);
+    this.schedulePersist();
+
+    if (initialRequest) {
+      await this.initializeWorkbenchFromText(message, interaction, initialRequest);
+    }
+  }
+
+  private async handleWorkbenchMessage(
+    message: IncomingChatMessage,
+    pending: PendingWorkbenchInteraction,
+  ): Promise<boolean> {
+    this.touchInteractionTimeout(message.conversationKey);
+
+    if (!pending.state) {
+      if (message.messageType === "file") {
+        await this.initializeWorkbenchFromFile(message, pending);
+        return true;
+      }
+      const prompt = message.plainText.trim();
+      if (!prompt) {
+        await this.sendNotice(message, {
+          title: "请先提供合同起点",
+          template: "blue",
+          icon: "edit_outlined",
+          message: "可以上传模板 Word、上传已有合同，或直接发送一段合同需求描述。",
+        });
+        return true;
+      }
+      await this.initializeWorkbenchFromText(message, pending, prompt);
+      return true;
+    }
+
+    if (message.messageType === "file") {
+      await this.sendNotice(message, {
+        title: "当前会话已绑定一份合同",
+        template: "yellow",
+        icon: "maybe_outlined",
+        message: "当前合同起草会话已经有正在编辑的合同。如需基于新文件继续，请结束当前会话后重新发送 `/合同起草开始`。",
+      });
+      return true;
+    }
+
+    const userInput = message.plainText.trim();
+    if (!userInput) {
+      await this.sendNotice(message, {
+        title: "请继续输入合同操作",
+        template: "blue",
+        icon: "edit_outlined",
+        message: "你可以直接说：显示第九条、删除风险收费部分、把争议解决改成法院诉讼、重新导出 Word。",
+      });
+      return true;
+    }
+
+    const processing = await this.sendNotice(message, {
+      title: "合同起草处理中",
+      template: "blue",
+      icon: "edit_outlined",
+      message: "正在理解你的合同操作并准备执行。",
+    });
+
+    try {
+      const result = await this.deps.service!.applyWorkbenchMessage(
+        pending.state,
+        pending.recentMessages,
+        userInput,
+      );
+      await this.applyWorkbenchResult(message, pending, userInput, result);
+      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+        title: "合同起草已处理",
+        template: "green",
+        iconToken: "yes_outlined",
+        message: result.message,
+      }), {
+        event: "contract workbench processed",
+        transcriptType: "outbound-final",
+        textPreview: createTextPreview(result.message),
+        len: result.message.length,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+        title: "合同起草处理失败",
+        template: "red",
+        iconToken: "error_filled",
+        message: detail,
+      }), {
+        event: "contract workbench failed",
+        transcriptType: "outbound-final",
+        textPreview: createTextPreview(detail),
+        len: detail.length,
+      });
+    }
+    return true;
+  }
+
   private async handleContractDraft(
     message: Pick<IncomingChatMessage, "chatId" | "messageId">,
     request: string,
@@ -404,14 +601,28 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       title: "合同起草中",
       template: "blue",
       icon: "edit_outlined",
-      message: "正在生成合同草稿，并同步写入飞书文档与合同台账。",
+      message: renderContractDraftProgressMessage("parse-request"),
     });
     try {
-      const result = await this.deps.service!.draftContract(request);
+      const result = await this.deps.service!.draftContract(request, async (stage, detail) => {
+        await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+          title: "合同起草中",
+          template: "blue",
+          iconToken: "edit_outlined",
+          message: renderContractDraftProgressMessage(stage, detail),
+        }), {
+          event: "contract draft progress updated",
+          transcriptType: "outbound-final",
+          textPreview: createTextPreview(detail ?? stage),
+          len: (detail ?? stage).length,
+        });
+      });
       const summary = [
         `Word 文件：${result.wordPath}`,
         result.docUrl ? `飞书文档：[打开飞书文档](${result.docUrl})` : "飞书文档：未创建",
-        result.recordId ? `合同台账记录：${result.recordId}` : "合同台账记录：未写入",
+        result.recordId
+          ? `合同台账记录：[打开记录](${buildBitableRecordUrl(this.featureConfig.storage.baseToken, this.featureConfig.storage.contractTableId, result.recordId)})`
+          : "合同台账记录：未写入",
         ...(result.warnings.length > 0 ? ["", ...result.warnings.map((item) => `- ${item}`)] : []),
       ].join("\n");
       await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
@@ -454,7 +665,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       const result = await this.deps.service!.extractContract(file);
       const summary = [
         `文件：${file.fileName}`,
-        `合同台账记录：${result.recordId}`,
+        `合同台账记录：[打开记录](${buildBitableRecordUrl(this.featureConfig.storage.baseToken, this.featureConfig.storage.contractTableId, result.recordId)})`,
         result.summary,
       ].join("\n");
       await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
@@ -608,6 +819,255 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     }
   }
 
+  private async initializeWorkbenchFromText(
+    message: Pick<IncomingChatMessage, "chatId" | "messageId" | "conversationKey">,
+    pending: PendingWorkbenchInteraction,
+    prompt: string,
+  ): Promise<void> {
+    const processing = await this.sendNotice(message, {
+      title: "合同起草初始化中",
+      template: "blue",
+      icon: "edit_outlined",
+      message: "正在根据文字描述初始化合同结构。",
+    });
+    try {
+      const sessionId = `${message.conversationKey}-${Date.now()}`;
+      const { state, message: summary } = await this.deps.service!.initializeWorkbenchFromPrompt(sessionId, prompt);
+      const updated: PendingWorkbenchInteraction = {
+        ...pending,
+        state: {
+          ...state,
+          history: state.history.length > 0
+            ? state.history
+            : [{ version: 1, summary: "已根据文字描述初始化合同。", at: new Date().toISOString() }],
+        },
+        recentMessages: pushRecentMessages(pending.recentMessages, prompt),
+      };
+      this.interactions.set(message.conversationKey, updated);
+      this.schedulePersist();
+      await this.updateWorkbenchAnchor(updated);
+      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+        title: "合同已载入工作会话",
+        template: "green",
+        iconToken: "yes_outlined",
+        message: summary,
+      }), {
+        event: "contract workbench init from text",
+        transcriptType: "outbound-final",
+        textPreview: createTextPreview(summary),
+        len: summary.length,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+        title: "合同初始化失败",
+        template: "red",
+        iconToken: "error_filled",
+        message: detail,
+      }), {
+        event: "contract workbench init from text failed",
+        transcriptType: "outbound-final",
+        textPreview: createTextPreview(detail),
+        len: detail.length,
+      });
+    }
+  }
+
+  private async initializeWorkbenchFromFile(
+    message: IncomingFileMessage,
+    pending: PendingWorkbenchInteraction,
+  ): Promise<void> {
+    const processing = await this.sendNotice(message, {
+      title: "合同起草初始化中",
+      template: "blue",
+      icon: "file-link-docx_outlined",
+      message: `正在解析《${message.file.fileName}》并生成合同结构。`,
+    });
+    try {
+      const sessionId = `${message.conversationKey}-${Date.now()}`;
+      const { state, message: summary } = await this.deps.service!.initializeWorkbenchFromDocument(sessionId, {
+        messageId: message.messageId,
+        fileKey: message.file.fileKey,
+        fileName: message.file.fileName,
+        size: message.file.size,
+      });
+      const updated: PendingWorkbenchInteraction = {
+        ...pending,
+        state: {
+          ...state,
+          history: state.history.length > 0
+            ? state.history
+            : [{ version: 1, summary: `已从《${message.file.fileName}》初始化合同。`, at: new Date().toISOString() }],
+        },
+        recentMessages: pushRecentMessages(pending.recentMessages, `[文件] ${message.file.fileName}`),
+      };
+      this.interactions.set(message.conversationKey, updated);
+      this.schedulePersist();
+      await this.updateWorkbenchAnchor(updated);
+      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+        title: "合同已载入工作会话",
+        template: "green",
+        iconToken: "yes_outlined",
+        message: summary,
+      }), {
+        event: "contract workbench init from file",
+        transcriptType: "outbound-final",
+        textPreview: createTextPreview(summary),
+        len: summary.length,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+        title: "合同初始化失败",
+        template: "red",
+        iconToken: "error_filled",
+        message: detail,
+      }), {
+        event: "contract workbench init from file failed",
+        transcriptType: "outbound-final",
+        textPreview: createTextPreview(detail),
+        len: detail.length,
+      });
+    }
+  }
+
+  private async applyWorkbenchResult(
+    message: Pick<IncomingChatMessage, "chatId" | "messageId" | "conversationKey">,
+    pending: PendingWorkbenchInteraction,
+    userInput: string,
+    result: ContractWorkbenchModelResult,
+  ): Promise<void> {
+    if (result.action === "reject") {
+      await this.sendWorkbenchReject(message);
+      return;
+    }
+
+    if (result.action === "view") {
+      const title = result.viewPayload?.title?.trim() || "合同条款查看";
+      const content = result.viewPayload?.content?.trim() || result.message;
+      const updated: PendingWorkbenchInteraction = {
+        ...pending,
+        recentMessages: pushRecentMessages(pushRecentMessages(pending.recentMessages, userInput), `查看结果：${title}`),
+      };
+      this.interactions.set(message.conversationKey, updated);
+      this.schedulePersist();
+      await this.sendNotice(message, {
+        title,
+        template: "grey",
+        icon: "doc_outlined",
+        message: content,
+      });
+      return;
+    }
+
+    if (result.action === "export") {
+      const exportProcessing = await this.sendNotice(message, {
+        title: "正在导出 Word",
+        template: "blue",
+        icon: "upload_outlined",
+        message: "正在根据当前合同结构生成 Word 草稿。",
+      });
+      try {
+        const { wordPath } = await this.deps.service!.exportWorkbenchWord(
+          pending.state!,
+          result.exportHint,
+        );
+        const updatedState: ContractState = {
+          ...pending.state!,
+          draftPath: wordPath,
+          lastRenderedAt: new Date().toISOString(),
+        };
+        const updated: PendingWorkbenchInteraction = {
+          ...pending,
+          state: updatedState,
+          recentMessages: pushRecentMessages(pushRecentMessages(pending.recentMessages, userInput), "已导出 Word"),
+        };
+        this.interactions.set(message.conversationKey, updated);
+        this.schedulePersist();
+        await this.updateWorkbenchAnchor(updated);
+        const summary = `Word 草稿已导出：${wordPath}`;
+        await this.deps.updatePayload(message.chatId, exportProcessing.messageId, buildNoticeCardPayload({
+          title: "Word 导出完成",
+          template: "green",
+          iconToken: "yes_outlined",
+          message: summary,
+        }), {
+          event: "contract workbench export completed",
+          transcriptType: "outbound-final",
+          textPreview: createTextPreview(summary),
+          len: summary.length,
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        await this.deps.updatePayload(message.chatId, exportProcessing.messageId, buildNoticeCardPayload({
+          title: "Word 导出失败",
+          template: "red",
+          iconToken: "error_filled",
+          message: detail,
+        }), {
+          event: "contract workbench export failed",
+          transcriptType: "outbound-final",
+          textPreview: createTextPreview(detail),
+          len: detail.length,
+        });
+      }
+      return;
+    }
+
+    if (result.action === "update" && result.updatedState) {
+      const nextVersion = (pending.state?.version ?? 1) + 1;
+      const updatedState: ContractState = {
+        ...result.updatedState,
+        sessionId: pending.state?.sessionId ?? result.updatedState.sessionId,
+        sourceMode: pending.state?.sourceMode ?? result.updatedState.sourceMode,
+        templatePath: pending.state?.templatePath ?? result.updatedState.templatePath,
+        sourceFilePath: pending.state?.sourceFilePath ?? result.updatedState.sourceFilePath,
+        draftPath: pending.state?.draftPath ?? result.updatedState.draftPath,
+        version: nextVersion,
+        history: [
+          ...(pending.state?.history ?? []),
+          { version: nextVersion, summary: result.message, at: new Date().toISOString() },
+        ].slice(-20),
+      };
+      const updated: PendingWorkbenchInteraction = {
+        ...pending,
+        state: updatedState,
+        recentMessages: pushRecentMessages(pushRecentMessages(pending.recentMessages, userInput), `修改结果：${result.message}`),
+      };
+      this.interactions.set(message.conversationKey, updated);
+      this.schedulePersist();
+      await this.updateWorkbenchAnchor(updated);
+      await this.sendNotice(message, {
+        title: "合同已更新",
+        template: "green",
+        icon: "yes_outlined",
+        message: result.message,
+      });
+      return;
+    }
+
+    await this.sendNotice(message, {
+      title: "合同起草返回了无效结果",
+      template: "red",
+      icon: "error_filled",
+      message: "模型未返回可执行的合同操作结果，请重试一次或换一种说法。",
+    });
+  }
+
+  private async updateWorkbenchAnchor(pending: PendingWorkbenchInteraction): Promise<void> {
+    await this.deps.updatePayload(pending.chatId, pending.anchorMessageId, buildNoticeCardPayload({
+      title: "合同起草会话",
+      template: "blue",
+      iconToken: "edit_outlined",
+      message: renderWorkbenchSummaryMessage(pending.state),
+    }), {
+      event: "contract workbench summary updated",
+      transcriptType: "outbound-final",
+      textPreview: createTextPreview(renderWorkbenchSummaryMessage(pending.state)),
+      len: renderWorkbenchSummaryMessage(pending.state).length,
+    });
+  }
+
   private async startPendingUpload(
     message: Pick<IncomingChatMessage, "chatId" | "messageId" | "conversationKey" | "senderOpenId">,
     kind: PendingUploadKind,
@@ -649,9 +1109,9 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         iconToken: "time_outlined",
         message: pending.kind === "contract-draft-onboard"
           ? "长时间未收到新的填写内容，当前合同起草引导已自动结束。重新发送 `/起草合同 引导` 即可继续。"
+          : pending.kind === "contract-workbench"
+            ? "长时间未收到新的合同操作，当前合同起草会话已自动结束。重新发送 `/合同起草开始` 即可继续。"
           : "长时间未收到文件，当前任务已自动结束。重新发送命令即可继续。",
-        messageIconToken: "time_outlined",
-        messageIconColor: "grey",
       }), {
         event: "contract assistant pending expired",
         transcriptType: "outbound-final",
@@ -673,6 +1133,38 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       this.timers.delete(conversationKey);
     }
     this.schedulePersist();
+  }
+
+  private clearWorkbenchSessionsForRequester(chatId: string, requesterOpenId: string): void {
+    for (const [conversationKey, interaction] of this.interactions.entries()) {
+      if (interaction.kind !== "contract-workbench") {
+        continue;
+      }
+      if (interaction.chatId === chatId && interaction.requesterOpenId === requesterOpenId) {
+        this.clearInteraction(conversationKey);
+      }
+    }
+  }
+
+  private touchInteractionTimeout(conversationKey: string): void {
+    const interaction = this.interactions.get(conversationKey);
+    if (!interaction) {
+      return;
+    }
+    interaction.expiresAt = Date.now() + this.featureConfig.ingest.pendingTtlMs;
+    this.restoreTimer(conversationKey, this.featureConfig.ingest.pendingTtlMs);
+    this.schedulePersist();
+  }
+
+  private async sendWorkbenchReject(
+    message: Pick<IncomingChatMessage, "chatId" | "messageId">,
+  ): Promise<void> {
+    await this.sendNotice(message, {
+      title: "当前在合同起草会话中",
+      template: "yellow",
+      icon: "maybe_outlined",
+      message: "当前在合同起草会话中，仅处理合同相关操作；如需其他内容请新开话题。",
+    });
   }
 
   private async tickReminders(): Promise<void> {
@@ -746,6 +1238,10 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
   }
 
   private restoreTimer(conversationKey: string, timeoutMs: number): void {
+    const existing = this.timers.get(conversationKey);
+    if (existing) {
+      clearTimeout(existing);
+    }
     const timer = setTimeout(() => {
       void this.expireInteraction(conversationKey);
     }, Math.max(1, timeoutMs));
@@ -1342,6 +1838,77 @@ function formatStageFeeSummary(fields: DraftTemplateField): string {
 
 function formatMoney(value: number | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? `${value}` : "【待补】";
+}
+
+function buildBitableRecordUrl(baseToken: string, tableId: string, recordId: string): string {
+  const base = `https://feishu.cn/base/${encodeURIComponent(baseToken)}?table=${encodeURIComponent(tableId)}`;
+  return `${base}&recordId=${encodeURIComponent(recordId)}`;
+}
+
+function renderContractDraftProgressMessage(
+  currentStage: ContractDraftProgressStage,
+  detail?: string,
+): string {
+  const steps: Array<{ stage: ContractDraftProgressStage; label: string }> = [
+    { stage: "parse-request", label: "解析起草需求" },
+    { stage: "match-template", label: "匹配合同模板" },
+    { stage: "prepare-fields", label: "整理关键字段" },
+    { stage: "generate-word", label: "生成 Word 草稿" },
+    { stage: "sync-artifacts", label: "同步飞书文档与台账" },
+  ];
+  const currentIndex = Math.max(0, steps.findIndex((step) => step.stage === currentStage));
+  const completed = steps.slice(0, currentIndex).map((step, index) => `${index + 1}. ${step.label}`);
+  const current = steps[currentIndex] ?? steps[0]!;
+  const pending = steps.slice(currentIndex + 1).map((step, index) => `${currentIndex + index + 2}. ${step.label}`);
+  return [
+    `**已完成**\n${completed.length > 0 ? completed.join("\n") : "无"}`,
+    `**当前**\n${currentIndex + 1}. ${current.label}${detail ? `\n${detail}` : ""}`,
+    `**待处理**\n${pending.length > 0 ? pending.join("\n") : "无"}`,
+  ].join("\n\n");
+}
+
+function renderWorkbenchSummaryMessage(state: ContractState | null): string {
+  if (!state) {
+    return [
+      "当前会话仅处理本份合同的查看、删改、补充和导出。",
+      "你现在可以上传模板 Word、上传已有合同，或直接发送文字描述。",
+      "如需结束当前会话，请发送 `/合同起草结束`。",
+    ].join("\n");
+  }
+  const latestHistory = state.history.at(-1);
+  const latestClauses = state.clauses.slice(0, 3).map((clause) => `- ${formatClauseLabel(clause)}`).join("\n");
+  return [
+    `当前合同：${state.title}`,
+    `来源：${formatSourceMode(state.sourceMode)}`,
+    `当前版本：v${state.version}`,
+    `条款数量：${state.clauses.length}`,
+    latestHistory ? `最近修改：${latestHistory.summary}` : "最近修改：初始化完成",
+    state.draftPath ? `当前 Word 草稿：${state.draftPath}` : "当前 Word 草稿：尚未导出",
+    "",
+    "示例操作：",
+    "显示第九条 / 删除风险收费部分 / 把争议解决改成法院诉讼 / 重新导出 Word",
+    latestClauses ? `\n当前条款预览：\n${latestClauses}` : "",
+  ].filter(Boolean).join("\n");
+}
+
+function formatSourceMode(sourceMode: ContractState["sourceMode"]): string {
+  switch (sourceMode) {
+    case "template_upload":
+      return "模板导入";
+    case "existing_contract_upload":
+      return "已有合同导入";
+    default:
+      return "文字描述起草";
+  }
+}
+
+function formatClauseLabel(clause: ContractClause): string {
+  const title = clause.title.trim();
+  return `${clause.number}${title ? ` ${title}` : ""}`.trim();
+}
+
+function pushRecentMessages(current: string[], next: string): string[] {
+  return [...current, next.trim()].filter((item) => item.length > 0).slice(-8);
 }
 
 function renderList(lines: string[]): string[] {

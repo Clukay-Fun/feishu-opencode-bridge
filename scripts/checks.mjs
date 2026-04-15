@@ -406,6 +406,48 @@ export async function checkDepsInstalled(options = {}) {
   return createResult("deps-installed", BRIDGE_GROUP, "项目依赖", "fail", "未检测到 node_modules", "运行 npm install");
 }
 
+export async function checkPythonBin(options = {}) {
+  const executable = (options.findExecutableFn ?? findExecutable)("python3", options)
+    ?? (options.findExecutableFn ?? findExecutable)("python", options);
+  if (executable) {
+    return createResult("python-bin", BRIDGE_GROUP, "Python", "pass", executable);
+  }
+  return createResult("python-bin", BRIDGE_GROUP, "Python", "fail", "未检测到 Python 解释器", "安装 python3 后重试");
+}
+
+export async function checkPythonToolsRequirements(options = {}) {
+  const cwd = options.cwd ?? process.cwd();
+  const requirementsPath = path.join(cwd, "scripts", "python", "requirements.txt");
+  if (existsSync(requirementsPath)) {
+    return createResult("python-tools-req", BRIDGE_GROUP, "Python 依赖", "pass", path.relative(cwd, requirementsPath));
+  }
+  return createResult("python-tools-req", BRIDGE_GROUP, "Python 依赖", "warn", "未检测到 scripts/python/requirements.txt");
+}
+
+export async function checkPythonToolModules(options = {}) {
+  const executable = (options.findExecutableFn ?? findExecutable)("python3", options)
+    ?? (options.findExecutableFn ?? findExecutable)("python", options);
+  if (!executable) {
+    return createResult("python-tools-modules", BRIDGE_GROUP, "Python 模块", "skip", "等待 Python");
+  }
+  try {
+    const result = await (options.runCommandFn ?? runCommand)(executable, [
+      "-c",
+      "import docx, lxml, pymupdf4llm",
+    ], {
+      cwd: options.cwd,
+      env: options.env,
+    });
+    if (result.code === 0) {
+      return createResult("python-tools-modules", BRIDGE_GROUP, "Python 模块", "pass", "python-docx / lxml / pymupdf4llm 可导入");
+    }
+    return createResult("python-tools-modules", BRIDGE_GROUP, "Python 模块", "warn", summarizeCommandOutput(result), "运行 pip install -r scripts/python/requirements.txt");
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return createResult("python-tools-modules", BRIDGE_GROUP, "Python 模块", "warn", detail, "运行 pip install -r scripts/python/requirements.txt");
+  }
+}
+
 export async function checkOpencodeBin(options = {}) {
   const executable = (options.findExecutableFn ?? findExecutable)("opencode", options);
   if (executable) {
@@ -693,6 +735,7 @@ export async function runBridgeChecks(options = {}) {
   results.push(await checkConfigPublicUrl({ cwd, configPath, state }));
   results.push(await checkNodeVersion({ version: options.version }));
   results.push(await checkDepsInstalled({ cwd }));
+  results.push(await checkPythonBin(options));
   results.push(await checkOpencodeBin(options));
   results.push(await checkOpencodeAuth({ ...options, cwd }));
   const healthResult = await checkOpencodeServe({ ...options, cwd, configPath, state });
@@ -703,6 +746,8 @@ export async function runBridgeChecks(options = {}) {
   if (options.includeDoctorExtras) {
     results.push(await checkBuildExists({ cwd }));
     results.push(await checkPortAvailable({ cwd, configPath, state }));
+    results.push(await checkPythonToolsRequirements({ cwd }));
+    results.push(await checkPythonToolModules({ ...options, cwd }));
   }
 
   return results;

@@ -107,7 +107,7 @@ const SILENT_LOGGER: Logger = {
 
 const PDF_TO_MD_SCRIPT_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  "../../scripts/pdf_to_md.py",
+  "../../scripts/python/pdf_to_markdown.py",
 );
 
 export async function runKnowledgeCli(
@@ -354,7 +354,7 @@ async function inspectKnowledgeDoctor(runtime: CliRuntime, options: { online: bo
   });
 
   checks.push({
-    name: "pdf_to_md.py",
+    name: "pdf_to_markdown.py",
     ok: await fileExists(PDF_TO_MD_SCRIPT_PATH),
     detail: `PDF 脚本：${PDF_TO_MD_SCRIPT_PATH}`,
   });

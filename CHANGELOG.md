@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.19 - 2026-04-15
+
+### Added
+- Added Python-backed contract rendering, editing, and parsing helpers plus shared Python tool wrappers for legal document workflows.
+- Added contract workbench export/edit regression coverage and repository checks for the Python toolchain requirements.
+
+### Changed
+- Updated contract-assistant prompts, runtime flow, and template metadata so contract drafting can support richer workbench-style editing and export behavior.
+- Updated knowledge PDF parsing entrypoints to reuse the newer Python conversion path and aligned local CLI/script helpers with the same toolchain.
+
 ## 0.1.18 - 2026-04-15
 
 ### Fixed
