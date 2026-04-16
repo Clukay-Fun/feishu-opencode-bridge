@@ -102,6 +102,37 @@ describe("BridgeApp command surface", () => {
     expect(extractMarkdown(getReplyPayloads(outbound)[0])).toContain("无效的会话编号");
   });
 
+  it("switches directly by session name when /switch receives a unique title", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const listSessions = vi.fn(async () => ([
+      { id: "ses_1", title: "日常聊天", time: { created: 1, updated: 2 } },
+      { id: "ses_2", title: "知识库入库与法律检索", time: { created: 1, updated: 1 } },
+    ]));
+    const appAny = app as unknown as {
+      opencode: { listSessions: typeof listSessions };
+      sessionMap: Record<string, SessionWindowRecord>;
+    };
+    appAny.opencode = { listSessions };
+    appAny.sessionMap["oc_p2p_1"] = {
+      mode: "multi",
+      activeSessionId: "ses_1",
+      sessions: [
+        { sessionId: "ses_1", label: "日常聊天", createdAt: 1, lastUsedAt: 2 },
+        { sessionId: "ses_2", label: "知识库入库与法律检索", createdAt: 1, lastUsedAt: 1 },
+      ],
+    };
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "sessions-select", query: "知识库入库" },
+    });
+
+    expect(appAny.sessionMap["oc_p2p_1"]?.activeSessionId).toBe("ses_2");
+    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("已切换会话");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("知识库入库与法律检索");
+  });
+
   it("migrates legacy p2p main-window sessions from the flat key to the :main key", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
@@ -215,7 +246,7 @@ describe("BridgeApp command surface", () => {
     expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("劳动争议分析");
   });
 
-  it("keeps the current window on the existing session and stores a thread anchor when /new is sent from a busy window", async () => {
+  it("switches the current window to the new session and stores a thread anchor when /new is sent from a busy window", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
     const createSession = vi.fn(async (title: string) => ({
@@ -242,16 +273,16 @@ describe("BridgeApp command surface", () => {
       command: { kind: "new", title: "劳动争议分析" },
     });
 
-    expect(appAny.sessionMap["oc_p2p_1"]?.activeSessionId).toBe("ses_existing");
+    expect(appAny.sessionMap["oc_p2p_1"]?.activeSessionId).toBe("ses_threaded");
     expect(appAny.sessionMap["oc_p2p_1"]?.sessions).toHaveLength(2);
     expect(appAny.sessionMap["oc_p2p_1"]?.sessions.map((session) => session.sessionId)).toContain("ses_threaded");
     expect(appAny.pendingNewSessionAnchors.get("om_reply")).toEqual(expect.objectContaining({
       sourceConversationKey: "oc_p2p_1",
       entry: expect.objectContaining({ sessionId: "ses_threaded", label: "劳动争议分析" }),
     }));
-    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("保持当前");
-    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("新会话");
-    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("在线程里继续");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("当前会话");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("已切换到新会话");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("创建话题");
   });
 
   it("truncates long /new titles in bridge labels while keeping the OpenCode title intact", async () => {
@@ -329,7 +360,7 @@ describe("BridgeApp command surface", () => {
 
     expect(appAny.sessionMap["oc_p2p_1:om_reply"]?.activeSessionId).toBe("ses_threaded");
     expect(appAny.sessionMap["oc_p2p_1:om_reply"]?.sessions[0]?.label).toBe("劳动争议分析");
-    expect(appAny.sessionMap["oc_p2p_1"]?.activeSessionId).toBe("ses_existing");
+    expect(appAny.sessionMap["oc_p2p_1"]?.activeSessionId).toBe("ses_threaded");
   });
 
   it("hydrates a thread from the /new reply parent id when root id points elsewhere", async () => {
@@ -1322,7 +1353,7 @@ type AppCommandSurfaceTestRoute = {
     | { kind: "knowledge-ingest-end" }
     | { kind: "sessions" }
     | { kind: "sessions-all" }
-    | { kind: "sessions-select"; index: number }
+    | { kind: "sessions-select"; index?: number | undefined; query?: string | undefined }
     | { kind: "close"; index?: number | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined }
     | { kind: "delete"; index?: number | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined; confirm: boolean };
 };

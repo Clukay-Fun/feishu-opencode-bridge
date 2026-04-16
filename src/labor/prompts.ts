@@ -49,7 +49,10 @@ export function buildLaborAggregatePrompt(materialsJson: string, notesText: stri
     "1. 重点回答：现有证据能支持哪些劳动主张，缺哪些关键材料。",
     "2. 对 evidenceRows 和 timeline 去重，保留最关键项。",
     "3. riskLevel 优先使用 high、medium、low。",
-    "4. 如果给了 legalSupports，请结合使用；没有明确命中也可以保守输出。",
+    "4. 输出风格应像律师工作底稿：事实清楚、证据对应明确、风险提示克制。",
+    "5. 法律依据不能凭空编造；如果没有知识库命中或明确规则，请在 legalSupports 中写明“需人工补核”。",
+    "6. 避免长段落，每条判断尽量控制在 1-2 句，便于飞书文档阅读和录屏展示。",
+    "7. 如果给了 legalSupports，请结合使用；没有明确命中只能保守输出，不得虚构法条编号、案例名称或裁判规则。",
     "",
     notesText
       ? `案件补充背景：\n---\n${notesText}\n---`

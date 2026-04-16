@@ -16,7 +16,7 @@ export type RoutedText =
       | { kind: "knowledge-mode-end" }
       | { kind: "sessions" }
       | { kind: "sessions-all" }
-      | { kind: "sessions-select"; index: number }
+      | { kind: "sessions-select"; index?: number | undefined; query?: string | undefined }
       | { kind: "close"; index?: number | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined }
       | { kind: "delete"; index?: number | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined; confirm: boolean }
       | { kind: "allow"; policy: "once" | "always" }
@@ -112,6 +112,13 @@ export function routeIncomingText(text: string): RoutedText {
     return {
       kind: "command",
       command: { kind: "sessions-select", index: Number(args[0]) },
+    };
+  }
+
+  if (rawCommand === "switch" && args.length > 0) {
+    return {
+      kind: "command",
+      command: { kind: "sessions-select", query: args.join(" ").trim() },
     };
   }
 

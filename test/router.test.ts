@@ -38,6 +38,10 @@ describe("routeIncomingText", () => {
       kind: "command",
       command: { kind: "sessions-select", index: 2 },
     });
+    expect(routeIncomingText("/switch 日常聊天")).toEqual({
+      kind: "command",
+      command: { kind: "sessions-select", query: "日常聊天" },
+    });
   });
 
   it("routes close and delete session commands", () => {

@@ -41,7 +41,6 @@ export type ContractAssistantFileRef = EvidenceFileRef;
 export type ContractDraftResult = {
   docTitle: string;
   wordPath: string;
-  docUrl?: string | undefined;
   markdown: string;
   recordId?: string | undefined;
   warnings: string[];
@@ -179,22 +178,31 @@ export class ContractAssistantService {
     await onProgress?.("parse-request", "正在识别模板、程序和收费条件");
     await onProgress?.("match-template", "正在匹配本地 Word 模板");
     const template = await this.resolveDraftTemplate(request);
+    validateContractDraftRequest(template.name, request);
     const templateContent = await this.loadTemplateContent(template);
     await onProgress?.("prepare-fields", `已匹配模板：${template.name}，正在整理关键字段`);
+    const warnings: string[] = [];
     const parsed = await this.askForJson(buildContractDraftPrompt(
       request,
       template.name,
       templateContent.mainText,
       templateContent.riskNoticeText,
       templateContent.fieldGuideText,
-    ), resolveModel(this.config, "draft"));
+    ), resolveModel(this.config, "draft")).catch((error) => {
+      const detail = error instanceof Error ? error.message : String(error);
+      warnings.push("模型暂不可用，已按本地规则生成合同初稿。");
+      this.logger.log("contract-assistant", "draft contract model fallback", {
+        detail,
+        templateName: template.name,
+      }, "warn");
+      return buildLocalContractDraftFallback(request, template.name);
+    });
     const docTitle = readString(parsed, "docTitle") ?? "合同草稿";
     const feeMode = readString(parsed, "feeMode") ?? inferFeeModeFromRequest(request);
     const rawMarkdown = readString(parsed, "markdown") ?? `### 合同草稿\n\n${request}`;
     const markdown = postProcessContractDraftMarkdown(rawMarkdown, feeMode);
     const record = readRecord(parsed, "record");
     const templateData = readRecord(parsed, "templateData");
-    const warnings: string[] = [];
     const fileNameTitle = buildContractWordFileTitle(request, record, template.name);
     await onProgress?.("generate-word", "正在生成 Word 合同草稿");
     const wordPath = await createLocalWordDoc(
@@ -204,14 +212,7 @@ export class ContractAssistantService {
       markdown,
       buildContractTemplateRenderData(request, record, templateData, feeMode),
     );
-    await onProgress?.("sync-artifacts", "正在同步飞书文档与合同台账");
-    const docUrl = await createLarkDoc(docTitle, markdown).catch((error) => {
-      warnings.push(`飞书文档创建失败：${error instanceof Error ? error.message : String(error)}`);
-      this.logger.log("contract-assistant", "create lark doc failed", {
-        detail: error instanceof Error ? error.message : String(error),
-      }, "warn");
-      return undefined;
-    });
+    await onProgress?.("sync-artifacts", "正在同步合同台账");
     const recordId = record
       ? await this.resources.createBitableRecord(
         this.config.storage.baseToken,
@@ -225,7 +226,7 @@ export class ContractAssistantService {
         return undefined;
       })
       : undefined;
-    return { docTitle, wordPath, docUrl, markdown, recordId, warnings };
+    return { docTitle, wordPath, markdown, recordId, warnings };
   }
 
   async listDraftTemplates(): Promise<string[]> {
@@ -986,6 +987,31 @@ function parseJsonObject(text: string): Record<string, unknown> {
   }
 }
 
+function buildLocalContractDraftFallback(request: string, templateName: string): Record<string, unknown> {
+  const parsed = parseContractDraftRequest(request);
+  const feeMode = inferFeeModeFromRequest(request);
+  const contractAmount = parsed.arbitrationFee ?? parsed.baseFee;
+  const record: Record<string, unknown> = {
+    项目名称: templateName,
+    客户名称: parsed.clientName ?? "【待补】",
+    合同类型: templateName,
+    "具体类型/案由": parsed.caseCause ?? "【待补】",
+    联系方式: parsed.clientPhone ?? "",
+    客户收件地址: parsed.clientAddress ?? "",
+    "信用代码/身份证": parsed.clientIdCode ?? "",
+  };
+  if (contractAmount !== undefined) {
+    record["合同金额"] = contractAmount;
+  }
+  return {
+    docTitle: templateName,
+    feeMode,
+    markdown: `### ${templateName}\n\n根据已提供信息生成合同初稿。`,
+    templateData: {},
+    record,
+  };
+}
+
 function readRecord(value: Record<string, unknown>, key: string): Record<string, unknown> | null {
   const target = value[key];
   return target && typeof target === "object" && !Array.isArray(target)
@@ -1104,6 +1130,7 @@ function normalizeCaseRecord(record: Record<string, unknown> | null): Record<str
   copyString(input, fields, "反诉截止日");
   copyString(input, fields, "管辖权异议截止日");
   copyString(input, fields, "上诉截止日");
+  copyString(input, fields, "承办律师");
   copyString(input, fields, "待做事项");
   copyString(input, fields, "进展");
   copyString(input, fields, "备注");
@@ -1152,15 +1179,10 @@ function copyStringArray(source: Record<string, unknown>, target: Record<string,
   }
 }
 
-async function createLarkDoc(title: string, markdown: string): Promise<string | undefined> {
-  const output = await runLarkCli(["docs", "+create", "--title", title, "--markdown", "-"], markdown);
-  const parsed = parseJsonObject(output);
-  return readString(parsed, "doc_url") ?? readString(readRecord(parsed, "data"), "doc_url");
-}
-
 type ContractTemplateRenderData = {
   client_name: string;
   client_representative: string;
+  client_representative_line: string;
   client_id_code: string;
   client_address: string;
   client_email: string;
@@ -1177,6 +1199,13 @@ type ContractTemplateRenderData = {
   settlement_checkbox: string;
   stage_fee_checkbox: string;
   risk_fee_checkbox: string;
+  arbitration_line: string;
+  first_instance_line: string;
+  second_instance_line: string;
+  enforcement_line: string;
+  settlement_line: string;
+  stage_fee_line: string;
+  risk_fee_line: string;
   attachment_notice_title: string;
   attachment_notice_suffix: string;
   dispute_resolution_clause: string;
@@ -1189,10 +1218,14 @@ type ContractTemplateRenderData = {
   fee_first_instance_clause: string;
   fee_second_instance_clause: string;
   fee_enforcement_clause: string;
+  stage_fee_intro: string;
+  risk_fee_intro: string;
   base_fee_clause: string;
   risk_fee_clause: string;
   risk_fee_followup_clause_1: string;
   risk_fee_followup_clause_2: string;
+  signature_line: string;
+  risk_notice_client_name: string;
 };
 
 async function createLocalWordDoc(
@@ -1232,15 +1265,47 @@ async function createLocalWordDocWithDocxtemplater(
     compression: "DEFLATE",
   });
   await writeFile(docxPath, output);
+  const finalizeResult = await spawnPythonTool<{
+    outputPath: string;
+  }>("contract_finalize", {
+    inputPath: docxPath,
+    outputPath: docxPath,
+    data: {
+      client_name: renderData.client_name,
+      client_id_code: renderData.client_id_code,
+      client_address: renderData.client_address,
+      client_phone: renderData.client_phone,
+      client_representative: renderData.client_representative,
+      lead_lawyer: renderData.lead_lawyer,
+      counterparty_name: renderData.counterparty_name,
+      case_cause: renderData.case_cause,
+      is_company: Boolean(renderData.client_representative_line),
+      show_risk_notice: renderData.show_risk_notice,
+      is_stage_fixed: renderData.is_stage_fixed,
+      engage_arbitration: renderData.arbitration_line.length > 0,
+      engage_first_instance: renderData.first_instance_line.length > 0,
+      engage_second_instance: renderData.second_instance_line.length > 0,
+      engage_enforcement: renderData.enforcement_line.length > 0,
+      engage_settlement: renderData.settlement_line.length > 0,
+      fee_arbitration_clause: renderData.fee_arbitration_clause,
+      fee_first_instance_clause: renderData.fee_first_instance_clause,
+      fee_second_instance_clause: renderData.fee_second_instance_clause,
+      fee_enforcement_clause: renderData.fee_enforcement_clause,
+    },
+  });
+  if (!finalizeResult.ok) {
+    throw new Error(finalizeResult.error);
+  }
   return docxPath;
 }
 
 async function ensureTaggedContractTemplate(dataDir: string, templatePath: string): Promise<string> {
+  const TEMPLATE_CACHE_VERSION = "v2";
   const templateDir = path.join(dataDir, "contract-template-cache");
   await mkdir(templateDir, { recursive: true });
   const cachePath = path.join(
     templateDir,
-    `${path.basename(templatePath, path.extname(templatePath))}.docxtpl.docx`,
+    `${path.basename(templatePath, path.extname(templatePath))}.${TEMPLATE_CACHE_VERSION}.docxtpl.docx`,
   );
   const [sourceStat, cacheStat] = await Promise.all([
     stat(templatePath),
@@ -1269,6 +1334,11 @@ function buildTaggedContractTemplateXml(sourceXml: string): string {
   let xml = sourceXml;
   xml = replaceRegexOnce(
     xml,
+    /(<w:t[^>]*>聘请方（甲方）：)[\s\S]*?(<\/w:t>)/,
+    "$1{client_name}$2",
+  );
+  xml = replaceRegexOnce(
+    xml,
     /(<w:t[^>]*>)地址（必填）：[\s\S]*?(<\/w:t>)/,
     "$1地址（必填）：{client_address}$2",
   );
@@ -1294,39 +1364,39 @@ function buildTaggedContractTemplateXml(sourceXml: string): string {
   );
   const replacements: Array<[string, string, string]> = [
     ["甲方（必填）：                                                        ", "甲方（必填）：{client_name}", "client_name"],
-    ["法定代表人/负责人：                                               ", "法定代表人/负责人：{client_representative}", "client_representative"],
+    ["法定代表人/负责人：                                               ", "{client_representative_line}", "client_representative_line"],
     ["证件号/社会统一信用代码（必填）：                                         ", "证件号/社会统一信用代码（必填）：{client_id_code}", "client_id_code"],
     ["地址（必填）：              ", "地址（必填）：{client_address}", "client_address"],
     ["电子邮箱：                   ", "电子邮箱：{client_email}", "client_email"],
     ["联系电话（必填）：                         ", "联系电话（必填）：{client_phone}", "client_phone"],
     ["甲方因与【案件当事人】【案由】纠纷          案件，委托乙方代理，经双方协商，订立下列各条款，共同遵照履行。", "甲方因与{counterparty_name}{case_cause}纠纷案件，委托乙方代理，经双方协商，订立下列各条款，共同遵照履行。", "case_intro"],
-    ["□仲裁阶段；", "{arbitration_checkbox}仲裁阶段；", "engage_arbitration"],
-    ["□一审诉讼；", "{first_instance_checkbox}一审诉讼；", "engage_first_instance"],
-    ["□二审诉讼；", "{second_instance_checkbox}二审诉讼；", "engage_second_instance"],
-    ["□执行程序；", "{enforcement_checkbox}执行程序；", "engage_enforcement"],
-    ["□上述案件代理程序中，有关调解、和解事宜。", "{settlement_checkbox}上述案件代理程序中，有关调解、和解事宜。", "engage_settlement"],
+    ["□仲裁阶段；", "{arbitration_line}", "engage_arbitration"],
+    ["□一审诉讼；", "{first_instance_line}", "engage_first_instance"],
+    ["□二审诉讼；", "{second_instance_line}", "engage_second_instance"],
+    ["□执行程序；", "{enforcement_line}", "engage_enforcement"],
+    ["□上述案件代理程序中，有关调解、和解事宜。", "{settlement_line}", "engage_settlement"],
     ["（一）乙方指派  ***  律师作为案件中甲方的委托代理人，甲方同意上述律师指派其他律师和助理配合完成辅助工作，但乙方更换代理律师应取得甲方认可。", "（一）乙方指派 {lead_lawyer} 律师作为案件中甲方的委托代理人，甲方同意上述律师指派其他律师和助理配合完成辅助工作，但乙方更换代理律师应取得甲方认可。", "lead_lawyer"],
-    ["□按阶段收费", "{stage_fee_checkbox}按阶段收费", "stage_fee_checkbox"],
-    ["甲乙双方约定乙方律师费如下：", "{#is_stage_fixed}甲乙双方约定乙方律师费如下：", "stage_fee_intro"],
+    ["□按阶段收费", "{stage_fee_line}", "stage_fee_line"],
+    ["甲乙双方约定乙方律师费如下：", "{stage_fee_intro}", "stage_fee_intro"],
     ["1.仲裁阶段：律师代理费为￥*0,000.00元（大写人民币*万元整），甲方在本合同签署后", "{fee_arbitration_clause}", "fee_arbitration_clause"],
     ["三日内一次性向乙方支付。", "", "fee_arbitration_clause_tail"],
     ["2.一审阶段：律师代理费为￥*0,000.00元（大写人民币*万元整），甲方在本合同签署后三日内一次性向乙方支付。", "{fee_first_instance_clause}", "fee_first_instance_clause"],
     ["3.二审阶段：律师代理费为￥*0,000.00元（大写人民币*万元整），若二审由甲方提起，则在甲方确定提起上诉之前一次性向乙方支付；若二审由其他诉讼当事人提起，则在收到上诉状之日起三日内一次性向乙方支付。", "{fee_second_instance_clause}", "fee_second_instance_clause"],
-    ["4.执行阶段：律师代理费为￥*0,000.00元（大写人民币*万元整），在甲方确定乙方代理执行程序之前一次性支付。", "{fee_enforcement_clause}{/is_stage_fixed}", "fee_enforcement_clause"],
-    ["□基础收费+风险收费", "{risk_fee_checkbox}基础收费+风险收费", "risk_fee_checkbox"],
-    ["甲乙双方选择风险代理收费方式，即律师费由基础费用和风险收费两部分组成：", "{#is_risk_fee}甲乙双方选择风险代理收费方式，即律师费由基础费用和风险收费两部分组成：", "risk_fee_intro"],
+    ["4.执行阶段：律师代理费为￥*0,000.00元（大写人民币*万元整），在甲方确定乙方代理执行程序之前一次性支付。", "{fee_enforcement_clause}", "fee_enforcement_clause"],
+    ["□基础收费+风险收费", "{risk_fee_line}", "risk_fee_line"],
+    ["甲乙双方选择风险代理收费方式，即律师费由基础费用和风险收费两部分组成：", "{risk_fee_intro}", "risk_fee_intro"],
     ["1.基础费用：￥***00.00元（大写***元整），在签订合同后三日内支付。", "{base_fee_clause}", "base_fee_clause"],
     ["2.风险收费：按照案件胜诉并收回款项金额的*%（百分之*）收取，即甲方在案件中以任何形式（包括债务人主动给付、和解、调解或判决后给付以及通过法院强制执行等）收回的与案件有关的款项、有形资产或其他财产权益，甲方按实际收回的本金、违约金、利息以及所获得的其他有形资产或财产权益（如有）价值金额的*%（百分之*）向乙方支付律师费，甲方应在每次收回款项或权益之日起三日内向乙方支付该律师费。对于作为被告的案件，乙方代理后甲方胜诉或调解结案的，甲方按照被减免债务金额的*%（百分之*）向乙方支付律师费，该律师费甲方应在收到生效裁判文书之日起三日内向乙方支付。", "{risk_fee_clause}", "risk_fee_clause"],
     ["如果甲方实际收到的是现金以外的有形资产或财产权益，乙方有权选择以评估金额或实际变现金额为依据计算律师费。", "{risk_fee_followup_clause_1}", "risk_fee_followup_clause_1"],
-    ["对于风险收费，甲方只要有回款或有回收其他有形资产或财产权益，就应按照约定支付律师费，无需等案件的全部标的额收回再支付律师费。", "{risk_fee_followup_clause_2}{/is_risk_fee}", "risk_fee_followup_clause_2"],
+    ["对于风险收费，甲方只要有回款或有回收其他有形资产或财产权益，就应按照约定支付律师费，无需等案件的全部标的额收回再支付律师费。", "{risk_fee_followup_clause_2}", "risk_fee_followup_clause_2"],
     ["甲、乙双方如果发生争议，应当友好协商解决。如协商不成，任何一方均有权将争议提交至深圳国际仲裁院仲裁，按照提交仲裁时深圳国际仲裁院现行有效的仲裁规则进行仲裁。仲裁裁决是终局的，对双方当事人均有约束力。", "{dispute_resolution_clause}", "dispute_resolution_clause"],
     ["附：《风险代理告知书》", "{attachment_notice_title}", "attachment_notice_title"],
     ["（以下无正文，为本合同签署处及附件）", "{attachment_notice_suffix}", "attachment_notice_suffix"],
     ["甲方：                                   乙方：北京市隆安（深圳）律师事务所", "甲方：{client_name}                                   乙方：北京市隆安（深圳）律师事务所", "sign_client_name"],
-    ["法定代表人/负责人/授权代表：__________   承办律师：_________________                                          ", "法定代表人/负责人/授权代表：{client_representative}   承办律师：{lead_lawyer}                                          ", "signature_line"],
+    ["法定代表人/负责人/授权代表：__________   承办律师：_________________                                          ", "{signature_line}", "signature_line"],
     ["签约时间：  202 年   月     日           ", "签约时间：{sign_date_text}           ", "sign_date_text"],
     ["<w:t>附件</w:t>", "<w:t>{#show_risk_notice}附件</w:t>", "show_risk_notice_open"],
-    ["委托人：", "委托人：{client_name}", "risk_notice_client_name"],
+    ["委托人：", "委托人：{risk_notice_client_name}", "risk_notice_client_name"],
     ["<w:t>日  期：   年  月  日</w:t>", "<w:t>日  期：{risk_notice_date_text}{/show_risk_notice}</w:t>", "show_risk_notice_close"],
   ];
 
@@ -1589,7 +1659,9 @@ function buildContractWordFileTitle(
   const clientName = readString(record, "客户名称")
     ?? extractPartyFromText(request, /甲方(?:为|是)?[:：]?\s*([^\n；;，,。]+)/)
     ?? "XXX";
-  const counterparty = extractPartyFromText(request, /(?:对方当事人|对方|乙方)(?:为|是)?[:：]?\s*([^\n；;，,。]+)/)
+  const parsed = parseContractDraftRequest(request);
+  const counterparty = parsed.counterpartyName
+    ?? extractPartyFromText(request, /(?:对方当事人|对方)(?:为|是)?[:：]?\s*([^\n；;，,。]+)/)
     ?? "XXX公司";
 
   if (/委托代理合同/.test(templateName)) {
@@ -1598,51 +1670,71 @@ function buildContractWordFileTitle(
   return `${templateName}（${normalizePartyForFileName(clientName)}vs${normalizePartyForFileName(counterparty)}）`;
 }
 
-function buildContractTemplateRenderData(
+export function buildContractTemplateRenderData(
   request: string,
   record: Record<string, unknown> | null,
   templateData: Record<string, unknown> | null,
   feeMode: string,
 ): ContractTemplateRenderData {
-  const resolvedFeeMode = readString(templateData, "fee_mode") ?? feeMode;
+  const parsed = parseContractDraftRequest(request);
+  const resolvedFeeMode = feeMode || readString(templateData, "fee_mode") || "stage_fixed";
   const isRiskFee = resolvedFeeMode === "base_plus_risk";
   const isStageFixed = !isRiskFee;
-  const clientName = readString(templateData, "client_name")
+  const clientName = parsed.clientName
+    ?? readString(templateData, "client_name")
     ?? readString(record, "客户名称")
     ?? extractPartyFromText(request, /甲方(?:为|是)?[:：]?\s*([^\n；;，,。]+)/)
     ?? "【待补】";
-  const clientRepresentative = readString(templateData, "client_representative") ?? "【待补】";
-  const clientIdCode = readString(templateData, "client_id_code")
+  const clientRepresentative = parsed.clientRepresentative ?? readString(templateData, "client_representative") ?? "";
+  const clientIdCode = parsed.clientIdCode
+    ?? readString(templateData, "client_id_code")
     ?? readString(record, "信用代码/身份证")
     ?? "【待补】";
-  const clientAddress = readString(templateData, "client_address")
+  const clientAddress = parsed.clientAddress
+    ?? readString(templateData, "client_address")
     ?? readString(record, "客户收件地址")
     ?? "【待补】";
-  const clientEmail = readString(templateData, "client_email") ?? "【待补】";
-  const clientPhone = readString(templateData, "client_phone")
+  const clientEmail = readString(templateData, "client_email") ?? "";
+  const clientPhone = parsed.clientPhone
+    ?? readString(templateData, "client_phone")
     ?? readString(record, "联系方式")
     ?? "【待补】";
-  const counterpartyName = readString(templateData, "counterparty_name")
-    ?? extractPartyFromText(request, /(?:对方当事人|对方|乙方)(?:为|是)?[:：]?\s*([^\n；;。]+)/)
+  const counterpartyName = parsed.counterpartyName
+    ?? readString(templateData, "counterparty_name")
+    ?? extractPartyFromText(request, /(?:对方当事人|对方)(?:为|是)?[:：]?\s*([^\n；;。]+)/)
     ?? "【待补】";
-  const caseCause = readString(templateData, "case_cause")
+  const caseCause = parsed.caseCause
+    ?? readString(templateData, "case_cause")
     ?? readString(record, "具体类型/案由")
     ?? extractPartyFromText(request, /案由(?:为|是)?[:：]?\s*([^\n；;。]+)/)
     ?? "【待补】";
-  const leadLawyer = readString(templateData, "lead_lawyer")
+  const leadLawyer = parsed.leadLawyer
+    ?? readString(templateData, "lead_lawyer")
     ?? extractPartyFromText(request, /承办律师(?:为|是)?[:：]?\s*([^\n；;，,。]+)/)
     ?? "【待补】";
   const signDateText = formatContractSignDate(readString(templateData, "sign_date"));
-  const engageArbitration = readBoolean(templateData, "engage_arbitration") ?? /仲裁/.test(request);
-  const engageFirstInstance = readBoolean(templateData, "engage_first_instance") ?? /一审/.test(request);
-  const engageSecondInstance = readBoolean(templateData, "engage_second_instance") ?? /二审/.test(request);
-  const engageEnforcement = readBoolean(templateData, "engage_enforcement") ?? /执行/.test(request);
-  const engageSettlement = readBoolean(templateData, "engage_settlement") ?? /(调解|和解)/.test(request);
+  const engageArbitration = parsed.engageArbitration ?? readBoolean(templateData, "engage_arbitration") ?? /仲裁/.test(request);
+  const engageFirstInstance = parsed.engageFirstInstance ?? readBoolean(templateData, "engage_first_instance") ?? /一审/.test(request);
+  const engageSecondInstance = parsed.engageSecondInstance ?? readBoolean(templateData, "engage_second_instance") ?? /二审/.test(request);
+  const engageEnforcement = parsed.engageEnforcement ?? readBoolean(templateData, "engage_enforcement") ?? /执行/.test(request);
+  const engageSettlement = parsed.engageSettlement ?? readBoolean(templateData, "engage_settlement") ?? /(调解|和解)/.test(request);
   const specialTerms = readString(templateData, "special_terms") ?? "";
+  const isCompany = inferIsCompany(clientName, clientIdCode, clientRepresentative);
+  const arbitrationAmount = parsed.arbitrationFee ?? extractMoneyFromClause(readString(templateData, "fee_arbitration_clause"));
+  const firstInstanceAmount = parsed.firstInstanceFee ?? extractMoneyFromClause(readString(templateData, "fee_first_instance_clause"));
+  const secondInstanceAmount = parsed.secondInstanceFee ?? extractMoneyFromClause(readString(templateData, "fee_second_instance_clause"));
+  const enforcementAmount = parsed.enforcementFee ?? extractMoneyFromClause(readString(templateData, "fee_enforcement_clause"));
+  const riskBaseAmount = parsed.baseFee ?? extractMoneyFromClause(readString(templateData, "base_fee_clause"));
+  const arbitrationChinese = parsed.arbitrationFeeChinese;
+  const representativeLine = isCompany ? `法定代表人/负责人：${clientRepresentative}` : "";
+  const signatureLine = isCompany
+    ? `法定代表人/负责人/授权代表：${clientRepresentative}   承办律师：${leadLawyer}                                          `
+    : "";
 
   return {
     client_name: clientName,
     client_representative: clientRepresentative,
+    client_representative_line: representativeLine,
     client_id_code: clientIdCode,
     client_address: clientAddress,
     client_email: clientEmail,
@@ -1659,6 +1751,13 @@ function buildContractTemplateRenderData(
     settlement_checkbox: engageSettlement ? "☑" : "☐",
     stage_fee_checkbox: isStageFixed ? "☑" : "☐",
     risk_fee_checkbox: isRiskFee ? "☑" : "☐",
+    arbitration_line: engageArbitration ? "☑仲裁阶段；" : "",
+    first_instance_line: engageFirstInstance ? "☑一审诉讼；" : "",
+    second_instance_line: engageSecondInstance ? "☑二审诉讼；" : "",
+    enforcement_line: engageEnforcement ? "☑执行程序；" : "",
+    settlement_line: engageSettlement ? "☑上述案件代理程序中，有关调解、和解事宜。" : "",
+    stage_fee_line: isStageFixed ? "☑按阶段收费" : "",
+    risk_fee_line: isRiskFee ? "☑基础收费+风险收费" : "",
     attachment_notice_title: isRiskFee ? "附：《风险代理告知书》" : "",
     attachment_notice_suffix: isRiskFee ? "（以下无正文，为本合同签署处及附件）" : "（以下无正文，为本合同签署处）",
     dispute_resolution_clause: readString(templateData, "dispute_resolution_clause")
@@ -1668,14 +1767,28 @@ function buildContractTemplateRenderData(
     is_stage_fixed: isStageFixed,
     is_risk_fee: isRiskFee,
     show_risk_notice: isRiskFee,
-    fee_arbitration_clause: readString(templateData, "fee_arbitration_clause") ?? "1.仲裁阶段：律师代理费为【待补】，甲方在本合同签署后三日内一次性向乙方支付。",
-    fee_first_instance_clause: readString(templateData, "fee_first_instance_clause") ?? "2.一审阶段：律师代理费为【待补】，甲方在本合同签署后三日内一次性向乙方支付。",
-    fee_second_instance_clause: readString(templateData, "fee_second_instance_clause") ?? "3.二审阶段：律师代理费为【待补】，若二审由甲方提起，则在甲方确定提起上诉之前一次性向乙方支付；若二审由其他诉讼当事人提起，则在收到上诉状之日起三日内一次性向乙方支付。",
-    fee_enforcement_clause: readString(templateData, "fee_enforcement_clause") ?? "4.执行阶段：律师代理费为【待补】，在甲方确定乙方代理执行程序之前一次性支付。",
-    base_fee_clause: readString(templateData, "base_fee_clause") ?? "甲乙双方选择风险代理收费方式，即律师费由基础费用和风险收费两部分组成：",
-    risk_fee_clause: readString(templateData, "risk_fee_clause") ?? "2.风险收费：按照双方另行确认的比例和条件执行。",
-    risk_fee_followup_clause_1: readString(templateData, "risk_fee_followup_clause_1") ?? "如果甲方实际收到的是现金以外的有形资产或财产权益，乙方有权选择以评估金额或实际变现金额为依据计算律师费。",
-    risk_fee_followup_clause_2: readString(templateData, "risk_fee_followup_clause_2") ?? "对于风险收费，甲方只要有回款或回收其他有形资产或财产权益，就应按照约定支付律师费，无需等案件的全部标的额收回再支付律师费。",
+    stage_fee_intro: isStageFixed ? "甲乙双方约定乙方律师费如下：" : "",
+    risk_fee_intro: isRiskFee ? "甲乙双方选择风险代理收费方式，即律师费由基础费用和风险收费两部分组成：" : "",
+    fee_arbitration_clause: engageArbitration && arbitrationAmount
+      ? buildStageFeeClause("1.仲裁阶段", arbitrationAmount, arbitrationChinese ?? formatChineseMoney(arbitrationAmount), "甲方在本合同签署后三日内一次性向乙方支付。")
+      : "",
+    fee_first_instance_clause: engageFirstInstance && firstInstanceAmount
+      ? buildStageFeeClause("2.一审阶段", firstInstanceAmount, formatChineseMoney(firstInstanceAmount), "甲方在本合同签署后三日内一次性向乙方支付。")
+      : "",
+    fee_second_instance_clause: engageSecondInstance && secondInstanceAmount
+      ? buildStageFeeClause("3.二审阶段", secondInstanceAmount, formatChineseMoney(secondInstanceAmount), "若二审由甲方提起，则在甲方确定提起上诉之前一次性向乙方支付；若二审由其他诉讼当事人提起，则在收到上诉状之日起三日内一次性向乙方支付。")
+      : "",
+    fee_enforcement_clause: engageEnforcement && enforcementAmount
+      ? buildStageFeeClause("4.执行阶段", enforcementAmount, formatChineseMoney(enforcementAmount), "在甲方确定乙方代理执行程序之前一次性支付。")
+      : "",
+    base_fee_clause: isRiskFee && riskBaseAmount
+      ? `1.基础费用：￥${formatMoney(riskBaseAmount)}元（大写${formatChineseMoney(riskBaseAmount)}），在签订合同后三日内支付。`
+      : "",
+    risk_fee_clause: isRiskFee ? (readString(templateData, "risk_fee_clause") ?? "2.风险收费：按照双方另行确认的比例和条件执行。") : "",
+    risk_fee_followup_clause_1: isRiskFee ? (readString(templateData, "risk_fee_followup_clause_1") ?? "如果甲方实际收到的是现金以外的有形资产或财产权益，乙方有权选择以评估金额或实际变现金额为依据计算律师费。") : "",
+    risk_fee_followup_clause_2: isRiskFee ? (readString(templateData, "risk_fee_followup_clause_2") ?? "对于风险收费，甲方只要有回款或回收其他有形资产或财产权益，就应按照约定支付律师费，无需等案件的全部标的额收回再支付律师费。") : "",
+    signature_line: signatureLine,
+    risk_notice_client_name: "",
   };
 }
 
@@ -1739,39 +1852,204 @@ function extractPartyFromText(text: string, pattern: RegExp): string | undefined
   return matched?.[1]?.trim() || undefined;
 }
 
+type ParsedContractDraftRequest = {
+  clientName?: string | undefined;
+  clientIdCode?: string | undefined;
+  clientAddress?: string | undefined;
+  clientPhone?: string | undefined;
+  clientRepresentative?: string | undefined;
+  counterpartyName?: string | undefined;
+  caseCause?: string | undefined;
+  leadLawyer?: string | undefined;
+  engageArbitration?: boolean | undefined;
+  engageFirstInstance?: boolean | undefined;
+  engageSecondInstance?: boolean | undefined;
+  engageEnforcement?: boolean | undefined;
+  engageSettlement?: boolean | undefined;
+  arbitrationFee?: number | undefined;
+  arbitrationFeeChinese?: string | undefined;
+  firstInstanceFee?: number | undefined;
+  secondInstanceFee?: number | undefined;
+  enforcementFee?: number | undefined;
+  baseFee?: number | undefined;
+};
+
+export function parseContractDraftRequest(text: string): ParsedContractDraftRequest {
+  const normalized = text.replace(/\r\n/g, "\n");
+  const clientName = firstMatch(normalized, [
+    /甲方（委托人）[:：]\s*([^\n；;，,。]+)/,
+    /甲方[:：]\s*([^\n；;，,。]+)/,
+    /甲方(?:为|是)\s*([^\n；;，,。]+)/,
+    /委托人[:：]\s*([^\n；;，,。]+)/,
+  ]);
+  const clientIdCode = firstMatch(normalized, [
+    /(?:身份证号|证件号|统一社会信用代码|社会统一信用代码)[:：]\s*([0-9A-Za-zXx*]+)/,
+  ]);
+  const clientAddress = firstMatch(normalized, [
+    /(?:住址|地址)[:：]\s*([^\n；;。]+?)(?=，(?:联系电话|联系方式|手机号码|手机号)|[。；;\n]|$)/,
+  ]);
+  const clientPhone = firstMatch(normalized, [
+    /(?:联系电话|联系方式|手机号码|手机号)[:：]\s*([0-9-+（）() ]{6,})/,
+  ])?.replace(/\s+/g, "");
+  const clientRepresentative = firstMatch(normalized, [
+    /(?:法定代表人|负责人)[:：]\s*([^\n；;，,。]+)/,
+  ]);
+  const counterpartyName = firstMatch(normalized, [
+    /因与([^，,。；;\n]+?)发生[^，,。；;\n]*(?:纠纷|争议)/,
+    /对方当事人(?:为|是)?[:：]\s*([^\n；;。]+)/,
+    /对方(?:为|是)?[:：]\s*([^\n；;。]+)/,
+  ]);
+  const caseCause = firstMatch(normalized, [
+    /发生([^，,。；;\n]*?(?:纠纷|争议))/,
+    /案由(?:为|是)?[:：]\s*([^\n；;。]+)/,
+  ]);
+  const leadLawyer = firstMatch(normalized, [
+    /承办律师(?:为|是)?[:：]\s*([^\n；;，,。]+)/,
+  ]);
+
+  const arbitrationFee = extractFeeForStage(normalized, "仲裁");
+  const firstInstanceFee = extractFeeForStage(normalized, "一审");
+  const secondInstanceFee = extractFeeForStage(normalized, "二审");
+  const enforcementFee = extractFeeForStage(normalized, "执行");
+  const baseFee = extractFeeForStage(normalized, "基础");
+  const arbitrationFeeChinese = firstMatch(normalized, [
+    /代理费用为人民币[\d,，.]+元（大写[:：]?\s*([^）)]+)）/,
+    /仲裁[^。；;\n]*大写[:：]?\s*([^，,。；;\n]+)/,
+  ]);
+
+  return {
+    clientName,
+    clientIdCode,
+    clientAddress,
+    clientPhone,
+    clientRepresentative,
+    counterpartyName,
+    caseCause,
+    leadLawyer,
+    engageArbitration: /仲裁/.test(normalized),
+    engageFirstInstance: /一审/.test(normalized),
+    engageSecondInstance: /二审/.test(normalized),
+    engageEnforcement: /执行/.test(normalized),
+    engageSettlement: /(调解|和解)/.test(normalized),
+    arbitrationFee,
+    arbitrationFeeChinese,
+    firstInstanceFee,
+    secondInstanceFee,
+    enforcementFee,
+    baseFee,
+  };
+}
+
+export function validateContractDraftRequest(templateName: string, request: string): void {
+  if (!/委托代理合同/.test(templateName)) {
+    return;
+  }
+  const parsed = parseContractDraftRequest(request);
+  const missing: string[] = [];
+  if (!parsed.clientName) missing.push("甲方/委托人");
+  if (!parsed.clientIdCode) missing.push("证件号/身份证号/统一社会信用代码");
+  if (!parsed.clientAddress) missing.push("地址/住址");
+  if (!parsed.clientPhone) missing.push("联系电话");
+  if (missing.length > 0) {
+    throw new Error(`委托代理合同起草缺少必填信息：${missing.join("、")}。请补充后重试。`);
+  }
+}
+
+function firstMatch(text: string, patterns: RegExp[]): string | undefined {
+  for (const pattern of patterns) {
+    const matched = text.match(pattern);
+    const value = matched?.[1]?.trim();
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function extractFeeForStage(text: string, stage: string): number | undefined {
+  const direct = text.match(new RegExp(`${stage}[^\\d]{0,12}([\\d,，]+(?:\\.\\d{1,2})?)\\s*元`));
+  if (direct?.[1]) {
+    return parseMoneyValue(direct[1]);
+  }
+  if (stage === "仲裁") {
+    const general = text.match(/代理费用为人民币\s*([\d,，]+(?:\.\d{1,2})?)\s*元/);
+    if (general?.[1]) {
+      return parseMoneyValue(general[1]);
+    }
+  }
+  return undefined;
+}
+
+function parseMoneyValue(value: string): number | undefined {
+  const normalized = value.replace(/[，,]/g, "").trim();
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function formatMoney(value: number): string {
+  return value.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatChineseMoney(value: number): string {
+  const integer = Math.round(value);
+  const digits = ["零", "壹", "贰", "叁", "肆", "伍", "陆", "柒", "捌", "玖"];
+  const units = ["", "拾", "佰", "仟"];
+  const bigUnits = ["", "万", "亿"];
+  const source = String(integer);
+  const groups: string[] = [];
+  for (let index = 0; index < source.length; index += 4) {
+    groups.unshift(source.slice(Math.max(0, source.length - index - 4), source.length - index));
+  }
+  const rendered = groups.map((group, groupIndex) => {
+    const chars = group.split("");
+    let block = "";
+    chars.forEach((char, index) => {
+      const digit = Number(char);
+      const unitIndex = chars.length - index - 1;
+      if (digit === 0) {
+        if (!block.endsWith("零") && block !== "") {
+          block += "零";
+        }
+        return;
+      }
+      block += `${digits[digit]}${units[unitIndex]}`;
+    });
+    block = block.replace(/零+$/g, "");
+    return block ? `${block}${bigUnits[groups.length - groupIndex - 1]}` : "";
+  }).join("").replace(/零+/g, "零").replace(/零(万|亿)/g, "$1").replace(/零+$/g, "");
+  return `${rendered || "零"}元整`;
+}
+
+function buildStageFeeClause(prefix: string, amount: number, chineseAmount: string, tail: string): string {
+  return `${prefix}：律师代理费为￥${formatMoney(amount)}元（大写人民币${chineseAmount}），${tail}`;
+}
+
+function extractMoneyFromClause(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const matched = value.match(/￥\s*([\d,，]+(?:\.\d{1,2})?)\s*元/);
+  return matched?.[1] ? parseMoneyValue(matched[1]) : undefined;
+}
+
+function inferIsCompany(clientName: string, clientIdCode: string, clientRepresentative: string): boolean {
+  if (clientRepresentative.trim()) {
+    return true;
+  }
+  if (/公司|事务所|中心|机构|集团|有限/.test(clientName)) {
+    return true;
+  }
+  return /^[0-9A-Z]{18}$/i.test(clientIdCode.trim());
+}
+
 function normalizePartyForFileName(value: string): string {
   return value
     .replace(/[《》“”"'`]/g, "")
     .replace(/\s+/g, "")
     .slice(0, 30) || "XXX";
-}
-
-async function runLarkCli(args: string[], stdinText?: string): Promise<string> {
-  return await new Promise((resolve, reject) => {
-    const child = spawn("lark-cli", args, {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => {
-      stdout += String(chunk);
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += String(chunk);
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) {
-        resolve(stdout);
-        return;
-      }
-      reject(new Error(stderr || stdout || `lark-cli exited with code ${code ?? -1}`));
-    });
-    if (stdinText) {
-      child.stdin.write(stdinText);
-    }
-    child.stdin.end();
-  });
 }
 
 function pickNearestDeadline(fields: Record<string, unknown>, now: number, lookaheadMs: number): { label: string; value: string } | null {
