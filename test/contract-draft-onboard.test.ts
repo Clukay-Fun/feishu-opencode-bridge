@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import type { AppConfig } from "../src/config/schema.js";
@@ -16,6 +18,25 @@ function createTextMessage(text: string): IncomingChatMessage {
     threadKey: "thread-1",
     conversationKey: "chat-1:thread-1",
     messageType: "text",
+  };
+}
+
+function createFileMessage(fileName: string): IncomingChatMessage {
+  return {
+    chatId: "chat-1",
+    chatType: "group",
+    senderOpenId: "ou_user",
+    messageId: `msg-${Math.random().toString(16).slice(2)}`,
+    rawContent: fileName,
+    plainText: fileName,
+    threadKey: "thread-1",
+    conversationKey: "chat-1:thread-1",
+    messageType: "file",
+    file: {
+      fileKey: "file_1",
+      fileName,
+      size: 1024,
+    },
   };
 }
 
@@ -45,13 +66,51 @@ function createModule() {
     return { messageId: "out-1" };
   });
   const listDraftTemplates = vi.fn(async () => ["委托代理合同-民事"]);
-  const draftContract = vi.fn(async (request: string) => ({
-    docTitle: "合同草稿",
-    wordPath: "/tmp/bridge-test/contract.docx",
-    docUrl: "https://example.com/doc",
-    markdown: `### 合同草稿\n\n${request}`,
-    recordId: "rec_1",
-    warnings: [],
+  const draftContract = vi.fn(async (request: string, onProgress?: (stage: string, detail?: string) => Promise<void> | void) => {
+    await onProgress?.("parse-request", "正在解析起草需求");
+    await onProgress?.("match-template", "正在匹配合同模板");
+    await onProgress?.("prepare-fields", "正在整理关键字段");
+    await onProgress?.("generate-word", "正在使用模板填充变量并生成文档");
+    await onProgress?.("sync-artifacts", "正在同步合同台账记录");
+    return {
+      docTitle: "合同草稿",
+      wordPath: path.join(process.cwd(), "data/contract-drafts/contract.docx"),
+      markdown: `### 合同草稿\n\n${request}`,
+      recordId: "rec_1",
+      warnings: [],
+    };
+  });
+  const createCase = vi.fn(async (request: string) => ({
+    summary: `已整理案件：${request}`,
+    recordId: "rec_case_1",
+    record: {
+      类型: "劳动争议",
+      案由: "违法解除劳动合同争议",
+      委托人: "张三",
+      对方当事人: "北京XX科技有限公司",
+      审理法院: "朝阳区劳动仲裁委员会",
+      程序阶段: ["劳动仲裁"],
+      承办律师: "刘达律师",
+    },
+  }));
+  const recognizeInvoice = vi.fn(async () => ({
+    summary: "付款方 张三，身份证号 110101199001010011，增值税普通发票，项目 诉讼代理律师费",
+    recordId: "rec_invoice_1",
+    record: {
+      付款方: "张三",
+      发票号: "032001900104",
+      开票日期: "2026-04-10",
+      发票金额: 20000,
+    },
+    matchedContract: "委托代理合同（张三 vs 北京XX科技）",
+  }));
+  const listReminderItems = vi.fn(async () => ({
+    contractLines: ["委托代理合同：未收款 ¥10000，未开票 ¥0；付款节点：04-20"],
+    invoiceLines: [],
+    caseLines: [
+      "张三劳动争议案：举证截止日 2026-04-17；当前状态 需补充工资流水证据",
+      "张三劳动争议案：开庭日 2026-04-18 09:30；当前状态 需补充工资流水证据",
+    ],
   }));
   const module = new ContractAssistantRuntimeModule({
     config: {
@@ -86,6 +145,9 @@ function createModule() {
     service: {
       listDraftTemplates,
       draftContract,
+      createCase,
+      recognizeInvoice,
+      listReminderItems,
     } as never,
     sendPayload,
     updatePayload,
@@ -96,6 +158,9 @@ function createModule() {
     updatePayload,
     listDraftTemplates,
     draftContract,
+    createCase,
+    recognizeInvoice,
+    listReminderItems,
   };
 }
 
@@ -112,6 +177,60 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     expect(listDraftTemplates).toHaveBeenCalledTimes(1);
     expect(sendPayload).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(sendPayload.mock.calls[0]?.[1] ?? {})).toContain("请选择模板");
+  });
+
+  it("renders optimized case create processing and completed cards", async () => {
+    const { module, sendPayload, updatePayload, createCase } = createModule();
+    const message = createTextMessage("/案件录入 张三与北京XX科技有限公司劳动争议，朝阳区劳动仲裁委员会，承办律师刘达律师");
+    const result = await module.handleMessage({
+      message,
+      routed: routeIncomingText(message.plainText),
+    });
+
+    expect(result).toEqual({ claimed: true });
+    expect(createCase).toHaveBeenCalledTimes(1);
+
+    const processingSerialized = JSON.stringify(sendPayload.mock.calls[0]?.[1] ?? {});
+    const completedSerialized = JSON.stringify(updatePayload.mock.calls[0]?.[2] ?? {});
+    expect(processingSerialized).toContain("案件信息录入中");
+    expect(processingSerialized).toContain("正在解析案件信息");
+    expect(processingSerialized).toContain("提取字段：进行中");
+    expect(processingSerialized).toContain("写入案件管理表：等待中");
+    expect(completedSerialized).toContain("案件已录入");
+    expect(completedSerialized).toContain("张三 vs 北京XX科技有限公司");
+    expect(completedSerialized).toContain("劳动争议｜劳动仲裁");
+    expect(completedSerialized).toContain("违法解除劳动合同争议");
+    expect(completedSerialized).toContain("刘达律师");
+    expect(completedSerialized).toContain("案件管理表");
+    expect(completedSerialized).toContain("rec_case_1");
+  });
+
+  it("keeps completed steps visible on contract draft card", async () => {
+    const { module, sendPayload, updatePayload, draftContract } = createModule();
+    const message = createTextMessage("/起草合同 甲方 张三，对方 北京XX科技，案由 劳动争议，劳动仲裁，律师费 20000 元");
+    const result = await module.handleMessage({
+      message,
+      routed: routeIncomingText(message.plainText),
+    });
+
+    expect(result).toEqual({ claimed: true });
+    expect(draftContract).toHaveBeenCalledTimes(1);
+
+    const initialSerialized = JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {});
+    const finalSerialized = JSON.stringify(updatePayload.mock.calls.at(-1)?.[2] ?? {});
+    expect(initialSerialized).toContain("合同起草");
+    expect(initialSerialized).toContain("委托代理合同");
+    expect(initialSerialized).toContain("劳动争议｜劳动仲裁");
+    expect(initialSerialized).toContain("律师费：¥20,000");
+    expect(finalSerialized).toContain("合同起草完成");
+    expect(finalSerialized).toContain("已完成解析起草需求");
+    expect(finalSerialized).toContain("已完成匹配合同模板");
+    expect(finalSerialized).toContain("已完成整理关键字段");
+    expect(finalSerialized).toContain("已完成使用模板填充变量并生成文档");
+    expect(finalSerialized).toContain("已完成同步合同台账记录");
+    expect(finalSerialized).toContain("/contract.docx");
+    expect(finalSerialized).toContain("合同台账记录：打开记录");
+    expect(finalSerialized).toContain("耗时：");
   });
 
   it("supports one-shot answer during onboarding", async () => {
@@ -133,7 +252,82 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     expect(draftContract.mock.calls[0]?.[0]).toContain("使用《委托代理合同-民事》模板");
     expect(draftContract.mock.calls[0]?.[0]).toContain("甲方为房怡康");
     expect(draftContract.mock.calls[0]?.[0]).toContain("收费模式选择：按阶段收费");
-    expect(updatePayload).toHaveBeenCalledTimes(1);
+    expect(updatePayload.mock.calls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("merges invoice processing and completed card", async () => {
+    const { module, sendPayload, updatePayload, recognizeInvoice } = createModule();
+    const start = createTextMessage("/识别发票");
+    await module.handleMessage({
+      message: start,
+      routed: routeIncomingText(start.plainText),
+    });
+
+    const file = createFileMessage("invoice.pdf");
+    const result = await module.handleMessage({
+      message: file,
+      routed: null,
+      pendingInteraction: null,
+    });
+
+    expect(result).toEqual({ claimed: true });
+    expect(recognizeInvoice).toHaveBeenCalledTimes(1);
+
+    const initialSerialized = JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {});
+    const finalSerialized = JSON.stringify(updatePayload.mock.calls.at(-1)?.[2] ?? {});
+    expect(initialSerialized).toContain("发票识别");
+    expect(initialSerialized).toContain("OCR 识别发票内容");
+    expect(initialSerialized).toContain("填写表格");
+    expect(finalSerialized).toContain("发票识别完成");
+    expect(finalSerialized).not.toContain("正在 OCR 识别发票内容");
+    expect(finalSerialized).toContain("购买方信息");
+    expect(finalSerialized).toContain("张三");
+    expect(finalSerialized).toContain("110101199001010011");
+    expect(finalSerialized).toContain("发票信息");
+    expect(finalSerialized).toContain("032001900104");
+    expect(finalSerialized).toContain("增值税普通发票");
+    expect(finalSerialized).toContain("¥20,000.00");
+    expect(finalSerialized).toContain("2026-04-10");
+    expect(finalSerialized).toContain("诉讼代理律师费");
+    expect(finalSerialized).toContain("查看发票表");
+    expect(finalSerialized).toContain("耗时：");
+  });
+
+  it("renders reminder progress and today todo cards", async () => {
+    const { module, sendPayload, updatePayload, listReminderItems } = createModule();
+    const now = new Date();
+    const moduleAny = module as any;
+    moduleAny.featureConfig.reminder.targetChatIds = ["chat-reminder"];
+    moduleAny.featureConfig.reminder.hour = now.getHours();
+    moduleAny.featureConfig.reminder.minute = now.getMinutes();
+
+    await moduleAny.tickReminders();
+
+    expect(listReminderItems).toHaveBeenCalledTimes(1);
+    const progressSerialized = JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {});
+    const todoSerialized = JSON.stringify(updatePayload.mock.calls.at(-1)?.[2] ?? {});
+    expect(progressSerialized).toContain("案件提醒");
+    expect(progressSerialized).toContain("正在检索关联案件与待办事项");
+    expect(todoSerialized).toContain("今日待办");
+    expect(todoSerialized).toContain("举证期限截止");
+    expect(todoSerialized).toContain("开庭提醒");
+    expect(todoSerialized).toContain("合同付款");
+    expect(todoSerialized).toContain("发送 /提醒 详情 查看全部");
+  });
+
+  it("shows short Word path and hides doc link in direct draft completion card", async () => {
+    const { module, updatePayload } = createModule();
+    const message = createTextMessage("/起草合同 甲方（委托人）：张三，身份证号：110101199001010011，住址：北京市朝阳区建国路88号，联系电话：13800000000。甲方因与相关单位发生劳动争议，现委托乙方作为其代理人，代理处理劳动仲裁相关事宜。双方经协商一致，确认本次代理事项为劳动仲裁，代理费用为人民币20,000元（大写：贰万元整）。");
+
+    const result = await module.handleMessage({
+      message,
+      routed: routeIncomingText(message.plainText),
+    });
+
+    expect(result).toEqual({ claimed: true });
+    const completedSerialized = JSON.stringify(updatePayload.mock.calls.at(-1)?.[2] ?? {});
+    expect(completedSerialized).toContain("feishu-opencode-bridge/data/contract-drafts/contract.docx");
+    expect(completedSerialized).not.toContain("飞书文档");
   });
 
   it("supports numeric step-by-step answers", async () => {

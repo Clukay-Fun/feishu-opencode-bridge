@@ -1,4 +1,4 @@
-import type { PendingInteraction, PendingPermissionInteraction } from "../bridge/state.js";
+import type { PendingInteraction, PendingPermissionInteraction, PendingSessionSelectionInteraction } from "../bridge/state.js";
 import type { RoutedText } from "../bridge/router.js";
 import {
   buildModelListCardPayload,
@@ -41,6 +41,7 @@ const SESSIONS_ALL_PAGE_SIZE = 20;
 type CommandMessage = Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "threadKey" | "senderOpenId">;
 type CommandRouted = Extract<RoutedText, { kind: "command" }>;
 type PermissionResolution = "once" | "always" | "deny" | "timeout";
+type SessionSelectionOption = PendingSessionSelectionInteraction["options"][number];
 
 export type BridgeAppContext = {
   config: {
@@ -139,18 +140,14 @@ export class CommandHandler {
     if (command.kind === "new") {
       const previousSession = getActiveSession(this.context.getSessionWindow(message.conversationKey, message.chatType));
       const preferredLabel = command.title?.trim() || undefined;
-      const entry = previousSession
-        ? await this.context.bindSessionWithoutActivating(message, await this.context.createDetachedSession(message, preferredLabel))
-        : await this.context.createAndBindSession(message, preferredLabel);
+      const entry = await this.context.createAndBindSession(message, preferredLabel);
       const result = await this.context.sendPayload(message.chatId, buildSessionTransitionCardPayload({
         title: "已创建新会话",
         iconToken: "add-bold_outlined",
         previousLabel: previousSession?.label ?? null,
-        ...(previousSession ? { previousTitle: "保持当前" } : {}),
-        ...(previousSession ? { preservePrevious: true } : {}),
         currentLabel: entry.label,
-        ...(previousSession ? { currentTitle: "新会话" } : {}),
-        footer: previousSession ? "可基于这条回复创建话题，在线程里继续" : "刚刚创建 · 发送第一条消息开始",
+        ...(previousSession ? { currentTitle: "当前会话" } : {}),
+        footer: previousSession ? "已切换到新会话 · 可基于这条回复创建话题" : "刚刚创建 · 发送第一条消息开始",
       }), {
         event: "final message sent",
         transcriptType: "outbound-final",
@@ -330,6 +327,14 @@ export class CommandHandler {
         return;
       }
       const pending = this.context.pendingInteractions.get(message.conversationKey);
+      if (command.query) {
+        await this.switchSessionByName(message, window, command.query);
+        return;
+      }
+      if (command.index === undefined) {
+        await this.context.sendMarkdown(message.chatId, "请发送 `/switch <编号>` 或 `/switch <会话名称>`。", message.messageId);
+        return;
+      }
       if (!pending || pending.kind !== "session-select" || pending.expiresAt <= Date.now()) {
         this.context.clearPendingInteraction(message.conversationKey, false);
         await this.context.sendMarkdown(message.chatId, "会话列表已过期，请先重新执行 `/sessions`。", message.messageId);
@@ -340,33 +345,7 @@ export class CommandHandler {
         await this.context.sendMarkdown(message.chatId, "无效的会话编号，请重新执行 `/sessions` 查看列表。", message.messageId);
         return;
       }
-      const openCodeSessions = await this.context.listOpenCodeSessionsById();
-      if (!openCodeSessions.has(match.sessionId)) {
-        const nextWindow = removeSession(window, match.sessionId, this.context.config.bridge.maxSessionsPerWindow);
-        await this.context.saveSessionWindow(message.conversationKey, nextWindow);
-        this.context.clearPendingInteraction(message.conversationKey, false);
-        await this.context.sendMarkdown(message.chatId, "目标会话已失效，已从当前窗口列表移除，请重新执行 `/sessions`。", message.messageId);
-        return;
-      }
-      const sessionMeta = openCodeSessions.get(match.sessionId);
-      const fallbackLabel = resolveDisplayLabel(sessionMeta, match.title, match.sessionId);
-      let nextWindow = match.inWindow
-        ? setActiveSession(window, match.sessionId, Date.now(), this.context.config.bridge.maxSessionsPerWindow)
-        : addSession(window, createSessionEntry(match.sessionId, Date.now(), fallbackLabel), this.context.config.bridge.maxSessionsPerWindow);
-      nextWindow = setActiveSession(nextWindow, match.sessionId, Date.now(), this.context.config.bridge.maxSessionsPerWindow);
-      nextWindow = updateSessionLabel(nextWindow, match.sessionId, fallbackLabel, this.context.config.bridge.maxSessionsPerWindow);
-      await this.context.saveSessionWindow(message.conversationKey, nextWindow);
-      this.context.clearPendingInteraction(message.conversationKey, false);
-      const previous = getActiveSession(window);
-      const current = getActiveSession(nextWindow);
-      const messageCount = await this.context.getSessionMessageCount(match.sessionId);
-      await this.context.sendPayload(message.chatId, buildSessionTransitionCardPayload({
-        title: "已切换会话",
-        iconToken: "sheet-iconsets-check_filled",
-        previousLabel: previous?.sessionId === current?.sessionId ? null : previous?.label ?? null,
-        currentLabel: current?.label ?? fallbackLabel,
-        footer: `创建于 ${formatSessionTimestamp(current?.createdAt ?? sessionMeta?.time?.created ?? Date.now())} · 共 ${messageCount} 条消息`,
-      }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "已切换会话", len: 5 }, { replyToMessageId: message.messageId });
+      await this.switchToSession(message, window, match, { clearPending: true });
       return;
     }
 
@@ -644,6 +623,110 @@ export class CommandHandler {
     await this.context.sendMarkdown(message.chatId, text, message.messageId);
   }
 
+  private async switchSessionByName(message: CommandMessage, window: SessionWindowRecord, rawQuery: string): Promise<void> {
+    const query = normalizeSessionLookupText(rawQuery);
+    if (!query) {
+      await this.context.sendMarkdown(message.chatId, "请在 `/switch` 后输入会话名称。", message.messageId);
+      return;
+    }
+
+    const openCodeSessions = await this.context.listOpenCodeSessionsById();
+    const candidateMap = new Map<string, SessionSelectionOption>();
+    for (const session of window.sessions) {
+      candidateMap.set(session.sessionId, {
+        index: candidateMap.size + 1,
+        sessionId: session.sessionId,
+        title: session.label,
+        current: session.sessionId === window.activeSessionId,
+        inWindow: true,
+      });
+    }
+    for (const session of openCodeSessions.values()) {
+      if (candidateMap.has(session.id)) {
+        continue;
+      }
+      candidateMap.set(session.id, {
+        index: candidateMap.size + 1,
+        sessionId: session.id,
+        title: resolveDisplayLabel(session, session.title ?? session.slug ?? session.id, session.id),
+        current: session.id === window.activeSessionId,
+        inWindow: false,
+      });
+    }
+
+    const candidates = [...candidateMap.values()];
+    const exactMatches = candidates.filter((candidate) => (
+      normalizeSessionLookupText(candidate.title) === query
+      || normalizeSessionLookupText(candidate.sessionId) === query
+    ));
+    const matches = exactMatches.length > 0
+      ? exactMatches
+      : candidates.filter((candidate) => normalizeSessionLookupText(candidate.title).includes(query));
+
+    if (matches.length === 0) {
+      await this.context.sendMarkdown(message.chatId, "未找到匹配的会话，请发送 `/sessions all` 查看完整列表。", message.messageId);
+      return;
+    }
+
+    if (matches.length > 1) {
+      const options = matches.map((match, index) => ({ ...match, index: index + 1 }));
+      this.context.setPendingInteraction(message.conversationKey, { kind: "session-select", options, expiresAt: Date.now() + SESSION_SELECTION_TTL_MS });
+      await this.context.sendPayload(message.chatId, buildSessionListCardPayload({
+        items: options.map((option) => ({
+          index: option.index,
+          title: option.title,
+          current: Boolean(option.current),
+          archived: !option.inWindow,
+          meta: option.current ? "当前" : option.inWindow ? "窗口中" : "已隐藏",
+        })),
+        footer: "匹配到多个会话 · 发送 `/switch <编号>` 切换 · 30s 内有效",
+      }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "匹配会话", len: 4 }, { replyToMessageId: message.messageId });
+      return;
+    }
+
+    await this.switchToSession(message, window, matches[0] as SessionSelectionOption, { clearPending: false, openCodeSessions });
+  }
+
+  private async switchToSession(
+    message: CommandMessage,
+    window: SessionWindowRecord,
+    match: SessionSelectionOption,
+    options: { clearPending: boolean; openCodeSessions?: Map<string, OpenCodeSession> },
+  ): Promise<void> {
+    const openCodeSessions = options.openCodeSessions ?? await this.context.listOpenCodeSessionsById();
+    if (!openCodeSessions.has(match.sessionId)) {
+      const nextWindow = removeSession(window, match.sessionId, this.context.config.bridge.maxSessionsPerWindow);
+      await this.context.saveSessionWindow(message.conversationKey, nextWindow);
+      this.context.clearPendingInteraction(message.conversationKey, false);
+      await this.context.sendMarkdown(message.chatId, "目标会话已失效，已从当前窗口列表移除，请重新执行 `/sessions`。", message.messageId);
+      return;
+    }
+
+    const sessionMeta = openCodeSessions.get(match.sessionId);
+    const fallbackLabel = resolveDisplayLabel(sessionMeta, match.title, match.sessionId);
+    const inWindow = match.inWindow ?? window.sessions.some((session) => session.sessionId === match.sessionId);
+    let nextWindow = inWindow
+      ? setActiveSession(window, match.sessionId, Date.now(), this.context.config.bridge.maxSessionsPerWindow)
+      : addSession(window, createSessionEntry(match.sessionId, Date.now(), fallbackLabel), this.context.config.bridge.maxSessionsPerWindow);
+    nextWindow = setActiveSession(nextWindow, match.sessionId, Date.now(), this.context.config.bridge.maxSessionsPerWindow);
+    nextWindow = updateSessionLabel(nextWindow, match.sessionId, fallbackLabel, this.context.config.bridge.maxSessionsPerWindow);
+    await this.context.saveSessionWindow(message.conversationKey, nextWindow);
+    if (options.clearPending) {
+      this.context.clearPendingInteraction(message.conversationKey, false);
+    }
+
+    const previous = getActiveSession(window);
+    const current = getActiveSession(nextWindow);
+    const messageCount = await this.context.getSessionMessageCount(match.sessionId);
+    await this.context.sendPayload(message.chatId, buildSessionTransitionCardPayload({
+      title: "已切换会话",
+      iconToken: "sheet-iconsets-check_filled",
+      previousLabel: previous?.sessionId === current?.sessionId ? null : previous?.label ?? null,
+      currentLabel: current?.label ?? fallbackLabel,
+      footer: `创建于 ${formatSessionTimestamp(current?.createdAt ?? sessionMeta?.time?.created ?? Date.now())} · 共 ${messageCount} 条消息`,
+    }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "已切换会话", len: 5 }, { replyToMessageId: message.messageId });
+  }
+
   private async sendNotice(
     message: CommandMessage,
     options: {
@@ -676,4 +759,8 @@ export class CommandHandler {
       message: "当前会话正在执行任务，请先发送 `/abort`。",
     });
   }
+}
+
+function normalizeSessionLookupText(value: string | undefined): string {
+  return (value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 }

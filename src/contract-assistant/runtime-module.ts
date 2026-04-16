@@ -4,7 +4,6 @@ import path from "node:path";
 import type { RuntimeModule, RuntimeModuleHandleResult, RuntimeModuleMessageContext } from "../bridge/module.js";
 import {
   buildNoticeCardPayload,
-  buildPostMarkdownPayload,
   type FeishuPostPayload,
 } from "../feishu/formatter.js";
 import { createTextPreview, type Logger, type TranscriptType } from "../logging/logger.js";
@@ -14,6 +13,8 @@ import type {
   ContractAssistantService,
   ContractClause,
   ContractAssistantFileRef,
+  CaseCreateResult,
+  InvoiceRecognizeResult,
   ContractState,
   ContractDraftProgressStage,
   ContractWorkbenchModelResult,
@@ -108,6 +109,31 @@ type PendingWorkbenchInteraction = {
 };
 
 type PendingInteraction = PendingUploadInteraction | PendingDraftInteraction | PendingWorkbenchInteraction;
+
+type ContractDraftProgressView = {
+  title: string;
+  tagLine?: string | undefined;
+  feeLine?: string | undefined;
+  steps: Array<{
+    stage: ContractDraftProgressStage;
+    label: string;
+    status: "pending" | "running" | "completed";
+    detail?: string | undefined;
+  }>;
+};
+
+type InvoiceRecognizeProgressView = {
+  steps: Array<{
+    label: string;
+    status: "pending" | "running" | "completed";
+  }>;
+};
+
+type ReminderListResult = {
+  contractLines: string[];
+  invoiceLines: string[];
+  caseLines: string[];
+};
 
 export class ContractAssistantRuntimeModule implements RuntimeModule {
   readonly name = "contract-assistant";
@@ -597,44 +623,39 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     message: Pick<IncomingChatMessage, "chatId" | "messageId">,
     request: string,
   ): Promise<void> {
-    const processing = await this.sendNotice(message, {
-      title: "合同起草中",
-      template: "blue",
-      icon: "edit_outlined",
-      message: renderContractDraftProgressMessage("parse-request"),
-    });
+    const startedAt = Date.now();
+    const progressState = createContractDraftProgressState(request);
+    const processing = await this.deps.sendPayload(message.chatId, buildContractDraftProgressPayload(progressState), {
+      event: "contract draft started",
+      transcriptType: "outbound-final",
+      textPreview: createTextPreview(request),
+      len: request.length,
+    }, { replyToMessageId: message.messageId });
     try {
       const result = await this.deps.service!.draftContract(request, async (stage, detail) => {
-        await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
-          title: "合同起草中",
-          template: "blue",
-          iconToken: "edit_outlined",
-          message: renderContractDraftProgressMessage(stage, detail),
-        }), {
+        applyContractDraftProgress(progressState, stage, detail);
+        await this.deps.updatePayload(message.chatId, processing.messageId, buildContractDraftProgressPayload(progressState), {
           event: "contract draft progress updated",
           transcriptType: "outbound-final",
           textPreview: createTextPreview(detail ?? stage),
           len: (detail ?? stage).length,
         });
       });
-      const summary = [
-        `Word 文件：${result.wordPath}`,
-        result.docUrl ? `飞书文档：[打开飞书文档](${result.docUrl})` : "飞书文档：未创建",
-        result.recordId
-          ? `合同台账记录：[打开记录](${buildBitableRecordUrl(this.featureConfig.storage.baseToken, this.featureConfig.storage.contractTableId, result.recordId)})`
-          : "合同台账记录：未写入",
-        ...(result.warnings.length > 0 ? ["", ...result.warnings.map((item) => `- ${item}`)] : []),
-      ].join("\n");
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
-        title: "合同起草完成",
-        template: "green",
-        iconToken: "yes_outlined",
-        message: summary,
-      }), {
+      completeContractDraftProgress(progressState);
+      await this.deps.updatePayload(message.chatId, processing.messageId, buildContractDraftCompletedPayload(
+        progressState,
+        result,
+        {
+          elapsedMs: Date.now() - startedAt,
+          recordUrl: result.recordId
+            ? buildBitableRecordUrl(this.featureConfig.storage.baseToken, this.featureConfig.storage.contractTableId, result.recordId)
+            : undefined,
+        },
+      ), {
         event: "contract draft completed",
         transcriptType: "outbound-final",
-        textPreview: createTextPreview(summary),
-        len: summary.length,
+        textPreview: createTextPreview(result.docTitle),
+        len: result.docTitle.length,
       });
     } catch (error) {
       await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
@@ -698,30 +719,42 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     message: Pick<IncomingChatMessage, "chatId" | "messageId">,
     file: ContractAssistantFileRef,
   ): Promise<void> {
-    const processing = await this.sendNotice(message, {
-      title: "发票识别中",
-      template: "blue",
-      icon: "file-link-docx_outlined",
-      message: `正在识别《${file.fileName}》中的发票字段，并写入发票记录。`,
-    });
+    const startedAt = Date.now();
+    const progressState = createInvoiceRecognizeProgressState();
+    const processing = await this.deps.sendPayload(message.chatId, buildInvoiceRecognizeProgressPayload(progressState), {
+      event: "invoice recognize started",
+      transcriptType: "outbound-final",
+      textPreview: file.fileName,
+      len: file.fileName.length,
+    }, { replyToMessageId: message.messageId });
     try {
+      applyInvoiceRecognizeStep(progressState, 0);
+      await this.deps.updatePayload(message.chatId, processing.messageId, buildInvoiceRecognizeProgressPayload(progressState), {
+        event: "invoice recognize ocr started",
+        transcriptType: "outbound-final",
+        textPreview: file.fileName,
+        len: file.fileName.length,
+      });
       const result = await this.deps.service!.recognizeInvoice(file);
-      const summary = [
-        `文件：${file.fileName}`,
-        `发票记录：${result.recordId}`,
-        result.matchedContract ? `关联合同：${result.matchedContract}` : "关联合同：未匹配到，待人工确认",
-        result.summary,
-      ].join("\n");
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
-        title: "发票识别完成",
-        template: "green",
-        iconToken: "yes_outlined",
-        message: summary,
-      }), {
+      applyInvoiceRecognizeStep(progressState, 1);
+      await this.deps.updatePayload(message.chatId, processing.messageId, buildInvoiceRecognizeProgressPayload(progressState), {
+        event: "invoice recognize record write started",
+        transcriptType: "outbound-final",
+        textPreview: result.summary,
+        len: result.summary.length,
+      });
+      completeInvoiceRecognizeProgress(progressState);
+      await this.deps.updatePayload(message.chatId, processing.messageId, buildInvoiceRecognizeCompletedPayload(
+        result,
+        {
+          elapsedMs: Date.now() - startedAt,
+          recordUrl: buildBitableRecordUrl(this.featureConfig.storage.baseToken, this.featureConfig.storage.invoiceTableId, result.recordId),
+        },
+      ), {
         event: "invoice recognize completed",
         transcriptType: "outbound-final",
-        textPreview: createTextPreview(summary),
-        len: summary.length,
+        textPreview: createTextPreview(result.summary),
+        len: result.summary.length,
       });
     } catch (error) {
       await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
@@ -742,28 +775,21 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     message: Pick<IncomingChatMessage, "chatId" | "messageId">,
     request: string,
   ): Promise<void> {
-    const processing = await this.sendNotice(message, {
-      title: "案件录入中",
-      template: "blue",
-      icon: "file-task_outlined",
-      message: "正在整理案件字段并写入案件管理表。",
-    });
+    const processing = await this.deps.sendPayload(message.chatId, buildCaseCreateProcessingPayload(request), {
+      event: "case create processing",
+      transcriptType: "outbound-final",
+      textPreview: createTextPreview(request),
+      len: request.length,
+    }, { replyToMessageId: message.messageId });
     try {
       const result = await this.deps.service!.createCase(request);
-      const summary = [
-        `案件记录：${result.recordId}`,
-        result.summary,
-      ].join("\n");
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
-        title: "案件录入完成",
-        template: "green",
-        iconToken: "yes_outlined",
-        message: summary,
-      }), {
+      const recordUrl = buildBitableRecordUrl(this.featureConfig.storage.baseToken, this.featureConfig.storage.caseTableId, result.recordId);
+      const payload = buildCaseCreateCompletedPayload(result, recordUrl);
+      await this.deps.updatePayload(message.chatId, processing.messageId, payload, {
         event: "case create completed",
         transcriptType: "outbound-final",
-        textPreview: createTextPreview(summary),
-        len: summary.length,
+        textPreview: createTextPreview(result.summary),
+        len: result.summary.length,
       });
     } catch (error) {
       await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
@@ -1180,14 +1206,23 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     }
     this.lastReminderSlot = slot;
     try {
+      const processingMessages = await Promise.all(this.featureConfig.reminder.targetChatIds.map(async (chatId) => ({
+        chatId,
+        ...(await this.deps.sendPayload(chatId, buildReminderProgressPayload(), {
+          event: "contract assistant reminder progress sent",
+          transcriptType: "outbound-final",
+          textPreview: "案件提醒",
+          len: 4,
+        })),
+      })));
       const result = await this.deps.service!.listReminderItems(this.featureConfig.reminder.lookaheadDays);
-      const markdown = renderReminderMarkdown(result);
-      for (const chatId of this.featureConfig.reminder.targetChatIds) {
-        await this.deps.sendPayload(chatId, buildPostMarkdownPayload(markdown), {
+      const payload = buildTodayTodoPayload(result);
+      for (const item of processingMessages) {
+        await this.deps.updatePayload(item.chatId, item.messageId, payload, {
           event: "contract assistant reminder sent",
           transcriptType: "outbound-final",
-          textPreview: createTextPreview(markdown),
-          len: markdown.length,
+          textPreview: createTextPreview(renderReminderPlainText(result)),
+          len: renderReminderPlainText(result).length,
         });
       }
     } catch (error) {
@@ -1704,24 +1739,12 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
   }
 }
 
-function renderReminderMarkdown(result: {
-  contractLines: string[];
-  invoiceLines: string[];
-  caseLines: string[];
-}): string {
-  const sections = [
-    "### 合同助手提醒",
-    "",
-    "#### 合同台账",
-    ...renderList(result.contractLines),
-    "",
-    "#### 发票记录",
-    ...renderList(result.invoiceLines),
-    "",
-    "#### 案件管理",
-    ...renderList(result.caseLines),
-  ];
-  return sections.join("\n");
+function renderReminderPlainText(result: ReminderListResult): string {
+  return [
+    ...result.caseLines,
+    ...result.contractLines,
+    ...result.invoiceLines,
+  ].join("\n") || "当前无需要提醒的事项";
 }
 
 function pickTemplate(answer: string, templates: string[]): string | undefined {
@@ -1840,31 +1863,806 @@ function formatMoney(value: number | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? `${value}` : "【待补】";
 }
 
+function buildCaseCreateProcessingPayload(request: string): FeishuPostPayload {
+  return buildInteractiveCardPayload({
+    title: "案件信息录入中",
+    template: "blue",
+    iconToken: "loading_outlined",
+    headerPadding: "12px 8px 12px 8px",
+    bodyElements: [
+      caseMarkdown("**正在解析案件信息**"),
+      caseColumnSet([
+        caseColumn([
+          caseMarkdown(escapeCardMarkdown(truncateCardText(request, 80))),
+        ], { bg: "blue-50", padding: "12px 12px 12px 12px", weight: 1 }),
+      ], { spacing: "12px", stretch: true }),
+      caseDivider(),
+      caseColumnSet([
+        caseColumn([
+          caseMarkdown("提取字段：进行中…", {
+            size: "normal_v2",
+            icon: { token: "loading_outlined", color: "blue" },
+          }),
+          caseMarkdown("写入案件管理表：等待中", {
+            size: "normal_v2",
+            icon: { token: "loading_outlined", color: "blue" },
+          }),
+        ], { bg: "grey-50", padding: "12px 12px 12px 12px", weight: 1 }),
+      ], { spacing: "12px", stretch: true }),
+    ],
+  });
+}
+
+function buildContractDraftProgressPayload(view: ContractDraftProgressView): FeishuPostPayload {
+  return buildInteractiveCardPayload({
+    title: "合同起草",
+    template: "blue",
+    iconToken: "file-link-docx_outlined",
+    headerPadding: "12px 12px 12px 12px",
+    bodyElements: [
+      caseColumnSet([
+        caseColumn([
+          caseMarkdown(`**${escapeCardMarkdown(view.title)}**`, { size: "heading" }),
+        ], { weight: 1, padding: "0px 0px 0px 0px" }),
+      ], { spacing: "8px" }),
+      ...buildContractDraftMetaRows(view),
+      caseColumnSet([
+        caseColumn(view.steps.map((step) => caseMarkdown(buildContractDraftStepText(step), {
+          size: "normal",
+          icon: mapContractDraftStepIcon(step.status),
+        })), {
+          bg: "grey-50",
+          padding: "8px 8px 8px 8px",
+          weight: 1,
+        }),
+      ], { spacing: "8px", stretch: true }),
+    ],
+  });
+}
+
+function buildContractDraftCompletedPayload(
+  view: ContractDraftProgressView,
+  result: { wordPath: string; recordId?: string | undefined; warnings: string[] },
+  options: { elapsedMs: number; recordUrl?: string | undefined },
+): FeishuPostPayload {
+  return buildInteractiveCardPayload({
+    title: "合同起草完成",
+    template: "green",
+    iconToken: "yes_filled",
+    headerPadding: "12px 12px 12px 12px",
+    bodyElements: [
+      caseColumnSet([
+        caseColumn([
+          caseMarkdown(`**${escapeCardMarkdown(view.title)}**`, { size: "heading" }),
+        ], { weight: 1, padding: "0px 0px 0px 0px" }),
+      ], { spacing: "8px" }),
+      ...buildContractDraftMetaRows(view),
+      caseColumnSet([
+        caseColumn(view.steps.map((step) => caseMarkdown(buildContractDraftStepText(step), {
+          size: "normal",
+          icon: mapContractDraftStepIcon(step.status),
+        })), {
+          bg: "grey-50",
+          padding: "8px 8px 8px 8px",
+          weight: 1,
+        }),
+      ], { spacing: "8px", stretch: true }),
+      caseColumnSet([
+        caseColumn([
+          caseMarkdown(`本地文件：\`${escapeCardMarkdown(shortProjectPath(result.wordPath))}\``, { size: "normal_v2" }),
+        ], { weight: 1, padding: "0px 0px 0px 0px" }),
+      ], { spacing: "8px" }),
+      caseColumnSet([
+        caseColumn([
+          caseMarkdown(options.recordUrl ? `[合同台账记录：打开记录](${options.recordUrl})` : "合同台账记录：未写入", { size: "normal_v2" }),
+        ], { weight: 1, padding: "0px 0px 0px 0px" }),
+      ], { spacing: "8px" }),
+      ...(result.warnings.length > 0
+        ? [
+          caseDivider(),
+          caseColumnSet([
+            caseColumn(result.warnings.map((warning) => caseMarkdown(`- ${escapeCardMarkdown(warning)}`, { size: "normal_v2" })), {
+              weight: 1,
+              padding: "0px 0px 0px 0px",
+            }),
+          ], { spacing: "8px" }),
+        ]
+        : []),
+      caseDivider(),
+      buildElapsedDiv(options.elapsedMs),
+    ],
+  });
+}
+
+function buildCaseCreateCompletedPayload(result: CaseCreateResult, recordUrl: string): FeishuPostPayload {
+  const record = result.record;
+  const clientName = readCaseField(record, "委托人") ?? "委托人";
+  const counterpartyName = readCaseField(record, "对方当事人") ?? "对方当事人";
+  const type = readCaseField(record, "类型");
+  const stage = readCaseField(record, "程序阶段");
+  const headline = `${clientName} vs ${counterpartyName}`;
+  const tagLine = [type, stage].filter(Boolean).join("｜");
+  const chips = [
+    readCaseField(record, "委托人"),
+    readCaseField(record, "对方当事人"),
+    readCaseField(record, "案由"),
+    readCaseField(record, "审理法院"),
+    readCaseField(record, "承办律师"),
+    readCaseField(record, "案件状态"),
+  ].filter((item): item is string => Boolean(item));
+
+  return buildInteractiveCardPayload({
+    title: "案件已录入",
+    template: "green",
+    iconToken: "succeed-hollow_filled",
+    headerPadding: "12px 12px 12px 12px",
+    bodyElements: [
+      caseColumnSet([
+        caseColumn([
+          caseMarkdown(`**${escapeCardMarkdown(headline)}**`, { size: "normal_v2" }),
+        ], { weight: 1, padding: "0px 0px 0px 0px" }),
+      ], { spacing: "8px" }),
+      ...(tagLine
+        ? [
+          caseColumnSet([
+            caseColumn([
+              casePlainDiv(tagLine, "notation", "grey"),
+            ], { bg: "grey-50", padding: "4px 4px 4px 4px" }),
+          ], { spacing: "8px" }),
+        ]
+        : []),
+      caseDivider(),
+      caseMarkdown("**结构化信息**", { size: "normal" }),
+      buildCaseChipRow(chips.length > 0 ? chips : [result.summary]),
+      caseDivider(),
+      caseMarkdown(`[案件管理表](${recordUrl})`, { size: "normal_v2" }),
+    ],
+  });
+}
+
+function buildContractDraftMetaRows(view: ContractDraftProgressView): Array<Record<string, unknown>> {
+  const chips = [view.tagLine, view.feeLine].filter((item): item is string => Boolean(item));
+  if (chips.length === 0) {
+    return [];
+  }
+  return [
+    caseColumnSet(chips.map((chip) => caseColumn([
+      casePlainDiv(chip, "notation", "grey"),
+    ], { bg: "grey-50", padding: "4px 4px 4px 4px" })), { spacing: "8px" }),
+  ];
+}
+
+function buildInvoiceRecognizeProgressPayload(view: InvoiceRecognizeProgressView): FeishuPostPayload {
+  return buildInteractiveCardPayload({
+    title: "发票识别",
+    template: "blue",
+    iconToken: "group-card_outlined",
+    headerPadding: "12px 12px 12px 12px",
+    bodyElements: [
+      caseColumnSet([
+        caseColumn(view.steps.map((step) => caseMarkdown(buildInvoiceStepText(step), {
+          size: "normal",
+          icon: mapInvoiceStepIcon(step.status),
+        })), {
+          bg: "grey-50",
+          padding: "8px 8px 8px 8px",
+          weight: 1,
+        }),
+      ], { spacing: "8px", stretch: true }),
+    ],
+  });
+}
+
+function buildInvoiceRecognizeCompletedPayload(
+  result: InvoiceRecognizeResult,
+  options: { elapsedMs: number; recordUrl: string },
+): FeishuPostPayload {
+  const payer = readCaseField(result.record, "付款方");
+  const invoiceNo = readCaseField(result.record, "发票号");
+  const invoiceDate = readCaseField(result.record, "开票日期");
+  const amount = readInvoiceAmount(result.record);
+  const summaryBits = splitInvoiceSummary(result.summary);
+  const buyerChips = [payer, summaryBits.identity].filter((item): item is string => Boolean(item));
+  const invoiceChips = [
+    invoiceNo,
+    summaryBits.invoiceType,
+    amount,
+    invoiceDate,
+    summaryBits.itemName,
+  ].filter((item): item is string => Boolean(item));
+
+  return buildInteractiveCardPayload({
+    title: "发票识别完成",
+    template: "green",
+    iconToken: "group-card_outlined",
+    headerPadding: "12px 12px 12px 12px",
+    bodyElements: [
+      ...(buyerChips.length > 0
+        ? [
+          caseMarkdown("购买方信息", { size: "normal_v2" }),
+          buildInvoiceChipGroup(buyerChips, false),
+        ]
+        : []),
+      ...(invoiceChips.length > 0
+        ? [
+          caseMarkdown("发票信息", { size: "normal_v2" }),
+          buildInvoiceChipGroup(invoiceChips, true),
+        ]
+        : []),
+      caseColumnSet([
+        caseColumn([
+          caseMarkdown(`[查看发票表 →](${options.recordUrl})`, { size: "normal_v2" }),
+        ], { weight: 1, padding: "4px 4px 4px 4px" }),
+      ], { spacing: "8px" }),
+      caseDivider(),
+      buildElapsedDiv(options.elapsedMs),
+    ],
+  });
+}
+
+function buildReminderProgressPayload(): FeishuPostPayload {
+  return buildInteractiveCardPayload({
+    title: "案件提醒",
+    template: "blue",
+    iconToken: "info_outlined",
+    headerPadding: "12px 12px 12px 12px",
+    bodyElements: [
+      caseColumnSet([
+        caseColumn([
+          caseMarkdown("已完成合同与发票台账扫描", {
+            size: "normal",
+            icon: { token: "yes_outlined", color: "green" },
+          }),
+          caseMarkdown("正在检索关联案件与待办事项…", {
+            size: "normal",
+            icon: { token: "loading_outlined", color: "blue" },
+          }),
+        ], {
+          bg: "grey-50",
+          padding: "8px 8px 8px 8px",
+          weight: 1,
+        }),
+      ], { spacing: "8px", stretch: true }),
+    ],
+  });
+}
+
+function buildTodayTodoPayload(result: ReminderListResult): FeishuPostPayload {
+  const items = buildReminderItems(result);
+  return buildInteractiveCardPayload({
+    title: "今日待办",
+    template: "orange",
+    iconToken: "info_outlined",
+    headerPadding: "12px 12px 12px 12px",
+    bodyElements: [
+      ...(items.length > 0
+        ? items.map((item) => buildReminderTodoRow(item))
+        : [buildReminderTodoRow({
+          title: "暂无待办",
+          detail: "当前无需要提醒的事项",
+          due: "",
+          bg: "grey-50",
+        })]),
+      {
+        tag: "div",
+        text: {
+          tag: "plain_text",
+          content: "发送 /提醒 详情 查看全部 · /提醒 完成 1 标记完成",
+          text_size: "notation",
+          text_align: "left",
+          text_color: "grey",
+        },
+        icon: {
+          tag: "standard_icon",
+          token: "info_outlined",
+          color: "light_grey",
+        },
+      },
+    ],
+  });
+}
+
+function buildInteractiveCardPayload(options: {
+  title: string;
+  template: "blue" | "green" | "red" | "wathet" | "grey" | "orange" | "yellow" | "purple" | "indigo";
+  iconToken: string;
+  bodyElements: Array<Record<string, unknown>>;
+  headerPadding?: string;
+}): FeishuPostPayload {
+  return {
+    msg_type: "interactive",
+    content: JSON.stringify({
+      schema: "2.0",
+      config: {
+        update_multi: true,
+        style: {
+          text_size: {
+            normal_v2: {
+              default: "normal",
+              pc: "normal",
+              mobile: "heading",
+            },
+          },
+        },
+      },
+      body: {
+        direction: "vertical",
+        elements: options.bodyElements,
+      },
+      header: {
+        title: {
+          tag: "plain_text",
+          content: options.title,
+        },
+        subtitle: {
+          tag: "plain_text",
+          content: "",
+        },
+        template: options.template,
+        icon: {
+          tag: "standard_icon",
+          token: options.iconToken,
+        },
+        padding: options.headerPadding ?? "12px 12px 12px 12px",
+      },
+    }),
+  };
+}
+
+function caseMarkdown(
+  content: string,
+  opts: { size?: string; icon?: { token: string; color?: string }; align?: string } = {},
+): Record<string, unknown> {
+  return {
+    tag: "markdown",
+    content,
+    text_align: opts.align ?? "left",
+    text_size: opts.size ?? "normal_v2",
+    margin: "0px 0px 0px 0px",
+    ...(opts.icon
+      ? {
+        icon: {
+          tag: "standard_icon",
+          token: opts.icon.token,
+          color: opts.icon.color,
+        },
+      }
+      : {}),
+  };
+}
+
+function casePlainDiv(content: string, textSize: string, textColor: string): Record<string, unknown> {
+  return {
+    tag: "div",
+    text: {
+      tag: "plain_text",
+      content,
+      text_size: textSize,
+      text_align: "left",
+      text_color: textColor,
+    },
+    margin: "0px 0px 0px 0px",
+  };
+}
+
+function caseColumnSet(
+  columns: Array<Record<string, unknown>>,
+  opts: { spacing?: string; stretch?: boolean; flow?: boolean } = {},
+): Record<string, unknown> {
+  return {
+    tag: "column_set",
+    ...(opts.stretch ? { flex_mode: "stretch" } : {}),
+    ...(opts.flow ? { flex_mode: "flow" } : {}),
+    horizontal_spacing: opts.spacing ?? "8px",
+    horizontal_align: "left",
+    columns,
+    margin: "0px 0px 0px 0px",
+  };
+}
+
+function caseColumn(
+  elements: Array<Record<string, unknown>>,
+  opts: { bg?: string; padding?: string; weight?: number } = {},
+): Record<string, unknown> {
+  return {
+    tag: "column",
+    width: opts.weight ? "weighted" : "auto",
+    ...(opts.bg ? { background_style: opts.bg } : {}),
+    elements,
+    padding: opts.padding ?? "0px 0px 0px 0px",
+    direction: "vertical",
+    horizontal_spacing: "8px",
+    vertical_spacing: opts.padding ? "4px" : "8px",
+    horizontal_align: opts.weight ? "left" : "center",
+    vertical_align: opts.weight ? "top" : "center",
+    ...(opts.weight ? { weight: opts.weight } : {}),
+    margin: "0px 0px 0px 0px",
+  };
+}
+
+function buildCaseChipRow(values: string[]): Record<string, unknown> {
+  return caseColumnSet(values.map((value) => caseColumn([
+    caseMarkdown(escapeCardMarkdown(value), { size: "normal" }),
+  ], {
+    bg: "grey-50",
+    padding: "4px 4px 4px 4px",
+  })), { spacing: "8px", flow: true });
+}
+
+function buildInvoiceChipGroup(values: string[], flow: boolean): Record<string, unknown> {
+  return caseColumnSet(values.map((value) => caseColumn([
+    caseMarkdown(escapeCardMarkdown(value), { size: "normal_v2" }),
+  ], {
+    bg: "grey-50",
+    padding: "4px 4px 4px 4px",
+  })), { spacing: "8px", flow });
+}
+
+function buildReminderTodoRow(item: { title: string; detail: string; due: string; bg: string }): Record<string, unknown> {
+  return {
+    tag: "column_set",
+    flex_mode: "stretch",
+    background_style: item.bg,
+    horizontal_spacing: "8px",
+    horizontal_align: "left",
+    columns: [
+      {
+        tag: "column",
+        width: "weighted",
+        elements: [
+          caseMarkdown(`**${escapeCardMarkdown(item.title)}**\n${escapeCardMarkdown(item.detail)}`, { size: "normal" }),
+        ],
+        padding: "8px 8px 8px 8px",
+        direction: "vertical",
+        horizontal_spacing: "8px",
+        vertical_spacing: "8px",
+        horizontal_align: "left",
+        vertical_align: "top",
+        margin: "0px 0px 0px 0px",
+        weight: 1,
+      },
+      ...(item.due
+        ? [{
+          tag: "column",
+          width: "auto",
+          elements: [
+            caseMarkdown(escapeCardMarkdown(item.due), { size: "normal" }),
+          ],
+          padding: "8px 8px 8px 8px",
+          direction: "vertical",
+          horizontal_spacing: "8px",
+          vertical_spacing: "8px",
+          horizontal_align: "center",
+          vertical_align: "center",
+          margin: "0px 0px 0px 0px",
+        }]
+        : []),
+    ],
+    margin: "0px 0px 0px 0px",
+  };
+}
+
+function caseDivider(): Record<string, unknown> {
+  return {
+    tag: "hr",
+    margin: "0px 0px 0px 0px",
+  };
+}
+
+function buildElapsedDiv(elapsedMs: number): Record<string, unknown> {
+  return {
+    tag: "div",
+    text: {
+      tag: "plain_text",
+      content: `耗时：${formatElapsedSeconds(elapsedMs)}`,
+      text_size: "notation",
+      text_align: "left",
+      text_color: "grey",
+    },
+    icon: {
+      tag: "standard_icon",
+      token: "alarm-clock_outlined",
+      color: "light_grey",
+    },
+    margin: "0px 0px 0px 0px",
+  };
+}
+
+function createInvoiceRecognizeProgressState(): InvoiceRecognizeProgressView {
+  return {
+    steps: [
+      { label: "OCR 识别发票内容", status: "pending" },
+      { label: "填写表格", status: "pending" },
+    ],
+  };
+}
+
+function applyInvoiceRecognizeStep(view: InvoiceRecognizeProgressView, currentIndex: number): void {
+  view.steps.forEach((step, index) => {
+    if (index < currentIndex) {
+      step.status = "completed";
+    } else if (index === currentIndex) {
+      step.status = "running";
+    } else {
+      step.status = "pending";
+    }
+  });
+}
+
+function completeInvoiceRecognizeProgress(view: InvoiceRecognizeProgressView): void {
+  view.steps.forEach((step) => {
+    step.status = "completed";
+  });
+}
+
+function buildReminderItems(result: ReminderListResult): Array<{ title: string; detail: string; due: string; bg: string }> {
+  return [
+    ...result.caseLines.map(parseCaseReminderLine),
+    ...result.contractLines.map(parseContractReminderLine),
+    ...result.invoiceLines.map(parseInvoiceReminderLine),
+  ].slice(0, 8);
+}
+
+function parseCaseReminderLine(line: string): { title: string; detail: string; due: string; bg: string } {
+  const [caseLabel = "案件", rest = line] = line.split(/：(.+)/);
+  const status = matchFirst(rest, [/当前状态\s*([^；;]+)/]);
+  const due = matchFirst(rest, [/(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?|\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)/]) ?? "";
+  const title = localizeReminderTitle(rest);
+  const detailTail = rest
+    .replace(due, "")
+    .replace(/；?当前状态\s*[^；;]+/, "")
+    .replace(/^\S+\s*/, "")
+    .trim();
+  return {
+    title,
+    detail: [caseLabel.trim(), detailTail || status].filter(Boolean).join(" · "),
+    due: formatReminderDue(due),
+    bg: title.includes("截止") ? "red-50" : title.includes("开庭") ? "yellow-50" : "grey-50",
+  };
+}
+
+function parseContractReminderLine(line: string): { title: string; detail: string; due: string; bg: string } {
+  const [name = "合同", rest = line] = line.split(/：(.+)/);
+  const due = matchFirst(rest, [/付款节点[：:]\s*([^；;]+)/]) ?? "";
+  return {
+    title: "合同付款",
+    detail: `${name.trim()} · ${rest.replace(/；?付款节点[：:]\s*[^；;]+/, "").trim()}`,
+    due: formatReminderDue(due),
+    bg: "wathet-50",
+  };
+}
+
+function parseInvoiceReminderLine(line: string): { title: string; detail: string; due: string; bg: string } {
+  const [contractNo = "发票记录", rest = line] = line.split(/：(.+)/);
+  const due = matchFirst(rest, [/开票日期\s*([^，,；;]+)/]) ?? "";
+  return {
+    title: "发票匹配",
+    detail: `${contractNo.trim()} · ${rest.replace(/，?开票日期\s*[^，,；;]+/, "").trim()}`,
+    due: formatReminderDue(due),
+    bg: "yellow-50",
+  };
+}
+
+function localizeReminderTitle(text: string): string {
+  if (text.includes("举证")) return "举证期限截止";
+  if (text.includes("开庭")) return "开庭提醒";
+  if (text.includes("上诉")) return "上诉期限截止";
+  if (text.includes("反诉")) return "反诉期限截止";
+  if (text.includes("管辖权异议")) return "管辖权异议期限截止";
+  return "案件提醒";
+}
+
+function formatReminderDue(value: string): string {
+  return value.trim();
+}
+
+function buildInvoiceStepText(step: InvoiceRecognizeProgressView["steps"][number]): string {
+  switch (step.status) {
+    case "completed":
+      return `已完成${step.label}`;
+    case "running":
+      return `正在 ${step.label}…`;
+    default:
+      return `正在${step.label}…`;
+  }
+}
+
+function mapInvoiceStepIcon(status: InvoiceRecognizeProgressView["steps"][number]["status"]): { token: string; color: string } {
+  switch (status) {
+    case "completed":
+      return { token: "yes_outlined", color: "green" };
+    default:
+      return { token: "loading_outlined", color: "blue" };
+  }
+}
+
+function createContractDraftProgressState(request: string): ContractDraftProgressView {
+  const meta = inferContractDraftMeta(request);
+  const steps = contractDraftSteps().map((step, index) => ({
+    ...step,
+    status: index === 0 ? "running" : "pending" as "running" | "pending",
+  }));
+  return {
+    ...meta,
+    steps,
+  };
+}
+
+function applyContractDraftProgress(
+  view: ContractDraftProgressView,
+  currentStage: ContractDraftProgressStage,
+  detail?: string,
+): void {
+  const currentIndex = view.steps.findIndex((step) => step.stage === currentStage);
+  if (currentIndex < 0) {
+    return;
+  }
+  view.steps.forEach((step, index) => {
+    if (index < currentIndex) {
+      step.status = "completed";
+      step.detail = undefined;
+      return;
+    }
+    if (index === currentIndex) {
+      step.status = "running";
+      step.detail = detail;
+      return;
+    }
+    if (step.status !== "completed") {
+      step.status = "pending";
+      step.detail = undefined;
+    }
+  });
+}
+
+function completeContractDraftProgress(view: ContractDraftProgressView): void {
+  view.steps.forEach((step) => {
+    step.status = "completed";
+    step.detail = undefined;
+  });
+}
+
+function contractDraftSteps(): Array<{ stage: ContractDraftProgressStage; label: string }> {
+  return [
+    { stage: "parse-request", label: "解析起草需求" },
+    { stage: "match-template", label: "匹配合同模板" },
+    { stage: "prepare-fields", label: "整理关键字段" },
+    { stage: "generate-word", label: "使用模板填充变量并生成文档" },
+    { stage: "sync-artifacts", label: "同步合同台账记录" },
+  ];
+}
+
+function buildContractDraftStepText(step: ContractDraftProgressView["steps"][number]): string {
+  switch (step.status) {
+    case "completed":
+      return `已完成${step.label}…`;
+    case "running":
+      return `正在${step.label}…`;
+    default:
+      return `等待${step.label}…`;
+  }
+}
+
+function mapContractDraftStepIcon(status: ContractDraftProgressView["steps"][number]["status"]): { token: string; color: string } {
+  switch (status) {
+    case "completed":
+      return { token: "yes_outlined", color: "green" };
+    case "running":
+      return { token: "loading_outlined", color: "blue" };
+    default:
+      return { token: "loading_outlined", color: "blue" };
+  }
+}
+
+function inferContractDraftMeta(request: string): { title: string; tagLine?: string; feeLine?: string } {
+  const compact = request.replace(/\s+/g, " ").trim();
+  const client = matchFirst(compact, [/甲方[：:\s]*([^，。,；;\n]+)/, /委托人[：:\s]*([^，。,；;\n]+)/]) ?? "委托人";
+  const counterparty = matchFirst(compact, [/对方[：:\s]*([^，。,；;\n]+)/, /乙方[：:\s]*([^，。,；;\n]+)/]) ?? "相关单位";
+  const cause = matchFirst(compact, [/案由[：:\s]*([^，。,；;\n]+)/]);
+  const stage = matchFirst(compact, [/(劳动仲裁|仲裁|一审|二审|执行)/]);
+  const fee = matchFirst(compact, [/律师费[：:\s]*([0-9,.]+)\s*元?/, /(仲裁|一审|二审|执行)\s*([0-9,.]+)\s*元/]);
+
+  return {
+    title: `委托代理合同（${client} vs ${counterparty}）`,
+    ...([cause, stage].filter(Boolean).length > 0 ? { tagLine: [cause, stage].filter(Boolean).join("｜") } : {}),
+    ...(fee ? { feeLine: `律师费：¥${normalizeMoneyText(fee)}` } : {}),
+  };
+}
+
+function matchFirst(text: string, patterns: RegExp[]): string | undefined {
+  for (const pattern of patterns) {
+    const matched = text.match(pattern);
+    const value = matched?.slice(1).find((item) => item && item.trim()) ?? matched?.[1] ?? matched?.[0];
+    if (value && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function normalizeMoneyText(value: string): string {
+  const digits = value.replace(/[^\d.]/g, "");
+  const amount = Number(digits);
+  if (!Number.isFinite(amount)) {
+    return value;
+  }
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(amount);
+}
+
+function formatElapsedSeconds(elapsedMs: number): string {
+  const seconds = Math.max(1, Math.round(elapsedMs / 1000));
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remain = seconds % 60;
+  return remain > 0 ? `${minutes} 分 ${remain} 秒` : `${minutes} 分`;
+}
+
+function readCaseField(record: Record<string, unknown>, field: string): string | undefined {
+  const value = record[field];
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  if (Array.isArray(value)) {
+    const parts = value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+    return parts.length > 0 ? parts.join("、") : undefined;
+  }
+  return undefined;
+}
+
+function readInvoiceAmount(record: Record<string, unknown>): string | undefined {
+  const value = record["发票金额"];
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+  return `¥${new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value)}`;
+}
+
+function splitInvoiceSummary(summary: string): { invoiceType?: string; itemName?: string; identity?: string } {
+  const invoiceType = matchFirst(summary, [/(增值税专用发票|增值税普通发票|电子发票|普通发票)/]);
+  const itemName = matchFirst(summary, [/项目[：:\s]*([^，。,；;\n]+)/, /内容[：:\s]*([^，。,；;\n]+)/]);
+  const identity = matchFirst(summary, [/(?:税号|身份证号|信用代码)[：:\s]*([A-Za-z0-9]+)/]);
+  return {
+    ...(invoiceType ? { invoiceType } : {}),
+    ...(itemName ? { itemName } : {}),
+    ...(identity ? { identity } : {}),
+  };
+}
+
+function truncateCardText(text: string, maxLength: number): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}…` : normalized;
+}
+
+function escapeCardMarkdown(text: string): string {
+  return text
+    .replace(/\\/g, "\\\\")
+    .replace(/\*/g, "\\*")
+    .replace(/_/g, "\\_")
+    .replace(/`/g, "\\`")
+    .replace(/\[/g, "\\[")
+    .replace(/\]/g, "\\]")
+    .replace(/\(/g, "\\(")
+    .replace(/\)/g, "\\)");
+}
+
 function buildBitableRecordUrl(baseToken: string, tableId: string, recordId: string): string {
   const base = `https://feishu.cn/base/${encodeURIComponent(baseToken)}?table=${encodeURIComponent(tableId)}`;
   return `${base}&recordId=${encodeURIComponent(recordId)}`;
 }
 
-function renderContractDraftProgressMessage(
-  currentStage: ContractDraftProgressStage,
-  detail?: string,
-): string {
-  const steps: Array<{ stage: ContractDraftProgressStage; label: string }> = [
-    { stage: "parse-request", label: "解析起草需求" },
-    { stage: "match-template", label: "匹配合同模板" },
-    { stage: "prepare-fields", label: "整理关键字段" },
-    { stage: "generate-word", label: "生成 Word 草稿" },
-    { stage: "sync-artifacts", label: "同步飞书文档与台账" },
-  ];
-  const currentIndex = Math.max(0, steps.findIndex((step) => step.stage === currentStage));
-  const completed = steps.slice(0, currentIndex).map((step, index) => `${index + 1}. ${step.label}`);
-  const current = steps[currentIndex] ?? steps[0]!;
-  const pending = steps.slice(currentIndex + 1).map((step, index) => `${currentIndex + index + 2}. ${step.label}`);
-  return [
-    `**已完成**\n${completed.length > 0 ? completed.join("\n") : "无"}`,
-    `**当前**\n${currentIndex + 1}. ${current.label}${detail ? `\n${detail}` : ""}`,
-    `**待处理**\n${pending.length > 0 ? pending.join("\n") : "无"}`,
-  ].join("\n\n");
+function shortProjectPath(targetPath: string): string {
+  const cwd = process.cwd();
+  const repoName = path.basename(cwd);
+  const relative = path.relative(cwd, targetPath);
+  if (!relative || relative.startsWith("..")) {
+    return targetPath;
+  }
+  return path.join(repoName, relative);
 }
 
 function renderWorkbenchSummaryMessage(state: ContractState | null): string {
@@ -1909,11 +2707,4 @@ function formatClauseLabel(clause: ContractClause): string {
 
 function pushRecentMessages(current: string[], next: string): string[] {
   return [...current, next.trim()].filter((item) => item.length > 0).slice(-8);
-}
-
-function renderList(lines: string[]): string[] {
-  if (lines.length === 0) {
-    return ["- 当前无需要提醒的事项"];
-  }
-  return lines.map((line) => `- ${line}`);
 }

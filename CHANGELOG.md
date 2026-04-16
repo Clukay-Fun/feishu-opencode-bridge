@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.22 - 2026-04-16
+
+### Added
+- Added a contract finalization Python helper and expanded contract-draft onboarding tests for the demo-ready drafting flow.
+- Added a labor demo dialogue and data-preparation note to stabilize recording inputs and narration.
+
+### Changed
+- Updated contract-assistant drafting, prompts, command routing, and runtime cards to support richer guided contract finalization.
+- Updated labor prompts and document text extraction handling for the competition demo material flow.
+
 ## 0.1.21 - 2026-04-16
 
 ### Added

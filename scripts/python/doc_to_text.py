@@ -7,9 +7,22 @@ from docx import Document  # type: ignore
 from common.io import read_json_stdin, write_error_stderr, write_json_stdout
 
 
+def extract_table_lines(document: Document) -> list[str]:
+    lines: list[str] = []
+    for table in document.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    text = paragraph.text.strip()
+                    if text:
+                        lines.append(text)
+    return lines
+
+
 def extract_docx_text(input_path: Path) -> str:
     document = Document(str(input_path))
     lines = [paragraph.text.strip() for paragraph in document.paragraphs if paragraph.text.strip()]
+    lines.extend(extract_table_lines(document))
     return "\n".join(lines)
 
 
