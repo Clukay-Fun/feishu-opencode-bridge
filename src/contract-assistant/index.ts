@@ -70,6 +70,23 @@ export type CaseUpdateResult = {
   fields: Record<string, unknown>;
 };
 
+export type CaseTodoResult = {
+  lines: string[];
+};
+
+export type CaseReminderResult = {
+  lines: string[];
+};
+
+export type CaseReminderAddResult = {
+  matchedLabel: string;
+  recordId: string;
+  reminderLabel: string;
+  reminderDate: string;
+  todo?: string | undefined;
+  fields: Record<string, unknown>;
+};
+
 export type ContractClause = {
   id: string;
   number: string;
@@ -174,7 +191,13 @@ export class ContractAssistantService {
     this.evidenceExtractor = new EvidenceExtractService(resources, opencode, logger);
   }
 
-  async draftContract(request: string, onProgress?: ContractDraftProgressCallback): Promise<ContractDraftResult> {
+  async draftContract(
+    request: string,
+    optionsOrProgress?: { requesterOpenId?: string | undefined } | ContractDraftProgressCallback,
+    maybeOnProgress?: ContractDraftProgressCallback,
+  ): Promise<ContractDraftResult> {
+    const options = typeof optionsOrProgress === "function" ? {} : (optionsOrProgress ?? {});
+    const onProgress = typeof optionsOrProgress === "function" ? optionsOrProgress : maybeOnProgress;
     await onProgress?.("parse-request", "正在识别模板、程序和收费条件");
     await onProgress?.("match-template", "正在匹配本地 Word 模板");
     const template = await this.resolveDraftTemplate(request);
@@ -217,7 +240,7 @@ export class ContractAssistantService {
       ? await this.resources.createBitableRecord(
         this.config.storage.baseToken,
         this.config.storage.contractTableId,
-        normalizeContractRecord(record),
+        normalizeContractRecordForDraft(record, request, options.requesterOpenId),
       ).catch((error) => {
         warnings.push(`合同台账写入失败：${error instanceof Error ? error.message : String(error)}`);
         this.logger.log("contract-assistant", "create contract record failed", {
@@ -272,30 +295,21 @@ export class ContractAssistantService {
         extractedText: extractedText || undefined,
       }),
     });
-    const record = normalizeInvoiceRecord(readRecord(result, "record"));
     const summary = readString(result, "summary") ?? "已识别发票信息。";
+    const record = normalizeInvoiceRecord(readRecord(result, "record"), {
+      matchHints: readRecord(result, "matchHints"),
+      summary,
+    });
     const recordId = await this.resources.createBitableRecord(
       this.config.storage.baseToken,
       this.config.storage.invoiceTableId,
       record,
     );
 
-    const matchHints = readRecord(result, "matchHints");
-    const matched = await this.tryMatchContract(matchHints, record);
-    if (matched) {
-      await this.resources.updateBitableRecord(
-        this.config.storage.baseToken,
-        this.config.storage.invoiceTableId,
-        recordId,
-        { 关联合同: [{ id: matched.recordId }] },
-      );
-    }
-
     return {
       summary,
       record,
       recordId,
-      matchedContract: matched?.label,
     };
   }
 
@@ -339,6 +353,94 @@ export class ContractAssistantService {
     );
     return {
       matchedLabel: readFieldString(matched.fields, "案号") ?? readFieldString(matched.fields, "委托人") ?? matched.recordId,
+      fields,
+    };
+  }
+
+  async listCaseTodos(query = ""): Promise<CaseTodoResult> {
+    const records = await this.resources.listBitableRecords(this.config.storage.baseToken, this.config.storage.caseTableId);
+    const normalizedQuery = query.trim();
+    const lines = records
+      .map((item) => {
+        const todo = readFieldString(item.fields, "待做事项");
+        if (!todo) {
+          return null;
+        }
+        const status = readFieldString(item.fields, "案件状态");
+        if (status === "已结案") {
+          return null;
+        }
+        const label = buildCaseRecordLabel(item.fields);
+        const stage = readFieldString(item.fields, "程序阶段");
+        const progress = readFieldString(item.fields, "进展");
+        const haystack = [label, stage, status, todo, progress].filter(Boolean).join(" ");
+        if (normalizedQuery && !haystack.includes(normalizedQuery)) {
+          return null;
+        }
+        return `${label}${stage ? `｜${stage}` : ""}${status ? `｜${status}` : ""}\n待办：${todo}${progress ? `\n进展：${progress}` : ""}`;
+      })
+      .filter((value): value is string => Boolean(value))
+      .slice(0, 10);
+    return { lines };
+  }
+
+  async listCaseReminders(query = "", lookaheadDays = 7): Promise<CaseReminderResult> {
+    const records = await this.resources.listBitableRecords(this.config.storage.baseToken, this.config.storage.caseTableId);
+    const now = Date.now();
+    const lookaheadMs = lookaheadDays * 24 * 60 * 60 * 1000;
+    const normalizedQuery = query.trim();
+    const lines = records
+      .flatMap((item) => buildCaseReminderCandidates(item.fields, now, lookaheadMs))
+      .filter((item) => {
+        if (!normalizedQuery) {
+          return true;
+        }
+        return item.haystack.includes(normalizedQuery);
+      })
+      .sort((left, right) => {
+        if (left.priority !== right.priority) {
+          return left.priority - right.priority;
+        }
+        if (left.time !== right.time) {
+          return left.time - right.time;
+        }
+        return right.recency - left.recency;
+      })
+      .map((item) => item.line)
+      .slice(0, 10);
+    return { lines };
+  }
+
+  async addCaseReminder(request: string): Promise<CaseReminderAddResult> {
+    const parsed = parseCaseReminderRequest(request);
+    const records = await this.resources.listBitableRecords(this.config.storage.baseToken, this.config.storage.caseTableId);
+    const matched = selectCaseRecordForReminder(records, parsed.target);
+    if (!matched) {
+      throw new Error(parsed.target
+        ? `未找到匹配“${parsed.target}”的案件，请换用案号、委托人或对方当事人。`
+        : "案件表暂无可添加提醒的记录，请先录入案件。");
+    }
+
+    const fields: Record<string, unknown> = {
+      [parsed.dateField]: parsed.dateValue,
+    };
+    if (parsed.todo) {
+      fields["待做事项"] = mergeCaseTodo(readFieldString(matched.fields, "待做事项"), parsed.todo);
+    }
+
+    await this.resources.updateBitableRecord(
+      this.config.storage.baseToken,
+      this.config.storage.caseTableId,
+      matched.recordId,
+      fields,
+    );
+
+    return {
+      matchedLabel: buildCaseRecordLabel(matched.fields),
+      recordId: matched.recordId,
+      reminderLabel: parsed.dateField,
+      reminderDate: parsed.dateDisplay,
+      todo: parsed.todo,
       fields,
     };
   }
@@ -992,7 +1094,7 @@ function buildLocalContractDraftFallback(request: string, templateName: string):
   const feeMode = inferFeeModeFromRequest(request);
   const contractAmount = parsed.arbitrationFee ?? parsed.baseFee;
   const record: Record<string, unknown> = {
-    项目名称: templateName,
+    项目名称: buildDraftProjectName(request) ?? templateName,
     客户名称: parsed.clientName ?? "【待补】",
     合同类型: templateName,
     "具体类型/案由": parsed.caseCause ?? "【待补】",
@@ -1080,6 +1182,48 @@ function readFieldNumber(fields: Record<string, unknown>, key: string): number |
   return undefined;
 }
 
+function buildCaseRecordLabel(fields: Record<string, unknown>): string {
+  const caseNo = readFieldString(fields, "案号");
+  const client = readFieldString(fields, "委托人");
+  const counterparty = readFieldString(fields, "对方当事人");
+  const cause = readFieldString(fields, "案由");
+  if (caseNo) {
+    return caseNo;
+  }
+  if (client && counterparty) {
+    return `${client} vs ${counterparty}${cause ? ` ${cause}` : ""}`;
+  }
+  return client ?? counterparty ?? cause ?? "未命名案件";
+}
+
+function readCaseRecencyTime(fields: Record<string, unknown>): number {
+  return readFieldTime(fields, "创建时间")
+    ?? readFieldTime(fields, "日期")
+    ?? readFieldTime(fields, "开庭日")
+    ?? readFieldTime(fields, "举证截止日")
+    ?? 0;
+}
+
+function readFieldTime(fields: Record<string, unknown>, key: string): number | undefined {
+  const value = fields[key];
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return normalizeTimestampMs(value);
+  }
+  if (typeof value === "string" && value.trim()) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) {
+      return normalizeTimestampMs(numeric);
+    }
+    const parsed = Date.parse(value.replace(/\//g, "-"));
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function normalizeTimestampMs(value: number): number {
+  return value < 10_000_000_000 ? value * 1_000 : value;
+}
+
 function normalizeContractRecord(record: Record<string, unknown> | null): Record<string, unknown> {
   const input = record ?? {};
   const fields: Record<string, unknown> = {};
@@ -1095,52 +1239,335 @@ function normalizeContractRecord(record: Record<string, unknown> | null): Record
   copyString(input, fields, "联系方式");
   copyString(input, fields, "客户收件地址");
   copyString(input, fields, "信用代码/身份证");
+  copyUserArray(input, fields, "承揽人");
+  copyUserArray(input, fields, "承办人");
   return fields;
 }
 
-function normalizeInvoiceRecord(record: Record<string, unknown> | null): Record<string, unknown> {
+function normalizeContractRecordForDraft(
+  record: Record<string, unknown> | null,
+  request: string,
+  requesterOpenId?: string,
+): Record<string, unknown> {
+  const fields = normalizeContractRecord(record);
+  const projectName = buildDraftProjectName(request, fields);
+  if (projectName) {
+    fields["项目名称"] = projectName;
+  }
+  return withDefaultContractOwners(fields, requesterOpenId);
+}
+
+export function normalizeInvoiceRecord(
+  record: Record<string, unknown> | null,
+  options: { matchHints?: Record<string, unknown> | null; summary?: string | undefined } = {},
+): Record<string, unknown> {
   const input = record ?? {};
   const fields: Record<string, unknown> = {};
   copyString(input, fields, "合同号");
-  copyString(input, fields, "付款方");
+  copyInvoicePayer(input, fields, options);
   copyString(input, fields, "发票号");
-  copyString(input, fields, "开票日期");
+  copyDate(input, fields, "开票日期");
   copyNumber(input, fields, "发票金额");
   return fields;
 }
 
-function normalizeCaseRecord(record: Record<string, unknown> | null): Record<string, unknown> {
+export function normalizeCaseRecord(record: Record<string, unknown> | null): Record<string, unknown> {
   const input = record ?? {};
   const fields: Record<string, unknown> = {};
-  copyString(input, fields, "类型");
-  copyString(input, fields, "案由");
+  copyNormalizedString(input, fields, "类型", normalizeCaseTypeValue);
+  copyNormalizedString(input, fields, "案由", normalizeCaseCauseValue);
   copyString(input, fields, "委托人");
   copyString(input, fields, "对方当事人");
   copyString(input, fields, "联系人");
   copyString(input, fields, "联系方式");
   copyString(input, fields, "案号");
   copyString(input, fields, "审理法院");
-  copyStringArray(input, fields, "程序阶段");
-  copyString(input, fields, "案件状态");
-  copyString(input, fields, "重要紧急程度");
-  copyString(input, fields, "日期");
-  copyString(input, fields, "开庭日");
+  copyAliasString(input, fields, "受理机构", "审理法院");
+  copyNormalizedStringArray(input, fields, "程序阶段", normalizeCaseStageValue);
+  copyNormalizedString(input, fields, "案件状态", normalizeCaseStatusValue);
+  copyNormalizedString(input, fields, "重要紧急程度", normalizeCasePriorityValue);
+  copyDate(input, fields, "日期");
+  copyDate(input, fields, "开庭日");
   copyString(input, fields, "开庭地点");
-  copyString(input, fields, "举证截止日");
-  copyString(input, fields, "反诉截止日");
-  copyString(input, fields, "管辖权异议截止日");
-  copyString(input, fields, "上诉截止日");
-  copyString(input, fields, "承办律师");
+  copyDate(input, fields, "举证截止日");
+  copyDate(input, fields, "反诉截止日");
+  copyDate(input, fields, "管辖权异议截止日");
+  copyDate(input, fields, "上诉截止日");
+  copyNormalizedStringArray(input, fields, "主办律师", normalizeCaseLawyerValue);
+  copyAliasNormalizedStringArray(input, fields, "承办律师", "主办律师", normalizeCaseLawyerValue);
   copyString(input, fields, "待做事项");
   copyString(input, fields, "进展");
+  appendCaseStatusDetail(input, fields);
   copyString(input, fields, "备注");
   return fields;
+}
+
+type CaseReminderDateField =
+  | "开庭日"
+  | "举证截止日"
+  | "反诉截止日"
+  | "管辖权异议截止日"
+  | "上诉截止日"
+  | "查封到期日";
+
+type CaseReminderDateMatch = {
+  raw: string;
+  timestamp: number;
+  display: string;
+  start: number;
+  end: number;
+};
+
+type ParsedCaseReminderRequest = {
+  target?: string | undefined;
+  dateField: CaseReminderDateField;
+  dateValue: number;
+  dateDisplay: string;
+  todo?: string | undefined;
+};
+
+function parseCaseReminderRequest(request: string, now = new Date()): ParsedCaseReminderRequest {
+  const text = request.trim();
+  if (!text) {
+    throw new Error("请补充提醒内容。示例：/添加案件提醒 举证截止日 2026-04-18 待做事项 补充工资流水证据");
+  }
+
+  const dateField = inferCaseReminderDateField(text);
+  if (!dateField) {
+    throw new Error("请说明提醒类型，例如：举证截止日、开庭日、上诉截止日。");
+  }
+
+  const date = extractCaseReminderDate(text, now);
+  if (!date) {
+    throw new Error("请提供提醒日期，例如：2026-04-18、04-18 09:30、明天 17:00。");
+  }
+
+  return {
+    target: extractCaseReminderTarget(text, date),
+    dateField,
+    dateValue: date.timestamp,
+    dateDisplay: date.display,
+    todo: extractCaseReminderTodo(text, date),
+  };
+}
+
+function inferCaseReminderDateField(text: string): CaseReminderDateField | undefined {
+  const candidates: Array<{ field: CaseReminderDateField; patterns: RegExp[] }> = [
+    { field: "管辖权异议截止日", patterns: [/管辖权异议/] },
+    { field: "反诉截止日", patterns: [/反诉/] },
+    { field: "上诉截止日", patterns: [/上诉/] },
+    { field: "查封到期日", patterns: [/查封/] },
+    { field: "举证截止日", patterns: [/举证/, /证据截止/] },
+    { field: "开庭日", patterns: [/开庭/, /庭审/] },
+  ];
+  return candidates.find((candidate) => candidate.patterns.some((pattern) => pattern.test(text)))?.field;
+}
+
+function extractCaseReminderDate(text: string, now: Date): CaseReminderDateMatch | undefined {
+  const relative = text.match(/(今天|今日|明天|后天)(?:\s*(\d{1,2}[:：]\d{2}(?::\d{2})?))?/);
+  if (relative?.index !== undefined) {
+    const timestamp = parseRelativeCaseReminderDate(relative[1]!, relative[2], now);
+    if (typeof timestamp === "number") {
+      return {
+        raw: relative[0],
+        timestamp,
+        display: formatCaseDeadlineDisplay(timestamp),
+        start: relative.index,
+        end: relative.index + relative[0].length,
+      };
+    }
+  }
+
+  const absolute = text.match(/(\d{4}[年./-]\d{1,2}[月./-]\d{1,2}日?(?:\s+\d{1,2}[:：]\d{2}(?::\d{2})?)?|\d{1,2}[./-]\d{1,2}(?:\s+\d{1,2}[:：]\d{2}(?::\d{2})?)?)/);
+  if (absolute?.index === undefined) {
+    return undefined;
+  }
+
+  const normalized = normalizeCaseReminderDateText(absolute[1]!, now);
+  const timestamp = normalizeBitableDateValue(normalized, now);
+  if (typeof timestamp !== "number") {
+    return undefined;
+  }
+  return {
+    raw: absolute[0],
+    timestamp,
+    display: formatCaseDeadlineDisplay(timestamp),
+    start: absolute.index,
+    end: absolute.index + absolute[0].length,
+  };
+}
+
+function parseRelativeCaseReminderDate(keyword: string, timeText: string | undefined, now: Date): number | undefined {
+  const dayOffset = keyword === "明天" ? 1 : keyword === "后天" ? 2 : 0;
+  const [hour = 0, minute = 0, second = 0] = (timeText ?? "00:00:00")
+    .replace("：", ":")
+    .split(":")
+    .map((value) => Number(value));
+  if (![hour, minute, second].every((value) => Number.isFinite(value))) {
+    return undefined;
+  }
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + dayOffset, hour, minute, second).getTime();
+}
+
+function normalizeCaseReminderDateText(value: string, now: Date): string {
+  const normalized = value
+    .replace(/年/g, "-")
+    .replace(/月/g, "-")
+    .replace(/日/g, "")
+    .replace(/[./]/g, "-")
+    .replace(/：/g, ":")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (/^\d{1,2}-\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?$/.test(normalized)) {
+    return `${now.getFullYear()}-${normalized}`;
+  }
+  return normalized;
+}
+
+function extractCaseReminderTarget(text: string, date: CaseReminderDateMatch): string | undefined {
+  const explicit = text.match(/(?:案号|案件编号|案件|委托人|客户|当事人)[:：]?\s*([^，,；;\s]+)/);
+  const explicitTarget = cleanupCaseReminderTarget(explicit?.[1]);
+  if (explicitTarget) {
+    return explicitTarget;
+  }
+
+  const prefix = cleanupCaseReminderTarget(text.slice(0, date.start));
+  return prefix;
+}
+
+function cleanupCaseReminderTarget(value: string | undefined): string | undefined {
+  const cleaned = value
+    ?.replace(/^(给|为|把|将|最近|最新|当前|这个|该)\s*/, "")
+    .replace(/[，,；;：:\s]+$/g, "")
+    .replace(/(?:管辖权异议截止日?|反诉截止日?|上诉截止日?|举证截止日?|查封到期日?|开庭日?|庭审|截止|到期)+$/g, "")
+    .replace(/[，,；;：:\s]+$/g, "")
+    .trim();
+  if (!cleaned || /^(案件|最近案件|最新案件|当前案件)$/.test(cleaned)) {
+    return undefined;
+  }
+  return cleaned;
+}
+
+function extractCaseReminderTodo(text: string, date: CaseReminderDateMatch): string | undefined {
+  const explicit = text.match(/(?:待做事项|待办事项|待办|提醒内容|内容|事项)[:：]?\s*(.+)$/);
+  if (explicit?.[1]) {
+    return cleanupCaseReminderTodo(explicit[1], date.raw);
+  }
+  return cleanupCaseReminderTodo(text.slice(date.end), date.raw);
+}
+
+function cleanupCaseReminderTodo(value: string, dateRaw: string): string | undefined {
+  const cleaned = value
+    .replace(dateRaw, "")
+    .replace(/^(提醒|待做事项|待办事项|待办|提醒内容|内容|事项|为|：|:|，|,|；|;|\s)+/g, "")
+    .replace(/[，,；;\s]+$/g, "")
+    .trim();
+  return cleaned || undefined;
+}
+
+function selectCaseRecordForReminder(
+  records: Array<{ recordId: string; fields: Record<string, unknown> }>,
+  target: string | undefined,
+): { recordId: string; fields: Record<string, unknown> } | undefined {
+  const sorted = [...records].sort((left, right) => readCaseRecencyTime(right.fields) - readCaseRecencyTime(left.fields));
+  if (!target) {
+    return sorted[0];
+  }
+  const normalizedTarget = normalizeCaseSearchText(target);
+  return sorted.find((item) => {
+    const haystack = normalizeCaseSearchText([
+      buildCaseRecordLabel(item.fields),
+      readFieldString(item.fields, "案号"),
+      readFieldString(item.fields, "委托人"),
+      readFieldString(item.fields, "对方当事人"),
+      readFieldString(item.fields, "案由"),
+      readFieldString(item.fields, "程序阶段"),
+      readFieldString(item.fields, "案件状态"),
+    ].filter(Boolean).join(" "));
+    return haystack.includes(normalizedTarget);
+  });
+}
+
+function normalizeCaseSearchText(value: string): string {
+  return value.replace(/[案\s,，;；:：()（）【】[\]《》-]/g, "").trim();
+}
+
+function mergeCaseTodo(existing: string | undefined, todo: string): string {
+  if (!existing) {
+    return todo;
+  }
+  if (existing.includes(todo)) {
+    return existing;
+  }
+  return `${existing}、${todo}`;
 }
 
 function copyString(source: Record<string, unknown>, target: Record<string, unknown>, key: string): void {
   const value = source[key];
   if (typeof value === "string" && value.trim()) {
     target[key] = value.trim();
+  }
+}
+
+function copyAliasString(source: Record<string, unknown>, target: Record<string, unknown>, sourceKey: string, targetKey: string): void {
+  if (target[targetKey]) {
+    return;
+  }
+  const value = source[sourceKey];
+  if (typeof value === "string" && value.trim()) {
+    target[targetKey] = value.trim();
+  }
+}
+
+function copyInvoicePayer(
+  source: Record<string, unknown>,
+  target: Record<string, unknown>,
+  options: { matchHints?: Record<string, unknown> | null; summary?: string | undefined } = {},
+): void {
+  const direct = readFirstString(source, ["付款方", "购买方", "购方名称", "购买方名称", "买方", "客户名称", "委托人"]);
+  const alias = readFirstString(source, ["购买方", "购方名称", "购买方名称", "买方", "客户名称", "委托人"]);
+  const hintClient = readFirstString(options.matchHints ?? {}, ["clientName", "payer", "buyerName", "customerName"]);
+  const summaryClient = extractInvoiceClientFromSummary(options.summary ?? "");
+  const fallback = [alias, hintClient, summaryClient].find((item) => item && !isLawFirmName(item));
+  const payer = direct && isLawFirmName(direct) ? fallback : (direct ?? fallback);
+  if (payer) {
+    target["付款方"] = payer;
+  }
+}
+
+function extractInvoiceClientFromSummary(summary: string): string | undefined {
+  const match = summary.match(/(?:付款方|购买方|购方|客户|委托人)\s*[：:]?\s*([^，,；;\n]+)/);
+  const value = match?.[1]?.trim();
+  return value && !isLawFirmName(value) ? value : undefined;
+}
+
+function readFirstString(source: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function isLawFirmName(value: string): boolean {
+  return /律师事务所|律所|隆安/.test(value);
+}
+
+function copyNormalizedString(
+  source: Record<string, unknown>,
+  target: Record<string, unknown>,
+  key: string,
+  normalize: (value: string) => string | undefined,
+): void {
+  const value = source[key];
+  if (typeof value !== "string" || !value.trim()) {
+    return;
+  }
+  const normalized = normalize(value.trim());
+  if (normalized) {
+    target[key] = normalized;
   }
 }
 
@@ -1165,18 +1592,199 @@ function copyDate(source: Record<string, unknown>, target: Record<string, unknow
   }
 }
 
-function copyStringArray(source: Record<string, unknown>, target: Record<string, unknown>, key: string): void {
-  const value = source[key];
-  if (Array.isArray(value)) {
-    const normalized = value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim());
-    if (normalized.length > 0) {
-      target[key] = normalized;
-    }
+function copyUserArray(source: Record<string, unknown>, target: Record<string, unknown>, key: string): void {
+  const users = normalizeUserFieldValue(source[key]);
+  if (users.length > 0) {
+    target[key] = users;
+  }
+}
+
+function copyNormalizedStringArray(
+  source: Record<string, unknown>,
+  target: Record<string, unknown>,
+  key: string,
+  normalize: (value: string) => string | undefined,
+): void {
+  const values = readStringArrayValue(source[key])
+    .map((item) => normalize(item))
+    .filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  if (values.length > 0) {
+    target[key] = Array.from(new Set(values));
+  }
+}
+
+function copyAliasNormalizedStringArray(
+  source: Record<string, unknown>,
+  target: Record<string, unknown>,
+  sourceKey: string,
+  targetKey: string,
+  normalize: (value: string) => string | undefined,
+): void {
+  if (target[targetKey]) {
     return;
   }
-  if (typeof value === "string" && value.trim()) {
-    target[key] = [value.trim()];
+  const values = readStringArrayValue(source[sourceKey])
+    .map((item) => normalize(item))
+    .filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  if (values.length > 0) {
+    target[targetKey] = Array.from(new Set(values));
   }
+}
+
+function readStringArrayValue(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      .map((item) => item.trim());
+  }
+  if (typeof value === "string" && value.trim()) {
+    return value
+      .split(/[、,，/]+/)
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+  }
+  return [];
+}
+
+function normalizeUserFieldValue(value: unknown): Array<{ id: string }> {
+  if (typeof value === "string" && value.trim()) {
+    return [{ id: value.trim() }];
+  }
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const users = value.flatMap((item) => {
+    if (typeof item === "string" && item.trim()) {
+      return [{ id: item.trim() }];
+    }
+    if (item && typeof item === "object" && typeof (item as { id?: unknown }).id === "string" && (item as { id: string }).id.trim()) {
+      return [{ id: (item as { id: string }).id.trim() }];
+    }
+    return [];
+  });
+  return dedupeUserFieldValue(users);
+}
+
+function withDefaultContractOwners(fields: Record<string, unknown>, requesterOpenId?: string): Record<string, unknown> {
+  if (!requesterOpenId?.trim()) {
+    return fields;
+  }
+  const fallback = [{ id: requesterOpenId.trim() }];
+  return {
+    ...fields,
+    承揽人: hasUserFieldValue(fields["承揽人"]) ? fields["承揽人"] : fallback,
+    承办人: hasUserFieldValue(fields["承办人"]) ? fields["承办人"] : fallback,
+  };
+}
+
+function hasUserFieldValue(value: unknown): value is Array<{ id: string }> {
+  return Array.isArray(value)
+    && value.some((item) => item && typeof item === "object" && typeof (item as { id?: unknown }).id === "string" && (item as { id: string }).id.trim().length > 0);
+}
+
+function dedupeUserFieldValue(users: Array<{ id: string }>): Array<{ id: string }> {
+  const seen = new Set<string>();
+  const deduped: Array<{ id: string }> = [];
+  for (const user of users) {
+    if (seen.has(user.id)) {
+      continue;
+    }
+    seen.add(user.id);
+    deduped.push(user);
+  }
+  return deduped;
+}
+
+function appendCaseStatusDetail(source: Record<string, unknown>, target: Record<string, unknown>): void {
+  if (target["进展"]) {
+    return;
+  }
+  const rawStatus = typeof source["案件状态"] === "string" ? source["案件状态"].trim() : "";
+  if (!rawStatus) {
+    return;
+  }
+  const normalizedStatus = normalizeCaseStatusValue(rawStatus);
+  if (normalizedStatus && normalizedStatus !== rawStatus) {
+    target["进展"] = rawStatus;
+  }
+}
+
+function normalizeCaseTypeValue(value: string): string | undefined {
+  const normalized = value.trim();
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized.includes("劳动仲裁")) {
+    return "劳动仲裁";
+  }
+  return normalized;
+}
+
+function normalizeCaseCauseValue(value: string): string | undefined {
+  const normalized = value.trim();
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized === "违法解除劳动合同争议" || normalized.includes("劳动合同") || normalized.includes("劳动争议")) {
+    return "劳动争议";
+  }
+  return normalized;
+}
+
+function normalizeCaseStageValue(value: string): string | undefined {
+  const normalized = value.trim();
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized === "劳动仲裁" || normalized === "仲裁") {
+    return "仲裁阶段";
+  }
+  return normalized;
+}
+
+function normalizeCaseStatusValue(value: string): string | undefined {
+  const normalized = value.trim();
+  if (!normalized) {
+    return undefined;
+  }
+  if (["进行中", "未结", "执行中", "已结案"].includes(normalized)) {
+    return normalized;
+  }
+  if (normalized.includes("证据") || normalized.includes("整理") || normalized.includes("开庭") || normalized.includes("处理中")) {
+    return "进行中";
+  }
+  if (normalized.includes("执行")) {
+    return "执行中";
+  }
+  if (normalized.includes("结案") || normalized.includes("已结")) {
+    return "已结案";
+  }
+  return normalized;
+}
+
+function normalizeCasePriorityValue(value: string): string | undefined {
+  const normalized = value.trim();
+  if (!normalized) {
+    return undefined;
+  }
+  if (["重要紧急", "紧急不重要", "重要不紧急", "不紧急不重要"].includes(normalized)) {
+    return normalized;
+  }
+  if (normalized === "高") {
+    return "重要紧急";
+  }
+  if (normalized === "中") {
+    return "重要不紧急";
+  }
+  if (normalized === "低") {
+    return "不紧急不重要";
+  }
+  return normalized;
+}
+
+function normalizeCaseLawyerValue(value: string): string | undefined {
+  const normalized = value.trim().replace(/律师$/u, "");
+  return normalized || undefined;
 }
 
 type ContractTemplateRenderData = {
@@ -1224,6 +1832,8 @@ type ContractTemplateRenderData = {
   risk_fee_clause: string;
   risk_fee_followup_clause_1: string;
   risk_fee_followup_clause_2: string;
+  sign_client_line: string;
+  sign_date_line: string;
   signature_line: string;
   risk_notice_client_name: string;
 };
@@ -1392,9 +2002,9 @@ function buildTaggedContractTemplateXml(sourceXml: string): string {
     ["甲、乙双方如果发生争议，应当友好协商解决。如协商不成，任何一方均有权将争议提交至深圳国际仲裁院仲裁，按照提交仲裁时深圳国际仲裁院现行有效的仲裁规则进行仲裁。仲裁裁决是终局的，对双方当事人均有约束力。", "{dispute_resolution_clause}", "dispute_resolution_clause"],
     ["附：《风险代理告知书》", "{attachment_notice_title}", "attachment_notice_title"],
     ["（以下无正文，为本合同签署处及附件）", "{attachment_notice_suffix}", "attachment_notice_suffix"],
-    ["甲方：                                   乙方：北京市隆安（深圳）律师事务所", "甲方：{client_name}                                   乙方：北京市隆安（深圳）律师事务所", "sign_client_name"],
+    ["甲方：                                   乙方：北京市隆安（深圳）律师事务所", "{sign_client_line}", "sign_client_name"],
     ["法定代表人/负责人/授权代表：__________   承办律师：_________________                                          ", "{signature_line}", "signature_line"],
-    ["签约时间：  202 年   月     日           ", "签约时间：{sign_date_text}           ", "sign_date_text"],
+    ["签约时间：  202 年   月     日           ", "{sign_date_line}", "sign_date_line"],
     ["<w:t>附件</w:t>", "<w:t>{#show_risk_notice}附件</w:t>", "show_risk_notice_open"],
     ["委托人：", "委托人：{risk_notice_client_name}", "risk_notice_client_name"],
     ["<w:t>日  期：   年  月  日</w:t>", "<w:t>日  期：{risk_notice_date_text}{/show_risk_notice}</w:t>", "show_risk_notice_close"],
@@ -1718,7 +2328,10 @@ export function buildContractTemplateRenderData(
   const engageSecondInstance = parsed.engageSecondInstance ?? readBoolean(templateData, "engage_second_instance") ?? /二审/.test(request);
   const engageEnforcement = parsed.engageEnforcement ?? readBoolean(templateData, "engage_enforcement") ?? /执行/.test(request);
   const engageSettlement = parsed.engageSettlement ?? readBoolean(templateData, "engage_settlement") ?? /(调解|和解)/.test(request);
-  const specialTerms = readString(templateData, "special_terms") ?? "";
+  const specialTerms = [
+    parsed.expenseModeText,
+    parsed.specialTerms ?? readString(templateData, "special_terms"),
+  ].filter((item): item is string => Boolean(item?.trim())).join("；");
   const isCompany = inferIsCompany(clientName, clientIdCode, clientRepresentative);
   const arbitrationAmount = parsed.arbitrationFee ?? extractMoneyFromClause(readString(templateData, "fee_arbitration_clause"));
   const firstInstanceAmount = parsed.firstInstanceFee ?? extractMoneyFromClause(readString(templateData, "fee_first_instance_clause"));
@@ -1727,9 +2340,9 @@ export function buildContractTemplateRenderData(
   const riskBaseAmount = parsed.baseFee ?? extractMoneyFromClause(readString(templateData, "base_fee_clause"));
   const arbitrationChinese = parsed.arbitrationFeeChinese;
   const representativeLine = isCompany ? `法定代表人/负责人：${clientRepresentative}` : "";
-  const signatureLine = isCompany
-    ? `法定代表人/负责人/授权代表：${clientRepresentative}   承办律师：${leadLawyer}                                          `
-    : "";
+  const signClientLine = "甲方：                                   乙方：北京市隆安（深圳）律师事务所";
+  const signDateLine = "签约时间：  202 年   月     日           ";
+  const signatureLine = "法定代表人/负责人/授权代表：__________   承办律师：_____________                                          ";
 
   return {
     client_name: clientName,
@@ -1760,6 +2373,8 @@ export function buildContractTemplateRenderData(
     risk_fee_line: isRiskFee ? "☑基础收费+风险收费" : "",
     attachment_notice_title: isRiskFee ? "附：《风险代理告知书》" : "",
     attachment_notice_suffix: isRiskFee ? "（以下无正文，为本合同签署处及附件）" : "（以下无正文，为本合同签署处）",
+    sign_client_line: signClientLine,
+    sign_date_line: signDateLine,
     dispute_resolution_clause: readString(templateData, "dispute_resolution_clause")
       ?? "甲、乙双方如果发生争议，应当友好协商解决。如协商不成，任何一方均有权将争议提交至深圳国际仲裁院仲裁，按照提交仲裁时深圳国际仲裁院现行有效的仲裁规则进行仲裁。仲裁裁决是终局的，对双方当事人均有约束力。",
     special_terms_clause: specialTerms || "",
@@ -1872,6 +2487,8 @@ type ParsedContractDraftRequest = {
   secondInstanceFee?: number | undefined;
   enforcementFee?: number | undefined;
   baseFee?: number | undefined;
+  expenseModeText?: string | undefined;
+  specialTerms?: string | undefined;
 };
 
 export function parseContractDraftRequest(text: string): ParsedContractDraftRequest {
@@ -1880,16 +2497,21 @@ export function parseContractDraftRequest(text: string): ParsedContractDraftRequ
     /甲方（委托人）[:：]\s*([^\n；;，,。]+)/,
     /甲方[:：]\s*([^\n；;，,。]+)/,
     /甲方(?:为|是)\s*([^\n；;，,。]+)/,
+    /甲方(?:（委托人）)?\s*([^\n；;，,。]+?)(?=，(?:身份证号|证件号|统一社会信用代码|社会统一信用代码|住址|地址|联系电话|联系方式|手机号码|手机号)|[；;。]|$)/,
     /委托人[:：]\s*([^\n；;，,。]+)/,
+    /委托人\s*([^\n；;，,。]+?)(?=，(?:身份证号|证件号|统一社会信用代码|社会统一信用代码|住址|地址|联系电话|联系方式|手机号码|手机号)|[；;。]|$)/,
   ]);
   const clientIdCode = firstMatch(normalized, [
     /(?:身份证号|证件号|统一社会信用代码|社会统一信用代码)[:：]\s*([0-9A-Za-zXx*]+)/,
+    /(?:身份证号|证件号|统一社会信用代码|社会统一信用代码)\s*([0-9A-Za-zXx*]+)/,
   ]);
   const clientAddress = firstMatch(normalized, [
     /(?:住址|地址)[:：]\s*([^\n；;。]+?)(?=，(?:联系电话|联系方式|手机号码|手机号)|[。；;\n]|$)/,
+    /(?:住址|地址)\s*([^\n；;。]+?)(?=，(?:联系电话|联系方式|手机号码|手机号)|[。；;\n]|$)/,
   ]);
   const clientPhone = firstMatch(normalized, [
     /(?:联系电话|联系方式|手机号码|手机号)[:：]\s*([0-9-+（）() ]{6,})/,
+    /(?:联系电话|联系方式|手机号码|手机号)\s*([0-9-+（）() ]{6,})/,
   ])?.replace(/\s+/g, "");
   const clientRepresentative = firstMatch(normalized, [
     /(?:法定代表人|负责人)[:：]\s*([^\n；;，,。]+)/,
@@ -1897,14 +2519,26 @@ export function parseContractDraftRequest(text: string): ParsedContractDraftRequ
   const counterpartyName = firstMatch(normalized, [
     /因与([^，,。；;\n]+?)发生[^，,。；;\n]*(?:纠纷|争议)/,
     /对方当事人(?:为|是)?[:：]\s*([^\n；;。]+)/,
+    /对方当事人(?:为|是)?\s*([^\n；;，,。]+)/,
     /对方(?:为|是)?[:：]\s*([^\n；;。]+)/,
+    /对方(?:为|是)?\s*([^\n；;，,。]+)/,
   ]);
   const caseCause = firstMatch(normalized, [
     /发生([^，,。；;\n]*?(?:纠纷|争议))/,
     /案由(?:为|是)?[:：]\s*([^\n；;。]+)/,
+    /案由(?:为|是)?\s*([^\n；;，,。]+)/,
   ]);
   const leadLawyer = firstMatch(normalized, [
     /承办律师(?:为|是)?[:：]\s*([^\n；;，,。]+)/,
+    /承办律师(?:为|是)?\s*([^\n；;，,。]+)/,
+  ]);
+  const expenseModeText = firstMatch(normalized, [
+    /(办案费用实报实销)/,
+    /(办案费用包干)/,
+  ]);
+  const specialTerms = firstMatch(normalized, [
+    /特别约定[:：]\s*([^\n]+)/,
+    /特别约定\s*([^\n]+)/,
   ]);
 
   const arbitrationFee = extractFeeForStage(normalized, "仲裁");
@@ -1926,6 +2560,8 @@ export function parseContractDraftRequest(text: string): ParsedContractDraftRequ
     counterpartyName,
     caseCause,
     leadLawyer,
+    expenseModeText,
+    specialTerms,
     engageArbitration: /仲裁/.test(normalized),
     engageFirstInstance: /一审/.test(normalized),
     engageSecondInstance: /二审/.test(normalized),
@@ -2042,7 +2678,11 @@ function inferIsCompany(clientName: string, clientIdCode: string, clientRepresen
   if (/公司|事务所|中心|机构|集团|有限/.test(clientName)) {
     return true;
   }
-  return /^[0-9A-Z]{18}$/i.test(clientIdCode.trim());
+  const normalizedId = clientIdCode.trim();
+  if (/^\d{17}[\dXx]$/.test(normalizedId)) {
+    return false;
+  }
+  return /^[0-9A-Z]{18}$/i.test(normalizedId);
 }
 
 function normalizePartyForFileName(value: string): string {
@@ -2052,6 +2692,42 @@ function normalizePartyForFileName(value: string): string {
     .slice(0, 30) || "XXX";
 }
 
+function buildDraftProjectName(request: string, record?: Record<string, unknown> | null): string | undefined {
+  const parsed = parseContractDraftRequest(request);
+  const clientName = parsed.clientName
+    ?? readString(record ?? null, "客户名称")
+    ?? readString(record ?? null, "甲方")
+    ?? undefined;
+  const counterpartyName = parsed.counterpartyName
+    ?? readString(record ?? null, "对方当事人")
+    ?? readString(record ?? null, "乙方")
+    ?? undefined;
+  if (!clientName || !counterpartyName) {
+    return undefined;
+  }
+  const stageLabel = inferDraftProjectStageLabel(parsed, readString(record ?? null, "具体类型/案由"));
+  return `${clientName} vs ${counterpartyName}${stageLabel}`;
+}
+
+function inferDraftProjectStageLabel(parsed: ParsedContractDraftRequest, caseCause?: string | undefined): string {
+  if (parsed.engageArbitration) {
+    return "劳动仲裁";
+  }
+  if (parsed.engageFirstInstance) {
+    return "劳动争议一审";
+  }
+  if (parsed.engageSecondInstance) {
+    return "劳动争议二审";
+  }
+  if (parsed.engageEnforcement) {
+    return "劳动争议执行";
+  }
+  if ((caseCause ?? parsed.caseCause ?? "").includes("劳动")) {
+    return "劳动争议";
+  }
+  return parsed.caseCause?.trim() || caseCause?.trim() || "委托事项";
+}
+
 function pickNearestDeadline(fields: Record<string, unknown>, now: number, lookaheadMs: number): { label: string; value: string } | null {
   const candidates = [
     "开庭日",
@@ -2059,18 +2735,92 @@ function pickNearestDeadline(fields: Record<string, unknown>, now: number, looka
     "反诉截止日",
     "管辖权异议截止日",
     "上诉截止日",
+    "查封到期日",
   ].map((key) => {
-    const value = readFieldString(fields, key);
-    if (!value) return null;
-    const time = Date.parse(value.replace(/\//g, "-"));
-    if (!Number.isFinite(time)) return null;
+    const time = readFieldTime(fields, key);
+    if (typeof time !== "number") return null;
     if (time < now || time > now + lookaheadMs) return null;
-    return { label: key, value, time };
+    return { label: key, value: formatCaseDeadlineDisplay(time), time };
   }).filter((item): item is { label: string; value: string; time: number } => Boolean(item));
   candidates.sort((left, right) => left.time - right.time);
   return candidates[0]
     ? { label: candidates[0].label, value: candidates[0].value }
     : null;
+}
+
+function buildCaseReminderCandidates(
+  fields: Record<string, unknown>,
+  now: number,
+  lookaheadMs: number,
+): Array<{ line: string; haystack: string; priority: number; time: number; recency: number }> {
+  const status = readFieldString(fields, "案件状态");
+  if (status === "已结案") {
+    return [];
+  }
+
+  const label = buildCaseRecordLabel(fields);
+  const stage = readFieldString(fields, "程序阶段");
+  const todo = readFieldString(fields, "待做事项");
+  const recency = readCaseRecencyTime(fields);
+  const nearestDeadline = pickNearestDeadline(fields, now, lookaheadMs);
+  const lines: Array<{ line: string; haystack: string; priority: number; time: number; recency: number }> = [];
+
+  for (const key of ["开庭日", "举证截止日", "反诉截止日", "管辖权异议截止日", "上诉截止日", "查封到期日"] as const) {
+    const time = readFieldTime(fields, key);
+    if (typeof time !== "number") {
+      continue;
+    }
+    if (time < now || time > now + lookaheadMs) {
+      continue;
+    }
+    const value = formatCaseDeadlineDisplay(time);
+    const line = `${label}：${key} ${value}${status ? `；当前状态 ${status}` : ""}${stage ? `；程序阶段 ${stage}` : ""}${todo ? `；待做事项 ${todo}` : ""}`;
+    lines.push({
+      line,
+      haystack: [label, key, value, status, stage, todo].filter(Boolean).join(" "),
+      priority: 0,
+      time,
+      recency,
+    });
+  }
+
+  for (const item of splitCaseTodoItems(todo)) {
+    const line = `${label}：待做事项 ${item}${nearestDeadline ? `；截止 ${nearestDeadline.value}` : ""}${status ? `；当前状态 ${status}` : ""}${stage ? `；程序阶段 ${stage}` : ""}`;
+    lines.push({
+      line,
+      haystack: [label, item, nearestDeadline?.value, nearestDeadline?.label, status, stage, todo].filter(Boolean).join(" "),
+      priority: 1,
+      time: nearestDeadline ? Date.parse(nearestDeadline.value.replace(/\//g, "-")) : (recency || now + lookaheadMs + 1),
+      recency,
+    });
+  }
+
+  return lines;
+}
+
+function splitCaseTodoItems(todo: string | undefined): string[] {
+  if (!todo) {
+    return [];
+  }
+  const items = todo
+    .split(/[、；;\n]+/u)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  return items.length > 0 ? items : [todo.trim()];
+}
+
+function formatCaseDeadlineDisplay(timestamp: number): string {
+  const date = new Date(timestamp);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = date.getHours();
+  const minute = date.getMinutes();
+  const second = date.getSeconds();
+  if (hour === 0 && minute === 0 && second === 0) {
+    return `${year}-${month}-${day}`;
+  }
+  return `${year}-${month}-${day} ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
 function formatNumber(value: number | undefined): string {

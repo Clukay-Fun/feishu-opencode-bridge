@@ -119,6 +119,23 @@ export type KnowledgeIngestFailureCardView = {
   suggestion?: string | undefined;
 };
 
+export type LaborAnalysisProgressCardView = {
+  sourceLabel: string;
+  steps: ReadonlyArray<ToolUpdateView>;
+  progressText?: string | undefined;
+  startedAt?: number | undefined;
+  elapsedMs?: number | undefined;
+};
+
+export type LaborAnalysisCompletedCardView = {
+  title: string;
+  materialCount: number;
+  evidenceCount: number;
+  issueCount: number;
+  tagCounts: Record<string, number>;
+  docUrl?: string | undefined;
+};
+
 export type KnowledgeIngestSessionSummaryView = {
   completedCount: number;
   failedCount: number;
@@ -377,10 +394,14 @@ export function buildKnowledgeQueryPayload(view: KnowledgeQueryResult): FeishuPo
       buildNoticeBodyBlock(`**问题**\n${escapeText(view.question)}`, "search_outlined", "indigo", { showIcon: false }),
       buildDivider(),
       ...view.results.flatMap((result, index) => {
+        const sourceLabel = `${escapeText(result.sourceFile)}${result.pageSection ? ` · ${escapeText(result.pageSection)}` : ""}`;
+        const sourceRecordUrl = buildKnowledgeRecordUrl(view.bitableUrl, result.bitableRecordId);
         const parts = [
           `**答案 ${index + 1}**`,
           escapeText(result.answer),
-          `📄 来源：${escapeText(result.sourceFile)}${result.pageSection ? ` · ${escapeText(result.pageSection)}` : ""}`,
+          sourceRecordUrl
+            ? `📄 来源：[打开知识库记录｜${sourceLabel}](${escapeText(sourceRecordUrl)})`
+            : `📄 来源：${sourceLabel}`,
           result.statute ? `📌 法条：${escapeText(result.statute)}` : "",
         ].filter(Boolean).join("\n\n");
         return index < view.results.length - 1
@@ -552,6 +573,40 @@ export function buildKnowledgeIngestProcessingPayload(view: KnowledgeIngestProgr
       buildDivider(),
       buildElapsedLine(resolveElapsedText(view)),
     ],
+  });
+}
+
+export function buildLaborAnalysisProgressPayload(view: LaborAnalysisProgressCardView): FeishuPostPayload {
+  const stepElements = view.steps.flatMap((step) => buildKnowledgeIngestProgressStepElements(step));
+  return buildInteractivePayload({
+    title: "劳动分析进行中",
+    template: "indigo",
+    iconToken: "start_outlined",
+    bodyElements: [
+      buildTitleLine(`处理文件：**${escapeText(view.sourceLabel)}**`),
+      ...stepElements,
+      ...(view.progressText ? [buildQuoteLine(escapeText(view.progressText))] : []),
+      buildDivider(),
+      buildElapsedLine(resolveElapsedText(view)),
+    ],
+  });
+}
+
+export function buildLaborAnalysisCompletedPayload(view: LaborAnalysisCompletedCardView): FeishuPostPayload {
+  const bodyElements: Array<Record<string, unknown>> = [
+    buildTitleLine(`案件：**${escapeText(view.title)}**`),
+    buildStatsRow([
+      `材料 ${view.materialCount}`,
+      `证据 ${view.evidenceCount}`,
+      `焦点 ${view.issueCount}`,
+    ]),
+    buildTagChartSection(view.tagCounts, view.docUrl, "材料占比", "打开分析文档"),
+  ];
+  return buildInteractivePayload({
+    title: "劳动分析完成",
+    template: "green",
+    iconToken: "yes_filled",
+    bodyElements,
   });
 }
 
@@ -779,7 +834,12 @@ function buildStatsRow(labels: string[]): Record<string, unknown> {
   };
 }
 
-function buildTagChartSection(tagCounts: Record<string, number>, bitableUrl?: string): Record<string, unknown> {
+function buildTagChartSection(
+  tagCounts: Record<string, number>,
+  bitableUrl?: string,
+  title = "标签占比",
+  linkLabel = "查看知识库",
+): Record<string, unknown> {
   const values = Object.entries(tagCounts)
     .slice(0, 10)
     .map(([tag, value]) => ({ tag, value }));
@@ -789,7 +849,7 @@ function buildTagChartSection(tagCounts: Record<string, number>, bitableUrl?: st
       tag: "chart",
       chart_spec: {
         type: "pie",
-        title: { text: "标签占比" },
+        title: { text: title },
         data: { values },
         seriesField: "tag",
         angleField: "value",
@@ -812,7 +872,7 @@ function buildTagChartSection(tagCounts: Record<string, number>, bitableUrl?: st
   }
   if (bitableUrl) {
     elements.push(buildDivider());
-    elements.push(cardMarkdown(`[查看知识库 →](${escapeText(bitableUrl)})`, "normal"));
+    elements.push(cardMarkdown(`[${escapeText(linkLabel)} →](${escapeText(bitableUrl)})`, "normal"));
   }
   return buildStretchColumnSet([
     buildWeightedColumn(elements, { padding: "0px 0px 0px 0px", verticalSpacing: "8px" }),
@@ -1399,4 +1459,20 @@ function buildFooter(sessionId: string, durationText: string): Record<string, un
 
 function escapeText(text: string): string {
   return text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function buildKnowledgeRecordUrl(bitableUrl: string | undefined, recordId: string | undefined): string | undefined {
+  if (!bitableUrl || !recordId) {
+    return undefined;
+  }
+  try {
+    const parsed = new URL(bitableUrl);
+    if (!parsed.pathname.startsWith("/base/")) {
+      return undefined;
+    }
+    parsed.searchParams.set("recordId", recordId);
+    return parsed.toString();
+  } catch {
+    return undefined;
+  }
 }

@@ -658,6 +658,82 @@ describe("KnowledgeBaseService", () => {
     service.close();
   });
 
+  it("deduplicates equivalent query answers from the same source", async () => {
+    stubEmbeddingFetch();
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-"));
+    tempDirs.push(dir);
+    const answer = "经济补偿按工作年限计算；违法解除的赔偿金按经济补偿标准的二倍计算。";
+    const service = new KnowledgeBaseService(
+      {
+        enabled: true,
+        autoDetect: { enabled: false, minConfidence: 0.75 },
+        query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
+        storage: {
+          sqlitePath: join(dir, "knowledge.db"),
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+            documentTableId: undefined,
+          },
+        },
+        embeddingProvider: {
+          baseUrl: new URL("https://example.com/v1/"),
+          apiKey: "token",
+          model: "text-embedding",
+        },
+        models: {},
+        ingest: {
+          allowedExtensions: [".txt"],
+          maxFileSizeMb: 20,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+        },
+      },
+      {
+        async downloadMessageResource() {
+          throw new Error("not used");
+        },
+        async createBitableRecord() {
+          throw new Error("not used");
+        },
+        async listBitableRecords() {
+          return [1, 2, 3].map((index) => ({
+            recordId: `rec_${index}`,
+            fields: {
+              问题: `赔偿金如何计算 ${index}`,
+              答案: answer,
+              标签: ["劳动"],
+              法条: "《劳动合同法》第 47 条、第 87 条",
+              源文件: "劳动法知识库演示材料.md",
+              "页码/章节": "文本 7-10",
+            },
+          }));
+        },
+      },
+      {
+        async createSession() {
+          return { id: "ses_1", title: "rerank" };
+        },
+        async deleteSession() {
+          return true;
+        },
+        async postMessageSync() {
+          return assistantMessage(JSON.stringify([
+            { id: 1, score: 0.99 },
+            { id: 2, score: 0.98 },
+            { id: 3, score: 0.97 },
+          ]));
+        },
+      },
+      logger(),
+    );
+
+    await service.syncMirror();
+    const result = await service.query("违法解除赔偿金怎么计算？");
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]?.answer).toBe(answer);
+    service.close();
+  });
+
   it("does not fail keyword fallback for slash-heavy questions", async () => {
     stubEmbeddingFetch();
     const dir = mkdtempSync(join(tmpdir(), "knowledge-"));

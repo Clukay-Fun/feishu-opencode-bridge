@@ -28,7 +28,7 @@ export type LaborMaterialExtraction = {
   missingEvidenceHints: string[];
 };
 
-type LaborAggregateResult = {
+export type LaborAggregateResult = {
   caseTitle: string;
   disputeStage: string;
   summary: string;
@@ -203,11 +203,11 @@ export class LaborSkillService {
     }
 
     if (input.preferredTitle?.trim()) {
-      normalizedAggregate.caseTitle = redactEvidenceText(input.preferredTitle.trim());
+      normalizedAggregate.caseTitle = input.preferredTitle.trim();
     }
 
     await onProgress?.("正在生成飞书工作台文档");
-    const title = redactEvidenceText(normalizedAggregate.caseTitle || "劳动争议案件分析工作台");
+    const title = normalizedAggregate.caseTitle || "劳动争议案件分析工作台";
     const markdown = renderLaborWorkbenchMarkdown(normalizedAggregate, input.materialCount, input.warnings);
     const docResult = await createLarkDoc(title, markdown).catch((error) => {
       this.logger.log("labor-skill", "create lark doc failed", {
@@ -366,8 +366,12 @@ function normalizeAggregateResult(
   };
 }
 
-function renderLaborWorkbenchMarkdown(result: LaborAggregateResult, materialCount: number, warnings: string[]): string {
-  const title = redactEvidenceText(result.caseTitle || "劳动争议案件");
+export function renderLaborWorkbenchMarkdown(result: LaborAggregateResult, materialCount: number, warnings: string[]): string {
+  const title = result.caseTitle || "劳动争议案件";
+  const timelineDiagram = buildTimelineMermaid(result.timeline);
+  const evidenceDiagram = buildEvidenceMapMermaid(result);
+  const claimsDiagram = buildClaimsMindmapMermaid(result);
+  const nextActionsDiagram = buildNextActionsFlowMermaid(result);
   const lines: string[] = [
     `# ${title}｜证据链分析工作底稿`,
     "",
@@ -431,25 +435,25 @@ function renderLaborWorkbenchMarkdown(result: LaborAggregateResult, materialCoun
     "",
     "用于快速确认入职、履职、沟通、解除、仲裁准备等关键节点。",
     "",
-    "<whiteboard type=\"blank\"></whiteboard>",
+    renderMermaidBlock(timelineDiagram),
     "",
     "#### 2. 证据关系图",
     "",
     "用于核对争议焦点、证明事实、现有证据和缺口是否形成闭环。",
     "",
-    "<whiteboard type=\"blank\"></whiteboard>",
+    renderMermaidBlock(evidenceDiagram),
     "",
     "#### 3. 请求项结构图",
     "",
     "用于拆解仲裁请求、事实依据、证据支撑和待核实金额。",
     "",
-    "<whiteboard type=\"blank\"></whiteboard>",
+    renderMermaidBlock(claimsDiagram),
     "",
     "#### 4. 补证流程图",
     "",
     "用于安排后续补证、发函、仲裁申请和律师复核动作。",
     "",
-    "<whiteboard type=\"blank\"></whiteboard>",
+    renderMermaidBlock(nextActionsDiagram),
     "",
     "### 证据链总表",
     "",
@@ -488,6 +492,11 @@ function renderLaborWorkbenchMarkdown(result: LaborAggregateResult, materialCoun
     "- 输出限制：本底稿不构成正式法律意见，不能替代律师独立判断。",
   ];
   return lines.join("\n");
+}
+
+function renderMermaidBlock(source: string): string {
+  const trimmed = source.trim();
+  return trimmed ? ["```mermaid", trimmed, "```"].join("\n") : "暂无可展示图示。";
 }
 
 function renderEvidenceTable(rows: LaborAggregateResult["evidenceRows"]): string {

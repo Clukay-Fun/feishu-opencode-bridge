@@ -66,7 +66,12 @@ function createModule() {
     return { messageId: "out-1" };
   });
   const listDraftTemplates = vi.fn(async () => ["委托代理合同-民事"]);
-  const draftContract = vi.fn(async (request: string, onProgress?: (stage: string, detail?: string) => Promise<void> | void) => {
+  const draftContract = vi.fn(async (
+    request: string,
+    optionsOrProgress?: { requesterOpenId?: string | undefined } | ((stage: string, detail?: string) => Promise<void> | void),
+    maybeOnProgress?: (stage: string, detail?: string) => Promise<void> | void,
+  ) => {
+    const onProgress = typeof optionsOrProgress === "function" ? optionsOrProgress : maybeOnProgress;
     await onProgress?.("parse-request", "正在解析起草需求");
     await onProgress?.("match-template", "正在匹配合同模板");
     await onProgress?.("prepare-fields", "正在整理关键字段");
@@ -91,6 +96,8 @@ function createModule() {
       审理法院: "朝阳区劳动仲裁委员会",
       程序阶段: ["劳动仲裁"],
       承办律师: "刘达律师",
+      开庭日: "2026-04-18 09:30",
+      举证截止日: "2026-04-17",
     },
   }));
   const recognizeInvoice = vi.fn(async () => ({
@@ -108,9 +115,21 @@ function createModule() {
     contractLines: ["委托代理合同：未收款 ¥10000，未开票 ¥0；付款节点：04-20"],
     invoiceLines: [],
     caseLines: [
-      "张三劳动争议案：举证截止日 2026-04-17；当前状态 需补充工资流水证据",
-      "张三劳动争议案：开庭日 2026-04-18 09:30；当前状态 需补充工资流水证据",
+      "张三劳动争议案：举证截止日 2026-04-17；当前状态 进行中；待做事项 需补充工资流水证据",
+      "张三劳动争议案：开庭日 2026-04-18 09:30；当前状态 进行中；待做事项 需补充工资流水证据",
+      "张三劳动争议案：待做事项 社保缴纳记录待获取；截止 2026-04-25；当前状态 进行中",
     ],
+  }));
+  const addCaseReminder = vi.fn(async (request: string) => ({
+    matchedLabel: "张某某 vs 杭州XX科技有限公司 劳动争议",
+    recordId: "rec_case_1",
+    reminderLabel: request.includes("开庭") ? "开庭日" : "举证截止日",
+    reminderDate: request.includes("09:30") ? "2026-04-18 09:30" : "2026-04-18",
+    todo: "补充工资流水证据",
+    fields: {
+      举证截止日: new Date(2026, 3, 18).getTime(),
+      待做事项: "补充工资流水证据",
+    },
   }));
   const module = new ContractAssistantRuntimeModule({
     config: {
@@ -148,6 +167,7 @@ function createModule() {
       createCase,
       recognizeInvoice,
       listReminderItems,
+      addCaseReminder,
     } as never,
     sendPayload,
     updatePayload,
@@ -161,6 +181,7 @@ function createModule() {
     createCase,
     recognizeInvoice,
     listReminderItems,
+    addCaseReminder,
   };
 }
 
@@ -192,6 +213,7 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
 
     const processingSerialized = JSON.stringify(sendPayload.mock.calls[0]?.[1] ?? {});
     const completedSerialized = JSON.stringify(updatePayload.mock.calls[0]?.[2] ?? {});
+    const completedCard = JSON.parse((updatePayload.mock.calls[0]?.[2] as { content?: string })?.content ?? "{}");
     expect(processingSerialized).toContain("案件信息录入中");
     expect(processingSerialized).toContain("正在解析案件信息");
     expect(processingSerialized).toContain("提取字段：进行中");
@@ -203,6 +225,9 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     expect(completedSerialized).toContain("刘达律师");
     expect(completedSerialized).toContain("案件管理表");
     expect(completedSerialized).toContain("rec_case_1");
+    expect(completedSerialized).toContain("开庭日 2026-04-18 09:30");
+    expect(completedSerialized).toContain("举证截止日 2026-04-17");
+    expect((completedCard.body?.elements ?? []).some((item: { tag?: string }) => item.tag === "column")).toBe(false);
   });
 
   it("keeps completed steps visible on contract draft card", async () => {
@@ -233,8 +258,28 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     expect(finalSerialized).toContain("耗时：");
   });
 
+  it("uses demo one-shot contract data in the draft card and request", async () => {
+    const { module, sendPayload, draftContract } = createModule();
+    const request = "/起草合同 使用《委托代理合同-民事》模板。甲方张某某，身份证号330100199003010011，住址杭州市西湖区文三路附近，联系电话13800000000；对方为杭州XX科技有限公司；案由为违法解除劳动合同争议；委托程序选择劳动仲裁、调解和解；授权方式为一般授权；收费模式为按阶段收费，仲裁阶段律师费20000元，办案费用实报实销；承办律师刘达律师；特别约定：AI 生成文本仅作为合同草稿，需经承办律师复核后签署。";
+
+    const result = await module.handleMessage({
+      message: createTextMessage(request),
+      routed: routeIncomingText(request),
+    });
+
+    expect(result).toEqual({ claimed: true });
+    expect(draftContract).toHaveBeenCalledTimes(1);
+    expect(draftContract.mock.calls[0]?.[0]).toContain("甲方张某某");
+    expect(draftContract.mock.calls[0]?.[0]).toContain("身份证号330100199003010011");
+    expect(draftContract.mock.calls[0]?.[0]).toContain("办案费用实报实销");
+    const initialSerialized = JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {});
+    expect(initialSerialized).toContain("委托代理合同（张某某 vs 杭州XX科技有限公司）");
+    expect(initialSerialized).toContain("违法解除劳动合同争议｜劳动仲裁");
+    expect(initialSerialized).toContain("律师费：¥20,000");
+  });
+
   it("supports one-shot answer during onboarding", async () => {
-    const { module, draftContract, updatePayload } = createModule();
+    const { module, sendPayload, draftContract, updatePayload } = createModule();
     const start = createTextMessage("/contract-draft onboard");
     await module.handleMessage({
       message: start,
@@ -252,6 +297,11 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     expect(draftContract.mock.calls[0]?.[0]).toContain("使用《委托代理合同-民事》模板");
     expect(draftContract.mock.calls[0]?.[0]).toContain("甲方为房怡康");
     expect(draftContract.mock.calls[0]?.[0]).toContain("收费模式选择：按阶段收费");
+    const processingSerialized = JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {});
+    expect(processingSerialized).toContain("委托代理合同（房怡康 vs 网新集团有限公司、安徽网新计算机有限公司）");
+    expect(processingSerialized).toContain("劳动争议｜仲裁");
+    expect(processingSerialized).toContain("律师费：¥8,000");
+    expect(processingSerialized).not.toContain("委托人 vs 相关单位");
     expect(updatePayload.mock.calls.length).toBeGreaterThanOrEqual(1);
   });
 
@@ -276,8 +326,9 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     const initialSerialized = JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {});
     const finalSerialized = JSON.stringify(updatePayload.mock.calls.at(-1)?.[2] ?? {});
     expect(initialSerialized).toContain("发票识别");
-    expect(initialSerialized).toContain("OCR 识别发票内容");
-    expect(initialSerialized).toContain("填写表格");
+    expect(initialSerialized).toContain("正在 OCR 识别发票内容");
+    expect(initialSerialized).toContain("等待填写表格");
+    expect(initialSerialized).not.toContain("正在填写表格");
     expect(finalSerialized).toContain("发票识别完成");
     expect(finalSerialized).not.toContain("正在 OCR 识别发票内容");
     expect(finalSerialized).toContain("购买方信息");
@@ -291,6 +342,31 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     expect(finalSerialized).toContain("诉讼代理律师费");
     expect(finalSerialized).toContain("查看发票表");
     expect(finalSerialized).toContain("耗时：");
+  });
+
+  it("falls back to request fields when case create response misses display fields", async () => {
+    const { module, updatePayload, createCase } = createModule();
+    createCase.mockResolvedValueOnce({
+      summary: "已整理案件管理字段。",
+      recordId: "rec_case_sparse",
+      record: {},
+    } as any);
+
+    const request = "/案件录入 类型劳动仲裁，案由违法解除劳动合同争议，委托人张某某，对方当事人杭州XX科技有限公司，受理机构杭州市西湖区劳动人事争议仲裁委员会，程序阶段劳动仲裁，案件状态证据整理中，承办律师刘达律师。";
+    const result = await module.handleMessage({
+      message: createTextMessage(request),
+      routed: routeIncomingText(request),
+    });
+
+    expect(result).toEqual({ claimed: true });
+    const completedSerialized = JSON.stringify(updatePayload.mock.calls.at(-1)?.[2] ?? {});
+    expect(completedSerialized).toContain("张某某 vs 杭州XX科技有限公司");
+    expect(completedSerialized).toContain("劳动仲裁｜仲裁阶段");
+    expect(completedSerialized).toContain("劳动争议");
+    expect(completedSerialized).toContain("杭州市西湖区劳动人事争议仲裁委员会");
+    expect(completedSerialized).toContain("刘达");
+    expect(completedSerialized).toContain("进行中");
+    expect(completedSerialized).not.toContain("委托人 vs 对方当事人");
   });
 
   it("renders reminder progress and today todo cards", async () => {
@@ -312,7 +388,28 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     expect(todoSerialized).toContain("举证期限截止");
     expect(todoSerialized).toContain("开庭提醒");
     expect(todoSerialized).toContain("合同付款");
+    expect(todoSerialized).toContain("证据补充");
+    expect(todoSerialized).toContain("2026-04-25");
     expect(todoSerialized).toContain("发送 /提醒 详情 查看全部");
+  });
+
+  it("adds a case reminder with a direct command", async () => {
+    const { module, sendPayload, updatePayload, addCaseReminder } = createModule();
+    const request = "/添加案件提醒 举证截止日 2026-04-18 待做事项 补充工资流水证据";
+    const result = await module.handleMessage({
+      message: createTextMessage(request),
+      routed: routeIncomingText(request),
+    });
+
+    expect(result).toEqual({ claimed: true });
+    expect(addCaseReminder).toHaveBeenCalledWith("举证截止日 2026-04-18 待做事项 补充工资流水证据");
+    expect(JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {})).toContain("案件提醒添加中");
+    const completedSerialized = JSON.stringify(updatePayload.mock.calls.at(-1)?.[2] ?? {});
+    expect(completedSerialized).toContain("案件提醒已添加");
+    expect(completedSerialized).toContain("张某某 vs 杭州XX科技有限公司");
+    expect(completedSerialized).toContain("举证截止日 2026-04-18");
+    expect(completedSerialized).toContain("补充工资流水证据");
+    expect(completedSerialized).toContain("发送 `/案件提醒`");
   });
 
   it("shows short Word path and hides doc link in direct draft completion card", async () => {

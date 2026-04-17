@@ -146,6 +146,10 @@ describe("routeIncomingText", () => {
       kind: "command",
       command: { kind: "knowledge-query", question: "员工试用期最长多久？" },
     });
+    expect(routeIncomingText("/kb-query 员工试用期最长多久？")).toEqual({
+      kind: "command",
+      command: { kind: "knowledge-query", question: "员工试用期最长多久？", explicit: true },
+    });
     expect(routeIncomingText("/知识入库")).toEqual({
       kind: "command",
       command: { kind: "knowledge-ingest" },

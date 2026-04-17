@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
+from copy import deepcopy
 from pathlib import Path
 
 from docx import Document  # type: ignore
+from docx.oxml import OxmlElement  # type: ignore
 from docx.table import Table  # type: ignore
+from docx.text.paragraph import Paragraph  # type: ignore
 
 from common.io import read_json_stdin, write_error_stderr, write_json_stdout
 
 
 def get_text(paragraph):
     return paragraph.text.strip()
+
+
+def normalize_match_text(text: str) -> str:
+    return "".join(text.split())
 
 
 def clear_and_set_text(paragraph, text: str) -> None:
@@ -27,6 +34,17 @@ def delete_paragraph(paragraph) -> None:
         parent.remove(element)
 
 
+def insert_paragraph_after(anchor, text: str, style_source=None):
+    new_element = OxmlElement("w:p")
+    source = style_source if style_source is not None else anchor
+    if source._element.pPr is not None:
+        new_element.append(deepcopy(source._element.pPr))
+    anchor._element.addnext(new_element)
+    paragraph = Paragraph(new_element, anchor._parent)
+    paragraph.add_run(text)
+    return paragraph
+
+
 def iter_container_paragraphs(container):
     for paragraph in container.paragraphs:
         yield paragraph
@@ -38,6 +56,77 @@ def iter_table_paragraphs(table: Table):
     for row in table.rows:
         for cell in row.cells:
             yield from iter_container_paragraphs(cell)
+
+
+def is_signature_cleanup_anchor(text: str) -> bool:
+    normalized = normalize_match_text(text)
+    anchors = [
+        "甲方：",
+        "乙方：北京市隆安（深圳）律师事务所",
+        "法定代表人/负责人/授权代表：",
+        "承办律师：",
+        "签约时间：",
+        "委托人：",
+        "（以下无正文，为本合同签署处",
+        "委托代理合同",
+        "合同编号：",
+        "附：《风险代理告知书》",
+        "附件",
+    ]
+    return any(
+        text.startswith(anchor)
+        or anchor in text
+        or normalize_match_text(anchor) in normalized
+        for anchor in anchors
+    )
+
+
+def remove_targeted_empty_paragraphs(document: Document) -> None:
+    paragraphs = list(document.paragraphs)
+    for index in range(len(paragraphs) - 1, -1, -1):
+        paragraph = paragraphs[index]
+        if get_text(paragraph):
+            continue
+        prev_text = ""
+        next_text = ""
+        for prev_index in range(index - 1, -1, -1):
+            prev_text = get_text(paragraphs[prev_index])
+            if prev_text:
+                break
+        for next_index in range(index + 1, len(paragraphs)):
+            next_text = get_text(paragraphs[next_index])
+            if next_text:
+                break
+        if is_signature_cleanup_anchor(prev_text) or is_signature_cleanup_anchor(next_text):
+            delete_paragraph(paragraph)
+
+
+def ensure_signature_block(document: Document) -> None:
+    paragraphs = list(document.paragraphs)
+    has_signature_placeholders = any(
+        "法定代表人/负责人/授权代表：__________" in get_text(paragraph)
+        or "承办律师：_____________" in get_text(paragraph)
+        for paragraph in paragraphs
+    )
+    if has_signature_placeholders:
+        return
+
+    signature_anchor = None
+    for paragraph in paragraphs:
+        text = get_text(paragraph)
+        if text.startswith("2.甲方在本合同签署之前已经全部阅读并知悉合同内容"):
+            signature_anchor = paragraph
+    if signature_anchor is None:
+        signature_anchor = next((paragraph for paragraph in paragraphs if get_text(paragraph).startswith("第十二条 特别约定")), None)
+    if signature_anchor is None:
+        return
+
+    anchor = insert_paragraph_after(signature_anchor, "甲方：", signature_anchor)
+    anchor = insert_paragraph_after(anchor, "法定代表人/负责人/授权代表：__________", signature_anchor)
+    anchor = insert_paragraph_after(anchor, "", signature_anchor)
+    anchor = insert_paragraph_after(anchor, "乙方：北京市隆安（深圳）律师事务所", signature_anchor)
+    anchor = insert_paragraph_after(anchor, "承办律师：_____________", signature_anchor)
+    insert_paragraph_after(anchor, "签约时间：  202 年   月     日", signature_anchor)
 
 
 def process_document(document: Document, data: dict) -> None:
@@ -90,6 +179,9 @@ def process_document(document: Document, data: dict) -> None:
 
         if text.startswith("聘请方（甲方）："):
             clear_and_set_text(paragraph, f"聘请方（甲方）：{client_name}")
+            continue
+        if "乙方：北京市隆安（深圳）律师事务所" in text and text.startswith("甲方："):
+            clear_and_set_text(paragraph, "甲方：                                   乙方：北京市隆安（深圳）律师事务所")
             continue
         if text == "甲方：" or text.startswith("甲方："):
             clear_and_set_text(paragraph, f"甲方：{client_name}")
@@ -169,11 +261,11 @@ def process_document(document: Document, data: dict) -> None:
             if (not stage_fixed) and (text == "☑按阶段收费" or text.startswith("甲乙双方约定乙方律师费如下：")):
                 delete_paragraph(paragraph)
                 continue
-            if text.startswith("法定代表人/负责人/授权代表："):
-                if is_company:
-                    clear_and_set_text(paragraph, f"法定代表人/负责人/授权代表：__________   承办律师：{lead_lawyer}")
-                else:
-                    clear_and_set_text(paragraph, f"承办律师：{lead_lawyer}")
+            if "法定代表人/负责人/授权代表：" in normalize_match_text(text):
+                clear_and_set_text(paragraph, "法定代表人/负责人/授权代表：__________   承办律师：_____________")
+                continue
+            if text.startswith("签约时间："):
+                clear_and_set_text(paragraph, "签约时间：  202 年   月     日           ")
                 continue
             if text.startswith("委托人："):
                 clear_and_set_text(paragraph, "委托人：")
@@ -204,6 +296,9 @@ def process_document(document: Document, data: dict) -> None:
         start = max(0, delete_from_index)
         for paragraph in current[start:]:
             delete_paragraph(paragraph)
+
+    ensure_signature_block(document)
+    remove_targeted_empty_paragraphs(document)
 
 
 def main() -> int:

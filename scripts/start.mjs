@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 
 import {
   createAugmentedEnv,
+  assertPortAvailable,
   findBuildEntry,
   findExecutable,
   isMainModule,
@@ -31,6 +32,8 @@ export async function runStart(options = {}) {
   const opencodeBaseUrl = typeof rawConfig?.opencode?.baseUrl === "string" ? rawConfig.opencode.baseUrl : "";
   const opencodeDirectory = resolveConfigValue(configState.configPath, rawConfig?.opencode?.directory);
   const loggingDir = resolveConfigValue(configState.configPath, rawConfig?.logging?.dir) ?? path.join(cwd, "logs");
+  const serverHost = typeof rawConfig?.server?.host === "string" ? rawConfig.server.host : "127.0.0.1";
+  const serverPort = Number(rawConfig?.server?.port ?? 3000);
 
   if (!opencodeBaseUrl || !opencodeDirectory) {
     throw new Error("config.json 缺少 opencode.baseUrl 或 opencode.directory");
@@ -39,6 +42,18 @@ export async function runStart(options = {}) {
   await mkdir(loggingDir, { recursive: true });
 
   logger.log("Feishu OpenCode Bridge");
+
+  const bridgePort = await ensureBridgePortAvailable({
+    host: serverHost,
+    port: serverPort,
+    logger,
+    fetchImpl,
+    assertPortAvailableFn: options.assertPortAvailableFn ?? assertPortAvailable,
+  });
+  if (bridgePort.alreadyRunning) {
+    logger.log("Bridge 已在运行，可以直接回到飞书继续使用。");
+    return 0;
+  }
 
   const opencode = await ensureOpencodeServer({
     cwd,
@@ -92,6 +107,52 @@ export async function runStart(options = {}) {
 
   await stopManagedProcess(opencode.child, { owned: opencode.ownedProcess });
   return process.exitCode ?? 0;
+}
+
+export async function ensureBridgePortAvailable(options = {}) {
+  const host = options.host ?? "127.0.0.1";
+  const port = Number(options.port ?? 3000);
+  const logger = options.logger ?? console;
+
+  if (!Number.isFinite(port) || port <= 0) {
+    throw new Error("config.json server.port 不合法");
+  }
+
+  if (await isBridgeHealthy(host, port, options.fetchImpl ?? fetch, options.healthTimeoutMs ?? 1_000)) {
+    logger.log(`[1/3] 检查 Bridge ... 已在运行 ${host}:${port}`);
+    return { alreadyRunning: true };
+  }
+
+  try {
+    await (options.assertPortAvailableFn ?? assertPortAvailable)(port, host);
+    logger.log(`[1/3] 检查 Bridge ... ${host}:${port} 可用`);
+    return { alreadyRunning: false };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Bridge 端口 ${host}:${port} 已被其他进程占用。若是旧的 Bridge，请先关闭旧窗口或结束旧进程后再启动；若只是想使用，直接回到飞书即可。详情：${detail}`);
+  }
+}
+
+export async function isBridgeHealthy(host, port, fetchImpl = fetch, timeoutMs = 1_000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(buildBridgeHealthUrl(host, port), { signal: controller.signal });
+    if (!response.ok) {
+      return false;
+    }
+    const payload = await response.json().catch(() => null);
+    return Boolean(
+      payload
+      && typeof payload === "object"
+      && payload.ok === true
+      && typeof payload.bridgeVersion === "string",
+    );
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function ensureOpencodeServer(options) {
@@ -203,6 +264,12 @@ function isLocalBaseUrl(baseUrl) {
 
 function ensureTrailingSlash(value) {
   return value.endsWith("/") ? value : `${value}/`;
+}
+
+function buildBridgeHealthUrl(host, port) {
+  const hostname = host === "0.0.0.0" ? "127.0.0.1" : host;
+  const wrappedHost = hostname.includes(":") && !hostname.startsWith("[") ? `[${hostname}]` : hostname;
+  return new URL(`http://${wrappedHost}:${port}/healthz`);
 }
 
 function pathExists(target) {
