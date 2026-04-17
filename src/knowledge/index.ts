@@ -194,9 +194,10 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     const keywordMatches = this.db.searchByKeyword(question, this.config.query.keywordFallbackLimit);
     const merged = dedupeCandidates([...embeddingMatches, ...keywordMatches]);
     const reranked = await this.rerank(question, merged);
+    const uniqueResults = dedupeEquivalentCandidates(reranked);
     return {
       question,
-      results: reranked.slice(0, this.config.query.finalTopN),
+      results: uniqueResults.slice(0, this.config.query.finalTopN),
       bitableUrl: resolveKnowledgeBitableViewUrl(this.config),
     };
   }
@@ -1155,6 +1156,31 @@ function dedupeCandidates(candidates: KnowledgeEntryCandidate[]): KnowledgeEntry
     }
   }
   return [...seen.values()].sort((left, right) => right.score - left.score);
+}
+
+function dedupeEquivalentCandidates(candidates: KnowledgeEntryCandidate[]): KnowledgeEntryCandidate[] {
+  const seen = new Map<string, KnowledgeEntryCandidate>();
+  for (const candidate of candidates) {
+    const key = [
+      normalizeCandidateText(candidate.answer),
+      normalizeCandidateText(candidate.sourceFile),
+      normalizeCandidateText(candidate.pageSection ?? ""),
+      normalizeCandidateText(candidate.statute ?? ""),
+    ].join("|");
+    const current = seen.get(key);
+    if (!current) {
+      seen.set(key, candidate);
+      continue;
+    }
+    if (candidate.score > current.score) {
+      seen.set(key, candidate);
+    }
+  }
+  return [...seen.values()].sort((left, right) => right.score - left.score);
+}
+
+function normalizeCandidateText(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 function shouldReportProgress(index: number, total: number): boolean {

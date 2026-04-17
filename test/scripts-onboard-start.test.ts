@@ -15,6 +15,8 @@ import {
   shouldRebuildConfig,
 } from "../scripts/onboard.mjs";
 import {
+  ensureBridgePortAvailable,
+  isBridgeHealthy,
   ensureOpencodeServer,
   resolveBridgeLaunch,
 } from "../scripts/start.mjs";
@@ -371,6 +373,74 @@ describe("scripts/start", () => {
 
     expect(result.ownedProcess).toBe(true);
     expect(result.child).toBe(child);
+  });
+
+  it("detects an already running bridge before spawning a second one", async () => {
+    const assertPortAvailableFn = vi.fn(async () => undefined);
+    const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    const result = await ensureBridgePortAvailable({
+      host: "127.0.0.1",
+      port: 3000,
+      logger,
+      fetchImpl: vi.fn(async () => new Response(JSON.stringify({
+        ok: true,
+        bridgeVersion: "0.1.22",
+      }), { status: 200 })),
+      assertPortAvailableFn,
+    });
+
+    expect(result).toEqual({ alreadyRunning: true });
+    expect(assertPortAvailableFn).not.toHaveBeenCalled();
+    expect(logger.log).toHaveBeenCalledWith("[1/3] 检查 Bridge ... 已在运行 127.0.0.1:3000");
+  });
+
+  it("checks bridge port availability when health endpoint is absent", async () => {
+    const assertPortAvailableFn = vi.fn(async () => undefined);
+    const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    const result = await ensureBridgePortAvailable({
+      host: "127.0.0.1",
+      port: 3000,
+      logger,
+      fetchImpl: vi.fn(async () => new Response("not found", { status: 404 })),
+      assertPortAvailableFn,
+    });
+
+    expect(result).toEqual({ alreadyRunning: false });
+    expect(assertPortAvailableFn).toHaveBeenCalledWith(3000, "127.0.0.1");
+    expect(logger.log).toHaveBeenCalledWith("[1/3] 检查 Bridge ... 127.0.0.1:3000 可用");
+  });
+
+  it("reports a friendly bridge port conflict", async () => {
+    await expect(ensureBridgePortAvailable({
+      host: "127.0.0.1",
+      port: 3000,
+      logger: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      fetchImpl: vi.fn(async () => {
+        throw new Error("connect refused");
+      }),
+      assertPortAvailableFn: vi.fn(async () => {
+        throw new Error("listen EADDRINUSE");
+      }),
+    })).rejects.toThrow(/Bridge 端口 127\.0\.0\.1:3000 已被其他进程占用/);
+  });
+
+  it("recognizes bridge health responses", async () => {
+    await expect(isBridgeHealthy(
+      "127.0.0.1",
+      3000,
+      vi.fn(async () => new Response(JSON.stringify({
+        ok: true,
+        bridgeVersion: "0.1.22",
+      }), { status: 200 })),
+    )).resolves.toBe(true);
+
+    await expect(isBridgeHealthy(
+      "127.0.0.1",
+      3000,
+      vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })),
+    )).resolves.toBe(false);
   });
 
   it("falls back to tsx when dist is missing", async () => {

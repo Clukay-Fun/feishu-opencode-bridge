@@ -9,7 +9,7 @@ export type RoutedText =
       | { kind: "models"; provider?: string | undefined }
       | { kind: "leave" }
       | { kind: "who" }
-      | { kind: "knowledge-query"; question: string }
+      | { kind: "knowledge-query"; question: string; explicit?: boolean | undefined }
       | { kind: "knowledge-ingest" }
       | { kind: "knowledge-ingest-end" }
       | { kind: "knowledge-mode-start" }
@@ -91,6 +91,10 @@ export function routeIncomingText(text: string): RoutedText {
 
   if ((rawCommand === "法律咨询" || rawCommand === "legal-query") && args.length > 0) {
     return { kind: "command", command: { kind: "knowledge-query", question: args.join(" ").trim() } };
+  }
+
+  if (rawCommand === "kb-query" && args.length > 0) {
+    return { kind: "command", command: { kind: "knowledge-query", question: args.join(" ").trim(), explicit: true } };
   }
 
   if (rawCommand === "sessions" && args.length === 0) {

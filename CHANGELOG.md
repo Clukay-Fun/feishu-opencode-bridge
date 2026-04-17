@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.23 - 2026-04-17
+
+### Added
+- Added labor runtime/workbench regression coverage plus a sample command script for the labor-and-knowledge demo walkthrough.
+
+### Changed
+- Updated contract-assistant workflows with case todo/reminder commands, stronger draft matching, and cleaner signature-block finalization for generated contracts.
+- Updated knowledge and labor runtime cards so query, ingest, and analysis flows use clearer batch/progress surfaces and richer linked results.
+- Updated startup checks and formatting/router helpers to better support demo-time bridge reuse and explicit knowledge-query routing.
+
 ## 0.1.22 - 2026-04-16
 
 ### Added

@@ -338,6 +338,7 @@ describe("buildPostPayload", () => {
         statute: "《劳动合同法》第 19 条",
         sourceFile: "劳动合同法实务指南.pdf",
         pageSection: "第 23 页",
+        bitableRecordId: "rec_123",
         createdAt: Date.now(),
         score: 0.98,
       }],
@@ -347,12 +348,36 @@ describe("buildPostPayload", () => {
     expect(content.header.title.content).toBe("法律咨询");
     expect(serialized).toContain("试用期最长不超过 6 个月");
     expect(serialized).toContain("劳动合同法实务指南.pdf");
+    expect(serialized).toContain("打开知识库记录｜劳动合同法实务指南.pdf · 第 23 页");
+    expect(serialized).toContain("https://example.com/base/app?table=tbl&recordId=rec_123");
     expect(serialized).toContain("以上内容仅供参考，不构成法律意见");
     expect(serialized).toContain("查看知识库");
     expect(serialized).toContain("https://example.com/base/app?table=tbl");
     expect(content.body.elements[0].columns[0].elements[0].icon).toBeUndefined();
     expect(content.body.elements[2].columns[0].elements[0].icon).toBeUndefined();
     expect(serialized).toContain("warning_outlined");
+  });
+
+  it("falls back to plain source text when the knowledge view url is not a base table", () => {
+    const payload = buildKnowledgeQueryPayload({
+      question: "员工试用期最长多久？",
+      bitableUrl: "https://example.com/knowledge",
+      results: [{
+        id: 1,
+        documentId: 1,
+        question: "员工试用期最长多久？",
+        answer: "试用期最长不超过 6 个月。",
+        tags: ["劳动"],
+        sourceFile: "劳动合同法实务指南.pdf",
+        pageSection: "第 23 页",
+        bitableRecordId: "rec_123",
+        createdAt: Date.now(),
+        score: 0.98,
+      }],
+    });
+    const serialized = JSON.stringify(JSON.parse(payload.content));
+    expect(serialized).toContain("📄 来源：劳动合同法实务指南.pdf · 第 23 页");
+    expect(serialized).not.toContain("recordId=rec_123");
   });
 
   it("renders an empty knowledge query card", () => {

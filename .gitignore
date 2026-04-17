@@ -9,3 +9,4 @@ active-knowledge-ingests.json
 .opencode/*
 !.opencode/skills/
 !.opencode/skills/**
+tmp-knowledge-check.txt
