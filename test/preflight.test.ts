@@ -1,3 +1,7 @@
+import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AppConfig } from "../src/config/schema.js";
@@ -68,6 +72,27 @@ describe("runStartupPreflight", () => {
     await expect(runStartupPreflight(config, {
       getTenantToken: async () => "tenant-token",
     }, () => {})).rejects.toThrow(/数据目录/i);
+  });
+
+  it("fails when a dotted data directory exists but is not writable", async () => {
+    stubHealthyFetch();
+
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), "preflight-"));
+    const dataDir = path.join(tempRoot, "data.v1");
+    await mkdir(dataDir);
+    await chmod(dataDir, 0o555);
+
+    try {
+      const config = baseConfig();
+      config.storage.dataDir = dataDir;
+
+      await expect(runStartupPreflight(config, {
+        getTenantToken: async () => "tenant-token",
+      }, () => {})).rejects.toThrow(/数据目录/i);
+    } finally {
+      await chmod(dataDir, 0o755);
+      await rm(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("fails when Feishu credentials are invalid", async () => {

@@ -50,7 +50,7 @@ type KnowledgeIngestQueueItem = {
   conversationKey: string;
   chatId: string;
   requesterOpenId: string;
-  receiptMessageId: string;
+  receiptMessageId?: string | undefined;
   processingMessageId?: string | undefined;
   progressState: KnowledgeIngestProgressState;
 } & (
@@ -534,14 +534,14 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       await this.sendKnowledgeIngestMarkdown(pending, "已收到结束指令，当前队列处理完成后会自动结束。");
       return true;
     }
-    const queuedCount = queue.pending.length + (queue.active ? 1 : 0);
-    if (queuedCount >= this.deps.config.bridge.queueLimit) {
-      await this.sendKnowledgeIngestMarkdown(pending, "已达上限，请等待当前文件处理完成。");
-      return true;
-    }
-
     const progressState = createKnowledgeIngestProgressState(sourceLabel);
-    const processing = await this.deps.sendPayload(message.chatId, buildNoticeCardPayload({
+    const queuedItem: KnowledgeIngestQueueItem = {
+      ...itemInput,
+      progressState,
+    };
+    queue.pending.push(queuedItem);
+    this.refreshKnowledgeIngestPending(pending.conversationKey, pending);
+    const receipt = await this.deps.sendPayload(message.chatId, buildNoticeCardPayload({
       title: "已收到入库素材",
       template: "blue",
       iconToken: itemInput.kind === "web" ? "global-link_outlined" : "file-link-docx_outlined",
@@ -557,12 +557,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       textPreview: sourceLabel,
       len: sourceLabel.length,
     }, this.getKnowledgeIngestDelivery(pending));
-    queue.pending.push({
-      ...itemInput,
-      receiptMessageId: processing.messageId,
-      progressState,
-    });
-    this.refreshKnowledgeIngestPending(pending.conversationKey, pending);
+    queuedItem.receiptMessageId = receipt.messageId;
     return true;
   }
 

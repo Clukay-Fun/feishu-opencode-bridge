@@ -465,44 +465,61 @@ export function buildKnowledgeIngestSessionPayload(view: KnowledgeIngestSessionS
 }
 
 export function buildKnowledgeIngestSessionFinalPayload(view: KnowledgeIngestSessionSummaryView): FeishuPostPayload {
-  const bodyElements: Array<Record<string, unknown>> = [];
   const results = view.results ?? [];
   const failures = view.failures ?? [];
-
-  if (results.length > 0 || failures.length > 0) {
-    results.forEach((result, index) => {
-      if (bodyElements.length > 0) {
-        bodyElements.push(buildDivider());
-      }
-      bodyElements.push(buildKnowledgeIngestSummaryItem(result, "success"));
-      if (index === results.length - 1 && failures.length === 0) {
-        return;
-      }
-    });
-    failures.forEach((failure) => {
-      if (bodyElements.length > 0) {
-        bodyElements.push(buildDivider());
-      }
-      bodyElements.push(buildKnowledgeIngestFailureSummaryItem(failure));
-    });
-  } else {
-    bodyElements.push(buildStatsRow([
-      `入库 ${view.totalExtractedCount}`,
-      `失败 ${view.failedCount}`,
-      `去重 ${view.totalDedupedCount}`,
-    ]));
-  }
+  const summaryLines = [
+    `**成功**：${view.completedCount} 个素材`,
+    `**失败**：${view.failedCount} 个素材`,
+    `**总入库**：${view.totalExtractedCount} 条问答`,
+    `**去重合并**：${view.totalDedupedCount} 条`,
+    ...(view.elapsedMs ? [`**总耗时**：${formatDurationMs(view.elapsedMs)}`] : []),
+  ];
+  const detailLines = buildKnowledgeIngestFinalDetailLines(results, failures);
 
   return buildInteractivePayload({
     title: "本次入库完成",
     template: "indigo",
     iconToken: "grid-view_filled",
     bodyElements: [
-      ...bodyElements,
+      buildGreyPanel([
+        cardMarkdown(summaryLines.join("\n"), "normal_v2"),
+      ]),
+      ...(detailLines.length > 0 ? [
+        buildDivider(),
+        cardMarkdown(detailLines.join("\n\n"), "normal_v2"),
+      ] : []),
       buildDivider(),
       ...(view.bitableUrl ? [cardMarkdown(`[查看知识库 →](${escapeText(view.bitableUrl)})`, "normal")] : []),
     ],
   });
+}
+
+function buildKnowledgeIngestFinalDetailLines(
+  results: KnowledgeIngestResult[],
+  failures: Array<{ sourceFile: string; reason: string }>,
+): string[] {
+  const maxVisibleItems = 12;
+  const lines: string[] = [];
+  const successLines = results.map((result) => {
+    const rawExtractedCount = result.rawExtractedCount ?? result.extractedCount;
+    const dedupedCount = result.dedupedCount ?? Math.max(0, rawExtractedCount - result.extractedCount);
+    return [
+      `**${escapeText(result.sourceFile)}**`,
+      `入库 ${result.extractedCount} · 提取 ${rawExtractedCount} · 去重 ${dedupedCount}`,
+    ].join("\n");
+  });
+  const failureLines = failures.map((failure) => [
+    `**${escapeText(failure.sourceFile)}**`,
+    `失败 · ${escapeText(failure.reason)}`,
+  ].join("\n"));
+  const allLines = [...successLines, ...failureLines];
+  const visibleLines = allLines.slice(0, maxVisibleItems);
+  lines.push(...visibleLines);
+  const omittedCount = allLines.length - visibleLines.length;
+  if (omittedCount > 0) {
+    lines.push(`其余 ${omittedCount} 个素材已省略，请查看知识库或日志获取完整结果。`);
+  }
+  return lines;
 }
 
 export function buildKnowledgeIngestPayload(view: KnowledgeIngestResult): FeishuPostPayload {
@@ -892,37 +909,6 @@ function buildKnowledgeIngestProgressStepElements(step: ToolUpdateView): Array<R
     elements.push(buildQuoteLine(detail));
   }
   return elements;
-}
-
-function buildKnowledgeIngestSummaryItem(result: KnowledgeIngestResult, state: "success" | "error"): Record<string, unknown> {
-  const rawExtractedCount = result.rawExtractedCount ?? result.extractedCount;
-  const dedupedCount = result.dedupedCount ?? Math.max(0, rawExtractedCount - result.extractedCount);
-  return buildStretchColumnSet([
-    buildWeightedColumn([
-      buildTitleLine(`文件：**${escapeText(result.sourceFile)}**`, {
-        token: state === "success" ? "succeed-hollow_filled" : "error-hollow_filled",
-        color: state === "success" ? "green" : "red",
-      }),
-      buildStatsRow([
-        `入库 ${result.extractedCount}`,
-        `提取 ${rawExtractedCount}`,
-        `去重 ${dedupedCount}`,
-      ]),
-      buildTagChartSection(result.tagCounts),
-    ], { padding: "0px 0px 0px 0px", verticalSpacing: "8px" }),
-  ], "8px");
-}
-
-function buildKnowledgeIngestFailureSummaryItem(failure: { sourceFile: string; reason: string }): Record<string, unknown> {
-  return buildStretchColumnSet([
-    buildWeightedColumn([
-      buildTitleLine(`文件：**${escapeText(failure.sourceFile)}**`, {
-        token: "error-hollow_filled",
-        color: "red",
-      }),
-      buildQuoteLine(escapeText(failure.reason)),
-    ], { padding: "0px 0px 0px 0px", verticalSpacing: "8px" }),
-  ], "8px");
 }
 
 function resolveElapsedText(view: { elapsedMs?: number | undefined; startedAt?: number | undefined }): string {

@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.24 - 2026-04-17
+
+### Fixed
+- Fixed startup preflight directory checks so writable directories with dotted names such as `data.v1` are validated directly instead of accidentally falling back to their parent directory.
+- Fixed knowledge-ingest runtime flow so queued materials continue to be accepted during an active ingest session instead of being blocked by the bridge queue limit.
+
+### Changed
+- Updated knowledge-ingest final summary cards to use a denser overview plus compact per-file details for larger batch imports.
+
 ## 0.1.23 - 2026-04-17
 
 ### Added
