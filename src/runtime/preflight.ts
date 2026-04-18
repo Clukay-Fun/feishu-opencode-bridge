@@ -1,6 +1,5 @@
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
-import path from "node:path";
 
 import type { AppConfig } from "../config/schema.js";
 import { OpenCodeClient } from "../opencode/client.js";
@@ -75,6 +74,5 @@ async function runCheck(name: string, report: ReportFn, fn: () => Promise<void>)
 }
 
 async function ensureWritable(target: string): Promise<void> {
-  const dir = path.extname(target) ? path.dirname(target) : target;
-  await access(dir, constants.R_OK | constants.W_OK);
+  await access(target, constants.R_OK | constants.W_OK);
 }

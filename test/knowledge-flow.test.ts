@@ -701,7 +701,7 @@ describe("knowledge base bridge flow", () => {
     expect(JSON.stringify(updatedPayloads)).toContain("普通对话继续处理");
   });
 
-  it("rejects new ingest material when the ingest queue is full", async () => {
+  it("keeps accepting queued ingest material even when bridge queueLimit is small", async () => {
     const outbound = createOutbound();
     const eventStream = new FakeOpenCodeEventStream();
     const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "not used" });
@@ -759,13 +759,13 @@ describe("knowledge base bridge flow", () => {
     });
     resolveIngest?.();
     await vi.waitFor(() => {
-      const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
-      expect(JSON.stringify(updatedPayloads)).toContain("本次入库完成");
+      expect(ingestFile).toHaveBeenCalledTimes(2);
     });
 
     const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
-    expect(ingestFile).toHaveBeenCalledTimes(1);
-    expect(JSON.stringify(replyPayloads)).toContain("已达上限，请等待当前文件处理完成");
+    expect(JSON.stringify(replyPayloads)).toContain("已收到入库素材");
+    expect(JSON.stringify(replyPayloads)).toContain("劳动合同2.txt");
+    expect(JSON.stringify(replyPayloads)).not.toContain("已达上限，请等待当前文件处理完成");
   });
 
   it("marks persisted active ingest sessions interrupted on restart", async () => {
