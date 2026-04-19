@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.29 - 2026-04-19
+
+### Changed
+- Polished the Chinese README localization with clearer section titles, Chinese architecture labels, localized project layout notes, and expanded documentation link descriptions.
+
 ## 0.1.28 - 2026-04-19
 
 ### Changed

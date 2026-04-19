@@ -3,15 +3,15 @@
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6)](https://www.typescriptlang.org/)
 [![Feishu](https://img.shields.io/badge/Feishu-Bridge-0F6FFF)](https://open.feishu.cn/)
-[![Tests](https://img.shields.io/badge/tests-371%20passing-success)](#%EF%B8%8F-开发命令)
+[![测试](https://img.shields.io/badge/tests-371%20passing-success)](#%EF%B8%8F-开发命令)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**中文** | [English](README.en.md)
+**中文** | [英文版](README.en.md)
 
 > **Feishu OpenCode Bridge 不是一个普通的飞书机器人。**
 > 它是把 OpenCode 运行时产品化到飞书里的 **Feishu-native runtime adapter**——让私聊、群聊、话题群都拥有会话窗口、过程卡片、权限确认、知识库、合同/劳动业务模块和长期记忆，真正成为 OpenCode 的工作入口。
 
-## 📢 News
+## 📢 项目动态
 
 - **2026-04-19** · 冻结后 backlog 全部清零，`TurnExecutor` settlement 控制器落地，进入日常维护节奏
 - **2026-04-10** · 框架冻结验收通过，[架构基线](docs/architecture-baseline.md) 与 [新功能自检清单](docs/plans/new-feature-checklist.md) 成为 PR 准入标准
@@ -56,8 +56,8 @@
 
 ```mermaid
 flowchart LR
-    user["飞书用户 / 群聊 / 话题群"] --> ws["Feishu WebSocket<br/>src/feishu/ws.ts"]
-    user --> callback["Card Action Callback<br/>src/http/server.ts"]
+    user["飞书用户 / 群聊 / 话题群"] --> ws["飞书 WebSocket<br/>src/feishu/ws.ts"]
+    user --> callback["卡片回调<br/>src/http/server.ts"]
 
     ws --> app["BridgeApp<br/>src/runtime/app.ts"]
     callback --> app
@@ -66,14 +66,14 @@ flowchart LR
     app --> executor["TurnExecutor<br/>OpenCode turn 执行链"]
     app --> modules["RuntimeModuleManager<br/>src/runtime/runtime-modules.ts"]
 
-    executor <--> opencode["OpenCode Server API + SSE<br/>src/opencode/*"]
-    modules --> services["Domain Services<br/>knowledge / contract / labor / memory"]
-    services --> stores["Stores / DB / Local Tools<br/>JSON / SQLite / Bitable / Files"]
+    executor <--> opencode["OpenCode 服务 API + SSE<br/>src/opencode/*"]
+    modules --> services["领域服务<br/>knowledge / contract / labor / memory"]
+    services --> stores["存储 / 数据库 / 本地工具<br/>JSON / SQLite / Bitable / Files"]
 
     command --> transport["FeishuTransport<br/>send / reply / update / notice"]
     executor --> transport
     modules --> transport
-    transport --> cards["Feishu Cards / Posts<br/>src/feishu/*-cards.ts"]
+    transport --> cards["飞书卡片 / 富文本<br/>src/feishu/*-cards.ts"]
     cards --> user
 ```
 
@@ -81,16 +81,16 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-    config["Configuration<br/>src/config/schema.ts<br/>src/config/loader.ts"]
+    config["配置<br/>src/config/schema.ts<br/>src/config/loader.ts"]
 
-    subgraph feishu["Feishu Layer"]
-      ws["WebSocket Ingress"]
-      api["Feishu API Client"]
+    subgraph feishu["飞书接入层"]
+      ws["WebSocket 入口"]
+      api["飞书 API 客户端"]
       transport["FeishuTransport"]
-      cardFamilies["Card Families<br/>shared / runtime / knowledge / labor / contract"]
+      cardFamilies["卡片家族<br/>shared / runtime / knowledge / labor / contract"]
     end
 
-    subgraph core["Core Runtime"]
+    subgraph core["核心运行时"]
       app["BridgeApp"]
       router["Router<br/>src/bridge/router.ts"]
       command["CommandHandler"]
@@ -100,27 +100,27 @@ flowchart TB
       resources["TurnOwnedResourceStore"]
     end
 
-    subgraph modules["Runtime Modules"]
+    subgraph modules["运行时模块"]
       knowledgeModule["KnowledgeRuntimeModule"]
       contractModule["ContractAssistantRuntimeModule"]
       laborModule["LaborRuntimeModule"]
       memoryModule["MemoryRuntimeModule"]
     end
 
-    subgraph services["Domain Services / Workflows"]
+    subgraph services["领域服务 / 工作流"]
       knowledge["KnowledgeBaseService"]
       contract["ContractAssistantService"]
       labor["LaborSkillService"]
       memory["MemoryService"]
-      workflow["Evidence / Python / Local CLI"]
+      workflow["证据处理 / Python / 本地 CLI"]
     end
 
-    subgraph persistence["Persistence / External APIs"]
-      json["JSON Stores<br/>mappings / whitelist / active ingests"]
+    subgraph persistence["持久化 / 外部 API"]
+      json["JSON 存储<br/>mappings / whitelist / active ingests"]
       sqlite["SQLite / FTS / embeddings"]
-      bitable["Feishu Bitable"]
-      files["Temp files / local workspace"]
-      opencode["OpenCode Server"]
+      bitable["飞书多维表格"]
+      files["临时文件 / 本地工作区"]
+      opencode["OpenCode 服务"]
     end
 
     config --> app
@@ -296,45 +296,45 @@ npm run dev:once
 
 ```text
 src/
-  bridge/              # router, queue, turn state, watchdog, module interface
-  config/              # zod schema and config loader
-  feishu/              # Feishu API, WebSocket ingress, card families
-  http/                # healthz and card action callback server
-  runtime/             # BridgeApp, command handler, turn executor, transport, preflight
-  knowledge/           # legal knowledge base, parser, local CLI, SQLite mirror
-  contract-assistant/  # contract drafting, case updates, reminders
-  labor/               # labor dispute material collection and analysis
-  memory/              # long-term memory, retrievers, embeddings, Obsidian sync
-  opencode/            # OpenCode client and event stream
-  store/               # JSON stores for mappings, whitelist, active ingests
-  workflows/           # workflow helpers
-scripts/               # doctor, onboard, knowledge CLI wrappers
-docs/                  # architecture, deployment, plans, archived demo docs
-test/                  # Vitest unit and integration tests
+  bridge/              # 路由、队列、turn 状态、看门狗、模块接口
+  config/              # Zod schema 与配置加载
+  feishu/              # 飞书 API、WebSocket 入口、卡片家族
+  http/                # healthz 与卡片回调服务
+  runtime/             # BridgeApp、命令处理、turn 执行、传输、启动前检查
+  knowledge/           # 法律知识库、解析器、本地 CLI、SQLite 镜像
+  contract-assistant/  # 合同起草、案件更新、提醒
+  labor/               # 劳动争议材料收集与分析
+  memory/              # 长期记忆、检索器、embedding、Obsidian 同步
+  opencode/            # OpenCode 客户端与事件流
+  store/               # 会话映射、白名单、活跃入库等 JSON 存储
+  workflows/           # 工作流辅助模块
+scripts/               # doctor、onboard、知识库 CLI 包装脚本
+docs/                  # 架构、部署、计划与归档演示文档
+test/                  # Vitest 单元测试与集成测试
 ```
 
 ## 📚 文档入口
 
-- [架构基线](docs/architecture-baseline.md)
-- [新功能自检清单](docs/plans/new-feature-checklist.md)
-- [飞书 Markdown 输出规范](docs/feishu-markdown.md)
-- [部署说明](docs/deploy.md)
-- [Formatter 迁移记录](docs/plans/formatter-migration.md)
-- [框架冻结验收](docs/plans/freeze-acceptance.md)
+- [架构基线](docs/architecture-baseline.md) — 冻结后的分层边界、扩展 seam 与禁止绕开的核心约束
+- [新功能自检清单](docs/plans/new-feature-checklist.md) — 新功能进入 PR 前必须核对的架构、测试、文档与部署检查项
+- [飞书 Markdown 输出规范](docs/feishu-markdown.md) — 面向飞书消息的 Markdown 输出规则和长文本排版约束
+- [部署说明](docs/deploy.md) — 本地与服务器部署、环境变量、Caddy、健康检查和验收步骤
+- [Formatter 迁移记录](docs/plans/formatter-migration.md) — 卡片 formatter 拆分的迁移背景、边界和收尾记录
+- [框架冻结验收](docs/plans/freeze-acceptance.md) — 框架冻结时的验收范围、证据和后续准入要求
 
 ## 🚢 部署
 
 单机部署拓扑：
 
 ```text
-Feishu <-> HTTPS / Caddy <-> Bridge HTTP + WebSocket <-> OpenCode Server
+飞书 <-> HTTPS / Caddy <-> Bridge HTTP + WebSocket <-> OpenCode 服务
 ```
 
 参考：
 
-- [docs/deploy.md](docs/deploy.md)
-- [ops/Caddyfile](ops/Caddyfile)
-- [.env.example](.env.example)
+- [部署说明](docs/deploy.md)
+- [Caddy 配置样例](ops/Caddyfile)
+- [环境变量样例](.env.example)
 
 健康检查 `GET /healthz` · 默认卡片回调路径 `/webhook/card`
 
@@ -346,12 +346,12 @@ Feishu <-> HTTPS / Caddy <-> Bridge HTTP + WebSocket <-> OpenCode Server
 - 不要在 `src/runtime/app.ts`、`src/runtime/turn-executor.ts`、`src/bridge/router.ts` 里新增业务特定分支，除非同步更新架构基线
 - 新卡片走 `src/feishu/*-cards.ts` family entrypoint，不要继续扩张 `formatter.ts`
 - 模块状态持久化复用共享基础设施，不复制 timer + JSON persist 逻辑
-- PR 描述里建议附上 [new-feature-checklist](docs/plans/new-feature-checklist.md) 自检结果
+- PR 描述里建议附上 [新功能自检清单](docs/plans/new-feature-checklist.md) 的自检结果
 
-## ⭐ Star History
+## ⭐ Star 历史
 
-[![Star History Chart](https://api.star-history.com/svg?repos=Clukay-Fun/feishu-opencode-bridge&type=Date)](https://star-history.com/#Clukay-Fun/feishu-opencode-bridge&Date)
+[![Star 历史图](https://api.star-history.com/svg?repos=Clukay-Fun/feishu-opencode-bridge&type=Date)](https://star-history.com/#Clukay-Fun/feishu-opencode-bridge&Date)
 
-## License
+## 许可证
 
 [MIT](LICENSE)
