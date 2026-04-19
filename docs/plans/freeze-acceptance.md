@@ -172,5 +172,5 @@ Backlog: `docs/plans/post-freeze-backlog.md`.
 
 Prepared by: Codex
 Accepted by: pending reviewer sign-off
-Commit: pending PR-6 commit or merge commit
+Commit: `93da5ac`
 Date: 2026-04-19
