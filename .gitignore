@@ -5,6 +5,7 @@ data/
 config.json
 mappings.json
 active-knowledge-ingests.json
+knowledge-base.db
 .DS_Store
 .opencode/*
 !.opencode/skills/

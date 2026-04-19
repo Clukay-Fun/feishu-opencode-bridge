@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.25 - 2026-04-19
+
+### Added
+- Added architecture freeze acceptance documentation and post-freeze planning notes for the runtime boundary cleanup.
+- Added runtime boundary helpers for Feishu transport, persisted interactions, runtime module wiring, and turn-owned resource tracking.
+
+### Changed
+- Split Feishu card rendering into domain-specific card modules and shared primitives to reduce formatter coupling.
+- Refactored turn execution, runtime module coordination, and command ownership boundaries around the frozen bridge architecture.
+- Archived demo planning material into a dedicated documentation area and updated knowledge-base follow-up planning.
+
 ## 0.1.24 - 2026-04-17
 
 ### Fixed

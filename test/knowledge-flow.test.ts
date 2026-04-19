@@ -205,11 +205,53 @@ describe("knowledge base bridge flow", () => {
     const request = promptAsync.mock.calls[0]?.[1];
     expect(request).toBeDefined();
     const promptText = request?.parts.map((part) => part.text ?? "").join("\n") ?? "";
+    const localPath = promptText.match(/本地路径：(.+)/)?.[1]?.trim();
     expect(promptText).toContain("本地路径：");
     expect(promptText).toContain("说明.txt");
     expect(promptText).toContain("不要默认把文件写入知识库");
     expect(promptText).not.toContain("这是一个需要总结的普通文件。");
     expect(JSON.stringify(updatePayloads)).toContain("文件总结完成");
+    expect(localPath).toBeTruthy();
+    await expect(readFile(localPath!, "utf8")).rejects.toThrow();
+  });
+
+  it("cleans temporary regular-file resources even when the turn fails", async () => {
+    const outbound = {
+      ...createOutbound(),
+      downloadMessageResource: vi.fn(async () => ({
+        fileName: "说明.txt",
+        mimeType: "text/plain",
+        buffer: Buffer.from("这是一个需要总结的普通文件。", "utf8"),
+      })),
+    };
+    const eventStream = new FakeOpenCodeEventStream();
+    const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "unused" });
+    let localPath = "";
+    vi.spyOn(opencode, "promptAsync").mockImplementation(async (_sessionId, request) => {
+      localPath = request.parts.map((part) => part.text ?? "").join("\n").match(/本地路径：(.+)/)?.[1]?.trim() ?? "";
+      throw new Error("服务暂时不可用");
+    });
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
+      knowledge: null,
+      opencode,
+      eventStream,
+      memory: null,
+    });
+
+    await app.handleIncomingMessage({
+      ...createTextMessage("说明.txt", "om_file_plain"),
+      messageType: "file",
+      file: {
+        fileKey: "file_plain",
+        fileName: "说明.txt",
+      },
+    });
+    await app.handleIncomingMessage(createTextMessage("总结这个文件", "om_instruction"));
+
+    expect(localPath).toContain("bridge-turn-file-");
+    await expect(readFile(localPath, "utf8")).rejects.toThrow();
+    const updatePayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+    expect(JSON.stringify(updatePayloads)).toContain("出了点问题");
   });
 
   it("rejects unsupported file types before entering the normal file flow", async () => {
@@ -266,7 +308,7 @@ describe("knowledge base bridge flow", () => {
     expect(outbound.downloadMessageResource).not.toHaveBeenCalled();
   });
 
-  it("treats /legal-query* as guidance only in private chat and keeps later messages on the normal OpenCode path", async () => {
+  it("retires /legal-query* aliases in private chat and keeps later messages on the normal OpenCode path", async () => {
     const outbound = createOutbound();
     const eventStream = new FakeOpenCodeEventStream();
     const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "这是普通 OpenCode 回复。" });
@@ -300,15 +342,18 @@ describe("knowledge base bridge flow", () => {
     ];
 
     expect(knowledgeQuery).not.toHaveBeenCalled();
-    expect(outboundTexts[0]).toContain("私聊里直接提问即可");
-    expect(outboundTexts[1]).toContain("私聊不再使用 `/legal-query*`");
-    expect(outboundTexts[2]).toContain("私聊不再使用 `/legal-query*`");
+    expect(outboundTexts[0]).toContain("命令已更新");
+    expect(outboundTexts[0]).toContain("`/legal-query-start`");
+    expect(outboundTexts[1]).toContain("命令已更新");
+    expect(outboundTexts[1]).toContain("`/kb-query <问题>`");
+    expect(outboundTexts[2]).toContain("命令已更新");
+    expect(outboundTexts[2]).toContain("`/legal-query-end`");
     expect(JSON.stringify(allPayloads)).toContain("这是普通 OpenCode 回复");
     expect(appAny.sessionMap["oc_p2p_1"]?.interactionMode ?? "default").toBe("default");
     expect(appAny.sessionMap["oc_p2p_1"]?.sessions).toHaveLength(1);
   });
 
-  it("does not let /legal-query-start enable bridge-side knowledge mode in private chat", async () => {
+  it("does not let the retired /legal-query-start alias affect private chat mode", async () => {
     const outbound = createOutbound();
     const eventStream = new FakeOpenCodeEventStream();
     const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "你好，我在。" });
@@ -335,6 +380,8 @@ describe("knowledge base bridge flow", () => {
       expect(JSON.stringify(updatedPayloads)).toContain("你好，我在。");
     });
     expect(knowledgeQuery).not.toHaveBeenCalled();
+    const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+    expect(JSON.stringify(replyPayloads[0])).toContain("命令已更新");
     const appAny = app as unknown as { sessionMap: Record<string, { interactionMode?: string }> };
     expect(appAny.sessionMap["oc_p2p_1"]?.interactionMode ?? "default").toBe("default");
   });
@@ -946,6 +993,9 @@ function createOutbound() {
     sendMessage: vi.fn(async () => ({ messageId: "om_send" })),
     replyMessage: vi.fn(async () => ({ messageId: "om_reply" })),
     updateMessage: vi.fn(async () => ({ messageId: "om_update" })),
+    createBitableRecord: vi.fn(async () => "rec_1"),
+    listBitableRecords: vi.fn(async () => []),
+    updateBitableRecord: vi.fn(async () => {}),
   };
 }
 

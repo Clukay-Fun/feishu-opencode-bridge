@@ -1,44 +1,31 @@
 import { DEFAULT_LABOR_SKILL_CONFIG, type AppConfig } from "../config/schema.js";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { RuntimeModule, RuntimeModuleHandleResult, RuntimeModuleMessageContext } from "../bridge/module.js";
 import {
-  buildLaborAnalysisCompletedPayload,
-  buildLaborAnalysisProgressPayload,
   buildNoticeCardPayload,
   buildPostMarkdownPayload,
-  type LaborAnalysisCompletedCardView,
-  type FeishuPostPayload,
-  type LaborAnalysisProgressCardView,
   type ToolUpdateView,
-} from "../feishu/formatter.js";
-import { createTextPreview, type Logger, type TranscriptType } from "../logging/logger.js";
+} from "../feishu/shared-primitives.js";
+import {
+  buildLaborAnalysisCompletedPayload,
+  buildLaborAnalysisProgressPayload,
+  type LaborAnalysisCompletedCardView,
+  type LaborAnalysisProgressCardView,
+} from "../feishu/labor-cards.js";
+import { createTextPreview, type Logger } from "../logging/logger.js";
 import type { KnowledgeBasePort } from "../knowledge/index.js";
 import type { IncomingChatMessage } from "../runtime/app.js";
 import type { RoutedText } from "../bridge/router.js";
+import type { FeishuTransport } from "../runtime/feishu-transport.js";
+import { PersistedInteractionManager } from "../runtime/persisted-interaction-manager.js";
 import type { LaborSkillService, LaborMaterialExtraction } from "./index.js";
-
-type SendPayload = (
-  chatId: string,
-  payload: FeishuPostPayload,
-  options: { event: string; transcriptType: TranscriptType; textPreview: string; len: number },
-  delivery?: { replyToMessageId: string; replyInThread?: boolean },
-) => Promise<{ messageId: string }>;
-
-type UpdatePayload = (
-  chatId: string,
-  messageId: string,
-  payload: FeishuPostPayload,
-  options: { event: string; transcriptType: TranscriptType; textPreview: string; len: number },
-) => Promise<{ messageId: string }>;
 
 type LaborRuntimeModuleDeps = {
   config: AppConfig;
   logger: Logger;
   knowledge: KnowledgeBasePort | null;
   service: LaborSkillService | null;
-  sendPayload: SendPayload;
-  updatePayload: UpdatePayload;
+  transport: FeishuTransport;
 };
 
 type LaborCommand = Extract<RoutedText, { kind: "command" }>["command"];
@@ -82,27 +69,28 @@ export class LaborRuntimeModule implements RuntimeModule {
   readonly priority = 40;
 
   private readonly featureConfig;
-  private readonly interactions = new Map<string, PendingLaborInteraction>();
-  private readonly timers = new Map<string, NodeJS.Timeout>();
-  private readonly stateFilePath: string;
-  private persistChain: Promise<void> = Promise.resolve();
+  private readonly interactions: PersistedInteractionManager<PendingLaborInteraction>;
 
   constructor(private readonly deps: LaborRuntimeModuleDeps) {
     this.featureConfig = deps.config.laborSkill ?? DEFAULT_LABOR_SKILL_CONFIG;
-    this.stateFilePath = path.join(deps.config.storage.dataDir, "labor-runtime-state.json");
+    this.interactions = new PersistedInteractionManager({
+      stateFilePath: path.join(deps.config.storage.dataDir, "labor-runtime-state.json"),
+      logger: deps.logger,
+      logScope: "labor/state",
+      getKey: (interaction) => interaction.conversationKey,
+      getExpiresAt: (interaction) => interaction.expiresAt,
+      onExpire: async (interaction) => {
+        await this.handleExpiredInteraction(interaction);
+      },
+    });
   }
 
   async start(): Promise<void> {
-    await this.restoreState();
+    await this.interactions.restore();
   }
 
   async stop(): Promise<void> {
-    await this.flushPersist();
-    for (const timer of this.timers.values()) {
-      clearTimeout(timer);
-    }
-    this.timers.clear();
-    this.interactions.clear();
+    await this.interactions.stop();
   }
 
   async handleMessage(context: RuntimeModuleMessageContext): Promise<RuntimeModuleHandleResult> {
@@ -144,11 +132,23 @@ export class LaborRuntimeModule implements RuntimeModule {
       return false;
     }
     const normalized = command.name.trim().toLowerCase();
-    if (!["劳动分析", "labor-start", "劳动分析结束", "labor-end"].includes(normalized)) {
+    if (normalized === "labor-start" || normalized === "labor-end") {
+      await this.sendNotice(message, {
+        title: "命令已更新",
+        template: "yellow",
+        icon: "maybe_outlined",
+        message: normalized === "labor-start"
+          ? "劳动分析入口已从 `/labor-start` 迁移到 `/劳动分析`。"
+          : "劳动分析结束命令已从 `/labor-end` 迁移到 `/劳动分析结束`。",
+      });
+      return true;
+    }
+
+    if (!["劳动分析", "劳动分析结束"].includes(normalized)) {
       return false;
     }
 
-    if (normalized === "劳动分析" || normalized === "labor-start") {
+    if (normalized === "劳动分析") {
       const title = command.arguments.join(" ").trim() || undefined;
       await this.startFromEntry(message, title);
       return true;
@@ -199,7 +199,7 @@ export class LaborRuntimeModule implements RuntimeModule {
       ].join("\n"),
     }, { replyToMessageId: message.messageId, replyInThread: deliveryMode === "group_thread" });
 
-    this.interactions.set(message.conversationKey, {
+    this.interactions.set({
       chatId: message.chatId,
       chatType: message.chatType,
       conversationKey: message.conversationKey,
@@ -212,13 +212,11 @@ export class LaborRuntimeModule implements RuntimeModule {
       notes: [],
       files: [],
     });
-    this.refreshInteractionTimeout(message.conversationKey);
-    this.schedulePersist();
   }
 
   private async collectInput(message: IncomingChatMessage, pending: PendingLaborInteraction): Promise<void> {
     pending.expiresAt = Date.now() + this.featureConfig.ingest.pendingTtlMs;
-    this.refreshInteractionTimeout(pending.conversationKey);
+    this.interactions.touch(pending.conversationKey, pending.expiresAt);
 
     if (message.messageType === "file") {
       pending.files.push({
@@ -227,13 +225,13 @@ export class LaborRuntimeModule implements RuntimeModule {
         fileName: message.file.fileName,
         size: message.file.size,
       });
-      this.schedulePersist();
+      this.interactions.touch(pending.conversationKey, pending.expiresAt);
       return;
     }
 
     if (message.plainText.trim()) {
       pending.notes.push(message.plainText.trim());
-      this.schedulePersist();
+      this.interactions.touch(pending.conversationKey, pending.expiresAt);
     }
   }
 
@@ -273,7 +271,7 @@ export class LaborRuntimeModule implements RuntimeModule {
       steps: createLaborAnalysisSteps(),
     };
 
-    const processing = await this.deps.sendPayload(message.chatId, buildLaborAnalysisProgressPayload(toLaborProgressCardView(progressState)), {
+    const processing = await this.deps.transport.sendPayload(message.chatId, buildLaborAnalysisProgressPayload(toLaborProgressCardView(progressState)), {
       event: "labor analysis started",
       transcriptType: "outbound-final",
       textPreview: "劳动分析处理中",
@@ -360,7 +358,7 @@ export class LaborRuntimeModule implements RuntimeModule {
           result.markdown,
         ].join("\n");
 
-        await this.deps.sendPayload(pending.chatId, buildPostMarkdownPayload(markdown), {
+        await this.deps.transport.sendPayload(pending.chatId, buildPostMarkdownPayload(markdown), {
           event: "labor analysis result sent",
           transcriptType: "outbound-final",
           textPreview: createTextPreview(markdown),
@@ -378,34 +376,8 @@ export class LaborRuntimeModule implements RuntimeModule {
     }
   }
 
-  private async expireInteraction(conversationKey: string): Promise<void> {
-    const pending = this.interactions.get(conversationKey);
-    if (!pending) {
-      return;
-    }
-    this.clearInteraction(conversationKey);
-    await this.deps.sendPayload(pending.chatId, buildNoticeCardPayload({
-      title: "劳动分析已超时",
-      template: "grey",
-      iconToken: "time_outlined",
-      message: "长时间未继续补充材料，当前劳动分析模式已自动结束。",
-      showMessageIcon: false,
-    }), {
-      event: "labor interaction expired",
-      transcriptType: "outbound-final",
-      textPreview: "劳动分析已超时",
-      len: 8,
-    }, this.getDelivery(pending));
-  }
-
   private clearInteraction(conversationKey: string): void {
     this.interactions.delete(conversationKey);
-    const timer = this.timers.get(conversationKey);
-    if (timer) {
-      clearTimeout(timer);
-      this.timers.delete(conversationKey);
-    }
-    this.schedulePersist();
   }
 
   private clearRequesterInteractions(chatId: string, requesterOpenId: string): void {
@@ -460,7 +432,7 @@ export class LaborRuntimeModule implements RuntimeModule {
 
   private async updateProcessingCard(chatId: string, messageId: string, state: LaborProgressState): Promise<void> {
     try {
-      await this.deps.updatePayload(chatId, messageId, buildLaborAnalysisProgressPayload(toLaborProgressCardView(state)), {
+      await this.deps.transport.updatePayload(chatId, messageId, buildLaborAnalysisProgressPayload(toLaborProgressCardView(state)), {
         event: "labor progress updated",
         transcriptType: "outbound-final",
         textPreview: createTextPreview(renderProcessingMessage(state)),
@@ -482,7 +454,7 @@ export class LaborRuntimeModule implements RuntimeModule {
     view: LaborAnalysisCompletedCardView,
   ): Promise<void> {
     try {
-      await this.deps.updatePayload(chatId, messageId, buildLaborAnalysisCompletedPayload(view), {
+      await this.deps.transport.updatePayload(chatId, messageId, buildLaborAnalysisCompletedPayload(view), {
         event: "labor analysis completed",
         transcriptType: "outbound-final",
         textPreview: createTextPreview(`${view.title}｜材料 ${view.materialCount}｜证据 ${view.evidenceCount}｜焦点 ${view.issueCount}`),
@@ -520,7 +492,7 @@ export class LaborRuntimeModule implements RuntimeModule {
     event: string,
   ): Promise<void> {
     try {
-      await this.deps.updatePayload(chatId, messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(chatId, messageId, buildNoticeCardPayload({
         title: options.title,
         template: options.template,
         iconToken: options.icon,
@@ -551,88 +523,47 @@ export class LaborRuntimeModule implements RuntimeModule {
     },
     delivery?: { replyToMessageId: string; replyInThread?: boolean },
   ): Promise<{ messageId: string }> {
-    return await this.deps.sendPayload(message.chatId, buildNoticeCardPayload({
+    return await this.deps.transport.sendNotice({
+      chatId: message.chatId,
+      replyToMessageId: delivery?.replyToMessageId ?? message.messageId,
+    }, {
       title: options.title,
       template: options.template,
       iconToken: options.icon,
       message: options.message,
       showMessageIcon: false,
-    }), {
+    }, {
       event: "labor notice sent",
       transcriptType: "outbound-final",
       textPreview: createTextPreview(options.message),
       len: options.message.length,
-    }, delivery ?? { replyToMessageId: message.messageId });
+    }, delivery?.replyInThread !== undefined ? { replyInThread: delivery.replyInThread } : undefined);
   }
 
-  private async restoreState(): Promise<void> {
-    const interactions = await this.readPersistedInteractions();
-    const now = Date.now();
-    let changed = false;
-    for (const interaction of interactions) {
-      if (interaction.expiresAt <= now) {
-        changed = true;
-        continue;
-      }
-      this.interactions.set(interaction.conversationKey, interaction);
-      this.restoreTimer(interaction.conversationKey, interaction.expiresAt - now);
-    }
-    if (changed) {
-      this.schedulePersist();
-      await this.flushPersist();
-    }
-  }
-
-  private restoreTimer(conversationKey: string, timeoutMs: number): void {
-    const existing = this.timers.get(conversationKey);
-    if (existing) {
-      clearTimeout(existing);
-    }
-    const timer = setTimeout(() => {
-      void this.expireInteraction(conversationKey);
-    }, Math.max(1, timeoutMs));
-    this.timers.set(conversationKey, timer);
-  }
-
-  private refreshInteractionTimeout(conversationKey: string): void {
-    this.restoreTimer(conversationKey, this.featureConfig.ingest.pendingTtlMs);
-  }
-
-  private async readPersistedInteractions(): Promise<PendingLaborInteraction[]> {
-    try {
-      const raw = await readFile(this.stateFilePath, "utf8");
-      const parsed = JSON.parse(raw) as { version?: number; interactions?: PendingLaborInteraction[] };
-      return Array.isArray(parsed.interactions) ? parsed.interactions : [];
-    } catch {
-      return [];
-    }
-  }
-
-  private schedulePersist(): void {
-    this.persistChain = this.persistChain
-      .catch(() => undefined)
-      .then(async () => {
-        await mkdir(path.dirname(this.stateFilePath), { recursive: true });
-        await writeFile(this.stateFilePath, JSON.stringify({
-          version: 1,
-          interactions: [...this.interactions.values()],
-        }, null, 2), "utf8");
-      })
-      .catch((error) => {
-        this.deps.logger.log("labor/state", "persist state failed", {
-          detail: error instanceof Error ? error.message : String(error),
-        }, "warn");
-      });
-  }
-
-  private async flushPersist(): Promise<void> {
-    await this.persistChain;
+  private async handleExpiredInteraction(pending: PendingLaborInteraction): Promise<void> {
+    await this.deps.transport.sendNotice({
+      chatId: pending.chatId,
+      replyToMessageId: pending.anchorMessageId,
+    }, {
+      title: "劳动分析已超时",
+      template: "grey",
+      iconToken: "time_outlined",
+      message: "长时间未继续补充材料，当前劳动分析模式已自动结束。",
+      showMessageIcon: false,
+    }, {
+      event: "labor interaction expired",
+      transcriptType: "outbound-final",
+      textPreview: "劳动分析已超时",
+      len: 8,
+    }, {
+      replyInThread: pending.deliveryMode === "group_thread",
+    });
   }
 }
 
 function isLaborEndCommand(command: LaborCommand): boolean {
   return command.kind === "passthrough"
-    && ["劳动分析结束", "labor-end"].includes(command.name.trim().toLowerCase());
+    && command.name.trim().toLowerCase() === "劳动分析结束";
 }
 
 function renderProcessingMessage(state: LaborProgressState): string {

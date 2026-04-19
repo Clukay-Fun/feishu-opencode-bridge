@@ -1,0 +1,173 @@
+import { describe, expect, it, vi } from "vitest";
+
+import { createFeishuTransport } from "../src/runtime/feishu-transport.js";
+import { createRuntimeModules } from "../src/runtime/runtime-modules.js";
+import type { AppConfig } from "../src/config/schema.js";
+
+describe("createRuntimeModules", () => {
+  it("allows missing resource methods when resource-backed features are disabled", () => {
+    expect(() => {
+      createRuntimeModules({
+        config: createConfig({ knowledgeEnabled: false, contractEnabled: false, laborEnabled: false }),
+        outbound: createOutbound(),
+        transport: createTransport(),
+        logger: { log: vi.fn() } as never,
+        opencode: createOpenCode(),
+        whitelist: { bind: vi.fn(async () => {}) },
+        getSessionWindow: () => ({ mode: "single", interactionMode: "default", activeSessionId: null, sessions: [] }),
+        saveSessionWindow: vi.fn(async () => {}),
+        createAndBindSession: vi.fn(async () => ({ sessionId: "ses_1", label: "会话", createdAt: 1, lastUsedAt: 1 })),
+      });
+    }).not.toThrow();
+  });
+
+  it("throws a clear error when an enabled feature lacks resource methods", () => {
+    expect(() => {
+      createRuntimeModules({
+        config: createConfig({ knowledgeEnabled: true, contractEnabled: false, laborEnabled: false }),
+        outbound: createOutbound(),
+        transport: createTransport(),
+        logger: { log: vi.fn() } as never,
+        opencode: createOpenCode(),
+        whitelist: { bind: vi.fn(async () => {}) },
+        getSessionWindow: () => ({ mode: "single", interactionMode: "default", activeSessionId: null, sessions: [] }),
+        saveSessionWindow: vi.fn(async () => {}),
+        createAndBindSession: vi.fn(async () => ({ sessionId: "ses_1", label: "会话", createdAt: 1, lastUsedAt: 1 })),
+      });
+    }).toThrow("knowledge base requires outbound resource methods");
+  });
+});
+
+function createOutbound() {
+  return {
+    sendMessage: vi.fn(async () => ({ messageId: "om_send" })),
+    replyMessage: vi.fn(async () => ({ messageId: "om_reply" })),
+    updateMessage: vi.fn(async () => ({ messageId: "om_update" })),
+  };
+}
+
+function createTransport() {
+  return createFeishuTransport({
+    sendPayload: vi.fn(async () => ({ messageId: "om_reply" })),
+    updatePayload: vi.fn(async () => ({ messageId: "om_update" })),
+  });
+}
+
+function createOpenCode() {
+  return {
+    createSession: vi.fn(async () => ({ id: "ses_1", title: "会话", time: { created: 1, updated: 1 } })),
+    getSessionMessages: vi.fn(async () => []),
+    listSessions: vi.fn(async () => []),
+    postMessageSync: vi.fn(async () => ({
+      info: { id: "msg_1", role: "assistant", sessionID: "ses_1", finish: "stop", time: { created: 1, completed: 1 } },
+      parts: [],
+    })),
+    promptAsync: vi.fn(async () => ({ accepted: true as const })),
+    replyPermission: vi.fn(async () => true),
+    replyQuestion: vi.fn(async () => {}),
+    runCommand: vi.fn(async () => ({
+      info: { id: "msg_1", role: "assistant", sessionID: "ses_1", finish: "stop", time: { created: 1, completed: 1 } },
+      parts: [],
+    })),
+  };
+}
+
+function createConfig(options: { knowledgeEnabled: boolean; contractEnabled: boolean; laborEnabled: boolean }): AppConfig {
+  return {
+    storage: {
+      dataDir: "/tmp/runtime-modules-test",
+      mappingsFile: "mappings.json",
+      logsDir: "/tmp/runtime-modules-test/logs",
+    },
+    bridge: {
+      queueLimit: 1,
+      maxSessionsPerWindow: 5,
+      sessionModes: { p2p: "single", group: "multi" },
+      injectSystemState: true,
+      firstEventTimeoutMs: 1_000,
+      eventGapTimeoutMs: 1_000,
+      totalTimeoutMs: 5_000,
+    },
+    feishu: {
+      appId: "app",
+      appSecret: "secret",
+      botOpenIds: new Set(),
+      botMentionNames: new Set(),
+      selfBotOpenIds: new Set(),
+      wsUrl: new URL("wss://example.com"),
+      allowedOpenIds: new Set(),
+      behavior: {
+        enableP2p: true,
+        enableGroup: true,
+        requireBotMentionInGroup: false,
+        strictBotMention: false,
+        ignoreNonUserSenders: true,
+        replyInThread: true,
+      },
+      cardActions: {
+        enabled: false,
+        path: "/card",
+        verificationToken: "",
+        encryptKey: "",
+      },
+    },
+    opencode: {
+      baseUrl: new URL("http://127.0.0.1:4096"),
+      directory: "/tmp/runtime-modules-test",
+    },
+    knowledgeBase: {
+      enabled: options.knowledgeEnabled,
+      dataDir: "/tmp/runtime-modules-test/kb",
+      ingest: {
+        maxFileSizeMb: 20,
+        pendingTtlMs: 60_000,
+        allowedExtensions: [".txt"],
+      },
+      retrieval: {
+        topK: 5,
+      },
+      bitable: {
+        appToken: "app",
+        tableId: "tbl",
+      },
+    },
+    memory: {
+      enabled: false,
+      provider: "obsidian",
+      vaultPath: "/tmp/runtime-modules-test/vault",
+      syncToObsidian: false,
+      appendTranscript: false,
+    },
+    contractAssistant: {
+      enabled: options.contractEnabled,
+      storage: {
+        baseToken: "app",
+        contractTableId: "tbl_contract",
+        invoiceTableId: "tbl_invoice",
+        caseTableId: "tbl_case",
+      },
+      models: {},
+      ingest: {
+        contractAllowedExtensions: [".docx"],
+        invoiceAllowedExtensions: [".pdf"],
+        maxFileSizeMb: 20,
+        pendingTtlMs: 60_000,
+      },
+      reminder: {
+        enabled: false,
+        targetChatIds: [],
+        hour: 9,
+        minute: 0,
+        lookaheadDays: 7,
+      },
+    },
+    laborSkill: {
+      enabled: options.laborEnabled,
+      ingest: {
+        pendingTtlMs: 60_000,
+        allowedExtensions: [".pdf"],
+        maxFileSizeMb: 20,
+      },
+    },
+  } as unknown as AppConfig;
+}

@@ -1,6 +1,6 @@
 import { vi } from "vitest";
 
-import type { FeishuPostPayload } from "../../src/feishu/formatter.js";
+import type { FeishuPostPayload } from "../../src/feishu/shared-primitives.js";
 import type { Logger } from "../../src/logging/logger.js";
 import type {
   OpenCodeHealth,

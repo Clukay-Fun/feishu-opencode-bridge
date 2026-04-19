@@ -1,6 +1,7 @@
 import type { PendingQuestionInteraction } from "../bridge/state.js";
 import type { BridgeTurn } from "../bridge/turn.js";
-import type { FeishuPostPayload, ModelListCardView, OutputView, ToolUpdateView } from "../feishu/formatter.js";
+import type { FeishuPostPayload, OutputView, ToolUpdateView } from "../feishu/shared-primitives.js";
+import type { ModelListCardView } from "../feishu/runtime-cards.js";
 import type { OpenCodeMessage, OpenCodeProvidersResponse, OpenCodeSession } from "../opencode/client.js";
 import type { SessionBindingRecord, SessionWindowRecord } from "../store/mappings.js";
 import type { IncomingChatMessage, PermissionCardActionValue } from "./app.js";
@@ -93,7 +94,7 @@ export function buildModelCardView(
     providers: providerViews,
     footer: normalizedFilter
       ? "发送 `/model use <provider/model>` 切换当前窗口模型\n发送 `/model reset` 恢复默认模型"
-      : "发送 `/model <provider>` 查看更多\n发送 `/model use <provider/model>` 切换当前窗口模型",
+      : "发送 `/models <provider>` 查看更多\n发送 `/model use <provider/model>` 切换当前窗口模型",
   };
 }
 

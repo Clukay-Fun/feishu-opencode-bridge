@@ -559,7 +559,7 @@ describe("BridgeApp command surface", () => {
     expect(text).toContain("已隐藏");
   });
 
-  it("renders /model openai as an interactive provider card", async () => {
+  it("renders /models openai as an interactive provider card", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
     const listProviders = vi.fn(async () => ({
@@ -597,6 +597,20 @@ describe("BridgeApp command surface", () => {
     expect(text).toContain("OpenAI");
     expect(text).toContain("gpt-5.4-mini");
     expect(text).not.toContain("OpenCode");
+  });
+
+  it("shows a retirement notice for the legacy /model listing alias", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "passthrough", name: "model", arguments: [] },
+    });
+
+    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("命令已更新");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("/models");
+    expect(outbound.sendMessage).not.toHaveBeenCalled();
   });
 
   it("does not truncate /sessions all by sessionListLimit", async () => {
@@ -867,7 +881,7 @@ describe("BridgeApp command surface", () => {
     expect(extractInteractiveHeader(getReplyPayloads(outbound).at(-1))).toBe("已彻底删除多个会话");
   });
 
-  it("keeps /legal-query* as guidance-only commands in private chat", async () => {
+  it("keeps explicit knowledge-mode commands out of private chat", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
       knowledge: {
@@ -1347,6 +1361,7 @@ type AppCommandSurfaceTestRoute = {
     | { kind: "rename"; title: string }
     | { kind: "abort" }
     | { kind: "models"; provider?: string | undefined }
+    | { kind: "passthrough"; name: string; arguments: string[] }
     | { kind: "knowledge-ingest" }
     | { kind: "knowledge-mode-start" }
     | { kind: "knowledge-mode-end" }

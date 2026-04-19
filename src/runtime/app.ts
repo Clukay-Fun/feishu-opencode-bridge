@@ -4,28 +4,22 @@ import path from "node:path";
 
 import { QueueRegistry } from "../bridge/queue.js";
 import { type PendingInteraction, type PendingKnowledgeIngestInteraction, type PendingPermissionInteraction } from "../bridge/state.js";
-import { ModuleManager } from "../bridge/module.js";
+import type { ModuleManager } from "../bridge/module.js";
 import { routeIncomingText, type RoutedText } from "../bridge/router.js";
 import type { BridgeTurn } from "../bridge/turn.js";
 import {
   buildNoticeCardPayload,
   buildPostMarkdownPayload,
   buildQueueNoticePayload,
-  type FeishuPostPayload,
   toInteractiveCardContent,
-} from "../feishu/formatter.js";
+  type FeishuPostPayload,
+} from "../feishu/shared-primitives.js";
 import { createTextPreview, type Logger, type TranscriptType } from "../logging/logger.js";
 import {
-  KnowledgeBaseService,
   type KnowledgeBasePort,
 } from "../knowledge/index.js";
-import { KnowledgeRuntimeModule } from "../knowledge/runtime-module.js";
-import { ContractAssistantService } from "../contract-assistant/index.js";
-import { ContractAssistantRuntimeModule } from "../contract-assistant/runtime-module.js";
-import { LaborSkillService } from "../labor/index.js";
-import { LaborRuntimeModule } from "../labor/runtime-module.js";
-import { MemoryService } from "../memory/index.js";
-import { MemoryRuntimeModule } from "../memory/runtime-module.js";
+import type { KnowledgeRuntimeModule } from "../knowledge/runtime-module.js";
+import type { MemoryService } from "../memory/index.js";
 import {
   OpenCodeClient,
   type OpenCodeSession,
@@ -34,7 +28,7 @@ import {
 import { getEventSessionId, OpenCodeEventStream, type OpenCodeEvent } from "../opencode/events.js";
 import { MappingStore, type MappingRecord, type SessionBindingRecord, type SessionWindowRecord } from "../store/mappings.js";
 import type { WhitelistStore } from "../store/whitelist.js";
-import { DEFAULT_CONTRACT_ASSISTANT_CONFIG, DEFAULT_LABOR_SKILL_CONFIG, type AppConfig } from "../config/schema.js";
+import type { AppConfig } from "../config/schema.js";
 import {
   buildSessionRangeIndices,
   buildSessionTitle,
@@ -48,8 +42,11 @@ import {
 } from "./app-helpers.js";
 import { PermissionManager } from "./permission-manager.js";
 import { CommandHandler, isBridgeOwnedCommand } from "./command-handler.js";
+import { createFeishuTransport } from "./feishu-transport.js";
+import { createRuntimeModules } from "./runtime-modules.js";
 import { TurnCardManager } from "./turn-card-manager.js";
 import { TurnExecutor } from "./turn-executor.js";
+import { TurnOwnedResourceStore } from "./turn-owned-resources.js";
 import { SlidingWindowRateLimiter } from "./rate-limiter.js";
 import {
   addSession,
@@ -168,6 +165,7 @@ export class BridgeApp {
   private readonly eventStream: OpenCodeEventStreamPort;
   private readonly permissionManager: PermissionManager;
   private readonly turnCardManager: TurnCardManager;
+  private readonly turnOwnedResources: TurnOwnedResourceStore;
   private readonly turnExecutor: TurnExecutor;
   private readonly moduleManager: ModuleManager;
   private readonly knowledgeModule: KnowledgeRuntimeModule;
@@ -180,10 +178,6 @@ export class BridgeApp {
   private readonly sessionStatuses = new Map<string, OpenCodeSessionStatus>();
   private readonly pendingNewSessionAnchors = new Map<string, PendingNewSessionAnchor>();
   private readonly pendingNewSessionAnchorTimers = new Map<string, NodeJS.Timeout>();
-  private readonly memory: MemoryService | null;
-  private readonly knowledge: KnowledgeBasePort | null;
-  private readonly contractAssistant: ContractAssistantService | null;
-  private readonly laborSkill: LaborSkillService | null;
   private globalEventUnsubscribe: (() => void) | null = null;
 
   constructor(
@@ -197,47 +191,8 @@ export class BridgeApp {
     this.mappings = new MappingStore(config.storage.dataDir, config.storage.mappingsFile, 200, logger);
     this.opencode = deps?.opencode ?? new OpenCodeClient(config.opencode.baseUrl);
     this.eventStream = deps?.eventStream ?? new OpenCodeEventStream(config.opencode.baseUrl, logger);
-    this.memory = deps && "memory" in deps
-      ? (deps.memory ?? null)
-      : config.memory.enabled
-        ? new MemoryService(
-          config.memory,
-          config.embeddings ?? { provider: undefined, similarityThreshold: 0.75 },
-          this.opencode as OpenCodeClient,
-          logger,
-        )
-        : null;
-    this.knowledge = deps && "knowledge" in deps
-      ? (deps.knowledge ?? null)
-      : config.knowledgeBase.enabled
-        ? new KnowledgeBaseService(
-          config.knowledgeBase,
-          this.outbound as OutboundPort & KnowledgeResourcePort,
-          this.opencode as OpenCodeClient,
-          logger,
-        )
-        : null;
-    const contractAssistantConfig = config.contractAssistant ?? DEFAULT_CONTRACT_ASSISTANT_CONFIG;
-    this.contractAssistant = contractAssistantConfig.enabled
-      ? new ContractAssistantService(
-        contractAssistantConfig,
-        config.storage.dataDir,
-        this.outbound as OutboundPort & KnowledgeResourcePort,
-        this.opencode as OpenCodeClient,
-        logger,
-      )
-      : null;
-    const laborSkillConfig = config.laborSkill ?? DEFAULT_LABOR_SKILL_CONFIG;
-    this.laborSkill = laborSkillConfig.enabled
-      ? new LaborSkillService(
-        laborSkillConfig,
-        config.storage.dataDir,
-        this.outbound as OutboundPort & KnowledgeResourcePort,
-        this.opencode as OpenCodeClient,
-        logger,
-        this.knowledge,
-      )
-      : null;
+    this.turnCardManager = new TurnCardManager(this.outbound, this.logger, this.config.feishu.behavior.replyInThread);
+    this.turnOwnedResources = new TurnOwnedResourceStore(this.logger);
     this.permissionManager = new PermissionManager({
       replyPermission: async (sessionId, permissionId, policy, remember) => {
         return await this.opencode.replyPermission(sessionId, permissionId, policy, remember);
@@ -254,39 +209,26 @@ export class BridgeApp {
       },
       toCardContent: (payload) => this.toCardContent(payload),
     });
-    this.turnCardManager = new TurnCardManager(this.outbound, this.logger, this.config.feishu.behavior.replyInThread);
-    this.moduleManager = new ModuleManager();
-    this.knowledgeModule = new KnowledgeRuntimeModule({
-      config: this.config,
-      logger: this.logger,
-      knowledge: this.knowledge,
+    const transport = createFeishuTransport({
       sendPayload: async (chatId, payload, options, delivery) => await this.sendPayload(chatId, payload, options, delivery),
       updatePayload: async (chatId, messageId, payload, options) => await this.updatePayload(chatId, messageId, payload, options),
+    });
+    const moduleAssembly = createRuntimeModules({
+      config: this.config,
+      outbound: this.outbound as OutboundPort & Partial<KnowledgeResourcePort>,
+      transport,
+      logger: this.logger,
+      opencode: this.opencode as OpenCodeClient,
+      whitelist: this.whitelist,
       getSessionWindow: (conversationKey, chatType) => this.getSessionWindow(conversationKey, chatType),
       saveSessionWindow: async (conversationKey, window) => await this.saveSessionWindow(conversationKey, window),
       createAndBindSession: async (source) => await this.createAndBindSession(source),
-      whitelistBind: async (chatId, openId) => await this.whitelist.bind(chatId, openId),
+      ...(deps && "memory" in deps ? { memory: deps.memory ?? null } : {}),
+      ...(deps && "knowledge" in deps ? { knowledge: deps.knowledge ?? null } : {}),
     });
+    this.moduleManager = moduleAssembly.moduleManager;
+    this.knowledgeModule = moduleAssembly.knowledgeModule;
     this.knowledgeIngestInteractions = this.knowledgeModule.interactions;
-    this.moduleManager.register(this.knowledgeModule);
-    this.moduleManager.register(new ContractAssistantRuntimeModule({
-      config: this.config,
-      logger: this.logger,
-      service: this.contractAssistant,
-      sendPayload: async (chatId, payload, options, delivery) => await this.sendPayload(chatId, payload, options, delivery),
-      updatePayload: async (chatId, messageId, payload, options) => await this.updatePayload(chatId, messageId, payload, options),
-    }));
-    this.moduleManager.register(new LaborRuntimeModule({
-      config: this.config,
-      logger: this.logger,
-      knowledge: this.knowledge,
-      service: this.laborSkill,
-      sendPayload: async (chatId, payload, options, delivery) => await this.sendPayload(chatId, payload, options, delivery),
-      updatePayload: async (chatId, messageId, payload, options) => await this.updatePayload(chatId, messageId, payload, options),
-    }));
-    if (this.memory) {
-      this.moduleManager.register(new MemoryRuntimeModule(this.memory));
-    }
     this.turnExecutor = new TurnExecutor({
       config: this.config,
       logger: this.logger,
@@ -302,6 +244,7 @@ export class BridgeApp {
       maybeUpdateSessionLabel: async (turn) => await this.maybeUpdateSessionLabel(turn),
       clearPendingInteraction: (conversationKey, keepNonExpiring) => this.clearPendingInteraction(conversationKey, keepNonExpiring),
       clearTurnOwnedPendingInteraction: (conversationKey, turnId) => this.clearTurnOwnedPendingInteraction(conversationKey, turnId),
+      cleanupTurnResources: async (turnId) => await this.turnOwnedResources.cleanupTurn(turnId),
       setPendingInteraction: (conversationKey, interaction) => this.setPendingInteraction(conversationKey, interaction),
       sendPayload: async (chatId, payload, options, delivery) => await this.sendPayload(chatId, payload, options, delivery),
     });
@@ -339,6 +282,7 @@ export class BridgeApp {
     this.pendingInteractionTimers.clear();
     this.turnCardManager.stop();
     await this.moduleManager.stop();
+    await this.turnOwnedResources.cleanupAll();
     await this.eventStream.stop();
   }
 
@@ -656,8 +600,13 @@ export class BridgeApp {
       await this.sendMarkdown(message.chatId, "请发送文字说明你希望我如何处理这个文件。", message.messageId);
       return true;
     }
-    const processed = await this.prepareFileForOpenCodeTurn(pending, instruction).catch(async (error) => {
+    const turnId = crypto.randomUUID();
+    let processed: { prompt: string } | null = null;
+    try {
+      processed = await this.prepareFileForOpenCodeTurn(turnId, pending, instruction);
+    } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
+      await this.turnOwnedResources.cleanupTurn(turnId);
       await this.sendPayload(message.chatId, buildNoticeCardPayload({
         title: "文件读取失败",
         template: "red",
@@ -672,21 +621,21 @@ export class BridgeApp {
         textPreview: detail,
         len: detail.length,
       }, { replyToMessageId: message.messageId });
-      return null;
-    });
+    }
     if (!processed) {
       this.clearPendingInteraction(message.conversationKey, false);
       return true;
     }
     this.clearPendingInteraction(message.conversationKey, false);
     if (!await this.ensureServerAvailableForMessage(message)) {
+      await this.turnOwnedResources.cleanupTurn(turnId);
       return true;
     }
     const sessionId = await this.ensureSession(message);
     const executionKey = this.buildExecutionKey(message.conversationKey, sessionId);
     const queue = this.queues.get(executionKey);
     const turn: BridgeTurn = {
-      turnId: crypto.randomUUID(),
+      turnId,
       chatId: message.chatId,
       conversationKey: message.conversationKey,
       threadKey: message.threadKey,
@@ -699,6 +648,7 @@ export class BridgeApp {
     };
     const result = queue.enqueue(turn);
     if (!result.accepted) {
+      await this.turnOwnedResources.cleanupTurn(turnId);
       await this.sendPayload(message.chatId, buildQueueNoticePayload(result.notice ?? { message: "当前不可用。" }), {
         event: "final message sent",
         transcriptType: "outbound-final",
@@ -800,6 +750,7 @@ export class BridgeApp {
   }
 
   private async prepareFileForOpenCodeTurn(
+    turnId: string,
     pending: Extract<PendingInteraction, { kind: "file-await-instruction" }>,
     instruction: string,
   ): Promise<{ prompt: string }> {
@@ -809,7 +760,7 @@ export class BridgeApp {
     }
     const downloaded = await resources.downloadMessageResource(pending.file.messageId, pending.file.fileKey, "file");
     this.validateRegularFileInput(downloaded.fileName, downloaded.buffer.byteLength);
-    const localPath = await this.saveUploadedFileForTurn(downloaded.fileName, downloaded.buffer);
+    const localPath = await this.saveUploadedFileForTurn(turnId, downloaded.fileName, downloaded.buffer);
     return {
       prompt: [
         "用户上传了一个文件，并要求你按下述需求处理。",
@@ -828,10 +779,11 @@ export class BridgeApp {
     };
   }
 
-  private async saveUploadedFileForTurn(fileName: string, buffer: Buffer): Promise<string> {
+  private async saveUploadedFileForTurn(turnId: string, fileName: string, buffer: Buffer): Promise<string> {
     const tempDir = await mkdtemp(path.join(tmpdir(), "bridge-turn-file-"));
     const targetPath = path.join(tempDir, sanitizeUploadedFileName(fileName));
     await writeFile(targetPath, buffer);
+    this.turnOwnedResources.register(turnId, { path: tempDir });
     return targetPath;
   }
 

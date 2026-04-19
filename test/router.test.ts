@@ -134,15 +134,15 @@ describe("routeIncomingText", () => {
       kind: "command",
       command: { kind: "knowledge-ingest-end" },
     });
-    expect(routeIncomingText("/legal-query-start")).toEqual({
+    expect(routeIncomingText("/法律咨询开始")).toEqual({
       kind: "command",
       command: { kind: "knowledge-mode-start" },
     });
-    expect(routeIncomingText("/legal-query-end")).toEqual({
+    expect(routeIncomingText("/法律咨询结束")).toEqual({
       kind: "command",
       command: { kind: "knowledge-mode-end" },
     });
-    expect(routeIncomingText("/legal-query 员工试用期最长多久？")).toEqual({
+    expect(routeIncomingText("/法律咨询 员工试用期最长多久？")).toEqual({
       kind: "command",
       command: { kind: "knowledge-query", question: "员工试用期最长多久？" },
     });
@@ -154,20 +154,36 @@ describe("routeIncomingText", () => {
       kind: "command",
       command: { kind: "knowledge-ingest" },
     });
-    expect(routeIncomingText("/法律咨询 员工试用期最长多久？")).toEqual({
+    expect(routeIncomingText("/legal-query-start")).toEqual({
       kind: "command",
-      command: { kind: "knowledge-query", question: "员工试用期最长多久？" },
+      command: { kind: "passthrough", name: "legal-query-start", arguments: [] },
+    });
+    expect(routeIncomingText("/legal-query-end")).toEqual({
+      kind: "command",
+      command: { kind: "passthrough", name: "legal-query-end", arguments: [] },
+    });
+    expect(routeIncomingText("/legal-query 员工试用期最长多久？")).toEqual({
+      kind: "command",
+      command: { kind: "passthrough", name: "legal-query", arguments: ["员工试用期最长多久？"] },
     });
   });
 
-  it("routes /model to the provider listing command and keeps model subcommands as passthrough", () => {
-    expect(routeIncomingText("/model")).toEqual({
+  it("routes /models to the provider listing command and leaves retired /model aliases as passthrough", () => {
+    expect(routeIncomingText("/models")).toEqual({
       kind: "command",
       command: { kind: "models" },
     });
-    expect(routeIncomingText("/model openai")).toEqual({
+    expect(routeIncomingText("/models openai")).toEqual({
       kind: "command",
       command: { kind: "models", provider: "openai" },
+    });
+    expect(routeIncomingText("/model")).toEqual({
+      kind: "command",
+      command: { kind: "passthrough", name: "model", arguments: [] },
+    });
+    expect(routeIncomingText("/model openai")).toEqual({
+      kind: "command",
+      command: { kind: "passthrough", name: "model", arguments: ["openai"] },
     });
     expect(routeIncomingText("/model use openai/gpt-5.4")).toEqual({
       kind: "command",

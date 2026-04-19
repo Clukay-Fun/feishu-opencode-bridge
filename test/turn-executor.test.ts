@@ -101,6 +101,52 @@ describe("TurnExecutor text buffering", () => {
     expect(text).toContain("OpenCode 请求权限：`bash`");
     expect(text).toContain("`/allow always`：始终允许，后续同类权限不再弹出");
   });
+
+  it("cleans turn-owned resources after a successful run", async () => {
+    const context = createContext();
+    const cleanupTurnResources = vi.fn(async () => {});
+    const replaceActive = vi.fn();
+    context.cleanupTurnResources = cleanupTurnResources;
+    context.queues.get = () => ({
+      peek: () => createTurn(),
+      replaceActive,
+      current: () => createTurn(),
+      finishActive() {},
+    });
+    const executor = new TurnExecutor(context) as unknown as {
+      runTurn: (queueKey: string) => Promise<void>;
+      executeTurn: () => Promise<string>;
+    };
+    executor.executeTurn = vi.fn(async () => "最终回复");
+
+    await executor.runTurn("queue-1");
+
+    expect(cleanupTurnResources).toHaveBeenCalledWith("turn_1");
+    expect(replaceActive).toHaveBeenCalled();
+  });
+
+  it("cleans turn-owned resources after a failed run", async () => {
+    const context = createContext();
+    const cleanupTurnResources = vi.fn(async () => {});
+    context.cleanupTurnResources = cleanupTurnResources;
+    context.queues.get = () => ({
+      peek: () => createTurn(),
+      replaceActive() {},
+      current: () => createTurn(),
+      finishActive() {},
+    });
+    const executor = new TurnExecutor(context) as unknown as {
+      runTurn: (queueKey: string) => Promise<void>;
+      executeTurn: () => Promise<string>;
+    };
+    executor.executeTurn = vi.fn(async () => {
+      throw new Error("总超时");
+    });
+
+    await executor.runTurn("queue-1");
+
+    expect(cleanupTurnResources).toHaveBeenCalledWith("turn_1");
+  });
 });
 
 function createContext(): TurnExecutorContext {
@@ -164,6 +210,7 @@ function createContext(): TurnExecutorContext {
     async maybeUpdateSessionLabel() {},
     clearPendingInteraction() {},
     clearTurnOwnedPendingInteraction() {},
+    async cleanupTurnResources() {},
     setPendingInteraction() {},
     async sendPayload() {
       return { messageId: "om_reply_1" };

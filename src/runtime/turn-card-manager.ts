@@ -1,4 +1,5 @@
-import { buildTurnStatusCardPayload, type FeishuPostPayload, type OutputView, type ToolUpdateView, type TurnStatusCardView } from "../feishu/formatter.js";
+import { type FeishuPostPayload, type OutputView, type ToolUpdateView } from "../feishu/shared-primitives.js";
+import { buildTurnStatusCardPayload, type TurnStatusCardView } from "../feishu/runtime-cards.js";
 import { createTextPreview, type Logger, type TranscriptType } from "../logging/logger.js";
 import {
   appendProgressUpdate,

@@ -1,3 +1,5 @@
+import { rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
@@ -6,6 +8,7 @@ import type { AppConfig } from "../src/config/schema.js";
 import { routeIncomingText } from "../src/bridge/router.js";
 import { ContractAssistantRuntimeModule } from "../src/contract-assistant/runtime-module.js";
 import type { IncomingChatMessage } from "../src/runtime/app.js";
+import { createFeishuTransport } from "../src/runtime/feishu-transport.js";
 
 function createTextMessage(text: string): IncomingChatMessage {
   return {
@@ -40,7 +43,8 @@ function createFileMessage(fileName: string): IncomingChatMessage {
   };
 }
 
-function createModule() {
+function createModule(existingTempDir?: string) {
+  const tempDir = existingTempDir ?? path.join(os.tmpdir(), `contract-onboard-test-${Math.random().toString(16).slice(2)}`);
   const sendPayload = vi.fn(async (
     chatId: string,
     payload: unknown,
@@ -134,7 +138,7 @@ function createModule() {
   const module = new ContractAssistantRuntimeModule({
     config: {
       storage: {
-        dataDir: "/tmp/bridge-test",
+        dataDir: tempDir,
       },
       contractAssistant: {
         enabled: true,
@@ -169,10 +173,13 @@ function createModule() {
       listReminderItems,
       addCaseReminder,
     } as never,
-    sendPayload,
-    updatePayload,
+    transport: createFeishuTransport({
+      sendPayload: sendPayload as never,
+      updatePayload: updatePayload as never,
+    }),
   });
   return {
+    tempDir,
     module,
     sendPayload,
     updatePayload,
@@ -185,49 +192,91 @@ function createModule() {
   };
 }
 
+async function cleanupModule(module: ContractAssistantRuntimeModule, tempDir: string): Promise<void> {
+  await module.stop();
+  await rm(tempDir, { recursive: true, force: true });
+}
+
 describe("ContractAssistantRuntimeModule onboard draft", () => {
   it("starts guided onboarding with explicit command", async () => {
-    const { module, sendPayload, listDraftTemplates } = createModule();
-    const message = createTextMessage("/起草合同 引导");
-    const result = await module.handleMessage({
-      message,
-      routed: routeIncomingText(message.plainText),
-    });
+    const { module, sendPayload, listDraftTemplates, tempDir } = await createModule();
+    try {
+      const message = createTextMessage("/起草合同 引导");
+      const result = await module.handleMessage({
+        message,
+        routed: routeIncomingText(message.plainText),
+      });
 
-    expect(result).toEqual({ claimed: true });
-    expect(listDraftTemplates).toHaveBeenCalledTimes(1);
-    expect(sendPayload).toHaveBeenCalledTimes(1);
-    expect(JSON.stringify(sendPayload.mock.calls[0]?.[1] ?? {})).toContain("请选择模板");
+      expect(result).toEqual({ claimed: true });
+      expect(listDraftTemplates).toHaveBeenCalledTimes(1);
+      expect(sendPayload).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(sendPayload.mock.calls[0]?.[1] ?? {})).toContain("请选择模板");
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("restores an unfinished onboarding interaction after restart", async () => {
+    const { module, tempDir } = createModule();
+    try {
+      const start = createTextMessage("/起草合同 引导");
+      await module.handleMessage({
+        message: start,
+        routed: routeIncomingText(start.plainText),
+      });
+      await module.stop();
+
+      const restarted = createModule(tempDir);
+      try {
+        await restarted.module.start();
+        const interactions = (restarted.module as unknown as {
+          interactions: { get(key: string): { kind: string; step: string } | undefined };
+        }).interactions;
+        expect(interactions.get(start.conversationKey)).toEqual(expect.objectContaining({
+          kind: "contract-draft-onboard",
+          step: "template",
+        }));
+      } finally {
+        await cleanupModule(restarted.module, restarted.tempDir);
+      }
+    } catch (error) {
+      await cleanupModule(module, tempDir);
+      throw error;
+    }
   });
 
   it("renders optimized case create processing and completed cards", async () => {
-    const { module, sendPayload, updatePayload, createCase } = createModule();
-    const message = createTextMessage("/案件录入 张三与北京XX科技有限公司劳动争议，朝阳区劳动仲裁委员会，承办律师刘达律师");
-    const result = await module.handleMessage({
-      message,
-      routed: routeIncomingText(message.plainText),
-    });
+    const { module, sendPayload, updatePayload, createCase, tempDir } = await createModule();
+    try {
+      const message = createTextMessage("/案件录入 张三与北京XX科技有限公司劳动争议，朝阳区劳动仲裁委员会，承办律师刘达律师");
+      const result = await module.handleMessage({
+        message,
+        routed: routeIncomingText(message.plainText),
+      });
 
-    expect(result).toEqual({ claimed: true });
-    expect(createCase).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ claimed: true });
+      expect(createCase).toHaveBeenCalledTimes(1);
 
-    const processingSerialized = JSON.stringify(sendPayload.mock.calls[0]?.[1] ?? {});
-    const completedSerialized = JSON.stringify(updatePayload.mock.calls[0]?.[2] ?? {});
-    const completedCard = JSON.parse((updatePayload.mock.calls[0]?.[2] as { content?: string })?.content ?? "{}");
-    expect(processingSerialized).toContain("案件信息录入中");
-    expect(processingSerialized).toContain("正在解析案件信息");
-    expect(processingSerialized).toContain("提取字段：进行中");
-    expect(processingSerialized).toContain("写入案件管理表：等待中");
-    expect(completedSerialized).toContain("案件已录入");
-    expect(completedSerialized).toContain("张三 vs 北京XX科技有限公司");
-    expect(completedSerialized).toContain("劳动争议｜劳动仲裁");
-    expect(completedSerialized).toContain("违法解除劳动合同争议");
-    expect(completedSerialized).toContain("刘达律师");
-    expect(completedSerialized).toContain("案件管理表");
-    expect(completedSerialized).toContain("rec_case_1");
-    expect(completedSerialized).toContain("开庭日 2026-04-18 09:30");
-    expect(completedSerialized).toContain("举证截止日 2026-04-17");
-    expect((completedCard.body?.elements ?? []).some((item: { tag?: string }) => item.tag === "column")).toBe(false);
+      const processingSerialized = JSON.stringify(sendPayload.mock.calls[0]?.[1] ?? {});
+      const completedSerialized = JSON.stringify(updatePayload.mock.calls[0]?.[2] ?? {});
+      const completedCard = JSON.parse((updatePayload.mock.calls[0]?.[2] as { content?: string })?.content ?? "{}");
+      expect(processingSerialized).toContain("案件信息录入中");
+      expect(processingSerialized).toContain("正在解析案件信息");
+      expect(processingSerialized).toContain("提取字段：进行中");
+      expect(processingSerialized).toContain("写入案件管理表：等待中");
+      expect(completedSerialized).toContain("案件已录入");
+      expect(completedSerialized).toContain("张三 vs 北京XX科技有限公司");
+      expect(completedSerialized).toContain("劳动争议｜劳动仲裁");
+      expect(completedSerialized).toContain("违法解除劳动合同争议");
+      expect(completedSerialized).toContain("刘达律师");
+      expect(completedSerialized).toContain("案件管理表");
+      expect(completedSerialized).toContain("rec_case_1");
+      expect(completedSerialized).toContain("开庭日 2026-04-18 09:30");
+      expect(completedSerialized).toContain("举证截止日 2026-04-17");
+      expect((completedCard.body?.elements ?? []).some((item: { tag?: string }) => item.tag === "column")).toBe(false);
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
   });
 
   it("keeps completed steps visible on contract draft card", async () => {

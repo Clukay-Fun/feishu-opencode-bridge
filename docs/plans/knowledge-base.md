@@ -1,5 +1,7 @@
 # 法律知识库方案
 
+> 注：当前命令面已更新。英文兼容别名 `/legal-query*` 已退役；群聊连续检索使用 `/法律咨询开始` / `/法律咨询结束`，单次显式检索使用 `/kb-query <问题>`，私聊直接提问即可。
+
 ## 定位
 
 面向法律从业者的知识库系统，支持：
@@ -7,9 +9,9 @@
 - 批量导入法律文档（PDF/Word/TXT/MD），AI 自动提取问答对
 - 用户提问时，基于 embedding 语义检索 + AI 重排序，返回多条带来源引用的答案
 - URL 网页内容入库（通过 OpenCode 辅助读取网页并整理成 Markdown）
-- 通过 `/legal-query-start` 进入知识库模式，后续直接提问，无需每条消息都输入命令
+- 通过 `/法律咨询开始` 进入知识库模式，后续直接提问，无需每条消息都输入命令
 
-实现为 bridge 内建知识库子系统（`src/knowledge/`），由 bridge 接管 `/kb-ingest-start`、`/kb-ingest-end`、`/legal-query`、`/legal-query-start`、`/legal-query-end` 这组命令。
+实现为 bridge 内建知识库子系统（`src/knowledge/`），由 bridge 接管 `/kb-ingest-start`、`/kb-ingest-end`、`/kb-query`、`/法律咨询开始`、`/法律咨询结束` 这组命令。
 
 ## 模型与供应商分工
 
@@ -214,20 +216,20 @@ URL 入库路径：bridge 创建一次 OpenCode 短生命周期 session，使用
 ### 触发方式
 
 ```
-@bot /legal-query-start
+@bot /法律咨询开始
 员工试用期最长多久？
 ```
 
 知识库模式下，普通文本消息会直接进入知识库检索，不再创建 OpenCode 普通会话。退出时发送：
 
 ```
-@bot /legal-query-end
+@bot /法律咨询结束
 ```
 
 单次查询仍可使用：
 
 ```
-@bot /legal-query 员工试用期最长多久？
+@bot /kb-query 员工试用期最长多久？
 ```
 
 未开启知识库模式时，bridge 会保守识别普通文本中的法律咨询问题（基于关键词 + 问句特征 + 法条引用的置信度评分）；置信度不足则回退到 OpenCode 普通对话。
@@ -315,10 +317,10 @@ src/knowledge/
   ├── /kb-ingest-end
   │     └── 当前窗口退出知识入库模式
   │
-  ├── /legal-query-start
+  ├── /法律咨询开始
   │     └── 当前窗口进入知识库模式
   │
-  ├── /legal-query-end
+  ├── /法律咨询结束
   │     └── 当前窗口退出知识库模式
   │
   ├── 知识库模式已开启
@@ -412,7 +414,7 @@ SQLite 表结构：
 入库任务运行时，bridge 对同一窗口的其他消息采用"占线"策略：
 
 - **允许**结束命令：`/kb-ingest-end`
-- **允许**切换命令：`/legal-query-start`
+- **允许**切换命令：`/法律咨询开始`
 - **其他普通文本**：不参与普通对话，直接提示"当前正在入库处理中"
 
 提示文案：
@@ -420,7 +422,7 @@ SQLite 表结构：
 ```
 当前正在处理知识入库任务。
 发送 /kb-ingest-end 可退出入库模式。
-如需切换到法律查询，请发送 /legal-query-start。
+如需切换到法律查询，请发送 /法律咨询开始。
 普通对话请等待当前入库完成后再发送。
 ```
 
@@ -437,7 +439,7 @@ SQLite 表结构：
 ```
 bridge = 控制面 + 查询面
   - 飞书消息接入、模式切换
-  - 命令入口（/kb-ingest-start, /legal-query-start 等）
+  - 命令入口（/kb-ingest-start, /法律咨询开始, /kb-query 等）
   - 本地 SQLite 检索
   - 查询结果卡片、入库进度卡片
 

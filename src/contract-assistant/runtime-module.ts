@@ -1,46 +1,43 @@
 import { DEFAULT_CONTRACT_ASSISTANT_CONFIG, type AppConfig, type ContractAssistantConfig } from "../config/schema.js";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { RuntimeModule, RuntimeModuleHandleResult, RuntimeModuleMessageContext } from "../bridge/module.js";
+import { buildNoticeCardPayload } from "../feishu/shared-primitives.js";
 import {
-  buildNoticeCardPayload,
-  type FeishuPostPayload,
-} from "../feishu/formatter.js";
-import { createTextPreview, type Logger, type TranscriptType } from "../logging/logger.js";
+  applyContractDraftProgress,
+  applyInvoiceRecognizeStep,
+  buildCaseCreateCompletedPayload,
+  buildCaseCreateProcessingPayload,
+  buildCaseReminderAddCompletedPayload,
+  buildContractDraftCompletedPayload,
+  buildContractDraftProgressPayload,
+  buildInvoiceRecognizeCompletedPayload,
+  buildInvoiceRecognizeProgressPayload,
+  buildReminderProgressPayload,
+  buildTodayTodoPayload,
+  completeContractDraftProgress,
+  completeInvoiceRecognizeProgress,
+  createContractDraftProgressState,
+  createInvoiceRecognizeProgressState,
+  type ReminderListResult,
+} from "../feishu/contract-cards.js";
+import { createTextPreview, type Logger } from "../logging/logger.js";
 import type { IncomingChatMessage, IncomingFileMessage } from "../runtime/app.js";
 import type { RoutedText } from "../bridge/router.js";
+import type { FeishuTransport } from "../runtime/feishu-transport.js";
+import { PersistedInteractionManager } from "../runtime/persisted-interaction-manager.js";
 import type {
   ContractAssistantService,
   ContractClause,
   ContractAssistantFileRef,
-  CaseCreateResult,
-  CaseReminderAddResult,
-  InvoiceRecognizeResult,
   ContractState,
-  ContractDraftProgressStage,
   ContractWorkbenchModelResult,
 } from "./index.js";
-
-type SendPayload = (
-  chatId: string,
-  payload: FeishuPostPayload,
-  options: { event: string; transcriptType: TranscriptType; textPreview: string; len: number },
-  delivery?: { replyToMessageId: string; replyInThread?: boolean },
-) => Promise<{ messageId: string }>;
-
-type UpdatePayload = (
-  chatId: string,
-  messageId: string,
-  payload: FeishuPostPayload,
-  options: { event: string; transcriptType: TranscriptType; textPreview: string; len: number },
-) => Promise<{ messageId: string }>;
 
 type ContractAssistantRuntimeModuleDeps = {
   config: AppConfig;
   logger: Logger;
   service: ContractAssistantService | null;
-  sendPayload: SendPayload;
-  updatePayload: UpdatePayload;
+  transport: FeishuTransport;
 };
 
 type ContractAssistantCommand = Extract<RoutedText, { kind: "command" }>["command"];
@@ -111,50 +108,31 @@ type PendingWorkbenchInteraction = {
 
 type PendingInteraction = PendingUploadInteraction | PendingDraftInteraction | PendingWorkbenchInteraction;
 
-type ContractDraftProgressView = {
-  title: string;
-  tagLine?: string | undefined;
-  feeLine?: string | undefined;
-  steps: Array<{
-    stage: ContractDraftProgressStage;
-    label: string;
-    status: "pending" | "running" | "completed";
-    detail?: string | undefined;
-  }>;
-};
-
-type InvoiceRecognizeProgressView = {
-  steps: Array<{
-    label: string;
-    status: "pending" | "running" | "completed";
-  }>;
-};
-
-type ReminderListResult = {
-  contractLines: string[];
-  invoiceLines: string[];
-  caseLines: string[];
-};
-
 export class ContractAssistantRuntimeModule implements RuntimeModule {
   readonly name = "contract-assistant";
   readonly priority = 30;
 
-  private readonly interactions = new Map<string, PendingInteraction>();
-  private readonly timers = new Map<string, NodeJS.Timeout>();
-  private readonly stateFilePath: string;
-  private persistChain: Promise<void> = Promise.resolve();
+  private readonly interactions: PersistedInteractionManager<PendingInteraction>;
   private reminderTimer: NodeJS.Timeout | null = null;
   private lastReminderSlot = "";
   private readonly featureConfig: ContractAssistantConfig;
 
   constructor(private readonly deps: ContractAssistantRuntimeModuleDeps) {
     this.featureConfig = deps.config.contractAssistant ?? DEFAULT_CONTRACT_ASSISTANT_CONFIG;
-    this.stateFilePath = path.join(deps.config.storage.dataDir, "contract-assistant-state.json");
+    this.interactions = new PersistedInteractionManager({
+      stateFilePath: path.join(deps.config.storage.dataDir, "contract-assistant-state.json"),
+      logger: deps.logger,
+      logScope: "contract-assistant/state",
+      getKey: (interaction) => interaction.conversationKey,
+      getExpiresAt: (interaction) => interaction.expiresAt,
+      onExpire: async (interaction) => {
+        await this.handleExpiredInteraction(interaction);
+      },
+    });
   }
 
   async start(): Promise<void> {
-    await this.restoreState();
+    await this.interactions.restore();
     if (!this.featureConfig.enabled || !this.featureConfig.reminder.enabled || !this.deps.service) {
       return;
     }
@@ -165,12 +143,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
   }
 
   async stop(): Promise<void> {
-    await this.flushPersist();
-    for (const timer of this.timers.values()) {
-      clearTimeout(timer);
-    }
-    this.timers.clear();
-    this.interactions.clear();
+    await this.interactions.stop();
     if (this.reminderTimer) {
       clearInterval(this.reminderTimer);
       this.reminderTimer = null;
@@ -231,32 +204,39 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     }
 
     const normalized = command.name.trim().toLowerCase();
-    if (normalized === "合同工作台结束" || normalized === "合同起草结束" || normalized === "contract-workbench") {
-      const endRequested = normalized === "合同工作台结束"
-        || normalized === "合同起草结束"
-        || (normalized === "contract-workbench" && command.arguments[0]?.trim().toLowerCase() === "end");
-      if (endRequested) {
-        if (!workbench) {
-          await this.sendNotice(message, {
-            title: "当前没有进行中的合同起草会话",
-            template: "grey",
-            icon: "maybe_outlined",
-            message: "发送 `/合同起草开始` 或 `/contract-workbench` 可开启新的合同起草会话。",
-          });
-          return true;
-        }
-        this.clearInteraction(message.conversationKey);
+    if (normalized === "contract-workbench") {
+      await this.sendNotice(message, {
+        title: "命令已更新",
+        template: "yellow",
+        icon: "maybe_outlined",
+        message: command.arguments[0]?.trim().toLowerCase() === "end"
+          ? "合同起草结束命令已从 `/contract-workbench end` 迁移到 `/合同起草结束`。"
+          : "合同起草入口已从 `/contract-workbench` 迁移到 `/合同起草开始`。",
+      });
+      return true;
+    }
+
+    if (normalized === "合同起草结束") {
+      if (!workbench) {
         await this.sendNotice(message, {
-          title: "合同起草会话已结束",
+          title: "当前没有进行中的合同起草会话",
           template: "grey",
-          icon: "switch_outlined",
-          message: "当前合同起草会话已结束。如需继续其他合同，请新开话题或重新发送 `/合同起草开始`。",
+          icon: "maybe_outlined",
+          message: "发送 `/合同起草开始` 可开启新的合同起草会话。",
         });
         return true;
       }
+      this.clearInteraction(message.conversationKey);
+      await this.sendNotice(message, {
+        title: "合同起草会话已结束",
+        template: "grey",
+        icon: "switch_outlined",
+        message: "当前合同起草会话已结束。如需继续其他合同，请新开话题或重新发送 `/合同起草开始`。",
+      });
+      return true;
     }
 
-    if (normalized === "合同工作台" || normalized === "合同起草开始" || normalized === "contract-workbench") {
+    if (normalized === "合同起草开始") {
       if (!this.featureConfig.enabled || !this.deps.service) {
         await this.sendNotice(message, {
           title: "合同助手未启用",
@@ -292,13 +272,9 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       "案件提醒",
       "case-reminders",
       "添加案件提醒",
-      "案件添加提醒",
       "case-reminder-add",
-      "add-case-reminder",
       "案件更新待办",
       "case-update-todos",
-      "案件提醒设置",
-      "case-reminder-set",
     ].includes(normalized)) {
       return false;
     }
@@ -384,11 +360,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
 
     if (
       normalized === "添加案件提醒"
-      || normalized === "案件添加提醒"
       || normalized === "case-reminder-add"
-      || normalized === "add-case-reminder"
-      || normalized === "案件提醒设置"
-      || normalized === "case-reminder-set"
     ) {
       const request = command.arguments.join(" ").trim();
       if (!request) {
@@ -410,10 +382,10 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
 
     if (normalized === "案件更新待办" || normalized === "case-update-todos") {
       await this.sendNotice(message, {
-        title: "案件待办更新暂未接入",
+        title: "命令已下线",
         template: "yellow",
         icon: "maybe_outlined",
-        message: "当前已识别该指令，但 runtime 还没有接入待办字段更新。临时可用 `/案件更新 案号XXX 待做事项 ...` 更新案件记录。",
+        message: "兼容命令 `/案件更新待办` 已下线。请改用 `/案件更新 案号XXX 待做事项 ...` 更新案件记录。",
       });
       return true;
     }
@@ -483,12 +455,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         stages: [],
       },
     };
-    this.interactions.set(message.conversationKey, interaction);
-    this.schedulePersist();
-    const timer = setTimeout(() => {
-      void this.expireInteraction(message.conversationKey);
-    }, this.featureConfig.ingest.pendingTtlMs);
-    this.timers.set(message.conversationKey, timer);
+    this.interactions.set(interaction);
     await this.sendNotice(message, {
       title: "合同起草引导",
       template: "blue",
@@ -543,8 +510,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       return true;
     }
 
-    this.interactions.set(message.conversationKey, next);
-    this.schedulePersist();
+    this.interactions.set(next);
     await this.sendNotice(message, {
       title: "继续补充合同起草信息",
       template: "blue",
@@ -581,9 +547,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       state: null,
       recentMessages: [],
     };
-    this.interactions.set(message.conversationKey, interaction);
-    this.restoreTimer(message.conversationKey, this.featureConfig.ingest.pendingTtlMs);
-    this.schedulePersist();
+    this.interactions.set(interaction);
 
     if (initialRequest) {
       await this.initializeWorkbenchFromText(message, interaction, initialRequest);
@@ -650,7 +614,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         userInput,
       );
       await this.applyWorkbenchResult(message, pending, userInput, result);
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同起草已处理",
         template: "green",
         iconToken: "yes_outlined",
@@ -663,7 +627,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同起草处理失败",
         template: "red",
         iconToken: "error_filled",
@@ -684,7 +648,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
   ): Promise<void> {
     const startedAt = Date.now();
     const progressState = createContractDraftProgressState(request);
-    const processing = await this.deps.sendPayload(message.chatId, buildContractDraftProgressPayload(progressState), {
+    const processing = await this.deps.transport.sendPayload(message.chatId, buildContractDraftProgressPayload(progressState), {
       event: "contract draft started",
       transcriptType: "outbound-final",
       textPreview: createTextPreview(request),
@@ -693,7 +657,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     try {
       const result = await this.deps.service!.draftContract(request, { requesterOpenId: message.senderOpenId }, async (stage, detail) => {
         applyContractDraftProgress(progressState, stage, detail);
-        await this.deps.updatePayload(message.chatId, processing.messageId, buildContractDraftProgressPayload(progressState), {
+        await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildContractDraftProgressPayload(progressState), {
           event: "contract draft progress updated",
           transcriptType: "outbound-final",
           textPreview: createTextPreview(detail ?? stage),
@@ -701,7 +665,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         });
       });
       completeContractDraftProgress(progressState);
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildContractDraftCompletedPayload(
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildContractDraftCompletedPayload(
         progressState,
         result,
         {
@@ -717,7 +681,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         len: result.docTitle.length,
       });
     } catch (error) {
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同起草失败",
         template: "red",
         iconToken: "error_filled",
@@ -748,7 +712,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         `合同台账记录：[打开记录](${buildBitableRecordUrl(this.featureConfig.storage.baseToken, this.featureConfig.storage.contractTableId, result.recordId)})`,
         result.summary,
       ].join("\n");
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同录入完成",
         template: "green",
         iconToken: "yes_outlined",
@@ -760,7 +724,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         len: summary.length,
       });
     } catch (error) {
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同录入失败",
         template: "red",
         iconToken: "error_filled",
@@ -781,7 +745,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     const startedAt = Date.now();
     const progressState = createInvoiceRecognizeProgressState();
     applyInvoiceRecognizeStep(progressState, 0);
-    const processing = await this.deps.sendPayload(message.chatId, buildInvoiceRecognizeProgressPayload(progressState), {
+    const processing = await this.deps.transport.sendPayload(message.chatId, buildInvoiceRecognizeProgressPayload(progressState), {
       event: "invoice recognize started",
       transcriptType: "outbound-final",
       textPreview: file.fileName,
@@ -790,14 +754,14 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     try {
       const result = await this.deps.service!.recognizeInvoice(file);
       applyInvoiceRecognizeStep(progressState, 1);
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildInvoiceRecognizeProgressPayload(progressState), {
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildInvoiceRecognizeProgressPayload(progressState), {
         event: "invoice recognize record write started",
         transcriptType: "outbound-final",
         textPreview: result.summary,
         len: result.summary.length,
       });
       completeInvoiceRecognizeProgress(progressState);
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildInvoiceRecognizeCompletedPayload(
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildInvoiceRecognizeCompletedPayload(
         result,
         {
           elapsedMs: Date.now() - startedAt,
@@ -810,7 +774,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         len: result.summary.length,
       });
     } catch (error) {
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "发票识别失败",
         template: "red",
         iconToken: "error_filled",
@@ -828,7 +792,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     message: Pick<IncomingChatMessage, "chatId" | "messageId">,
     request: string,
   ): Promise<void> {
-    const processing = await this.deps.sendPayload(message.chatId, buildCaseCreateProcessingPayload(request), {
+    const processing = await this.deps.transport.sendPayload(message.chatId, buildCaseCreateProcessingPayload(request), {
       event: "case create processing",
       transcriptType: "outbound-final",
       textPreview: createTextPreview(request),
@@ -838,14 +802,14 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       const result = await this.deps.service!.createCase(request);
       const recordUrl = buildBitableRecordUrl(this.featureConfig.storage.baseToken, this.featureConfig.storage.caseTableId, result.recordId);
       const payload = buildCaseCreateCompletedPayload(result, recordUrl, request);
-      await this.deps.updatePayload(message.chatId, processing.messageId, payload, {
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, payload, {
         event: "case create completed",
         transcriptType: "outbound-final",
         textPreview: createTextPreview(result.summary),
         len: result.summary.length,
       });
     } catch (error) {
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "案件录入失败",
         template: "red",
         iconToken: "error_filled",
@@ -872,7 +836,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     try {
       const result = await this.deps.service!.updateCase(request);
       const summary = `匹配案件：${result.matchedLabel}`;
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "案件更新完成",
         template: "green",
         iconToken: "yes_outlined",
@@ -884,7 +848,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         len: summary.length,
       });
     } catch (error) {
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "案件更新失败",
         template: "red",
         iconToken: "error_filled",
@@ -929,7 +893,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     message: Pick<IncomingChatMessage, "chatId" | "messageId">,
     query: string,
   ): Promise<void> {
-    const processing = await this.deps.sendPayload(message.chatId, buildReminderProgressPayload(), {
+    const processing = await this.deps.transport.sendPayload(message.chatId, buildReminderProgressPayload(), {
       event: "case reminder progress sent",
       transcriptType: "outbound-final",
       textPreview: "案件提醒",
@@ -942,7 +906,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         invoiceLines: [],
         caseLines: result.lines,
       };
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildTodayTodoPayload(reminderResult), {
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildTodayTodoPayload(reminderResult), {
         event: "case reminder sent",
         transcriptType: "outbound-final",
         textPreview: createTextPreview(renderReminderPlainText(reminderResult)),
@@ -950,7 +914,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "案件提醒查询失败",
         template: "red",
         iconToken: "error_filled",
@@ -979,7 +943,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       const recordUrl = buildBitableRecordUrl(this.featureConfig.storage.baseToken, this.featureConfig.storage.caseTableId, result.recordId);
       const payload = buildCaseReminderAddCompletedPayload(result, recordUrl);
       const preview = `案件提醒已添加：${result.matchedLabel} ${result.reminderLabel} ${result.reminderDate}`;
-      await this.deps.updatePayload(message.chatId, processing.messageId, payload, {
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, payload, {
         event: "case reminder add completed",
         transcriptType: "outbound-final",
         textPreview: createTextPreview(preview),
@@ -987,7 +951,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "案件提醒添加失败",
         template: "red",
         iconToken: "error_filled",
@@ -1025,10 +989,9 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         },
         recentMessages: pushRecentMessages(pending.recentMessages, prompt),
       };
-      this.interactions.set(message.conversationKey, updated);
-      this.schedulePersist();
+      this.interactions.set(updated);
       await this.updateWorkbenchAnchor(updated);
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同已载入工作会话",
         template: "green",
         iconToken: "yes_outlined",
@@ -1041,7 +1004,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同初始化失败",
         template: "red",
         iconToken: "error_filled",
@@ -1083,10 +1046,9 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         },
         recentMessages: pushRecentMessages(pending.recentMessages, `[文件] ${message.file.fileName}`),
       };
-      this.interactions.set(message.conversationKey, updated);
-      this.schedulePersist();
+      this.interactions.set(updated);
       await this.updateWorkbenchAnchor(updated);
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同已载入工作会话",
         template: "green",
         iconToken: "yes_outlined",
@@ -1099,7 +1061,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同初始化失败",
         template: "red",
         iconToken: "error_filled",
@@ -1131,8 +1093,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         ...pending,
         recentMessages: pushRecentMessages(pushRecentMessages(pending.recentMessages, userInput), `查看结果：${title}`),
       };
-      this.interactions.set(message.conversationKey, updated);
-      this.schedulePersist();
+      this.interactions.set(updated);
       await this.sendNotice(message, {
         title,
         template: "grey",
@@ -1164,11 +1125,10 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
           state: updatedState,
           recentMessages: pushRecentMessages(pushRecentMessages(pending.recentMessages, userInput), "已导出 Word"),
         };
-        this.interactions.set(message.conversationKey, updated);
-        this.schedulePersist();
+        this.interactions.set(updated);
         await this.updateWorkbenchAnchor(updated);
         const summary = `Word 草稿已导出：${wordPath}`;
-        await this.deps.updatePayload(message.chatId, exportProcessing.messageId, buildNoticeCardPayload({
+        await this.deps.transport.updatePayload(message.chatId, exportProcessing.messageId, buildNoticeCardPayload({
           title: "Word 导出完成",
           template: "green",
           iconToken: "yes_outlined",
@@ -1181,7 +1141,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         });
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
-        await this.deps.updatePayload(message.chatId, exportProcessing.messageId, buildNoticeCardPayload({
+        await this.deps.transport.updatePayload(message.chatId, exportProcessing.messageId, buildNoticeCardPayload({
           title: "Word 导出失败",
           template: "red",
           iconToken: "error_filled",
@@ -1216,8 +1176,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         state: updatedState,
         recentMessages: pushRecentMessages(pushRecentMessages(pending.recentMessages, userInput), `修改结果：${result.message}`),
       };
-      this.interactions.set(message.conversationKey, updated);
-      this.schedulePersist();
+      this.interactions.set(updated);
       await this.updateWorkbenchAnchor(updated);
       await this.sendNotice(message, {
         title: "合同已更新",
@@ -1237,7 +1196,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
   }
 
   private async updateWorkbenchAnchor(pending: PendingWorkbenchInteraction): Promise<void> {
-    await this.deps.updatePayload(pending.chatId, pending.anchorMessageId, buildNoticeCardPayload({
+    await this.deps.transport.updatePayload(pending.chatId, pending.anchorMessageId, buildNoticeCardPayload({
       title: "合同起草会话",
       template: "blue",
       iconToken: "edit_outlined",
@@ -1264,12 +1223,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       anchorMessageId: message.messageId,
       expiresAt: Date.now() + this.featureConfig.ingest.pendingTtlMs,
     };
-    this.interactions.set(message.conversationKey, interaction);
-    this.schedulePersist();
-    const timer = setTimeout(() => {
-      void this.expireInteraction(message.conversationKey);
-    }, this.featureConfig.ingest.pendingTtlMs);
-    this.timers.set(message.conversationKey, timer);
+    this.interactions.set(interaction);
     await this.sendNotice(message, {
       title: kind === "contract-extract" ? "等待上传合同文件" : "等待上传发票文件",
       template: "blue",
@@ -1278,14 +1232,9 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     });
   }
 
-  private async expireInteraction(conversationKey: string): Promise<void> {
-    const pending = this.interactions.get(conversationKey);
-    if (!pending) {
-      return;
-    }
-    this.clearInteraction(conversationKey);
+  private async handleExpiredInteraction(pending: PendingInteraction): Promise<void> {
     try {
-      await this.deps.sendPayload(pending.chatId, buildNoticeCardPayload({
+      await this.deps.transport.sendPayload(pending.chatId, buildNoticeCardPayload({
         title: "任务已超时",
         template: "grey",
         iconToken: "time_outlined",
@@ -1309,12 +1258,6 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
 
   private clearInteraction(conversationKey: string): void {
     this.interactions.delete(conversationKey);
-    const timer = this.timers.get(conversationKey);
-    if (timer) {
-      clearTimeout(timer);
-      this.timers.delete(conversationKey);
-    }
-    this.schedulePersist();
   }
 
   private clearWorkbenchSessionsForRequester(chatId: string, requesterOpenId: string): void {
@@ -1334,8 +1277,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       return;
     }
     interaction.expiresAt = Date.now() + this.featureConfig.ingest.pendingTtlMs;
-    this.restoreTimer(conversationKey, this.featureConfig.ingest.pendingTtlMs);
-    this.schedulePersist();
+    this.interactions.touch(conversationKey, interaction.expiresAt);
   }
 
   private async sendWorkbenchReject(
@@ -1364,7 +1306,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     try {
       const processingMessages = await Promise.all(this.featureConfig.reminder.targetChatIds.map(async (chatId) => ({
         chatId,
-        ...(await this.deps.sendPayload(chatId, buildReminderProgressPayload(), {
+        ...(await this.deps.transport.sendPayload(chatId, buildReminderProgressPayload(), {
           event: "contract assistant reminder progress sent",
           transcriptType: "outbound-final",
           textPreview: "案件提醒",
@@ -1374,7 +1316,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       const result = await this.deps.service!.listReminderItems(this.featureConfig.reminder.lookaheadDays);
       const payload = buildTodayTodoPayload(result);
       for (const item of processingMessages) {
-        await this.deps.updatePayload(item.chatId, item.messageId, payload, {
+        await this.deps.transport.updatePayload(item.chatId, item.messageId, payload, {
           event: "contract assistant reminder sent",
           transcriptType: "outbound-final",
           textPreview: createTextPreview(renderReminderPlainText(result)),
@@ -1397,77 +1339,20 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       message: string;
     },
   ): Promise<{ messageId: string }> {
-    return await this.deps.sendPayload(message.chatId, buildNoticeCardPayload({
+    return await this.deps.transport.sendNotice({
+      chatId: message.chatId,
+      replyToMessageId: message.messageId,
+    }, {
       title: options.title,
       template: options.template,
       iconToken: options.icon,
       message: options.message,
-    }), {
+    }, {
       event: "contract assistant notice sent",
       transcriptType: "outbound-final",
       textPreview: options.message,
       len: options.message.length,
-    }, { replyToMessageId: message.messageId });
-  }
-
-  private async restoreState(): Promise<void> {
-    const interactions = await this.readPersistedInteractions();
-    const now = Date.now();
-    let changed = false;
-    for (const interaction of interactions) {
-      if (interaction.expiresAt <= now) {
-        changed = true;
-        continue;
-      }
-      this.interactions.set(interaction.conversationKey, interaction);
-      this.restoreTimer(interaction.conversationKey, interaction.expiresAt - now);
-    }
-    if (changed) {
-      this.schedulePersist();
-      await this.flushPersist();
-    }
-  }
-
-  private restoreTimer(conversationKey: string, timeoutMs: number): void {
-    const existing = this.timers.get(conversationKey);
-    if (existing) {
-      clearTimeout(existing);
-    }
-    const timer = setTimeout(() => {
-      void this.expireInteraction(conversationKey);
-    }, Math.max(1, timeoutMs));
-    this.timers.set(conversationKey, timer);
-  }
-
-  private async readPersistedInteractions(): Promise<PendingInteraction[]> {
-    try {
-      const raw = await readFile(this.stateFilePath, "utf8");
-      const parsed = JSON.parse(raw) as { version?: number; interactions?: PendingInteraction[] };
-      return Array.isArray(parsed.interactions) ? parsed.interactions : [];
-    } catch {
-      return [];
-    }
-  }
-
-  private schedulePersist(): void {
-    this.persistChain = this.persistChain
-      .catch(() => undefined)
-      .then(async () => {
-        await mkdir(path.dirname(this.stateFilePath), { recursive: true });
-        await writeFile(this.stateFilePath, JSON.stringify({
-          version: 1,
-          interactions: [...this.interactions.values()],
-        }, null, 2), "utf8");
-      })
-      .catch((error) => {
-        this.deps.logger.log("contract-assistant/state", "persist state failed", {
-          detail: error instanceof Error ? error.message : String(error),
-        }, "warn");
-      });
-  }
-
-  private async flushPersist(): Promise<void> {
-    await this.persistChain;
+    });
   }
 
   private renderWizardPrompt(pending: PendingDraftInteraction): string {
@@ -2019,1016 +1904,9 @@ function formatMoney(value: number | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? `${value}` : "【待补】";
 }
 
-function buildCaseCreateProcessingPayload(request: string): FeishuPostPayload {
-  return buildInteractiveCardPayload({
-    title: "案件信息录入中",
-    template: "blue",
-    iconToken: "loading_outlined",
-    headerPadding: "12px 8px 12px 8px",
-    bodyElements: [
-      caseMarkdown("**正在解析案件信息**"),
-      caseColumnSet([
-        caseColumn([
-          caseMarkdown(escapeCardMarkdown(truncateCardText(request, 80))),
-        ], { bg: "blue-50", padding: "12px 12px 12px 12px", weight: 1 }),
-      ], { spacing: "12px", stretch: true }),
-      caseDivider(),
-      caseColumnSet([
-        caseColumn([
-          caseMarkdown("提取字段：进行中…", {
-            size: "normal_v2",
-            icon: { token: "loading_outlined", color: "blue" },
-          }),
-          caseMarkdown("写入案件管理表：等待中", {
-            size: "normal_v2",
-            icon: { token: "loading_outlined", color: "blue" },
-          }),
-        ], { bg: "grey-50", padding: "12px 12px 12px 12px", weight: 1 }),
-      ], { spacing: "12px", stretch: true }),
-    ],
-  });
-}
-
-function buildContractDraftProgressPayload(view: ContractDraftProgressView): FeishuPostPayload {
-  return buildInteractiveCardPayload({
-    title: "合同起草",
-    template: "blue",
-    iconToken: "file-link-docx_outlined",
-    headerPadding: "12px 12px 12px 12px",
-    bodyElements: [
-      caseColumnSet([
-        caseColumn([
-          caseMarkdown(`**${escapeCardMarkdown(view.title)}**`, { size: "heading" }),
-        ], { weight: 1, padding: "0px 0px 0px 0px" }),
-      ], { spacing: "8px" }),
-      ...buildContractDraftMetaRows(view),
-      caseColumnSet([
-        caseColumn(view.steps.map((step) => caseMarkdown(buildContractDraftStepText(step), {
-          size: "normal",
-          icon: mapContractDraftStepIcon(step.status),
-        })), {
-          bg: "grey-50",
-          padding: "8px 8px 8px 8px",
-          weight: 1,
-        }),
-      ], { spacing: "8px", stretch: true }),
-    ],
-  });
-}
-
-function buildContractDraftCompletedPayload(
-  view: ContractDraftProgressView,
-  result: { wordPath: string; recordId?: string | undefined; warnings: string[] },
-  options: { elapsedMs: number; recordUrl?: string | undefined },
-): FeishuPostPayload {
-  return buildInteractiveCardPayload({
-    title: "合同起草完成",
-    template: "green",
-    iconToken: "yes_filled",
-    headerPadding: "12px 12px 12px 12px",
-    bodyElements: [
-      caseColumnSet([
-        caseColumn([
-          caseMarkdown(`**${escapeCardMarkdown(view.title)}**`, { size: "heading" }),
-        ], { weight: 1, padding: "0px 0px 0px 0px" }),
-      ], { spacing: "8px" }),
-      ...buildContractDraftMetaRows(view),
-      caseColumnSet([
-        caseColumn(view.steps.map((step) => caseMarkdown(buildContractDraftStepText(step), {
-          size: "normal",
-          icon: mapContractDraftStepIcon(step.status),
-        })), {
-          bg: "grey-50",
-          padding: "8px 8px 8px 8px",
-          weight: 1,
-        }),
-      ], { spacing: "8px", stretch: true }),
-      caseColumnSet([
-        caseColumn([
-          caseMarkdown(`本地文件：\`${escapeCardMarkdown(shortProjectPath(result.wordPath))}\``, { size: "normal_v2" }),
-        ], { weight: 1, padding: "0px 0px 0px 0px" }),
-      ], { spacing: "8px" }),
-      caseColumnSet([
-        caseColumn([
-          caseMarkdown(options.recordUrl ? `[合同台账记录：打开记录](${options.recordUrl})` : "合同台账记录：未写入", { size: "normal_v2" }),
-        ], { weight: 1, padding: "0px 0px 0px 0px" }),
-      ], { spacing: "8px" }),
-      ...(result.warnings.length > 0
-        ? [
-          caseDivider(),
-          caseColumnSet([
-            caseColumn(result.warnings.map((warning) => caseMarkdown(`- ${escapeCardMarkdown(warning)}`, { size: "normal_v2" })), {
-              weight: 1,
-              padding: "0px 0px 0px 0px",
-            }),
-          ], { spacing: "8px" }),
-        ]
-        : []),
-      caseDivider(),
-      buildElapsedDiv(options.elapsedMs),
-    ],
-  });
-}
-
-function buildCaseCreateCompletedPayload(result: CaseCreateResult, recordUrl: string, request: string): FeishuPostPayload {
-  const record = result.record;
-  const fallback = parseCaseCreateRequestPreview(request);
-  const clientName = readCaseField(record, "委托人") ?? fallback.clientName ?? "委托人";
-  const counterpartyName = readCaseField(record, "对方当事人") ?? fallback.counterpartyName ?? "对方当事人";
-  const type = readCaseField(record, "类型") ?? fallback.type;
-  const stage = readCaseField(record, "程序阶段") ?? fallback.stage;
-  const headline = `${clientName} vs ${counterpartyName}`;
-  const tagLine = [type, stage].filter(Boolean).join("｜");
-  const chips = buildCaseDisplayItems(record, fallback);
-
-  return buildInteractiveCardPayload({
-    title: "案件已录入",
-    template: "green",
-    iconToken: "succeed-hollow_filled",
-    headerPadding: "12px 12px 12px 12px",
-    bodyElements: [
-      caseColumnSet([
-        caseColumn([
-          caseMarkdown(`**${escapeCardMarkdown(headline)}**`, { size: "normal_v2" }),
-        ], { weight: 1, padding: "0px 0px 0px 0px" }),
-      ], { spacing: "8px" }),
-      ...(tagLine
-        ? [
-          caseColumnSet([
-            caseColumn([
-              casePlainDiv(tagLine, "notation", "grey"),
-            ], { bg: "grey-50", padding: "4px 4px 4px 4px" }),
-          ], { spacing: "8px" }),
-        ]
-        : []),
-      caseDivider(),
-      caseMarkdown("**结构化信息**", { size: "normal" }),
-      buildCaseChipRow(chips.length > 0 ? chips : [result.summary]),
-      caseDivider(),
-      caseMarkdown(`[案件管理表](${recordUrl})`, { size: "normal_v2" }),
-    ],
-  });
-}
-
-function parseCaseCreateRequestPreview(request: string): {
-  clientName?: string | undefined;
-  counterpartyName?: string | undefined;
-  cause?: string | undefined;
-  court?: string | undefined;
-  lawyer?: string | undefined;
-  status?: string | undefined;
-  type?: string | undefined;
-  stage?: string | undefined;
-} {
-  const text = request.trim();
-  const clientName = matchFirst(text, [/委托人[：:\s]*([^，。,；;\n]+)/]);
-  const counterpartyName = matchFirst(text, [/对方当事人[：:\s]*([^，。,；;\n]+)/]);
-  const cause = matchFirst(text, [/案由[：:\s]*([^，。,；;\n]+)/]);
-  const court = matchFirst(text, [/受理机构[：:\s]*([^，。,；;\n]+)/, /审理法院[：:\s]*([^，。,；;\n]+)/]);
-  const rawLawyer = matchFirst(text, [/承办律师[：:\s]*([^，。,；;\n]+)/, /主办律师[：:\s]*([^，。,；;\n]+)/]);
-  const lawyer = rawLawyer?.replace(/律师$/u, "").trim() || undefined;
-  const status = normalizeCaseCreateStatus(matchFirst(text, [/案件状态[：:\s]*([^，。,；;\n]+)/]));
-  const type = matchFirst(text, [/类型[：:\s]*([^，。,；;\n]+)/]);
-  const stage = normalizeCaseCreateStage(matchFirst(text, [/程序阶段[：:\s]*([^，。,；;\n]+)/]));
-  return {
-    ...(clientName ? { clientName } : {}),
-    ...(counterpartyName ? { counterpartyName } : {}),
-    ...(cause ? { cause: normalizeCaseCreateCause(cause) } : {}),
-    ...(court ? { court } : {}),
-    ...(lawyer ? { lawyer } : {}),
-    ...(status ? { status } : {}),
-    ...(type ? { type } : {}),
-    ...(stage ? { stage } : {}),
-  };
-}
-
-function normalizeCaseCreateCause(value: string | undefined): string | undefined {
-  if (!value) {
-    return undefined;
-  }
-  return /劳动/.test(value) ? "劳动争议" : value.trim();
-}
-
-function normalizeCaseCreateStage(value: string | undefined): string | undefined {
-  if (!value) {
-    return undefined;
-  }
-  if (/劳动仲裁|仲裁/.test(value)) {
-    return "仲裁阶段";
-  }
-  if (/一审/.test(value)) {
-    return "一审阶段";
-  }
-  if (/二审/.test(value)) {
-    return "二审阶段";
-  }
-  if (/执行/.test(value)) {
-    return "执行阶段";
-  }
-  return value.trim();
-}
-
-function normalizeCaseCreateStatus(value: string | undefined): string | undefined {
-  if (!value) {
-    return undefined;
-  }
-  if (/证据整理中|处理中|进行中|在办/.test(value)) {
-    return "进行中";
-  }
-  return value.trim();
-}
-
-function buildContractDraftMetaRows(view: ContractDraftProgressView): Array<Record<string, unknown>> {
-  const chips = [view.tagLine, view.feeLine].filter((item): item is string => Boolean(item));
-  if (chips.length === 0) {
-    return [];
-  }
-  return [
-    caseColumnSet(chips.map((chip) => caseColumn([
-      casePlainDiv(chip, "notation", "grey"),
-    ], { bg: "grey-50", padding: "4px 4px 4px 4px" })), { spacing: "8px" }),
-  ];
-}
-
-function buildInvoiceRecognizeProgressPayload(view: InvoiceRecognizeProgressView): FeishuPostPayload {
-  return buildInteractiveCardPayload({
-    title: "发票识别",
-    template: "blue",
-    iconToken: "group-card_outlined",
-    headerPadding: "12px 12px 12px 12px",
-    bodyElements: [
-      caseColumnSet([
-        caseColumn(view.steps.map((step) => caseMarkdown(buildInvoiceStepText(step), {
-          size: "normal",
-          icon: mapInvoiceStepIcon(step.status),
-        })), {
-          bg: "grey-50",
-          padding: "8px 8px 8px 8px",
-          weight: 1,
-        }),
-      ], { spacing: "8px", stretch: true }),
-    ],
-  });
-}
-
-function buildInvoiceRecognizeCompletedPayload(
-  result: InvoiceRecognizeResult,
-  options: { elapsedMs: number; recordUrl: string },
-): FeishuPostPayload {
-  const payer = readCaseField(result.record, "付款方");
-  const invoiceNo = readCaseField(result.record, "发票号");
-  const invoiceDate = readCaseField(result.record, "开票日期");
-  const amount = readInvoiceAmount(result.record);
-  const summaryBits = splitInvoiceSummary(result.summary);
-  const buyerChips = [payer, summaryBits.identity].filter((item): item is string => Boolean(item));
-  const invoiceChips = [
-    invoiceNo,
-    summaryBits.invoiceType,
-    amount,
-    invoiceDate,
-    summaryBits.itemName,
-  ].filter((item): item is string => Boolean(item));
-
-  return buildInteractiveCardPayload({
-    title: "发票识别完成",
-    template: "green",
-    iconToken: "group-card_outlined",
-    headerPadding: "12px 12px 12px 12px",
-    bodyElements: [
-      ...(buyerChips.length > 0
-        ? [
-          caseMarkdown("购买方信息", { size: "normal_v2" }),
-          buildInvoiceChipGroup(buyerChips, false),
-        ]
-        : []),
-      ...(invoiceChips.length > 0
-        ? [
-          caseMarkdown("发票信息", { size: "normal_v2" }),
-          buildInvoiceChipGroup(invoiceChips, true),
-        ]
-        : []),
-      caseColumnSet([
-        caseColumn([
-          caseMarkdown(`[查看发票表 →](${options.recordUrl})`, { size: "normal_v2" }),
-        ], { weight: 1, padding: "4px 4px 4px 4px" }),
-      ], { spacing: "8px" }),
-      caseDivider(),
-      buildElapsedDiv(options.elapsedMs),
-    ],
-  });
-}
-
-function buildReminderProgressPayload(): FeishuPostPayload {
-  return buildInteractiveCardPayload({
-    title: "案件提醒",
-    template: "blue",
-    iconToken: "info_outlined",
-    headerPadding: "12px 12px 12px 12px",
-    bodyElements: [
-      caseColumnSet([
-        caseColumn([
-          caseMarkdown("已完成合同与发票台账扫描", {
-            size: "normal",
-            icon: { token: "yes_outlined", color: "green" },
-          }),
-          caseMarkdown("正在检索关联案件与待办事项…", {
-            size: "normal",
-            icon: { token: "loading_outlined", color: "blue" },
-          }),
-        ], {
-          bg: "grey-50",
-          padding: "8px 8px 8px 8px",
-          weight: 1,
-        }),
-      ], { spacing: "8px", stretch: true }),
-    ],
-  });
-}
-
-function buildTodayTodoPayload(result: ReminderListResult): FeishuPostPayload {
-  const items = buildReminderItems(result);
-  return buildInteractiveCardPayload({
-    title: "今日待办",
-    template: "orange",
-    iconToken: "info_outlined",
-    headerPadding: "12px 12px 12px 12px",
-    bodyElements: [
-      ...(items.length > 0
-        ? items.map((item) => buildReminderTodoRow(item))
-        : [buildReminderTodoRow({
-          title: "暂无待办",
-          detail: "当前无需要提醒的事项",
-          due: "",
-          bg: "grey-50",
-        })]),
-      {
-        tag: "div",
-        text: {
-          tag: "plain_text",
-          content: "发送 /提醒 详情 查看全部 · /提醒 完成 1 标记完成",
-          text_size: "notation",
-          text_align: "left",
-          text_color: "grey",
-        },
-        icon: {
-          tag: "standard_icon",
-          token: "info_outlined",
-          color: "light_grey",
-        },
-      },
-    ],
-  });
-}
-
-function buildCaseReminderAddCompletedPayload(result: CaseReminderAddResult, recordUrl: string): FeishuPostPayload {
-  const body = [
-    `案件：${result.matchedLabel}`,
-    `提醒：${result.reminderLabel} ${result.reminderDate}`,
-    result.todo ? `待做事项：${result.todo}` : undefined,
-    "已写入案件管理表。",
-    "",
-    `[查看案件记录](${recordUrl})`,
-    "发送 `/案件提醒` 可查看最近提醒。",
-  ].filter((line): line is string => typeof line === "string").join("\n");
-  return buildNoticeCardPayload({
-    title: "案件提醒已添加",
-    template: "green",
-    iconToken: "alarm-clock_outlined",
-    message: body,
-  });
-}
-
-function buildInteractiveCardPayload(options: {
-  title: string;
-  template: "blue" | "green" | "red" | "wathet" | "grey" | "orange" | "yellow" | "purple" | "indigo";
-  iconToken: string;
-  bodyElements: Array<Record<string, unknown>>;
-  headerPadding?: string;
-}): FeishuPostPayload {
-  return {
-    msg_type: "interactive",
-    content: JSON.stringify({
-      schema: "2.0",
-      config: {
-        update_multi: true,
-        style: {
-          text_size: {
-            normal_v2: {
-              default: "normal",
-              pc: "normal",
-              mobile: "heading",
-            },
-          },
-        },
-      },
-      body: {
-        direction: "vertical",
-        elements: options.bodyElements,
-      },
-      header: {
-        title: {
-          tag: "plain_text",
-          content: options.title,
-        },
-        subtitle: {
-          tag: "plain_text",
-          content: "",
-        },
-        template: options.template,
-        icon: {
-          tag: "standard_icon",
-          token: options.iconToken,
-        },
-        padding: options.headerPadding ?? "12px 12px 12px 12px",
-      },
-    }),
-  };
-}
-
-function caseMarkdown(
-  content: string,
-  opts: { size?: string; icon?: { token: string; color?: string }; align?: string } = {},
-): Record<string, unknown> {
-  return {
-    tag: "markdown",
-    content,
-    text_align: opts.align ?? "left",
-    text_size: opts.size ?? "normal_v2",
-    margin: "0px 0px 0px 0px",
-    ...(opts.icon
-      ? {
-        icon: {
-          tag: "standard_icon",
-          token: opts.icon.token,
-          color: opts.icon.color,
-        },
-      }
-      : {}),
-  };
-}
-
-function casePlainDiv(content: string, textSize: string, textColor: string): Record<string, unknown> {
-  return {
-    tag: "div",
-    text: {
-      tag: "plain_text",
-      content,
-      text_size: textSize,
-      text_align: "left",
-      text_color: textColor,
-    },
-    margin: "0px 0px 0px 0px",
-  };
-}
-
-function caseColumnSet(
-  columns: Array<Record<string, unknown>>,
-  opts: { spacing?: string; stretch?: boolean; flow?: boolean } = {},
-): Record<string, unknown> {
-  return {
-    tag: "column_set",
-    ...(opts.stretch ? { flex_mode: "stretch" } : {}),
-    ...(opts.flow ? { flex_mode: "flow" } : {}),
-    horizontal_spacing: opts.spacing ?? "8px",
-    horizontal_align: "left",
-    columns,
-    margin: "0px 0px 0px 0px",
-  };
-}
-
-function caseColumn(
-  elements: Array<Record<string, unknown>>,
-  opts: { bg?: string; padding?: string; weight?: number } = {},
-): Record<string, unknown> {
-  return {
-    tag: "column",
-    width: opts.weight ? "weighted" : "auto",
-    ...(opts.bg ? { background_style: opts.bg } : {}),
-    elements,
-    padding: opts.padding ?? "0px 0px 0px 0px",
-    direction: "vertical",
-    horizontal_spacing: "8px",
-    vertical_spacing: opts.padding ? "4px" : "8px",
-    horizontal_align: opts.weight ? "left" : "center",
-    vertical_align: opts.weight ? "top" : "center",
-    ...(opts.weight ? { weight: opts.weight } : {}),
-    margin: "0px 0px 0px 0px",
-  };
-}
-
-function buildCaseChipRow(values: string[]): Record<string, unknown> {
-  const rows = chunkCaseChipValues(values, 5);
-  return caseColumnSet([
-    caseColumn(rows.map((row) => caseColumnSet(row.map((value) => caseColumn([
-      caseMarkdown(escapeCardMarkdown(value), { size: "normal" }),
-    ], {
-      bg: "grey-50",
-      padding: "4px 4px 4px 4px",
-    })), { spacing: "8px" })), {
-      weight: 1,
-      padding: "0px 0px 0px 0px",
-    }),
-  ], { spacing: "8px" });
-}
-
-function buildCaseDisplayItems(
-  record: Record<string, unknown>,
-  fallback: ReturnType<typeof parseCaseCreateRequestPreview>,
-): string[] {
-  const items = [
-    readCaseField(record, "委托人") ?? fallback.clientName,
-    readCaseField(record, "对方当事人") ?? fallback.counterpartyName,
-    readCaseField(record, "案由") ?? fallback.cause,
-    readCaseField(record, "审理法院") ?? fallback.court,
-    readCaseField(record, "主办律师") ?? readCaseField(record, "承办律师") ?? fallback.lawyer,
-    readCaseField(record, "案件状态") ?? fallback.status,
-    formatCaseDisplayItem("日期", readCaseDisplayField(record, "日期")),
-    formatCaseDisplayItem("开庭日", readCaseDisplayField(record, "开庭日")),
-    formatCaseDisplayItem("举证截止日", readCaseDisplayField(record, "举证截止日")),
-    formatCaseDisplayItem("待做事项", readCaseField(record, "待做事项")),
-  ];
-  return items.filter((item): item is string => Boolean(item));
-}
-
-function formatCaseDisplayItem(label: string, value: string | undefined): string | undefined {
-  return value ? `${label} ${value}` : undefined;
-}
-
-function readCaseDisplayField(record: Record<string, unknown>, field: string): string | undefined {
-  const value = record[field];
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return formatCaseDateTime(value, field === "开庭日");
-  }
-  return readCaseField(record, field);
-}
-
-function formatCaseDateTime(timestamp: number, includeTime: boolean): string {
-  const date = new Date(timestamp);
-  const pad = (value: number) => String(value).padStart(2, "0");
-  const formatted = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-  return includeTime ? `${formatted} ${pad(date.getHours())}:${pad(date.getMinutes())}` : formatted;
-}
-
-function chunkCaseChipValues(values: string[], size: number): string[][] {
-  const chunks: string[][] = [];
-  for (let index = 0; index < values.length; index += size) {
-    chunks.push(values.slice(index, index + size));
-  }
-  return chunks;
-}
-
-function buildInvoiceChipGroup(values: string[], flow: boolean): Record<string, unknown> {
-  return caseColumnSet(values.map((value) => caseColumn([
-    caseMarkdown(escapeCardMarkdown(value), { size: "normal_v2" }),
-  ], {
-    bg: "grey-50",
-    padding: "4px 4px 4px 4px",
-  })), { spacing: "8px", flow });
-}
-
-function buildReminderTodoRow(item: { title: string; detail: string; due: string; bg: string }): Record<string, unknown> {
-  return {
-    tag: "column_set",
-    flex_mode: "stretch",
-    background_style: item.bg,
-    horizontal_spacing: "8px",
-    horizontal_align: "left",
-    columns: [
-      {
-        tag: "column",
-        width: "weighted",
-        elements: [
-          caseMarkdown(`**${escapeCardMarkdown(item.title)}**\n${escapeCardMarkdown(item.detail)}`, { size: "normal" }),
-        ],
-        padding: "8px 8px 8px 8px",
-        direction: "vertical",
-        horizontal_spacing: "8px",
-        vertical_spacing: "8px",
-        horizontal_align: "left",
-        vertical_align: "top",
-        margin: "0px 0px 0px 0px",
-        weight: 1,
-      },
-      ...(item.due
-        ? [{
-          tag: "column",
-          width: "auto",
-          elements: [
-            caseMarkdown(escapeCardMarkdown(item.due), { size: "normal" }),
-          ],
-          padding: "8px 8px 8px 8px",
-          direction: "vertical",
-          horizontal_spacing: "8px",
-          vertical_spacing: "8px",
-          horizontal_align: "center",
-          vertical_align: "center",
-          margin: "0px 0px 0px 0px",
-        }]
-        : []),
-    ],
-    margin: "0px 0px 0px 0px",
-  };
-}
-
-function caseDivider(): Record<string, unknown> {
-  return {
-    tag: "hr",
-    margin: "0px 0px 0px 0px",
-  };
-}
-
-function buildElapsedDiv(elapsedMs: number): Record<string, unknown> {
-  return {
-    tag: "div",
-    text: {
-      tag: "plain_text",
-      content: `耗时：${formatElapsedSeconds(elapsedMs)}`,
-      text_size: "notation",
-      text_align: "left",
-      text_color: "grey",
-    },
-    icon: {
-      tag: "standard_icon",
-      token: "alarm-clock_outlined",
-      color: "light_grey",
-    },
-    margin: "0px 0px 0px 0px",
-  };
-}
-
-function createInvoiceRecognizeProgressState(): InvoiceRecognizeProgressView {
-  return {
-    steps: [
-      { label: "OCR 识别发票内容", status: "pending" },
-      { label: "填写表格", status: "pending" },
-    ],
-  };
-}
-
-function applyInvoiceRecognizeStep(view: InvoiceRecognizeProgressView, currentIndex: number): void {
-  view.steps.forEach((step, index) => {
-    if (index < currentIndex) {
-      step.status = "completed";
-    } else if (index === currentIndex) {
-      step.status = "running";
-    } else {
-      step.status = "pending";
-    }
-  });
-}
-
-function completeInvoiceRecognizeProgress(view: InvoiceRecognizeProgressView): void {
-  view.steps.forEach((step) => {
-    step.status = "completed";
-  });
-}
-
-function buildReminderItems(result: ReminderListResult): Array<{ title: string; detail: string; due: string; bg: string }> {
-  return [
-    ...result.caseLines.map(parseCaseReminderLine),
-    ...result.contractLines.map(parseContractReminderLine),
-    ...result.invoiceLines.map(parseInvoiceReminderLine),
-  ].slice(0, 8);
-}
-
-function parseCaseReminderLine(line: string): { title: string; detail: string; due: string; bg: string } {
-  const [caseLabel = "案件", rest = line] = line.split(/：(.+)/);
-  const status = matchFirst(rest, [/当前状态\s*([^；;]+)/]);
-  const todo = matchFirst(rest, [/待做事项\s*([^；;]+)/]);
-  const due = matchFirst(rest, [/(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?|\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)/]) ?? "";
-  const title = localizeReminderTitle(rest, todo);
-  const detailTail = rest
-    .replace(due, "")
-    .replace(/；?截止\s*[^；;]+/, "")
-    .replace(/；?当前状态\s*[^；;]+/, "")
-    .replace(/；?程序阶段\s*[^；;]+/, "")
-    .replace(/；?待做事项\s*[^；;]+/, "")
-    .replace(/^\S+\s*/, "")
-    .trim();
-  return {
-    title,
-    detail: [caseLabel.trim(), todo || detailTail || status].filter(Boolean).join(" · "),
-    due: formatReminderDue(due),
-    bg: reminderBackground(title),
-  };
-}
-
-function parseContractReminderLine(line: string): { title: string; detail: string; due: string; bg: string } {
-  const [name = "合同", rest = line] = line.split(/：(.+)/);
-  const due = matchFirst(rest, [/付款节点[：:]\s*([^；;]+)/]) ?? "";
-  return {
-    title: "合同付款",
-    detail: `${name.trim()} · ${rest.replace(/；?付款节点[：:]\s*[^；;]+/, "").trim()}`,
-    due: formatReminderDue(due),
-    bg: "wathet-50",
-  };
-}
-
-function parseInvoiceReminderLine(line: string): { title: string; detail: string; due: string; bg: string } {
-  const [contractNo = "发票记录", rest = line] = line.split(/：(.+)/);
-  const due = matchFirst(rest, [/开票日期\s*([^，,；;]+)/]) ?? "";
-  return {
-    title: "发票匹配",
-    detail: `${contractNo.trim()} · ${rest.replace(/，?开票日期\s*[^，,；;]+/, "").trim()}`,
-    due: formatReminderDue(due),
-    bg: "yellow-50",
-  };
-}
-
-function localizeReminderTitle(text: string, todo?: string): string {
-  if (text.includes("举证")) return "举证期限截止";
-  if (text.includes("开庭")) return "开庭提醒";
-  if (text.includes("上诉")) return "上诉期限截止";
-  if (text.includes("反诉")) return "反诉期限截止";
-  if (text.includes("管辖权异议")) return "管辖权异议期限截止";
-  if (text.includes("待做事项")) return classifyCaseTodoTitle(todo);
-  return "案件提醒";
-}
-
-function classifyCaseTodoTitle(todo: string | undefined): string {
-  if (!todo) {
-    return "案件待办";
-  }
-  if (/(证据|社保|工资流水|考勤|聊天记录|录音|证明|材料)/.test(todo)) {
-    return "证据补充";
-  }
-  if (/(申请书|起诉状|答辩状|代理词|文书|起草|准备仲裁申请书)/.test(todo)) {
-    return "文书准备";
-  }
-  if (/(沟通|联系|通知|协调|确认)/.test(todo)) {
-    return "沟通跟进";
-  }
-  if (/(开庭|庭审|出庭)/.test(todo)) {
-    return "开庭准备";
-  }
-  return "案件待办";
-}
-
-function reminderBackground(title: string): string {
-  if (title.includes("截止")) {
-    return "red-50";
-  }
-  if (title.includes("开庭")) {
-    return "yellow-50";
-  }
-  if (title.includes("合同付款")) {
-    return "wathet-50";
-  }
-  return "grey-50";
-}
-
-function formatReminderDue(value: string): string {
-  return value.trim();
-}
-
-function buildInvoiceStepText(step: InvoiceRecognizeProgressView["steps"][number]): string {
-  switch (step.status) {
-    case "completed":
-      return `已完成${step.label}`;
-    case "running":
-      return `正在 ${step.label}…`;
-    default:
-      return `等待${step.label}…`;
-  }
-}
-
-function mapInvoiceStepIcon(status: InvoiceRecognizeProgressView["steps"][number]["status"]): { token: string; color: string } {
-  switch (status) {
-    case "completed":
-      return { token: "yes_outlined", color: "green" };
-    default:
-      return { token: "loading_outlined", color: "blue" };
-  }
-}
-
-function createContractDraftProgressState(request: string): ContractDraftProgressView {
-  const meta = inferContractDraftMeta(request);
-  const steps = contractDraftSteps().map((step, index) => ({
-    ...step,
-    status: index === 0 ? "running" : "pending" as "running" | "pending",
-  }));
-  return {
-    ...meta,
-    steps,
-  };
-}
-
-function applyContractDraftProgress(
-  view: ContractDraftProgressView,
-  currentStage: ContractDraftProgressStage,
-  detail?: string,
-): void {
-  const currentIndex = view.steps.findIndex((step) => step.stage === currentStage);
-  if (currentIndex < 0) {
-    return;
-  }
-  view.steps.forEach((step, index) => {
-    if (index < currentIndex) {
-      step.status = "completed";
-      step.detail = undefined;
-      return;
-    }
-    if (index === currentIndex) {
-      step.status = "running";
-      step.detail = detail;
-      return;
-    }
-    if (step.status !== "completed") {
-      step.status = "pending";
-      step.detail = undefined;
-    }
-  });
-}
-
-function completeContractDraftProgress(view: ContractDraftProgressView): void {
-  view.steps.forEach((step) => {
-    step.status = "completed";
-    step.detail = undefined;
-  });
-}
-
-function contractDraftSteps(): Array<{ stage: ContractDraftProgressStage; label: string }> {
-  return [
-    { stage: "parse-request", label: "解析起草需求" },
-    { stage: "match-template", label: "匹配合同模板" },
-    { stage: "prepare-fields", label: "整理关键字段" },
-    { stage: "generate-word", label: "使用模板填充变量并生成文档" },
-    { stage: "sync-artifacts", label: "同步合同台账记录" },
-  ];
-}
-
-function buildContractDraftStepText(step: ContractDraftProgressView["steps"][number]): string {
-  switch (step.status) {
-    case "completed":
-      return `已完成${step.label}…`;
-    case "running":
-      return `正在${step.label}…`;
-    default:
-      return `等待${step.label}…`;
-  }
-}
-
-function mapContractDraftStepIcon(status: ContractDraftProgressView["steps"][number]["status"]): { token: string; color: string } {
-  switch (status) {
-    case "completed":
-      return { token: "yes_outlined", color: "green" };
-    case "running":
-      return { token: "loading_outlined", color: "blue" };
-    default:
-      return { token: "loading_outlined", color: "blue" };
-  }
-}
-
-function inferContractDraftMeta(request: string): { title: string; tagLine?: string; feeLine?: string } {
-  const compact = request.replace(/\s+/g, " ").trim();
-  const client = extractLabeledValue(compact, ["甲方", "委托人"]);
-  const counterparty = extractLabeledValue(compact, ["对方当事人", "对方"])
-    ?? matchFirst(compact, [/因与([^，。,；;\n]+?)(?:发生|的)?(?:劳动争议|纠纷|争议)/]);
-  const cause = extractLabeledValue(compact, ["案由"])
-    ?? matchFirst(compact, [/(劳动争议|劳动仲裁|民间借贷纠纷|合同纠纷|买卖合同纠纷|服务合同纠纷)/]);
-  const stage = matchFirst(compact, [/(劳动仲裁|仲裁|一审|二审|执行)/]);
-  const fee = extractContractDraftFee(compact);
-  const parties = [client, counterparty].filter(Boolean);
-
-  return {
-    title: parties.length === 2 ? `委托代理合同（${parties[0]} vs ${parties[1]}）` : "委托代理合同",
-    ...([cause, stage].filter(Boolean).length > 0 ? { tagLine: [cause, stage].filter(Boolean).join("｜") } : {}),
-    ...(fee ? { feeLine: `律师费：¥${normalizeMoneyText(fee)}` } : {}),
-  };
-}
-
-function extractLabeledValue(text: string, labels: string[]): string | undefined {
-  const labelPattern = labels
-    .sort((a, b) => b.length - a.length)
-    .map(escapeRegExp)
-    .join("|");
-  const explicit = text.match(new RegExp(`(?:${labelPattern})(?:（[^）]+）)?\\s*(?:为|是|[:：])\\s*([^，。,；;\\n]+)`));
-  if (explicit?.[1]?.trim()) {
-    return cleanupDraftMetaValue(explicit[1]);
-  }
-  const compact = text.match(new RegExp(`(?:${labelPattern})(?:（[^）]+）)?\\s*([^，。,；;\\n]+)`));
-  if (compact?.[1]?.trim() && !/^(因|与|为|是|[:：])/.test(compact[1].trim())) {
-    return cleanupDraftMetaValue(compact[1]);
-  }
-  return undefined;
-}
-
-function cleanupDraftMetaValue(value: string): string {
-  return value
-    .replace(/^(?:为|是|[:：])\s*/, "")
-    .replace(/^(?:发生|关于)/, "")
-    .trim();
-}
-
-function extractContractDraftFee(text: string): string | undefined {
-  const patterns = [
-    /(?:律师费|代理费用|代理费|基础费用)\s*(?:为|是|[:：])?\s*(?:人民币|¥)?\s*([0-9][0-9,.]*)\s*元?/,
-    /(?:仲裁|一审|二审|执行)(?:阶段|程序)?(?:律师费|代理费)?\s*(?:为|是|[:：])?\s*(?:人民币|¥)?\s*([0-9][0-9,.]*)\s*元?/,
-  ];
-  return matchFirst(text, patterns);
-}
-
-function matchFirst(text: string, patterns: RegExp[]): string | undefined {
-  for (const pattern of patterns) {
-    const matched = text.match(pattern);
-    const value = matched?.slice(1).find((item) => item && item.trim()) ?? matched?.[1] ?? matched?.[0];
-    if (value && value.trim()) {
-      return value.trim();
-    }
-  }
-  return undefined;
-}
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function normalizeMoneyText(value: string): string {
-  const digits = value.replace(/[^\d.]/g, "");
-  if (!digits) {
-    return value;
-  }
-  const amount = Number(digits);
-  if (!Number.isFinite(amount)) {
-    return value;
-  }
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(amount);
-}
-
-function formatElapsedSeconds(elapsedMs: number): string {
-  const seconds = Math.max(1, Math.round(elapsedMs / 1000));
-  if (seconds < 60) {
-    return `${seconds}s`;
-  }
-  const minutes = Math.floor(seconds / 60);
-  const remain = seconds % 60;
-  return remain > 0 ? `${minutes} 分 ${remain} 秒` : `${minutes} 分`;
-}
-
-function readCaseField(record: Record<string, unknown>, field: string): string | undefined {
-  const value = record[field];
-  if (typeof value === "string" && value.trim()) {
-    return value.trim();
-  }
-  if (Array.isArray(value)) {
-    const parts = value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
-    return parts.length > 0 ? parts.join("、") : undefined;
-  }
-  return undefined;
-}
-
-function readInvoiceAmount(record: Record<string, unknown>): string | undefined {
-  const value = record["发票金额"];
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return undefined;
-  }
-  return `¥${new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value)}`;
-}
-
-function splitInvoiceSummary(summary: string): { invoiceType?: string; itemName?: string; identity?: string } {
-  const invoiceType = matchFirst(summary, [/(增值税专用发票|增值税普通发票|电子发票|普通发票)/]);
-  const itemName = matchFirst(summary, [/项目[：:\s]*([^，。,；;\n]+)/, /内容[：:\s]*([^，。,；;\n]+)/]);
-  const identity = matchFirst(summary, [/(?:税号|身份证号|信用代码)[：:\s]*([A-Za-z0-9]+)/]);
-  return {
-    ...(invoiceType ? { invoiceType } : {}),
-    ...(itemName ? { itemName } : {}),
-    ...(identity ? { identity } : {}),
-  };
-}
-
-function truncateCardText(text: string, maxLength: number): string {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}…` : normalized;
-}
-
-function escapeCardMarkdown(text: string): string {
-  return text
-    .replace(/\\/g, "\\\\")
-    .replace(/\*/g, "\\*")
-    .replace(/_/g, "\\_")
-    .replace(/`/g, "\\`")
-    .replace(/\[/g, "\\[")
-    .replace(/\]/g, "\\]")
-    .replace(/\(/g, "\\(")
-    .replace(/\)/g, "\\)");
-}
-
 function buildBitableRecordUrl(baseToken: string, tableId: string, recordId: string): string {
   const base = `https://feishu.cn/base/${encodeURIComponent(baseToken)}?table=${encodeURIComponent(tableId)}`;
   return `${base}&recordId=${encodeURIComponent(recordId)}`;
-}
-
-function shortProjectPath(targetPath: string): string {
-  const cwd = process.cwd();
-  const repoName = path.basename(cwd);
-  const relative = path.relative(cwd, targetPath);
-  if (!relative || relative.startsWith("..")) {
-    return targetPath;
-  }
-  return path.join(repoName, relative);
 }
 
 function renderWorkbenchSummaryMessage(state: ContractState | null): string {
