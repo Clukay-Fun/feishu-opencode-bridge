@@ -9,6 +9,7 @@ import { routeIncomingText } from "../src/bridge/router.js";
 import { LaborRuntimeModule } from "../src/labor/runtime-module.js";
 import type { LaborAggregateResult, LaborMaterialExtraction } from "../src/labor/index.js";
 import type { IncomingChatMessage } from "../src/runtime/app.js";
+import { createFeishuTransport } from "../src/runtime/feishu-transport.js";
 
 function createTextMessage(text: string, overrides: Partial<IncomingChatMessage> = {}): IncomingChatMessage {
   return {
@@ -117,8 +118,10 @@ async function createModule() {
       extractMaterial,
       finalizeAnalysis,
     } as never,
-    sendPayload: sendPayload as never,
-    updatePayload: updatePayload as never,
+    transport: createFeishuTransport({
+      sendPayload: sendPayload as never,
+      updatePayload: updatePayload as never,
+    }),
   });
 
   return {

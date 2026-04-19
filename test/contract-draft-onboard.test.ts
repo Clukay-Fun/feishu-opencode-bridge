@@ -6,6 +6,7 @@ import type { AppConfig } from "../src/config/schema.js";
 import { routeIncomingText } from "../src/bridge/router.js";
 import { ContractAssistantRuntimeModule } from "../src/contract-assistant/runtime-module.js";
 import type { IncomingChatMessage } from "../src/runtime/app.js";
+import { createFeishuTransport } from "../src/runtime/feishu-transport.js";
 
 function createTextMessage(text: string): IncomingChatMessage {
   return {
@@ -169,8 +170,10 @@ function createModule() {
       listReminderItems,
       addCaseReminder,
     } as never,
-    sendPayload,
-    updatePayload,
+    transport: createFeishuTransport({
+      sendPayload: sendPayload as never,
+      updatePayload: updatePayload as never,
+    }),
   });
   return {
     module,

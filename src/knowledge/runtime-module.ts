@@ -15,6 +15,7 @@ import {
 } from "../feishu/formatter.js";
 import { createTextPreview, type Logger, type TranscriptType } from "../logging/logger.js";
 import type { IncomingChatMessage } from "../runtime/app.js";
+import type { FeishuTransport } from "../runtime/feishu-transport.js";
 import {
   getActiveSession,
   setActiveSession,
@@ -31,20 +32,6 @@ import {
   type KnowledgeIngestProgressUpdate,
   type KnowledgeIngestResult,
 } from "./index.js";
-
-type SendPayload = (
-  chatId: string,
-  payload: FeishuPostPayload,
-  options: { event: string; transcriptType: TranscriptType; textPreview: string; len: number },
-  delivery?: { replyToMessageId: string; replyInThread?: boolean },
-) => Promise<{ messageId: string }>;
-
-type UpdatePayload = (
-  chatId: string,
-  messageId: string,
-  payload: FeishuPostPayload,
-  options: { event: string; transcriptType: TranscriptType; textPreview: string; len: number },
-) => Promise<{ messageId: string }>;
 
 type KnowledgeIngestQueueItem = {
   conversationKey: string;
@@ -92,8 +79,7 @@ type KnowledgeRuntimeModuleDeps = {
   config: AppConfig;
   logger: Logger;
   knowledge: KnowledgeBasePort | null;
-  sendPayload: SendPayload;
-  updatePayload: UpdatePayload;
+  transport: FeishuTransport;
   getSessionWindow(conversationKey: string, chatType?: string): SessionWindowRecord;
   saveSessionWindow(conversationKey: string, window: SessionWindowRecord): Promise<void>;
   createAndBindSession(source: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey">): Promise<SessionBindingRecord>;
@@ -230,7 +216,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
         return true;
       }
       try {
-        const processing = await this.deps.sendPayload(
+        const processing = await this.sendPayload(
           message.chatId,
           buildNoticeCardPayload({
             title: "知识检索进行中",
@@ -247,7 +233,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
           { replyToMessageId: message.messageId },
         );
         const result = await this.deps.knowledge.query(command.question);
-        await this.deps.updatePayload(
+        await this.updatePayload(
           message.chatId,
           processing.messageId,
           result.results.length > 0 ? buildKnowledgeQueryPayload(result) : buildKnowledgeQueryEmptyPayload(command.question),
@@ -301,7 +287,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       );
       await this.deps.saveSessionWindow(message.conversationKey, nextWindow);
       const deliveryMode = message.chatType === "p2p" ? "p2p_reply" : "group_thread";
-      const ready = await this.deps.sendPayload(message.chatId, buildKnowledgeIngestReadyPayload(), {
+      const ready = await this.sendPayload(message.chatId, buildKnowledgeIngestReadyPayload(), {
         event: "knowledge ingest pending",
         transcriptType: "outbound-final",
         textPreview: "已进入知识入库模式",
@@ -420,7 +406,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     ) {
       try {
         const result = await this.deps.knowledge.query(message.plainText);
-        await this.deps.sendPayload(
+        await this.sendPayload(
           message.chatId,
           result.results.length > 0 ? buildKnowledgeQueryPayload(result) : buildKnowledgeQueryEmptyPayload(message.plainText),
           {
@@ -433,7 +419,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
         );
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
-        await this.deps.sendPayload(message.chatId, buildNoticeCardPayload({
+        await this.sendPayload(message.chatId, buildNoticeCardPayload({
           title: "知识检索失败",
           template: "red",
           iconToken: "error_filled",
@@ -464,7 +450,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       if (result.results.length === 0) {
         return false;
       }
-      await this.deps.sendPayload(
+      await this.sendPayload(
         message.chatId,
         buildKnowledgeQueryPayload(result),
         {
@@ -541,7 +527,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     };
     queue.pending.push(queuedItem);
     this.refreshKnowledgeIngestPending(pending.conversationKey, pending);
-    const receipt = await this.deps.sendPayload(message.chatId, buildNoticeCardPayload({
+    const receipt = await this.sendPayload(message.chatId, buildNoticeCardPayload({
       title: "已收到入库素材",
       template: "blue",
       iconToken: itemInput.kind === "web" ? "global-link_outlined" : "file-link-docx_outlined",
@@ -615,7 +601,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
           const detail = error instanceof Error ? error.message : String(error);
           this.recordKnowledgeIngestFailure(conversationKey, getKnowledgeIngestQueueItemLabel(currentItem), detail);
           if (queue.batchMessageId) {
-            await this.deps.updatePayload(currentItem.chatId, queue.batchMessageId, buildKnowledgeIngestFailurePayload({
+            await this.updatePayload(currentItem.chatId, queue.batchMessageId, buildKnowledgeIngestFailurePayload({
               sourceLabel: getKnowledgeIngestQueueItemLabel(currentItem),
               reason: detail,
             }), {
@@ -721,7 +707,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     });
     const queue = this.knowledgeIngestQueues.get(pending.conversationKey);
     if (queue?.batchMessageId) {
-      await this.deps.updatePayload(pending.chatId, queue.batchMessageId, payload, {
+      await this.updatePayload(pending.chatId, queue.batchMessageId, payload, {
         event: "knowledge ingest session final summary updated",
         transcriptType: "outbound-final",
         textPreview: "知识入库完成汇总",
@@ -729,7 +715,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       });
       return;
     }
-    await this.deps.sendPayload(pending.chatId, payload, {
+    await this.sendPayload(pending.chatId, payload, {
       event: "knowledge ingest session final summary sent",
       transcriptType: "outbound-final",
       textPreview: "知识入库完成汇总",
@@ -789,7 +775,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     delivery?: { replyToMessageId: string },
   ): Promise<void> {
     if (pending.requesterOpenId !== message.senderOpenId) {
-      await this.deps.sendPayload(pending.chatId, buildNoticeCardPayload({
+      await this.sendPayload(pending.chatId, buildNoticeCardPayload({
         title: "无法结束入库模式",
         template: "yellow",
         iconToken: "maybe_outlined",
@@ -818,7 +804,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     if (!delivery || !endedImmediately) {
       return;
     }
-    await this.deps.sendPayload(pending.chatId, buildNoticeCardPayload({
+    await this.sendPayload(pending.chatId, buildNoticeCardPayload({
       title: "已退出知识入库模式",
       template: "green",
       iconToken: "yes_filled",
@@ -880,7 +866,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     }
     await this.sendKnowledgeIngestFinalSummary(current);
     await this.clearPending(conversationKey, current.chatType);
-    await this.deps.sendPayload(current.chatId, buildNoticeCardPayload({
+    await this.sendPayload(current.chatId, buildNoticeCardPayload({
       title: "入库任务已超时",
       template: "yellow",
       iconToken: "maybe_outlined",
@@ -897,7 +883,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
   }
 
   private async sendKnowledgeIngestMarkdown(pending: PendingKnowledgeIngestInteraction, markdown: string): Promise<void> {
-    await this.deps.sendPayload(pending.chatId, buildPostMarkdownPayload(markdown), {
+    await this.sendPayload(pending.chatId, buildPostMarkdownPayload(markdown), {
       event: "knowledge ingest notice sent",
       transcriptType: "outbound-final",
       textPreview: createTextPreview(markdown),
@@ -1023,7 +1009,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
           detail: error instanceof Error ? error.message : String(error),
         }, "warn");
       });
-      await this.deps.sendPayload(record.chatId, buildNoticeCardPayload({
+      await this.sendPayload(record.chatId, buildNoticeCardPayload({
         title: "入库任务已中断",
         template: "yellow",
         iconToken: "maybe_outlined",
@@ -1060,7 +1046,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     applyKnowledgeIngestProgress(state, update);
     const payload = buildKnowledgeIngestProcessingPayload(state);
     try {
-      await this.deps.updatePayload(chatId, messageId, payload, {
+      await this.updatePayload(chatId, messageId, payload, {
         event: "knowledge ingest progress updated",
         transcriptType: "outbound-final",
         textPreview: `${state.sourceLabel} ${state.steps.map((step) => `${step.label}:${step.detail}`).join(" | ")}`,
@@ -1081,7 +1067,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     item: KnowledgeIngestQueueItem,
   ): Promise<void> {
     if (!queue.batchMessageId) {
-      const created = await this.deps.sendPayload(item.chatId, buildKnowledgeIngestProcessingPayload(item.progressState), {
+      const created = await this.sendPayload(item.chatId, buildKnowledgeIngestProcessingPayload(item.progressState), {
         event: "knowledge ingest processing started",
         transcriptType: "outbound-final",
         textPreview: getKnowledgeIngestQueueItemLabel(item),
@@ -1091,7 +1077,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       return;
     }
     try {
-      await this.deps.updatePayload(item.chatId, queue.batchMessageId, buildKnowledgeIngestProcessingPayload(item.progressState), {
+      await this.updatePayload(item.chatId, queue.batchMessageId, buildKnowledgeIngestProcessingPayload(item.progressState), {
         event: "knowledge ingest processing started",
         transcriptType: "outbound-final",
         textPreview: getKnowledgeIngestQueueItemLabel(item),
@@ -1115,7 +1101,10 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       message: string;
     },
   ): Promise<void> {
-    await this.deps.sendPayload(message.chatId, buildNoticeCardPayload({
+    await this.deps.transport.sendNotice({
+      chatId: message.chatId,
+      replyToMessageId: message.messageId,
+    }, {
       title: input.title,
       template: input.template,
       iconToken: input.icon,
@@ -1131,12 +1120,30 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
               ? "indigo"
               : "blue",
       showMessageIcon: false,
-    }), {
+    }, {
       event: "final message sent",
       transcriptType: "outbound-final",
       textPreview: input.title,
       len: input.title.length,
-    }, { replyToMessageId: message.messageId });
+    });
+  }
+
+  private async sendPayload(
+    chatId: string,
+    payload: FeishuPostPayload,
+    options: { event: string; transcriptType: TranscriptType; textPreview: string; len: number },
+    delivery?: { replyToMessageId: string; replyInThread?: boolean },
+  ): Promise<{ messageId: string }> {
+    return await this.deps.transport.sendPayload(chatId, payload, options, delivery);
+  }
+
+  private async updatePayload(
+    chatId: string,
+    messageId: string,
+    payload: FeishuPostPayload,
+    options: { event: string; transcriptType: TranscriptType; textPreview: string; len: number },
+  ): Promise<{ messageId: string }> {
+    return await this.deps.transport.updatePayload(chatId, messageId, payload, options);
   }
 }
 

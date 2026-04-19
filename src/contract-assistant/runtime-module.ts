@@ -1,14 +1,15 @@
 import { DEFAULT_CONTRACT_ASSISTANT_CONFIG, type AppConfig, type ContractAssistantConfig } from "../config/schema.js";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { RuntimeModule, RuntimeModuleHandleResult, RuntimeModuleMessageContext } from "../bridge/module.js";
 import {
   buildNoticeCardPayload,
   type FeishuPostPayload,
 } from "../feishu/formatter.js";
-import { createTextPreview, type Logger, type TranscriptType } from "../logging/logger.js";
+import { createTextPreview, type Logger } from "../logging/logger.js";
 import type { IncomingChatMessage, IncomingFileMessage } from "../runtime/app.js";
 import type { RoutedText } from "../bridge/router.js";
+import type { FeishuTransport } from "../runtime/feishu-transport.js";
+import { PersistedInteractionManager } from "../runtime/persisted-interaction-manager.js";
 import type {
   ContractAssistantService,
   ContractClause,
@@ -21,26 +22,11 @@ import type {
   ContractWorkbenchModelResult,
 } from "./index.js";
 
-type SendPayload = (
-  chatId: string,
-  payload: FeishuPostPayload,
-  options: { event: string; transcriptType: TranscriptType; textPreview: string; len: number },
-  delivery?: { replyToMessageId: string; replyInThread?: boolean },
-) => Promise<{ messageId: string }>;
-
-type UpdatePayload = (
-  chatId: string,
-  messageId: string,
-  payload: FeishuPostPayload,
-  options: { event: string; transcriptType: TranscriptType; textPreview: string; len: number },
-) => Promise<{ messageId: string }>;
-
 type ContractAssistantRuntimeModuleDeps = {
   config: AppConfig;
   logger: Logger;
   service: ContractAssistantService | null;
-  sendPayload: SendPayload;
-  updatePayload: UpdatePayload;
+  transport: FeishuTransport;
 };
 
 type ContractAssistantCommand = Extract<RoutedText, { kind: "command" }>["command"];
@@ -140,21 +126,27 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
   readonly name = "contract-assistant";
   readonly priority = 30;
 
-  private readonly interactions = new Map<string, PendingInteraction>();
-  private readonly timers = new Map<string, NodeJS.Timeout>();
-  private readonly stateFilePath: string;
-  private persistChain: Promise<void> = Promise.resolve();
+  private readonly interactions: PersistedInteractionManager<PendingInteraction>;
   private reminderTimer: NodeJS.Timeout | null = null;
   private lastReminderSlot = "";
   private readonly featureConfig: ContractAssistantConfig;
 
   constructor(private readonly deps: ContractAssistantRuntimeModuleDeps) {
     this.featureConfig = deps.config.contractAssistant ?? DEFAULT_CONTRACT_ASSISTANT_CONFIG;
-    this.stateFilePath = path.join(deps.config.storage.dataDir, "contract-assistant-state.json");
+    this.interactions = new PersistedInteractionManager({
+      stateFilePath: path.join(deps.config.storage.dataDir, "contract-assistant-state.json"),
+      logger: deps.logger,
+      logScope: "contract-assistant/state",
+      getKey: (interaction) => interaction.conversationKey,
+      getExpiresAt: (interaction) => interaction.expiresAt,
+      onExpire: async (interaction) => {
+        await this.handleExpiredInteraction(interaction);
+      },
+    });
   }
 
   async start(): Promise<void> {
-    await this.restoreState();
+    await this.interactions.restore();
     if (!this.featureConfig.enabled || !this.featureConfig.reminder.enabled || !this.deps.service) {
       return;
     }
@@ -165,12 +157,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
   }
 
   async stop(): Promise<void> {
-    await this.flushPersist();
-    for (const timer of this.timers.values()) {
-      clearTimeout(timer);
-    }
-    this.timers.clear();
-    this.interactions.clear();
+    await this.interactions.stop();
     if (this.reminderTimer) {
       clearInterval(this.reminderTimer);
       this.reminderTimer = null;
@@ -483,12 +470,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         stages: [],
       },
     };
-    this.interactions.set(message.conversationKey, interaction);
-    this.schedulePersist();
-    const timer = setTimeout(() => {
-      void this.expireInteraction(message.conversationKey);
-    }, this.featureConfig.ingest.pendingTtlMs);
-    this.timers.set(message.conversationKey, timer);
+    this.interactions.set(interaction);
     await this.sendNotice(message, {
       title: "合同起草引导",
       template: "blue",
@@ -543,8 +525,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       return true;
     }
 
-    this.interactions.set(message.conversationKey, next);
-    this.schedulePersist();
+    this.interactions.set(next);
     await this.sendNotice(message, {
       title: "继续补充合同起草信息",
       template: "blue",
@@ -581,9 +562,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       state: null,
       recentMessages: [],
     };
-    this.interactions.set(message.conversationKey, interaction);
-    this.restoreTimer(message.conversationKey, this.featureConfig.ingest.pendingTtlMs);
-    this.schedulePersist();
+    this.interactions.set(interaction);
 
     if (initialRequest) {
       await this.initializeWorkbenchFromText(message, interaction, initialRequest);
@@ -650,7 +629,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         userInput,
       );
       await this.applyWorkbenchResult(message, pending, userInput, result);
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同起草已处理",
         template: "green",
         iconToken: "yes_outlined",
@@ -663,7 +642,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同起草处理失败",
         template: "red",
         iconToken: "error_filled",
@@ -684,7 +663,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
   ): Promise<void> {
     const startedAt = Date.now();
     const progressState = createContractDraftProgressState(request);
-    const processing = await this.deps.sendPayload(message.chatId, buildContractDraftProgressPayload(progressState), {
+    const processing = await this.deps.transport.sendPayload(message.chatId, buildContractDraftProgressPayload(progressState), {
       event: "contract draft started",
       transcriptType: "outbound-final",
       textPreview: createTextPreview(request),
@@ -693,7 +672,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     try {
       const result = await this.deps.service!.draftContract(request, { requesterOpenId: message.senderOpenId }, async (stage, detail) => {
         applyContractDraftProgress(progressState, stage, detail);
-        await this.deps.updatePayload(message.chatId, processing.messageId, buildContractDraftProgressPayload(progressState), {
+        await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildContractDraftProgressPayload(progressState), {
           event: "contract draft progress updated",
           transcriptType: "outbound-final",
           textPreview: createTextPreview(detail ?? stage),
@@ -701,7 +680,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         });
       });
       completeContractDraftProgress(progressState);
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildContractDraftCompletedPayload(
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildContractDraftCompletedPayload(
         progressState,
         result,
         {
@@ -717,7 +696,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         len: result.docTitle.length,
       });
     } catch (error) {
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同起草失败",
         template: "red",
         iconToken: "error_filled",
@@ -748,7 +727,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         `合同台账记录：[打开记录](${buildBitableRecordUrl(this.featureConfig.storage.baseToken, this.featureConfig.storage.contractTableId, result.recordId)})`,
         result.summary,
       ].join("\n");
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同录入完成",
         template: "green",
         iconToken: "yes_outlined",
@@ -760,7 +739,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         len: summary.length,
       });
     } catch (error) {
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同录入失败",
         template: "red",
         iconToken: "error_filled",
@@ -781,7 +760,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     const startedAt = Date.now();
     const progressState = createInvoiceRecognizeProgressState();
     applyInvoiceRecognizeStep(progressState, 0);
-    const processing = await this.deps.sendPayload(message.chatId, buildInvoiceRecognizeProgressPayload(progressState), {
+    const processing = await this.deps.transport.sendPayload(message.chatId, buildInvoiceRecognizeProgressPayload(progressState), {
       event: "invoice recognize started",
       transcriptType: "outbound-final",
       textPreview: file.fileName,
@@ -790,14 +769,14 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     try {
       const result = await this.deps.service!.recognizeInvoice(file);
       applyInvoiceRecognizeStep(progressState, 1);
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildInvoiceRecognizeProgressPayload(progressState), {
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildInvoiceRecognizeProgressPayload(progressState), {
         event: "invoice recognize record write started",
         transcriptType: "outbound-final",
         textPreview: result.summary,
         len: result.summary.length,
       });
       completeInvoiceRecognizeProgress(progressState);
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildInvoiceRecognizeCompletedPayload(
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildInvoiceRecognizeCompletedPayload(
         result,
         {
           elapsedMs: Date.now() - startedAt,
@@ -810,7 +789,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         len: result.summary.length,
       });
     } catch (error) {
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "发票识别失败",
         template: "red",
         iconToken: "error_filled",
@@ -828,7 +807,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     message: Pick<IncomingChatMessage, "chatId" | "messageId">,
     request: string,
   ): Promise<void> {
-    const processing = await this.deps.sendPayload(message.chatId, buildCaseCreateProcessingPayload(request), {
+    const processing = await this.deps.transport.sendPayload(message.chatId, buildCaseCreateProcessingPayload(request), {
       event: "case create processing",
       transcriptType: "outbound-final",
       textPreview: createTextPreview(request),
@@ -838,14 +817,14 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       const result = await this.deps.service!.createCase(request);
       const recordUrl = buildBitableRecordUrl(this.featureConfig.storage.baseToken, this.featureConfig.storage.caseTableId, result.recordId);
       const payload = buildCaseCreateCompletedPayload(result, recordUrl, request);
-      await this.deps.updatePayload(message.chatId, processing.messageId, payload, {
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, payload, {
         event: "case create completed",
         transcriptType: "outbound-final",
         textPreview: createTextPreview(result.summary),
         len: result.summary.length,
       });
     } catch (error) {
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "案件录入失败",
         template: "red",
         iconToken: "error_filled",
@@ -872,7 +851,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     try {
       const result = await this.deps.service!.updateCase(request);
       const summary = `匹配案件：${result.matchedLabel}`;
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "案件更新完成",
         template: "green",
         iconToken: "yes_outlined",
@@ -884,7 +863,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         len: summary.length,
       });
     } catch (error) {
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "案件更新失败",
         template: "red",
         iconToken: "error_filled",
@@ -929,7 +908,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     message: Pick<IncomingChatMessage, "chatId" | "messageId">,
     query: string,
   ): Promise<void> {
-    const processing = await this.deps.sendPayload(message.chatId, buildReminderProgressPayload(), {
+    const processing = await this.deps.transport.sendPayload(message.chatId, buildReminderProgressPayload(), {
       event: "case reminder progress sent",
       transcriptType: "outbound-final",
       textPreview: "案件提醒",
@@ -942,7 +921,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         invoiceLines: [],
         caseLines: result.lines,
       };
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildTodayTodoPayload(reminderResult), {
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildTodayTodoPayload(reminderResult), {
         event: "case reminder sent",
         transcriptType: "outbound-final",
         textPreview: createTextPreview(renderReminderPlainText(reminderResult)),
@@ -950,7 +929,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "案件提醒查询失败",
         template: "red",
         iconToken: "error_filled",
@@ -979,7 +958,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       const recordUrl = buildBitableRecordUrl(this.featureConfig.storage.baseToken, this.featureConfig.storage.caseTableId, result.recordId);
       const payload = buildCaseReminderAddCompletedPayload(result, recordUrl);
       const preview = `案件提醒已添加：${result.matchedLabel} ${result.reminderLabel} ${result.reminderDate}`;
-      await this.deps.updatePayload(message.chatId, processing.messageId, payload, {
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, payload, {
         event: "case reminder add completed",
         transcriptType: "outbound-final",
         textPreview: createTextPreview(preview),
@@ -987,7 +966,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "案件提醒添加失败",
         template: "red",
         iconToken: "error_filled",
@@ -1025,10 +1004,9 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         },
         recentMessages: pushRecentMessages(pending.recentMessages, prompt),
       };
-      this.interactions.set(message.conversationKey, updated);
-      this.schedulePersist();
+      this.interactions.set(updated);
       await this.updateWorkbenchAnchor(updated);
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同已载入工作会话",
         template: "green",
         iconToken: "yes_outlined",
@@ -1041,7 +1019,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同初始化失败",
         template: "red",
         iconToken: "error_filled",
@@ -1083,10 +1061,9 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         },
         recentMessages: pushRecentMessages(pending.recentMessages, `[文件] ${message.file.fileName}`),
       };
-      this.interactions.set(message.conversationKey, updated);
-      this.schedulePersist();
+      this.interactions.set(updated);
       await this.updateWorkbenchAnchor(updated);
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同已载入工作会话",
         template: "green",
         iconToken: "yes_outlined",
@@ -1099,7 +1076,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      await this.deps.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同初始化失败",
         template: "red",
         iconToken: "error_filled",
@@ -1131,8 +1108,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         ...pending,
         recentMessages: pushRecentMessages(pushRecentMessages(pending.recentMessages, userInput), `查看结果：${title}`),
       };
-      this.interactions.set(message.conversationKey, updated);
-      this.schedulePersist();
+      this.interactions.set(updated);
       await this.sendNotice(message, {
         title,
         template: "grey",
@@ -1164,11 +1140,10 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
           state: updatedState,
           recentMessages: pushRecentMessages(pushRecentMessages(pending.recentMessages, userInput), "已导出 Word"),
         };
-        this.interactions.set(message.conversationKey, updated);
-        this.schedulePersist();
+        this.interactions.set(updated);
         await this.updateWorkbenchAnchor(updated);
         const summary = `Word 草稿已导出：${wordPath}`;
-        await this.deps.updatePayload(message.chatId, exportProcessing.messageId, buildNoticeCardPayload({
+        await this.deps.transport.updatePayload(message.chatId, exportProcessing.messageId, buildNoticeCardPayload({
           title: "Word 导出完成",
           template: "green",
           iconToken: "yes_outlined",
@@ -1181,7 +1156,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         });
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
-        await this.deps.updatePayload(message.chatId, exportProcessing.messageId, buildNoticeCardPayload({
+        await this.deps.transport.updatePayload(message.chatId, exportProcessing.messageId, buildNoticeCardPayload({
           title: "Word 导出失败",
           template: "red",
           iconToken: "error_filled",
@@ -1216,8 +1191,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         state: updatedState,
         recentMessages: pushRecentMessages(pushRecentMessages(pending.recentMessages, userInput), `修改结果：${result.message}`),
       };
-      this.interactions.set(message.conversationKey, updated);
-      this.schedulePersist();
+      this.interactions.set(updated);
       await this.updateWorkbenchAnchor(updated);
       await this.sendNotice(message, {
         title: "合同已更新",
@@ -1237,7 +1211,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
   }
 
   private async updateWorkbenchAnchor(pending: PendingWorkbenchInteraction): Promise<void> {
-    await this.deps.updatePayload(pending.chatId, pending.anchorMessageId, buildNoticeCardPayload({
+    await this.deps.transport.updatePayload(pending.chatId, pending.anchorMessageId, buildNoticeCardPayload({
       title: "合同起草会话",
       template: "blue",
       iconToken: "edit_outlined",
@@ -1264,12 +1238,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       anchorMessageId: message.messageId,
       expiresAt: Date.now() + this.featureConfig.ingest.pendingTtlMs,
     };
-    this.interactions.set(message.conversationKey, interaction);
-    this.schedulePersist();
-    const timer = setTimeout(() => {
-      void this.expireInteraction(message.conversationKey);
-    }, this.featureConfig.ingest.pendingTtlMs);
-    this.timers.set(message.conversationKey, timer);
+    this.interactions.set(interaction);
     await this.sendNotice(message, {
       title: kind === "contract-extract" ? "等待上传合同文件" : "等待上传发票文件",
       template: "blue",
@@ -1278,14 +1247,9 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     });
   }
 
-  private async expireInteraction(conversationKey: string): Promise<void> {
-    const pending = this.interactions.get(conversationKey);
-    if (!pending) {
-      return;
-    }
-    this.clearInteraction(conversationKey);
+  private async handleExpiredInteraction(pending: PendingInteraction): Promise<void> {
     try {
-      await this.deps.sendPayload(pending.chatId, buildNoticeCardPayload({
+      await this.deps.transport.sendPayload(pending.chatId, buildNoticeCardPayload({
         title: "任务已超时",
         template: "grey",
         iconToken: "time_outlined",
@@ -1309,12 +1273,6 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
 
   private clearInteraction(conversationKey: string): void {
     this.interactions.delete(conversationKey);
-    const timer = this.timers.get(conversationKey);
-    if (timer) {
-      clearTimeout(timer);
-      this.timers.delete(conversationKey);
-    }
-    this.schedulePersist();
   }
 
   private clearWorkbenchSessionsForRequester(chatId: string, requesterOpenId: string): void {
@@ -1334,8 +1292,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       return;
     }
     interaction.expiresAt = Date.now() + this.featureConfig.ingest.pendingTtlMs;
-    this.restoreTimer(conversationKey, this.featureConfig.ingest.pendingTtlMs);
-    this.schedulePersist();
+    this.interactions.touch(conversationKey, interaction.expiresAt);
   }
 
   private async sendWorkbenchReject(
@@ -1364,7 +1321,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     try {
       const processingMessages = await Promise.all(this.featureConfig.reminder.targetChatIds.map(async (chatId) => ({
         chatId,
-        ...(await this.deps.sendPayload(chatId, buildReminderProgressPayload(), {
+        ...(await this.deps.transport.sendPayload(chatId, buildReminderProgressPayload(), {
           event: "contract assistant reminder progress sent",
           transcriptType: "outbound-final",
           textPreview: "案件提醒",
@@ -1374,7 +1331,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       const result = await this.deps.service!.listReminderItems(this.featureConfig.reminder.lookaheadDays);
       const payload = buildTodayTodoPayload(result);
       for (const item of processingMessages) {
-        await this.deps.updatePayload(item.chatId, item.messageId, payload, {
+        await this.deps.transport.updatePayload(item.chatId, item.messageId, payload, {
           event: "contract assistant reminder sent",
           transcriptType: "outbound-final",
           textPreview: createTextPreview(renderReminderPlainText(result)),
@@ -1397,77 +1354,20 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       message: string;
     },
   ): Promise<{ messageId: string }> {
-    return await this.deps.sendPayload(message.chatId, buildNoticeCardPayload({
+    return await this.deps.transport.sendNotice({
+      chatId: message.chatId,
+      replyToMessageId: message.messageId,
+    }, {
       title: options.title,
       template: options.template,
       iconToken: options.icon,
       message: options.message,
-    }), {
+    }, {
       event: "contract assistant notice sent",
       transcriptType: "outbound-final",
       textPreview: options.message,
       len: options.message.length,
-    }, { replyToMessageId: message.messageId });
-  }
-
-  private async restoreState(): Promise<void> {
-    const interactions = await this.readPersistedInteractions();
-    const now = Date.now();
-    let changed = false;
-    for (const interaction of interactions) {
-      if (interaction.expiresAt <= now) {
-        changed = true;
-        continue;
-      }
-      this.interactions.set(interaction.conversationKey, interaction);
-      this.restoreTimer(interaction.conversationKey, interaction.expiresAt - now);
-    }
-    if (changed) {
-      this.schedulePersist();
-      await this.flushPersist();
-    }
-  }
-
-  private restoreTimer(conversationKey: string, timeoutMs: number): void {
-    const existing = this.timers.get(conversationKey);
-    if (existing) {
-      clearTimeout(existing);
-    }
-    const timer = setTimeout(() => {
-      void this.expireInteraction(conversationKey);
-    }, Math.max(1, timeoutMs));
-    this.timers.set(conversationKey, timer);
-  }
-
-  private async readPersistedInteractions(): Promise<PendingInteraction[]> {
-    try {
-      const raw = await readFile(this.stateFilePath, "utf8");
-      const parsed = JSON.parse(raw) as { version?: number; interactions?: PendingInteraction[] };
-      return Array.isArray(parsed.interactions) ? parsed.interactions : [];
-    } catch {
-      return [];
-    }
-  }
-
-  private schedulePersist(): void {
-    this.persistChain = this.persistChain
-      .catch(() => undefined)
-      .then(async () => {
-        await mkdir(path.dirname(this.stateFilePath), { recursive: true });
-        await writeFile(this.stateFilePath, JSON.stringify({
-          version: 1,
-          interactions: [...this.interactions.values()],
-        }, null, 2), "utf8");
-      })
-      .catch((error) => {
-        this.deps.logger.log("contract-assistant/state", "persist state failed", {
-          detail: error instanceof Error ? error.message : String(error),
-        }, "warn");
-      });
-  }
-
-  private async flushPersist(): Promise<void> {
-    await this.persistChain;
+    });
   }
 
   private renderWizardPrompt(pending: PendingDraftInteraction): string {

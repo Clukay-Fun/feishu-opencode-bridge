@@ -164,6 +164,7 @@ function createContext(): TurnExecutorContext {
     async maybeUpdateSessionLabel() {},
     clearPendingInteraction() {},
     clearTurnOwnedPendingInteraction() {},
+    async cleanupTurnResources() {},
     setPendingInteraction() {},
     async sendPayload() {
       return { messageId: "om_reply_1" };

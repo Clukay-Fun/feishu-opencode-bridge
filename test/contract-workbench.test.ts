@@ -9,6 +9,7 @@ import { routeIncomingText } from "../src/bridge/router.js";
 import { ContractAssistantRuntimeModule } from "../src/contract-assistant/runtime-module.js";
 import type { ContractState } from "../src/contract-assistant/index.js";
 import type { IncomingChatMessage } from "../src/runtime/app.js";
+import { createFeishuTransport } from "../src/runtime/feishu-transport.js";
 
 function createTextMessage(text: string): IncomingChatMessage {
   return {
@@ -122,8 +123,10 @@ async function createModule() {
       applyWorkbenchMessage,
       exportWorkbenchWord,
     } as never,
-    sendPayload,
-    updatePayload,
+    transport: createFeishuTransport({
+      sendPayload: sendPayload as never,
+      updatePayload: updatePayload as never,
+    }),
   });
 
   return {
@@ -139,14 +142,7 @@ async function createModule() {
 }
 
 async function cleanupModule(module: ContractAssistantRuntimeModule, tempDir: string): Promise<void> {
-  await (module as unknown as { flushPersist?: () => Promise<void> }).flushPersist?.();
-  const timers = (module as unknown as { timers?: Map<string, ReturnType<typeof setTimeout>> }).timers;
-  if (timers) {
-    for (const timer of timers.values()) {
-      clearTimeout(timer);
-    }
-    timers.clear();
-  }
+  await module.stop();
   await rm(tempDir, { recursive: true, force: true });
 }
 

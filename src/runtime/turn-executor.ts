@@ -87,6 +87,7 @@ export type TurnExecutorContext = {
   maybeUpdateSessionLabel(turn: BridgeTurn & { sessionId: string }): Promise<void>;
   clearPendingInteraction(conversationKey: string, keepNonExpiring: boolean): void;
   clearTurnOwnedPendingInteraction(conversationKey: string, turnId: string): void;
+  cleanupTurnResources(turnId: string): Promise<void>;
   setPendingInteraction(conversationKey: string, interaction: PendingInteraction): void;
   sendPayload(
     chatId: string,
@@ -178,6 +179,7 @@ export class TurnExecutor {
       queue.replaceActive(transitionTurn(turn, detail.includes("超时") ? "timeout" : "aborted"));
     } finally {
       this.context.clearTurnOwnedPendingInteraction(turn.conversationKey, turn.turnId);
+      await this.context.cleanupTurnResources(turn.turnId);
       this.context.turnCardManager.cleanup(turn.turnId);
     }
   }

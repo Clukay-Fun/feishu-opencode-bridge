@@ -946,6 +946,9 @@ function createOutbound() {
     sendMessage: vi.fn(async () => ({ messageId: "om_send" })),
     replyMessage: vi.fn(async () => ({ messageId: "om_reply" })),
     updateMessage: vi.fn(async () => ({ messageId: "om_update" })),
+    createBitableRecord: vi.fn(async () => "rec_1"),
+    listBitableRecords: vi.fn(async () => []),
+    updateBitableRecord: vi.fn(async () => {}),
   };
 }
 
