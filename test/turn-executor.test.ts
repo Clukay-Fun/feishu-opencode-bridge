@@ -1,8 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TurnExecutor, type TurnExecutorContext } from "../src/runtime/turn-executor.js";
 
 describe("TurnExecutor text buffering", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("does not surface non-assistant text before the assistant message is confirmed", async () => {
     const executor = new TurnExecutor(createContext()) as unknown as {
       handleEvent: (turn: Record<string, unknown>, event: Record<string, unknown>, runtime: ReturnType<typeof createRuntime>) => Promise<void>;
@@ -146,6 +150,45 @@ describe("TurnExecutor text buffering", () => {
     await executor.runTurn("queue-1");
 
     expect(cleanupTurnResources).toHaveBeenCalledWith("turn_1");
+  });
+
+  it("falls back to the latest completed assistant message when SSE does not arrive", async () => {
+    vi.useFakeTimers();
+    const context = createContext();
+    const replaceActive = vi.fn();
+    const scheduleStreamUpdate = vi.fn(async () => {});
+    context.queues.get = () => ({
+      peek: () => createTurn(),
+      replaceActive,
+      current: () => createTurn(),
+      finishActive() {},
+    });
+    context.opencode.promptAsync = vi.fn(async () => ({}));
+    context.opencode.getSessionMessages = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([{
+        info: {
+          id: "msg_assistant",
+          role: "assistant",
+          sessionID: "ses_1",
+          finish: "stop",
+          time: { created: Date.now(), completed: Date.now() },
+        },
+        parts: [{ type: "text", text: "fallback 最终回复" }],
+      }]);
+    context.turnCardManager.scheduleStreamUpdate = scheduleStreamUpdate;
+    const executor = new TurnExecutor(context) as unknown as {
+      runTurn: (queueKey: string) => Promise<void>;
+    };
+
+    const run = executor.runTurn("queue-1");
+    await Promise.resolve();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await run;
+
+    expect(scheduleStreamUpdate).toHaveBeenCalledWith("turn_1", "fallback 最终回复");
+    expect(replaceActive).toHaveBeenCalledWith(expect.objectContaining({ state: "done" }));
   });
 });
 

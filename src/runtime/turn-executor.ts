@@ -34,6 +34,74 @@ import { cleanAssistantReply } from "./sanitize.js";
 const FIRST_SSE_FALLBACK_MS = 5_000;
 const PERMISSION_TTL_MS = 120_000;
 
+type TurnExecutionSettlementOptions = {
+  finalize: () => Promise<string>;
+  reject: (reason?: unknown) => void;
+  resolve: (value: string) => void;
+  unsubscribe: () => void;
+  watchdog: TurnWatchdog;
+};
+
+class TurnExecutionSettlement {
+  private settled = false;
+  private fallbackTimer: NodeJS.Timeout | null = null;
+  private seenSessionEvent = false;
+
+  constructor(private readonly options: TurnExecutionSettlementOptions) {}
+
+  startFallback(runFallback: () => void): void {
+    this.fallbackTimer = setTimeout(() => {
+      if (!this.seenSessionEvent) {
+        runFallback();
+      }
+    }, FIRST_SSE_FALLBACK_MS);
+  }
+
+  markSessionEvent(): void {
+    this.seenSessionEvent = true;
+    this.clearFallbackTimer();
+  }
+
+  markWatchdogEvent(nextWatchdogGapMs: number | null): void {
+    if (nextWatchdogGapMs !== null) {
+      this.options.watchdog.snoozeEventGap(nextWatchdogGapMs);
+      return;
+    }
+
+    this.options.watchdog.markEvent();
+  }
+
+  settleWithError(error: Error): void {
+    if (this.settled) return;
+    this.settled = true;
+    this.cleanup();
+    this.options.reject(error);
+  }
+
+  async settleWithText(): Promise<void> {
+    if (this.settled) return;
+    this.settled = true;
+    this.cleanup();
+    try {
+      this.options.resolve(await this.options.finalize());
+    } catch (error) {
+      this.options.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  private cleanup(): void {
+    this.clearFallbackTimer();
+    this.options.unsubscribe();
+    this.options.watchdog.clear();
+  }
+
+  private clearFallbackTimer(): void {
+    if (!this.fallbackTimer) return;
+    clearTimeout(this.fallbackTimer);
+    this.fallbackTimer = null;
+  }
+}
+
 type RuntimeQueue = {
   peek(): BridgeTurn | null;
   replaceActive(turn: BridgeTurn): void;
@@ -237,46 +305,38 @@ export class TurnExecutor {
     return new Promise<string>((resolve, reject) => {
       let assistantMessageId: string | null = null;
       let finalText = "";
-      let settled = false;
-      let fallbackTimer: NodeJS.Timeout | null = null;
-      let seenSessionEvent = false;
       const ignoredTextPartIds = new Set<string>();
       const pendingTextEvents: Array<{ messageId: string; kind: "delta" | "set"; value: string }> = [];
 
-      const settleWithError = (error: Error): void => {
-        if (settled) return;
-        settled = true;
-        if (fallbackTimer) clearTimeout(fallbackTimer);
-        unsubscribe();
-        watchdog.clear();
-        reject(error);
-      };
+      let unsubscribe = (): void => {};
+      const settleWithError = (error: Error): void => { settlement.settleWithError(error); };
+      const watchdog = new TurnWatchdog(
+        {
+          firstEventTimeoutMs: this.context.config.bridge.firstEventTimeoutMs,
+          eventGapTimeoutMs: this.context.config.bridge.eventGapTimeoutMs,
+          totalTimeoutMs: this.context.config.bridge.totalTimeoutMs,
+        },
+        {
+          onFirstEventTimeout: () => settleWithError(new Error("处理超时，请重试或 /new 开新会话")),
+          onEventGapTimeout: () => settleWithError(new Error("处理超时，请重试或 /new 开新会话")),
+          onTotalTimeout: () => settleWithError(new Error("处理超时，请重试或 /new 开新会话")),
+        },
+      );
+      const settlement = new TurnExecutionSettlement({
+        finalize: () => this.finalizeAssistantReply(turn.sessionId, finalText, {
+          baselineAssistantId: baseline.baselineAssistantId,
+          baselineAssistantTimestamp: baseline.baselineAssistantTimestamp,
+          assistantMessageId,
+        }),
+        reject,
+        resolve,
+        unsubscribe: () => { unsubscribe(); },
+        watchdog,
+      });
 
-      const settleWithText = async (): Promise<void> => {
-        if (settled) return;
-        settled = true;
-        if (fallbackTimer) clearTimeout(fallbackTimer);
-        unsubscribe();
-        watchdog.clear();
-        try {
-          const text = await this.finalizeAssistantReply(turn.sessionId, finalText, {
-            baselineAssistantId: baseline.baselineAssistantId,
-            baselineAssistantTimestamp: baseline.baselineAssistantTimestamp,
-            assistantMessageId,
-          });
-          resolve(text);
-        } catch (error) {
-          reject(error instanceof Error ? error : new Error(String(error)));
-        }
-      };
-
-      const unsubscribe = this.context.eventStream.subscribe(async (event) => {
+      unsubscribe = this.context.eventStream.subscribe(async (event) => {
         if (getEventSessionId(event) !== turn.sessionId) return;
-        seenSessionEvent = true;
-        if (fallbackTimer) {
-          clearTimeout(fallbackTimer);
-          fallbackTimer = null;
-        }
+        settlement.markSessionEvent();
 
         try {
           let nextWatchdogGapMs: number | null = null;
@@ -309,56 +369,37 @@ export class TurnExecutor {
               finalText = value;
               await this.context.turnCardManager.scheduleStreamUpdate(turn.turnId, finalText);
             },
-            finish: settleWithText,
-            fail: settleWithError,
+            finish: () => settlement.settleWithText(),
+            fail: (error) => settlement.settleWithError(error),
             getFinalText: () => finalText,
             snoozeWatchdog: (timeoutMs) => { nextWatchdogGapMs = timeoutMs; },
           });
-          if (nextWatchdogGapMs !== null) {
-            watchdog.snoozeEventGap(nextWatchdogGapMs);
-          } else {
-            watchdog.markEvent();
-          }
+          settlement.markWatchdogEvent(nextWatchdogGapMs);
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
           this.context.logger.log("opencode/events", "event listener failed", { chatId: turn.chatId, conversationKey: turn.conversationKey, sessionId: turn.sessionId, detail, type: event.type }, "warn");
         }
       });
 
-      const watchdog = new TurnWatchdog(
-        {
-          firstEventTimeoutMs: this.context.config.bridge.firstEventTimeoutMs,
-          eventGapTimeoutMs: this.context.config.bridge.eventGapTimeoutMs,
-          totalTimeoutMs: this.context.config.bridge.totalTimeoutMs,
-        },
-        {
-          onFirstEventTimeout: () => settleWithError(new Error("处理超时，请重试或 /new 开新会话")),
-          onEventGapTimeout: () => settleWithError(new Error("处理超时，请重试或 /new 开新会话")),
-          onTotalTimeout: () => settleWithError(new Error("处理超时，请重试或 /new 开新会话")),
-        },
-      );
-
       watchdog.start();
       void this.context.opencode.promptAsync(turn.sessionId, buildPromptRequest(turn.text, systemPrompt))
         .then(() => {
           queue.replaceActive(transitionTurn(turn, "awaiting-sse"));
           void this.context.turnCardManager.updateTurnCard(turn.turnId, { status: "处理中", update: "请求已发送，等待事件流...", target: "step" });
-          fallbackTimer = setTimeout(() => {
-            if (!seenSessionEvent) {
-              void this.runFirstSseFallback(turn.sessionId, {
-                baselineAssistantId: baseline.baselineAssistantId,
-                baselineAssistantTimestamp: baseline.baselineAssistantTimestamp,
-                assistantMessageId: () => assistantMessageId,
-              }, {
-                updateText: async (text) => {
-                  finalText = text;
-                  await this.context.turnCardManager.scheduleStreamUpdate(turn.turnId, finalText);
-                },
-                finish: settleWithText,
-                fail: settleWithError,
-              });
-            }
-          }, FIRST_SSE_FALLBACK_MS);
+          settlement.startFallback(() => {
+            void this.runFirstSseFallback(turn.sessionId, {
+              baselineAssistantId: baseline.baselineAssistantId,
+              baselineAssistantTimestamp: baseline.baselineAssistantTimestamp,
+              assistantMessageId: () => assistantMessageId,
+            }, {
+              updateText: async (text) => {
+                finalText = text;
+                await this.context.turnCardManager.scheduleStreamUpdate(turn.turnId, finalText);
+              },
+              finish: () => settlement.settleWithText(),
+              fail: settleWithError,
+            });
+          });
         })
         .catch((error) => settleWithError(error instanceof Error ? error : new Error(String(error))));
     });
