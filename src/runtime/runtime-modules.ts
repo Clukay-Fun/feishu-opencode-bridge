@@ -33,6 +33,8 @@ type KnowledgeResourcePort = {
   updateBitableRecord(appToken: string, tableId: string, recordId: string, fields: Record<string, unknown>): Promise<void>;
 };
 
+type RuntimeModuleOutboundPort = OutboundPort & KnowledgeResourcePort;
+
 export type RuntimeModuleAssemblyResult = {
   moduleManager: ModuleManager;
   knowledgeModule: KnowledgeRuntimeModule;
@@ -40,7 +42,7 @@ export type RuntimeModuleAssemblyResult = {
 
 export function createRuntimeModules(options: {
   config: AppConfig;
-  outbound: OutboundPort & Partial<KnowledgeResourcePort>;
+  outbound: RuntimeModuleOutboundPort;
   transport: FeishuTransport;
   logger: Logger;
   opencode: Pick<OpenCodeClient,
@@ -119,14 +121,13 @@ function createMemoryService(
 
 function createKnowledgeService(
   config: AppConfig,
-  outbound: OutboundPort & Partial<KnowledgeResourcePort>,
+  outbound: RuntimeModuleOutboundPort,
   opencode: OpenCodeClient,
   logger: Logger,
 ): KnowledgeBasePort | null {
   if (!config.knowledgeBase.enabled) {
     return null;
   }
-  assertKnowledgeResourcePort(outbound, "knowledge base");
   return new KnowledgeBaseService(
     config.knowledgeBase,
     outbound,
@@ -137,7 +138,7 @@ function createKnowledgeService(
 
 function createContractAssistantService(
   config: AppConfig,
-  outbound: OutboundPort & Partial<KnowledgeResourcePort>,
+  outbound: RuntimeModuleOutboundPort,
   opencode: OpenCodeClient,
   logger: Logger,
 ): ContractAssistantService | null {
@@ -145,7 +146,6 @@ function createContractAssistantService(
   if (!contractAssistantConfig.enabled) {
     return null;
   }
-  assertKnowledgeResourcePort(outbound, "contract assistant");
   return new ContractAssistantService(
     contractAssistantConfig,
     config.storage.dataDir,
@@ -157,7 +157,7 @@ function createContractAssistantService(
 
 function createLaborSkillService(
   config: AppConfig,
-  outbound: OutboundPort & Partial<KnowledgeResourcePort>,
+  outbound: RuntimeModuleOutboundPort,
   opencode: OpenCodeClient,
   logger: Logger,
   knowledge: KnowledgeBasePort | null,
@@ -166,7 +166,6 @@ function createLaborSkillService(
   if (!laborSkillConfig.enabled) {
     return null;
   }
-  assertKnowledgeResourcePort(outbound, "labor skill");
   return new LaborSkillService(
     laborSkillConfig,
     config.storage.dataDir,
@@ -175,22 +174,4 @@ function createLaborSkillService(
     logger,
     knowledge,
   );
-}
-
-function assertKnowledgeResourcePort(
-  outbound: OutboundPort & Partial<KnowledgeResourcePort>,
-  featureName: string,
-): asserts outbound is OutboundPort & KnowledgeResourcePort {
-  const missing = [
-    "downloadMessageResource",
-    "createBitableRecord",
-    "listBitableRecords",
-    "updateBitableRecord",
-  ].filter((name) => typeof outbound[name as keyof KnowledgeResourcePort] !== "function");
-
-  if (missing.length === 0) {
-    return;
-  }
-
-  throw new Error(`${featureName} requires outbound resource methods: ${missing.join(", ")}`);
 }

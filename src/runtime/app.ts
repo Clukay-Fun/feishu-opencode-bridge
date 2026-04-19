@@ -215,7 +215,7 @@ export class BridgeApp {
     });
     const moduleAssembly = createRuntimeModules({
       config: this.config,
-      outbound: this.outbound as OutboundPort & Partial<KnowledgeResourcePort>,
+      outbound: this.getRuntimeModuleOutbound(),
       transport,
       logger: this.logger,
       opencode: this.opencode as OpenCodeClient,
@@ -747,6 +747,37 @@ export class BridgeApp {
       }
     }
     return null;
+  }
+
+  private getRuntimeModuleOutbound(): OutboundPort & KnowledgeResourcePort {
+    const resources = this.outbound as OutboundPort & Partial<KnowledgeResourcePort>;
+    const missing = [
+      "downloadMessageResource",
+      "createBitableRecord",
+      "listBitableRecords",
+      "updateBitableRecord",
+    ].filter((name) => typeof resources[name as keyof KnowledgeResourcePort] !== "function");
+    if (missing.length > 0 && this.hasResourceBackedFeatureEnabled()) {
+      throw new Error(`runtime modules require outbound resource methods: ${missing.join(", ")}`);
+    }
+    const missingResourceMethod = async (): Promise<never> => {
+      throw new Error("当前运行环境不支持飞书资源操作。");
+    };
+    return {
+      ...this.outbound,
+      downloadMessageResource: resources.downloadMessageResource ?? missingResourceMethod,
+      createBitableRecord: resources.createBitableRecord ?? missingResourceMethod,
+      listBitableRecords: resources.listBitableRecords ?? missingResourceMethod,
+      updateBitableRecord: resources.updateBitableRecord ?? missingResourceMethod,
+    };
+  }
+
+  private hasResourceBackedFeatureEnabled(): boolean {
+    return Boolean(
+      this.config.knowledgeBase.enabled
+      || this.config.contractAssistant?.enabled
+      || this.config.laborSkill?.enabled,
+    );
   }
 
   private async prepareFileForOpenCodeTurn(
