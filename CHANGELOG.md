@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.30 - 2026-04-19
+
+### Added
+- Added the first observability event schema for bridge runtime logs.
+- Added structured logger context propagation, JSON log output, message logging policies, and event helpers.
+
+### Changed
+- Threaded correlation and turn context through Feishu ingress, HTTP callbacks, runtime modules, permission handling, turn cards, and turn execution.
+- Updated architecture documentation to describe the observability boundary and stable event vocabulary.
+
 ## 0.1.29 - 2026-04-19
 
 ### Changed

@@ -67,7 +67,7 @@ export function createRuntimeModules(options: {
   const contractAssistant = createContractAssistantService(options.config, options.outbound, options.opencode as OpenCodeClient, options.logger);
   const laborSkill = createLaborSkillService(options.config, options.outbound, options.opencode as OpenCodeClient, options.logger, knowledge);
 
-  const moduleManager = new RuntimeModuleManager();
+  const moduleManager = new RuntimeModuleManager(options.logger);
   const knowledgeModule = new KnowledgeRuntimeModule({
     config: options.config,
     logger: options.logger,

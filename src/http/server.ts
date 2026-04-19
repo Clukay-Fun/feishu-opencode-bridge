@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
 import http from "node:http";
 
 import type { AppConfig } from "../config/schema.js";
+import { runWithLogContext } from "../logging/logger.js";
 import { APP_VERSION } from "../version.js";
 
 type LoggerLike = {
@@ -85,18 +87,23 @@ export async function startBridgeHttpServer(
           const openMessageId = extractOpenMessageId(event);
           const actionValue = event.action?.value ?? {};
 
-          logger.log("http/server", "callback event parsed", {
-            actorOpenId,
-            openMessageId,
-            actionValueKind: typeof actionValue.kind === "string" ? actionValue.kind : "",
-            ...flattenScalarFields("callback", event),
-          });
+          return await runWithLogContext({
+            userId: actorOpenId,
+            messageId: openMessageId,
+          }, async () => {
+            logger.log("http/server", "callback event parsed", {
+              actorOpenId,
+              openMessageId,
+              actionValueKind: typeof actionValue.kind === "string" ? actionValue.kind : "",
+              ...flattenScalarFields("callback", event),
+            });
 
-          return actions.handlePermissionCardAction(
-            actorOpenId,
-            openMessageId,
-            actionValue,
-          );
+            return await actions.handlePermissionCardAction(
+              actorOpenId,
+              openMessageId,
+              actionValue,
+            );
+          });
         },
       ),
       { autoChallenge: true },
@@ -122,13 +129,15 @@ export async function startBridgeHttpServer(
     }
 
     if (adapter && url.pathname === config.feishu.cardActions.path) {
-      logger.log("http/card-action", "callback received", {
-        method: req.method ?? "UNKNOWN",
-        path: url.pathname,
-        userAgent: req.headers["user-agent"] ?? "",
-        contentType: req.headers["content-type"] ?? "",
+      await runWithLogContext({ correlationId: randomUUID() }, async () => {
+        logger.log("http/card-action", "callback received", {
+          method: req.method ?? "UNKNOWN",
+          path: url.pathname,
+          userAgent: req.headers["user-agent"] ?? "",
+          contentType: req.headers["content-type"] ?? "",
+        });
+        await adapter(req, res);
       });
-      await adapter(req, res);
       return;
     }
 

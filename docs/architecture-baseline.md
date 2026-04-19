@@ -115,7 +115,7 @@ Stable responsibilities:
 - normalize callback inputs
 - handle Feishu markdown and card payload rules
 - encapsulate delivery details such as reply vs thread reply
-- emit logs and transcripts through the shared logger pipeline using stable scope naming
+- emit logs and transcripts through the shared logger pipeline using stable scope naming and the observability event schema
 
 Must not own:
 
@@ -145,6 +145,7 @@ Stable responsibilities:
 - own bridge command surface such as `/new`, `/sessions`, `/status`, `/close`, `/delete`
 - own queueing, turn execution, watchdog, process-card lifecycle, and final reply delivery
 - own session-window state and interaction mode state
+- emit turn, permission, and module lifecycle events using the observability event schema
 
 Must not own:
 

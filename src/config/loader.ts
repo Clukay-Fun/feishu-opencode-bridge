@@ -92,6 +92,9 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
       enableConsole: parsed.logging.enableConsole,
       enableColor: parsed.logging.enableColor,
       rotateDaily: parsed.logging.rotateDaily,
+      format: parsed.logging.format,
+      messagePolicy: parsed.logging.messagePolicy,
+      redactFields: parsed.logging.redactFields,
     },
     memory: {
       enabled: parsed.memory.enabled,
