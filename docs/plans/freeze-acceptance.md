@@ -137,7 +137,7 @@ npm run lint
 npm test
 ```
 
-Result before this acceptance commit: all three passed. `npm test` reported 52 test files and 370 tests passing.
+Final main verification after PR #38 merge: all three passed on commit `e37eb44`. `npm test` reported 52 test files and 370 tests passing.
 
 Test-count note: PR-3 reduced the count from 370 to 368 when alias-only tests were removed; PR-5 added two turn-owned resource cleanup tests, returning the total to 370.
 
@@ -171,6 +171,6 @@ Backlog: `docs/plans/post-freeze-backlog.md`.
 ## 8. Final Sign-Off
 
 Prepared by: Codex
-Accepted by: pending reviewer sign-off
-Commit: `93da5ac`
+Accepted by: Clukay / Codex
+Commit: `e37eb44`
 Date: 2026-04-19
