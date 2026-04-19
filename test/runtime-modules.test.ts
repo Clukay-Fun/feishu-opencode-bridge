@@ -5,7 +5,7 @@ import { createRuntimeModules } from "../src/runtime/runtime-modules.js";
 import type { AppConfig } from "../src/config/schema.js";
 
 describe("createRuntimeModules", () => {
-  it("allows missing resource methods when resource-backed features are disabled", () => {
+  it("assembles modules with the complete outbound resource port", () => {
     expect(() => {
       createRuntimeModules({
         config: createConfig({ knowledgeEnabled: false, contractEnabled: false, laborEnabled: false }),
@@ -20,22 +20,6 @@ describe("createRuntimeModules", () => {
       });
     }).not.toThrow();
   });
-
-  it("throws a clear error when an enabled feature lacks resource methods", () => {
-    expect(() => {
-      createRuntimeModules({
-        config: createConfig({ knowledgeEnabled: true, contractEnabled: false, laborEnabled: false }),
-        outbound: createOutbound(),
-        transport: createTransport(),
-        logger: { log: vi.fn() } as never,
-        opencode: createOpenCode(),
-        whitelist: { bind: vi.fn(async () => {}) },
-        getSessionWindow: () => ({ mode: "single", interactionMode: "default", activeSessionId: null, sessions: [] }),
-        saveSessionWindow: vi.fn(async () => {}),
-        createAndBindSession: vi.fn(async () => ({ sessionId: "ses_1", label: "会话", createdAt: 1, lastUsedAt: 1 })),
-      });
-    }).toThrow("knowledge base requires outbound resource methods");
-  });
 });
 
 function createOutbound() {
@@ -43,6 +27,14 @@ function createOutbound() {
     sendMessage: vi.fn(async () => ({ messageId: "om_send" })),
     replyMessage: vi.fn(async () => ({ messageId: "om_reply" })),
     updateMessage: vi.fn(async () => ({ messageId: "om_update" })),
+    downloadMessageResource: vi.fn(async () => ({
+      fileName: "fixture.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("fixture"),
+    })),
+    createBitableRecord: vi.fn(async () => "rec_1"),
+    listBitableRecords: vi.fn(async () => []),
+    updateBitableRecord: vi.fn(async () => {}),
   };
 }
 

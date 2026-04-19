@@ -135,4 +135,33 @@ describe("PersistedInteractionManager", () => {
     await manager.stop();
     await rm(tempDir, { recursive: true, force: true });
   });
+
+  it("logs persist failures and keeps flush non-throwing", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "persisted-interactions-"));
+    const logger = { log: vi.fn() };
+    const manager = new PersistedInteractionManager<TestInteraction>({
+      stateFilePath: tempDir,
+      logger: logger as never,
+      logScope: "test/persisted",
+      getKey: (interaction) => interaction.conversationKey,
+      getExpiresAt: (interaction) => interaction.expiresAt,
+    });
+
+    manager.set({
+      conversationKey: "active",
+      expiresAt: Date.now() + 60_000,
+      label: "saved",
+    });
+
+    await expect(manager.flush()).resolves.toBeUndefined();
+    expect(logger.log).toHaveBeenCalledWith(
+      "test/persisted",
+      "persist state failed",
+      expect.objectContaining({ detail: expect.any(String) }),
+      "warn",
+    );
+
+    await manager.stop();
+    await rm(tempDir, { recursive: true, force: true });
+  });
 });

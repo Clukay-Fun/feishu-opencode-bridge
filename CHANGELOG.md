@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.26 - 2026-04-19
+
+### Changed
+- Refactored TurnExecutor settlement handling so fallback timers, watchdog cleanup, unsubscribe, and final resolution are owned by a dedicated settlement helper.
+- Tightened runtime module resource wiring so BridgeApp adapts the outbound resource port once before assembling resource-backed modules.
+- Closed the post-freeze runtime cleanup backlog with verification notes and a smaller follow-up candidate.
+
+### Fixed
+- Fixed persisted interaction handling so already-expired interactions are dropped instead of scheduling immediate expiry work.
+- Fixed first-SSE fallback coverage to verify the latest completed assistant message is streamed and settled when OpenCode events never arrive.
+
 ## 0.1.25 - 2026-04-19
 
 ### Added
