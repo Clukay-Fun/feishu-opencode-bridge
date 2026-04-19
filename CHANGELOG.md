@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.27 - 2026-04-19
+
+### Added
+- Added an English README and linked it from the main project README.
+
+### Changed
+- Reworked the main README as the Chinese project homepage with updated status, architecture diagrams, command overview, and documentation links.
+- Reduced `README.zh-CN.md` to a compatibility pointer that redirects readers to the main README and English README.
+
 ## 0.1.26 - 2026-04-19
 
 ### Changed
