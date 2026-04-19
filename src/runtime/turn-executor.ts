@@ -5,7 +5,8 @@ import type { ModuleManager } from "../bridge/module.js";
 import { transitionTurn } from "../bridge/state-machine.js";
 import { TurnWatchdog } from "../bridge/watchdog.js";
 import type { BridgeTurn } from "../bridge/turn.js";
-import { buildPermissionRequestCardPayload, buildPostMarkdownPayload, type FeishuPostPayload } from "../feishu/formatter.js";
+import { buildPermissionRequestCardPayload } from "../feishu/runtime-cards.js";
+import { buildPostMarkdownPayload, type FeishuPostPayload } from "../feishu/shared-primitives.js";
 import { createTextPreview, type Logger, type TranscriptType } from "../logging/logger.js";
 import { type OpenCodeMessage, type OpenCodeSessionStatus } from "../opencode/client.js";
 import { getEventSessionId, type OpenCodeEvent } from "../opencode/events.js";
@@ -184,11 +185,16 @@ export class TurnExecutor {
     }
   }
 
-  private async executeTurn(queueKey: string, turn: BridgeTurn & { sessionId: string }): Promise<string> {
+  private async prepareTurnExecution(
+    queueKey: string,
+    turn: BridgeTurn & { sessionId: string },
+  ): Promise<{
+    baselineAssistantId: string | null;
+    baselineAssistantTimestamp: number | null;
+    queue: RuntimeQueue;
+    systemPrompt: string | undefined;
+  }> {
     const baselineAssistant = await this.getLatestAssistantMessage(turn.sessionId);
-    const baselineAssistantId = baselineAssistant?.info.id ?? null;
-    const baselineAssistantTimestamp = getMessageTimestamp(baselineAssistant);
-    const queue = this.context.queues.get(queueKey);
     const bridgeSystemPrompt = this.context.config.bridge.injectSystemState
       ? buildBridgeSystemPrompt(turn, this.context.getSessionWindow(turn.conversationKey, turn.chatType))
       : undefined;
@@ -196,8 +202,38 @@ export class TurnExecutor {
       turn,
       window: this.context.getSessionWindow(turn.conversationKey, turn.chatType),
     });
-    const systemPrompt = composeSystemPrompt(bridgeSystemPrompt, ...moduleSystemBlocks);
 
+    return {
+      baselineAssistantId: baselineAssistant?.info.id ?? null,
+      baselineAssistantTimestamp: getMessageTimestamp(baselineAssistant),
+      queue: this.context.queues.get(queueKey),
+      systemPrompt: composeSystemPrompt(bridgeSystemPrompt, ...moduleSystemBlocks),
+    };
+  }
+
+  private async executeTurn(queueKey: string, turn: BridgeTurn & { sessionId: string }): Promise<string> {
+    const {
+      baselineAssistantId,
+      baselineAssistantTimestamp,
+      queue,
+      systemPrompt,
+    } = await this.prepareTurnExecution(queueKey, turn);
+
+    return this.executePromptWithEventStream(turn, queue, systemPrompt, {
+      baselineAssistantId,
+      baselineAssistantTimestamp,
+    });
+  }
+
+  private async executePromptWithEventStream(
+    turn: BridgeTurn & { sessionId: string },
+    queue: RuntimeQueue,
+    systemPrompt: string | undefined,
+    baseline: {
+      baselineAssistantId: string | null;
+      baselineAssistantTimestamp: number | null;
+    },
+  ): Promise<string> {
     return new Promise<string>((resolve, reject) => {
       let assistantMessageId: string | null = null;
       let finalText = "";
@@ -224,8 +260,8 @@ export class TurnExecutor {
         watchdog.clear();
         try {
           const text = await this.finalizeAssistantReply(turn.sessionId, finalText, {
-            baselineAssistantId,
-            baselineAssistantTimestamp,
+            baselineAssistantId: baseline.baselineAssistantId,
+            baselineAssistantTimestamp: baseline.baselineAssistantTimestamp,
             assistantMessageId,
           });
           resolve(text);
@@ -310,8 +346,8 @@ export class TurnExecutor {
           fallbackTimer = setTimeout(() => {
             if (!seenSessionEvent) {
               void this.runFirstSseFallback(turn.sessionId, {
-                baselineAssistantId,
-                baselineAssistantTimestamp,
+                baselineAssistantId: baseline.baselineAssistantId,
+                baselineAssistantTimestamp: baseline.baselineAssistantTimestamp,
                 assistantMessageId: () => assistantMessageId,
               }, {
                 updateText: async (text) => {
@@ -425,52 +461,7 @@ export class TurnExecutor {
     }
 
     if (event.type === "permission.asked") {
-      const permissionId = readOptionalString(event.properties, "id");
-      const permissionName = readOptionalString(event.properties, "permission") ?? "unknown";
-      if (!permissionId) return;
-      const interaction: PendingPermissionInteraction = {
-        kind: "permission",
-        chatId: turn.chatId,
-        conversationKey: turn.conversationKey,
-        replyToMessageId: turn.inboundMessageId,
-        requesterOpenId: turn.senderOpenId,
-        sessionId: turn.sessionId,
-        permissionId,
-        permissionName,
-        permissionMessageId: null,
-        permissionVersion: crypto.randomUUID(),
-        turnId: turn.turnId,
-        expiresAt: Date.now() + PERMISSION_TTL_MS,
-      };
-      this.context.permissionManager.registerInteraction(interaction);
-      this.context.setPendingInteraction(turn.conversationKey, interaction);
-      runtime.snoozeWatchdog(PERMISSION_TTL_MS + 5_000);
-      await this.context.turnCardManager.updateTurnCard(turn.turnId, {
-        status: "等待确认",
-        update: "当前权限请求待确认，可点击卡片按钮或发送文本命令处理",
-        target: "step",
-      });
-      const permissionPayload = this.context.config.feishu.cardActions.enabled
-        ? buildPermissionRequestCardPayload({
-          permissionName,
-          buttons: this.context.permissionManager.buildActionButtons(interaction),
-          expiresInSeconds: Math.floor(PERMISSION_TTL_MS / 1000),
-        })
-        : buildPostMarkdownPayload([
-          `OpenCode 请求权限：\`${escapeMarkdownText(permissionName)}\``,
-          "",
-          "回复以下任一命令：",
-          "- `/allow once`：仅本次允许",
-          "- `/allow always`：始终允许，后续同类权限不再弹出",
-          "- `/deny`：拒绝",
-        ].join("\n"));
-      const sent = await this.context.sendPayload(turn.chatId, permissionPayload, {
-        event: "final message sent",
-        transcriptType: "outbound-final",
-        textPreview: `权限请求：${permissionName}`,
-        len: permissionName.length + 16,
-      }, { replyToMessageId: turn.inboundMessageId });
-      interaction.permissionMessageId = sent.messageId;
+      await this.handlePermissionAskedEvent(turn, event, runtime);
       return;
     }
 
@@ -499,6 +490,62 @@ export class TurnExecutor {
     if (event.type === "session.idle") {
       await runtime.finish();
     }
+  }
+
+  private async handlePermissionAskedEvent(
+    turn: BridgeTurn & { sessionId: string },
+    event: OpenCodeEvent,
+    runtime: {
+      snoozeWatchdog: (timeoutMs: number) => void;
+    },
+  ): Promise<void> {
+    const permissionId = readOptionalString(event.properties, "id");
+    const permissionName = readOptionalString(event.properties, "permission") ?? "unknown";
+    if (!permissionId) return;
+
+    const interaction: PendingPermissionInteraction = {
+      kind: "permission",
+      chatId: turn.chatId,
+      conversationKey: turn.conversationKey,
+      replyToMessageId: turn.inboundMessageId,
+      requesterOpenId: turn.senderOpenId,
+      sessionId: turn.sessionId,
+      permissionId,
+      permissionName,
+      permissionMessageId: null,
+      permissionVersion: crypto.randomUUID(),
+      turnId: turn.turnId,
+      expiresAt: Date.now() + PERMISSION_TTL_MS,
+    };
+    this.context.permissionManager.registerInteraction(interaction);
+    this.context.setPendingInteraction(turn.conversationKey, interaction);
+    runtime.snoozeWatchdog(PERMISSION_TTL_MS + 5_000);
+    await this.context.turnCardManager.updateTurnCard(turn.turnId, {
+      status: "等待确认",
+      update: "当前权限请求待确认，可点击卡片按钮或发送文本命令处理",
+      target: "step",
+    });
+    const permissionPayload = this.context.config.feishu.cardActions.enabled
+      ? buildPermissionRequestCardPayload({
+        permissionName,
+        buttons: this.context.permissionManager.buildActionButtons(interaction),
+        expiresInSeconds: Math.floor(PERMISSION_TTL_MS / 1000),
+      })
+      : buildPostMarkdownPayload([
+        `OpenCode 请求权限：\`${escapeMarkdownText(permissionName)}\``,
+        "",
+        "回复以下任一命令：",
+        "- `/allow once`：仅本次允许",
+        "- `/allow always`：始终允许，后续同类权限不再弹出",
+        "- `/deny`：拒绝",
+      ].join("\n"));
+    const sent = await this.context.sendPayload(turn.chatId, permissionPayload, {
+      event: "final message sent",
+      transcriptType: "outbound-final",
+      textPreview: `权限请求：${permissionName}`,
+      len: permissionName.length + 16,
+    }, { replyToMessageId: turn.inboundMessageId });
+    interaction.permissionMessageId = sent.messageId;
   }
 
   private async runFirstSseFallback(
