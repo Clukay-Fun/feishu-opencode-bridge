@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.28 - 2026-04-19
+
+### Changed
+- Polished the Chinese and English README presentation with a stronger project intro, news section, capability overview, and clearer architecture/command sections.
+- Synchronized README formatting so both language entrypoints share the same public-facing structure.
+
 ## 0.1.27 - 2026-04-19
 
 ### Added
