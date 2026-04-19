@@ -1,4 +1,4 @@
-import type { FeishuPostPayload } from "./formatter.js";
+import type { FeishuPostPayload } from "./shared-primitives.js";
 
 const RETRY_MAX_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 500;

@@ -1,6 +1,7 @@
 import type { PendingQuestionInteraction } from "../bridge/state.js";
 import type { BridgeTurn } from "../bridge/turn.js";
-import type { FeishuPostPayload, ModelListCardView, OutputView, ToolUpdateView } from "../feishu/formatter.js";
+import type { FeishuPostPayload, OutputView, ToolUpdateView } from "../feishu/shared-primitives.js";
+import type { ModelListCardView } from "../feishu/runtime-cards.js";
 import type { OpenCodeMessage, OpenCodeProvidersResponse, OpenCodeSession } from "../opencode/client.js";
 import type { SessionBindingRecord, SessionWindowRecord } from "../store/mappings.js";
 import type { IncomingChatMessage, PermissionCardActionValue } from "./app.js";

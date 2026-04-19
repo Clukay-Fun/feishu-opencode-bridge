@@ -1,4 +1,4 @@
-import { buildNoticeCardPayload, type FeishuPostPayload, type NoticeCardView } from "../feishu/formatter.js";
+import { buildNoticeCardPayload, type FeishuPostPayload, type NoticeCardView } from "../feishu/shared-primitives.js";
 import { createTextPreview, type TranscriptType } from "../logging/logger.js";
 
 export type FeishuTransportLog = {

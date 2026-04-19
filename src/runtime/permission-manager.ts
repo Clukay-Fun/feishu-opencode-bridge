@@ -1,5 +1,5 @@
 import type { PendingPermissionInteraction } from "../bridge/state.js";
-import { buildNoticeCardPayload, type FeishuPostPayload } from "../feishu/formatter.js";
+import { buildNoticeCardPayload, type FeishuPostPayload } from "../feishu/shared-primitives.js";
 import type { Logger, TranscriptType } from "../logging/logger.js";
 import type { PermissionPolicy } from "../opencode/client.js";
 import type { PermissionCardActionValue } from "./app.js";

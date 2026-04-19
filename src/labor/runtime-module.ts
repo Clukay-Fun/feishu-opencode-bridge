@@ -2,14 +2,16 @@ import { DEFAULT_LABOR_SKILL_CONFIG, type AppConfig } from "../config/schema.js"
 import path from "node:path";
 import type { RuntimeModule, RuntimeModuleHandleResult, RuntimeModuleMessageContext } from "../bridge/module.js";
 import {
-  buildLaborAnalysisCompletedPayload,
-  buildLaborAnalysisProgressPayload,
   buildNoticeCardPayload,
   buildPostMarkdownPayload,
+  type ToolUpdateView,
+} from "../feishu/shared-primitives.js";
+import {
+  buildLaborAnalysisCompletedPayload,
+  buildLaborAnalysisProgressPayload,
   type LaborAnalysisCompletedCardView,
   type LaborAnalysisProgressCardView,
-  type ToolUpdateView,
-} from "../feishu/formatter.js";
+} from "../feishu/labor-cards.js";
 import { createTextPreview, type Logger } from "../logging/logger.js";
 import type { KnowledgeBasePort } from "../knowledge/index.js";
 import type { IncomingChatMessage } from "../runtime/app.js";

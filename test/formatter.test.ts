@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildCaseCreateProcessingPayload,
   buildKnowledgeIngestFailurePayload,
   buildKnowledgeIngestProcessingPayload,
   buildKnowledgeIngestPayload,
@@ -259,6 +260,16 @@ describe("buildPostPayload", () => {
     expect(content.body.elements[0].columns[0].elements[0].content).toContain("后续消息不再响应");
   });
 
+  it("re-exports contract family payload builders through formatter compat surface", () => {
+    const payload = buildCaseCreateProcessingPayload("委托人：张三；对方当事人：李四；案由：劳动争议");
+    const content = JSON.parse(payload.content) as any;
+    const serialized = JSON.stringify(content);
+
+    expect(content.header.title.content).toBe("案件信息录入中");
+    expect(serialized).toContain("正在解析案件信息");
+    expect(serialized).toContain("劳动争议");
+  });
+
   it("renders an idempotent leave card", () => {
     const payload = buildLeaveCommandCardPayload({ unbound: false });
     const content = JSON.parse(payload.content) as any;
@@ -381,7 +392,7 @@ describe("buildPostPayload", () => {
   });
 
   it("renders an empty knowledge query card", () => {
-    const payload = buildKnowledgeQueryEmptyPayload("员工试用期最长多久？");
+    const payload = buildKnowledgeQueryEmptyPayload({ question: "员工试用期最长多久？" });
     const serialized = JSON.stringify(JSON.parse(payload.content));
     expect(serialized).toContain("未找到");
     expect(serialized).toContain("员工试用期最长多久");

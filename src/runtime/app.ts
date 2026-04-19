@@ -11,9 +11,9 @@ import {
   buildNoticeCardPayload,
   buildPostMarkdownPayload,
   buildQueueNoticePayload,
-  type FeishuPostPayload,
   toInteractiveCardContent,
-} from "../feishu/formatter.js";
+  type FeishuPostPayload,
+} from "../feishu/shared-primitives.js";
 import { createTextPreview, type Logger, type TranscriptType } from "../logging/logger.js";
 import {
   type KnowledgeBasePort,

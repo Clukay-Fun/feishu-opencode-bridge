@@ -1,15 +1,14 @@
 import type { PendingInteraction, PendingPermissionInteraction, PendingSessionSelectionInteraction } from "../bridge/state.js";
 import type { RoutedText } from "../bridge/router.js";
 import {
-  buildModelListCardPayload,
-  buildNoticeCardPayload,
   buildLeaveCommandCardPayload,
+  buildModelListCardPayload,
   buildSessionListCardPayload,
   buildSessionTransitionCardPayload,
   buildStatusCommandCardPayload,
   buildWhoCommandCardPayload,
-  type FeishuPostPayload,
-} from "../feishu/formatter.js";
+} from "../feishu/runtime-cards.js";
+import { buildNoticeCardPayload, type FeishuPostPayload } from "../feishu/shared-primitives.js";
 import type { TranscriptType } from "../logging/logger.js";
 import type { OpenCodeMessage, OpenCodeProvidersResponse, OpenCodeSession, OpenCodeSessionStatus } from "../opencode/client.js";
 import type { SessionBindingRecord, SessionWindowRecord } from "../store/mappings.js";

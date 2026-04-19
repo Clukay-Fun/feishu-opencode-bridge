@@ -8,11 +8,13 @@ import {
   buildKnowledgeIngestSessionFinalPayload,
   buildKnowledgeQueryEmptyPayload,
   buildKnowledgeQueryPayload,
+} from "../feishu/knowledge-cards.js";
+import {
   buildNoticeCardPayload,
   buildPostMarkdownPayload,
   type FeishuPostPayload,
   type ToolUpdateView,
-} from "../feishu/formatter.js";
+} from "../feishu/shared-primitives.js";
 import { createTextPreview, type Logger, type TranscriptType } from "../logging/logger.js";
 import type { IncomingChatMessage } from "../runtime/app.js";
 import type { FeishuTransport } from "../runtime/feishu-transport.js";
@@ -236,7 +238,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
         await this.updatePayload(
           message.chatId,
           processing.messageId,
-          result.results.length > 0 ? buildKnowledgeQueryPayload(result) : buildKnowledgeQueryEmptyPayload(command.question),
+          result.results.length > 0 ? buildKnowledgeQueryPayload(result) : buildKnowledgeQueryEmptyPayload({ question: command.question }),
           {
             event: "knowledge query sent",
             transcriptType: "outbound-final",
@@ -408,7 +410,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
         const result = await this.deps.knowledge.query(message.plainText);
         await this.sendPayload(
           message.chatId,
-          result.results.length > 0 ? buildKnowledgeQueryPayload(result) : buildKnowledgeQueryEmptyPayload(message.plainText),
+          result.results.length > 0 ? buildKnowledgeQueryPayload(result) : buildKnowledgeQueryEmptyPayload({ question: message.plainText }),
           {
             event: "knowledge query sent",
             transcriptType: "outbound-final",
