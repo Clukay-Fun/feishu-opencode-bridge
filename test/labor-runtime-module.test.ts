@@ -77,8 +77,8 @@ function createAggregate(): LaborAggregateResult {
   };
 }
 
-async function createModule() {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "labor-runtime-test-"));
+async function createModule(existingTempDir?: string) {
+  const tempDir = existingTempDir ?? await mkdtemp(path.join(os.tmpdir(), "labor-runtime-test-"));
   let sendIndex = 0;
   const sendPayload = vi.fn(async () => {
     sendIndex += 1;
@@ -140,6 +140,27 @@ async function cleanupModule(module: LaborRuntimeModule, tempDir: string): Promi
 }
 
 describe("LaborRuntimeModule", () => {
+  it("shows a retirement notice for the legacy /labor-start alias", async () => {
+    const { module, tempDir, sendPayload } = await createModule();
+    try {
+      const start = createTextMessage("/labor-start 劳动争议演示");
+      const result = await module.handleMessage({
+        message: start,
+        routed: routeIncomingText(start.plainText),
+      });
+
+      expect(result).toEqual({ claimed: true });
+      const payloadCalls = sendPayload.mock.calls as unknown as Array<[string, unknown]>;
+      expect(JSON.stringify(payloadCalls[0]?.[1] ?? {})).toContain("命令已更新");
+      const interactions = (module as unknown as {
+        interactions: { get(key: string): unknown };
+      }).interactions;
+      expect(interactions.get(start.conversationKey)).toBeUndefined();
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
   it("collects files and notes silently, and only starts analysis after /劳动分析结束", async () => {
     const { module, tempDir, sendPayload, updatePayload, extractMaterial, finalizeAnalysis } = await createModule();
     try {
@@ -214,6 +235,39 @@ describe("LaborRuntimeModule", () => {
       expect(completedSerialized).toContain("打开分析文档");
     } finally {
       await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("restores an unfinished interaction after restart", async () => {
+    const { module, tempDir } = await createModule();
+    try {
+      const start = createTextMessage("/劳动分析 劳动争议演示");
+      await module.handleMessage({
+        message: start,
+        routed: routeIncomingText(start.plainText),
+      });
+      await module.handleMessage({
+        message: createFileMessage("证据1.pdf"),
+        routed: null,
+      });
+      await module.stop();
+
+      const restarted = await createModule(tempDir);
+      try {
+        await restarted.module.start();
+        const interactions = (restarted.module as unknown as {
+          interactions: { get(key: string): { files: unknown[]; title?: string } | undefined };
+        }).interactions;
+        expect(interactions.get(start.conversationKey)).toEqual(expect.objectContaining({
+          title: "劳动争议演示",
+          files: expect.arrayContaining([expect.objectContaining({ fileName: "证据1.pdf" })]),
+        }));
+      } finally {
+        await cleanupModule(restarted.module, restarted.tempDir);
+      }
+    } catch (error) {
+      await cleanupModule(module, tempDir);
+      throw error;
     }
   });
 });

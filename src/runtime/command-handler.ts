@@ -255,7 +255,7 @@ export class CommandHandler {
           title: "提醒",
           template: "yellow",
           icon: "maybe_outlined",
-          message: "当前没有匹配的模型提供方，请重新发送 `/model` 查看列表。",
+          message: "当前没有匹配的模型提供方，请重新发送 `/models` 查看列表。",
         });
         return;
       }
@@ -614,6 +614,16 @@ export class CommandHandler {
     }
 
     if (command.kind !== "passthrough") {
+      return;
+    }
+    if (command.name === "model" && (command.arguments.length === 0 || (command.arguments.length === 1 && !["use", "reset"].includes(command.arguments[0] ?? "")))) {
+      const replacement = command.arguments.length === 0 ? "`/models`" : "`/models <provider>`";
+      await this.sendNotice(message, {
+        title: "命令已更新",
+        template: "yellow",
+        icon: "maybe_outlined",
+        message: `模型列表入口已从 \`/model\` 迁移到 ${replacement}。切换模型仍继续使用 \`/model use <provider/model>\` 和 \`/model reset\`。`,
+      });
       return;
     }
     const sessionId = await this.context.ensureSession(message);

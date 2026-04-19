@@ -132,11 +132,23 @@ export class LaborRuntimeModule implements RuntimeModule {
       return false;
     }
     const normalized = command.name.trim().toLowerCase();
-    if (!["劳动分析", "labor-start", "劳动分析结束", "labor-end"].includes(normalized)) {
+    if (normalized === "labor-start" || normalized === "labor-end") {
+      await this.sendNotice(message, {
+        title: "命令已更新",
+        template: "yellow",
+        icon: "maybe_outlined",
+        message: normalized === "labor-start"
+          ? "劳动分析入口已从 `/labor-start` 迁移到 `/劳动分析`。"
+          : "劳动分析结束命令已从 `/labor-end` 迁移到 `/劳动分析结束`。",
+      });
+      return true;
+    }
+
+    if (!["劳动分析", "劳动分析结束"].includes(normalized)) {
       return false;
     }
 
-    if (normalized === "劳动分析" || normalized === "labor-start") {
+    if (normalized === "劳动分析") {
       const title = command.arguments.join(" ").trim() || undefined;
       await this.startFromEntry(message, title);
       return true;
@@ -551,7 +563,7 @@ export class LaborRuntimeModule implements RuntimeModule {
 
 function isLaborEndCommand(command: LaborCommand): boolean {
   return command.kind === "passthrough"
-    && ["劳动分析结束", "labor-end"].includes(command.name.trim().toLowerCase());
+    && command.name.trim().toLowerCase() === "劳动分析结束";
 }
 
 function renderProcessingMessage(state: LaborProgressState): string {

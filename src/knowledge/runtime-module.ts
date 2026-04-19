@@ -185,6 +185,43 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "threadKey" | "senderOpenId">,
     command: KnowledgeCommand,
   ): Promise<boolean> {
+    if (command.kind === "passthrough") {
+      const legacyAlias = command.name.trim().toLowerCase();
+      if (legacyAlias === "legal-query-start") {
+        await this.sendNotice(message, {
+          title: "命令已更新",
+          template: "yellow",
+          icon: "maybe_outlined",
+          message: message.chatType === "p2p"
+            ? "私聊里不再使用 `/legal-query-start`。直接发送问题即可；如需批量入库，请使用 `/kb-ingest-start`。"
+            : "知识库模式入口已从 `/legal-query-start` 迁移到 `/法律咨询开始`。如需单次检索，也可以使用 `/kb-query <问题>`。",
+        });
+        return true;
+      }
+      if (legacyAlias === "legal-query-end") {
+        await this.sendNotice(message, {
+          title: "命令已更新",
+          template: "yellow",
+          icon: "maybe_outlined",
+          message: message.chatType === "p2p"
+            ? "私聊里不再使用 `/legal-query-end`。直接发送问题即可，不需要显式退出。"
+            : "知识库模式退出命令已从 `/legal-query-end` 迁移到 `/法律咨询结束`。",
+        });
+        return true;
+      }
+      if (legacyAlias === "legal-query") {
+        await this.sendNotice(message, {
+          title: "命令已更新",
+          template: "yellow",
+          icon: "maybe_outlined",
+          message: message.chatType === "p2p"
+            ? "私聊里不再使用 `/legal-query <问题>`。直接发送问题即可；如需强制走知识库查询，请使用 `/kb-query <问题>`。"
+            : "单次知识库检索已从 `/legal-query <问题>` 迁移到 `/kb-query <问题>`；连续检索模式请使用 `/法律咨询开始`。",
+        });
+        return true;
+      }
+    }
+
     if (
       message.chatType === "p2p"
       && (
@@ -202,7 +239,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
         title: "私聊里直接提问即可",
         template: "blue",
         icon: "search_outlined",
-        message: "私聊不再使用 `/legal-query*` 切换知识库模式。直接发送问题即可，由 OpenCode 自主决定是否使用知识库；如需批量入库，请使用 `/kb-ingest-start`。",
+        message: "私聊不需要显式切换知识库模式。直接发送问题即可，由 OpenCode 自主决定是否使用知识库；如需批量入库，请使用 `/kb-ingest-start`。",
       });
       return true;
     }
@@ -348,8 +385,8 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
           template: "blue",
           icon: "search_outlined",
           message: clearedIngestPending
-            ? "已退出知识入库模式；当前仍是知识库模式。接下来直接发送问题即可检索知识库，发送 `/legal-query-end` 可退出。"
-            : "接下来直接发送问题即可检索知识库，发送 `/legal-query-end` 可退出。",
+            ? "已退出知识入库模式；当前仍是知识库模式。接下来直接发送问题即可检索知识库，发送 `/法律咨询结束` 可退出。"
+            : "接下来直接发送问题即可检索知识库，发送 `/法律咨询结束` 可退出。",
         });
         return true;
       }
@@ -360,8 +397,8 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
         template: "indigo",
         icon: "search_outlined",
         message: clearedIngestPending
-          ? "已退出知识入库模式，并切换到知识库查询模式。接下来直接发送问题即可检索知识库，发送 `/legal-query-end` 可退出。"
-          : "接下来直接发送问题即可检索知识库，发送 `/legal-query-end` 可退出。",
+          ? "已退出知识入库模式，并切换到知识库查询模式。接下来直接发送问题即可检索知识库，发送 `/法律咨询结束` 可退出。"
+          : "接下来直接发送问题即可检索知识库，发送 `/法律咨询结束` 可退出。",
       });
       return true;
     }
@@ -374,7 +411,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
           title: "当前未开启知识库模式",
           template: "grey",
           icon: "info-hollow_filled",
-          message: "当前仍是普通对话模式，发送 `/legal-query-start` 可进入知识库模式。",
+          message: "当前仍是普通对话模式，发送 `/法律咨询开始` 可进入知识库模式。",
         });
         return true;
       }
@@ -384,7 +421,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
         title: "已退出知识库模式",
         template: "green",
         icon: "chat_outlined",
-        message: "后续消息将恢复为普通 OpenCode 对话，仍可用 `/legal-query <问题>` 单次查询。",
+        message: "后续消息将恢复为普通 OpenCode 对话，仍可用 `/kb-query <问题>` 单次检索知识库。",
       });
       return true;
     }

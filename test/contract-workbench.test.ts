@@ -147,10 +147,28 @@ async function cleanupModule(module: ContractAssistantRuntimeModule, tempDir: st
 }
 
 describe("ContractAssistantRuntimeModule contract workbench", () => {
+  it("shows a retirement notice for the legacy /contract-workbench alias", async () => {
+    const { module, sendPayload, tempDir } = await createModule();
+    try {
+      const message = createTextMessage("/contract-workbench");
+      const result = await module.handleMessage({
+        message,
+        routed: routeIncomingText(message.plainText),
+      });
+
+      expect(result).toEqual({ claimed: true });
+      expect(sendPayload).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify((sendPayload.mock.calls[0] ?? [])[1] ?? {})).toContain("命令已更新");
+      expect(JSON.stringify((sendPayload.mock.calls[0] ?? [])[1] ?? {})).toContain("/合同起草开始");
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
   it("starts a dedicated contract workbench session", async () => {
     const { module, sendPayload, tempDir } = await createModule();
     try {
-      const message = createTextMessage("/合同工作台");
+      const message = createTextMessage("/合同起草开始");
       const result = await module.handleMessage({
         message,
         routed: routeIncomingText(message.plainText),
@@ -167,7 +185,7 @@ describe("ContractAssistantRuntimeModule contract workbench", () => {
   it("initializes state from freeform text inside workbench session", async () => {
     const { module, initializeWorkbenchFromPrompt, updatePayload, tempDir } = await createModule();
     try {
-      const start = createTextMessage("/合同工作台");
+      const start = createTextMessage("/合同起草开始");
       await module.handleMessage({
         message: start,
         routed: routeIncomingText(start.plainText),
@@ -190,7 +208,7 @@ describe("ContractAssistantRuntimeModule contract workbench", () => {
   it("applies update actions during active workbench session", async () => {
     const { module, applyWorkbenchMessage, sendPayload, tempDir } = await createModule();
     try {
-      const start = createTextMessage("/合同工作台 帮我起草一份劳动仲裁委托代理合同");
+      const start = createTextMessage("/合同起草开始 帮我起草一份劳动仲裁委托代理合同");
       await module.handleMessage({
         message: start,
         routed: routeIncomingText(start.plainText),

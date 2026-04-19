@@ -94,7 +94,7 @@ export function buildModelCardView(
     providers: providerViews,
     footer: normalizedFilter
       ? "发送 `/model use <provider/model>` 切换当前窗口模型\n发送 `/model reset` 恢复默认模型"
-      : "发送 `/model <provider>` 查看更多\n发送 `/model use <provider/model>` 切换当前窗口模型",
+      : "发送 `/models <provider>` 查看更多\n发送 `/model use <provider/model>` 切换当前窗口模型",
   };
 }
 

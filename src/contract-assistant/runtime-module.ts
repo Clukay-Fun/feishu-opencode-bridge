@@ -204,32 +204,39 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     }
 
     const normalized = command.name.trim().toLowerCase();
-    if (normalized === "合同工作台结束" || normalized === "合同起草结束" || normalized === "contract-workbench") {
-      const endRequested = normalized === "合同工作台结束"
-        || normalized === "合同起草结束"
-        || (normalized === "contract-workbench" && command.arguments[0]?.trim().toLowerCase() === "end");
-      if (endRequested) {
-        if (!workbench) {
-          await this.sendNotice(message, {
-            title: "当前没有进行中的合同起草会话",
-            template: "grey",
-            icon: "maybe_outlined",
-            message: "发送 `/合同起草开始` 或 `/contract-workbench` 可开启新的合同起草会话。",
-          });
-          return true;
-        }
-        this.clearInteraction(message.conversationKey);
+    if (normalized === "contract-workbench") {
+      await this.sendNotice(message, {
+        title: "命令已更新",
+        template: "yellow",
+        icon: "maybe_outlined",
+        message: command.arguments[0]?.trim().toLowerCase() === "end"
+          ? "合同起草结束命令已从 `/contract-workbench end` 迁移到 `/合同起草结束`。"
+          : "合同起草入口已从 `/contract-workbench` 迁移到 `/合同起草开始`。",
+      });
+      return true;
+    }
+
+    if (normalized === "合同起草结束") {
+      if (!workbench) {
         await this.sendNotice(message, {
-          title: "合同起草会话已结束",
+          title: "当前没有进行中的合同起草会话",
           template: "grey",
-          icon: "switch_outlined",
-          message: "当前合同起草会话已结束。如需继续其他合同，请新开话题或重新发送 `/合同起草开始`。",
+          icon: "maybe_outlined",
+          message: "发送 `/合同起草开始` 可开启新的合同起草会话。",
         });
         return true;
       }
+      this.clearInteraction(message.conversationKey);
+      await this.sendNotice(message, {
+        title: "合同起草会话已结束",
+        template: "grey",
+        icon: "switch_outlined",
+        message: "当前合同起草会话已结束。如需继续其他合同，请新开话题或重新发送 `/合同起草开始`。",
+      });
+      return true;
     }
 
-    if (normalized === "合同工作台" || normalized === "合同起草开始" || normalized === "contract-workbench") {
+    if (normalized === "合同起草开始") {
       if (!this.featureConfig.enabled || !this.deps.service) {
         await this.sendNotice(message, {
           title: "合同助手未启用",
@@ -265,13 +272,9 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       "案件提醒",
       "case-reminders",
       "添加案件提醒",
-      "案件添加提醒",
       "case-reminder-add",
-      "add-case-reminder",
       "案件更新待办",
       "case-update-todos",
-      "案件提醒设置",
-      "case-reminder-set",
     ].includes(normalized)) {
       return false;
     }
@@ -357,11 +360,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
 
     if (
       normalized === "添加案件提醒"
-      || normalized === "案件添加提醒"
       || normalized === "case-reminder-add"
-      || normalized === "add-case-reminder"
-      || normalized === "案件提醒设置"
-      || normalized === "case-reminder-set"
     ) {
       const request = command.arguments.join(" ").trim();
       if (!request) {
@@ -383,10 +382,10 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
 
     if (normalized === "案件更新待办" || normalized === "case-update-todos") {
       await this.sendNotice(message, {
-        title: "案件待办更新暂未接入",
+        title: "命令已下线",
         template: "yellow",
         icon: "maybe_outlined",
-        message: "当前已识别该指令，但 runtime 还没有接入待办字段更新。临时可用 `/案件更新 案号XXX 待做事项 ...` 更新案件记录。",
+        message: "兼容命令 `/案件更新待办` 已下线。请改用 `/案件更新 案号XXX 待做事项 ...` 更新案件记录。",
       });
       return true;
     }
