@@ -430,6 +430,7 @@ describe("buildPostPayload", () => {
     expect(serialized).toContain("标签占比");
     expect(serialized).toContain("\"tag\":\"劳动\"");
     expect(serialized).toContain("查看知识库");
+    expect(serialized).toContain("耗时：12s");
     expect(content.header.icon.token).toBe("yes_filled");
     expect(content.body.elements[0].columns[0].elements[0].icon).toBeUndefined();
     expect(serialized).not.toContain("link_outlined");
@@ -492,11 +493,11 @@ describe("buildPostPayload", () => {
       totalDedupedCount: 38,
     });
     const finalPayload = buildKnowledgeIngestSessionFinalPayload({
-      completedCount: 5,
+      completedCount: 1,
       failedCount: 0,
       queuedCount: 0,
-      totalExtractedCount: 214,
-      totalDedupedCount: 38,
+      totalExtractedCount: 12,
+      totalDedupedCount: 4,
       elapsedMs: 222_000,
       bitableUrl: "https://example.com/base/app?table=tbl",
       results: [{
@@ -516,12 +517,15 @@ describe("buildPostPayload", () => {
     expect(sessionSerialized).toContain("劳动合同法释义.pdf");
     expect(sessionSerialized).toContain("排队中");
     expect(sessionSerialized).toContain("总入库");
-    expect(finalSerialized).toContain("本次入库完成");
+    expect(finalSerialized).toContain("知识入库完成");
     expect(finalSerialized).toContain("劳动合同法实务指南.pdf");
     expect(finalSerialized).toContain("入库 12");
     expect(finalSerialized).toContain("提取 16");
     expect(finalSerialized).toContain("去重 4");
+    expect(finalSerialized).toContain("标签占比");
+    expect(finalSerialized).toContain("\"tag\":\"劳动\"");
     expect(finalSerialized).toContain("查看知识库");
+    expect(finalSerialized).toContain("耗时：3 分 42 秒");
   });
 
   it("renders a notice card without body icon when disabled", () => {

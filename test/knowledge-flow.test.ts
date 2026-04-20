@@ -160,11 +160,11 @@ describe("knowledge base bridge flow", () => {
     expect(JSON.stringify(updatedPayloads)).toContain("知识入库进行中");
     expect(JSON.stringify(updatedPayloads)).toContain("正在提取问答（1/1）");
     expect(JSON.stringify(updatedPayloads)).toContain("正在写入知识库（2/4）");
-    expect(JSON.stringify(updatedPayloads)).toContain("本次入库完成");
-    expect(JSON.stringify(updatedPayloads)).toContain("提取 6");
-    expect(JSON.stringify(updatedPayloads)).toContain("去重 2");
+    expect(JSON.stringify(updatedPayloads)).toContain("知识入库完成");
+    expect(JSON.stringify(updatedPayloads)).toContain("提取 12");
+    expect(JSON.stringify(updatedPayloads)).toContain("去重 4");
     expect(JSON.stringify(updatedPayloads)).toContain("劳动合同.txt");
-    expect(JSON.stringify(replyPayloads)).not.toContain("本次入库完成");
+    expect(JSON.stringify(replyPayloads)).not.toContain("知识入库完成");
     expect(JSON.stringify(replyPayloads)).not.toContain("已收到结束指令，将处理完当前队列后结束");
   });
 
@@ -420,7 +420,7 @@ describe("knowledge base bridge flow", () => {
     await app.handleIncomingMessage(createIngestReplyMessage("/kb-ingest-end", "om_web_end"));
     await vi.waitFor(() => {
       const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
-      expect(JSON.stringify(updatedPayloads)).toContain("本次入库完成");
+      expect(JSON.stringify(updatedPayloads)).toContain("知识入库完成");
     });
 
     const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
@@ -432,7 +432,7 @@ describe("knowledge base bridge flow", () => {
     }, expect.any(Object));
     expect(knowledgeQuery).not.toHaveBeenCalled();
     expect(JSON.stringify(replyPayloads)).toContain("已收到入库素材");
-    expect(JSON.stringify(updatedPayloads)).toContain("本次入库完成");
+    expect(JSON.stringify(updatedPayloads)).toContain("知识入库完成");
     expect(JSON.stringify(updatedPayloads)).toContain("入库 2");
     expect(JSON.stringify(updatedPayloads)).toContain("劳动合同法网页.md");
   });
@@ -545,7 +545,7 @@ describe("knowledge base bridge flow", () => {
     expect(JSON.stringify(replyPayloads)).toContain("已收到入库素材");
     expect(JSON.stringify(replyPayloads)).not.toContain("已收到文件");
     expect(JSON.stringify(updatedPayloads)).toContain("主线继续聊天");
-    expect(JSON.stringify(updatedPayloads)).toContain("本次入库完成");
+    expect(JSON.stringify(updatedPayloads)).toContain("知识入库完成");
   });
 
   it("allows the requester to end P2P ingest from the mainline when the reply chain is hard to find", async () => {
@@ -686,7 +686,7 @@ describe("knowledge base bridge flow", () => {
     const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
     const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
     expect(JSON.stringify(replyPayloads)).toContain("已收到入库素材");
-    expect(JSON.stringify(updatedPayloads)).toContain("本次入库完成");
+    expect(JSON.stringify(updatedPayloads)).toContain("知识入库完成");
     expect(JSON.stringify(replyPayloads)).not.toContain("已收到文件");
   });
 

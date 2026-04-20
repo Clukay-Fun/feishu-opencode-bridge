@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { FeishuApiClient } from "../src/feishu/api.js";
 import { BridgeApp } from "../src/runtime/app.js";
 import type { AppConfig } from "../src/config/schema.js";
 import type { ChatWhitelist } from "../src/store/whitelist.js";
@@ -7,6 +8,27 @@ import type { PendingInteraction } from "../src/bridge/state.js";
 import type { SessionWindowRecord } from "../src/store/mappings.js";
 
 describe("BridgeApp command surface", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("preserves FeishuApiClient resource method binding when adapting runtime module outbound", async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ code: 0, tenant_access_token: "token_1" }))
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { has_more: false, items: [] } }));
+    vi.stubGlobal("fetch", fetch);
+    const app = new BridgeApp(baseConfig(), new FeishuApiClient("app", "secret"), logger(), createWhitelist());
+    const outbound = (app as unknown as {
+      getRuntimeModuleOutbound(): {
+        listBitableRecords(appToken: string, tableId: string): Promise<Array<{ recordId: string; fields: Record<string, unknown> }>>;
+      };
+    }).getRuntimeModuleOutbound();
+
+    await expect(outbound.listBitableRecords("app_token", "tbl_1")).resolves.toEqual([]);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
   it("returns a no-task notice for /abort when no turn is running", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
@@ -1542,4 +1564,11 @@ function extractInteractiveHeader(payload: { content: string } | undefined): str
 
 function getReplyPayloads(outbound: ReturnType<typeof createOutbound>): Array<{ content: string } | undefined> {
   return (outbound.replyMessage.mock.calls as unknown[][]).map((call) => call[1] as { content: string } | undefined);
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
 }

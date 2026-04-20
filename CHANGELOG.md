@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.31 - 2026-04-20
+
+### Changed
+- Polished knowledge-ingest completion cards so single-file and session summaries share the same compact stats, tag chart, elapsed time, and knowledge-base link layout.
+- Updated demo knowledge-query examples to split the labor dispute walkthrough into smaller focused questions.
+
+### Fixed
+- Fixed runtime module outbound adaptation so Feishu API resource methods keep their original client binding.
+
 ## 0.1.30 - 2026-04-19
 
 ### Added
