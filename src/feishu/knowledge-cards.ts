@@ -141,45 +141,39 @@ export function buildKnowledgeIngestSessionPayload(view: KnowledgeIngestSessionS
 export function buildKnowledgeIngestSessionFinalPayload(view: KnowledgeIngestSessionSummaryView): FeishuPostPayload {
   const results = view.results ?? [];
   const failures = view.failures ?? [];
-  const summaryLines = [
-    `**成功**：${view.completedCount} 个素材`,
-    `**失败**：${view.failedCount} 个素材`,
-    `**总入库**：${view.totalExtractedCount} 条问答`,
-    `**去重合并**：${view.totalDedupedCount} 条`,
-    ...(view.elapsedMs ? [`**总耗时**：${formatDurationMs(view.elapsedMs)}`] : []),
-  ];
-  const detailLines = buildKnowledgeIngestFinalDetailLines(results, failures);
+  const tagCounts = summarizeKnowledgeIngestTagCounts(results);
+  const rawExtractedCount = summarizeKnowledgeIngestRawExtractedCount(results, view);
+  const sourceLabel = resolveKnowledgeIngestFinalSourceLabel(results, failures);
+  const bodyElements = buildKnowledgeIngestCompletionBodyElements({
+    sourceLabel,
+    extractedCount: view.totalExtractedCount,
+    rawExtractedCount,
+    dedupedCount: view.totalDedupedCount,
+    tagCounts,
+    bitableUrl: view.bitableUrl,
+    elapsedMs: view.elapsedMs,
+  });
 
   return buildInteractivePayload({
-    title: "本次入库完成",
-    template: "indigo",
-    iconToken: "grid-view_filled",
-    bodyElements: [
-      buildGreyPanel([
-        cardMarkdown(summaryLines.join("\n"), "normal_v2"),
-      ]),
-      ...(detailLines.length > 0 ? [
-        buildDivider(),
-        cardMarkdown(detailLines.join("\n\n"), "normal_v2"),
-      ] : []),
-      buildDivider(),
-      ...(view.bitableUrl ? [cardMarkdown(`[查看知识库 →](${escapeText(view.bitableUrl)})`, "normal")] : []),
-    ],
+    title: "知识入库完成",
+    template: "green",
+    iconToken: "yes_filled",
+    bodyElements,
   });
 }
 
 export function buildKnowledgeIngestPayload(view: KnowledgeIngestResult): FeishuPostPayload {
   const rawExtractedCount = view.rawExtractedCount ?? view.extractedCount;
   const dedupedCount = view.dedupedCount ?? Math.max(0, rawExtractedCount - view.extractedCount);
-  const bodyElements: Array<Record<string, unknown>> = [
-    buildTitleLine(`文件：**${escapeText(view.sourceFile)}**`),
-    buildStatsRow([
-      `入库 ${view.extractedCount}`,
-      `提取 ${rawExtractedCount}`,
-      `去重 ${dedupedCount}`,
-    ]),
-    buildTagChartSection(view.tagCounts, view.bitableUrl),
-  ];
+  const bodyElements = buildKnowledgeIngestCompletionBodyElements({
+    sourceLabel: view.sourceFile,
+    extractedCount: view.extractedCount,
+    rawExtractedCount,
+    dedupedCount,
+    tagCounts: view.tagCounts,
+    bitableUrl: view.bitableUrl,
+    elapsedMs: view.durationMs,
+  });
   if (view.warning) {
     bodyElements.push(buildQuoteLine(escapeText(view.warning)));
   }
@@ -239,32 +233,66 @@ export function buildKnowledgeIngestProcessingPayload(view: KnowledgeIngestProgr
   });
 }
 
-function buildKnowledgeIngestFinalDetailLines(
+function summarizeKnowledgeIngestTagCounts(results: KnowledgeIngestResult[]): Record<string, number> {
+  const counts = new Map<string, number>();
+  for (const result of results) {
+    for (const [tag, value] of Object.entries(result.tagCounts)) {
+      if (!Number.isFinite(value) || value <= 0) {
+        continue;
+      }
+      counts.set(tag, (counts.get(tag) ?? 0) + value);
+    }
+  }
+  return Object.fromEntries([...counts.entries()].sort((left, right) => right[1] - left[1]));
+}
+
+function buildKnowledgeIngestCompletionBodyElements(input: {
+  sourceLabel: string;
+  extractedCount: number;
+  rawExtractedCount: number;
+  dedupedCount: number;
+  tagCounts: Record<string, number>;
+  bitableUrl?: string | undefined;
+  elapsedMs?: number | undefined;
+}): Array<Record<string, unknown>> {
+  return [
+    buildTitleLine(`文件：**${escapeText(input.sourceLabel)}**`),
+    buildStatsRow([
+      `入库 ${input.extractedCount}`,
+      `提取 ${input.rawExtractedCount}`,
+      `去重 ${input.dedupedCount}`,
+    ]),
+    buildTagChartSection(input.tagCounts, input.bitableUrl),
+    ...(input.elapsedMs ? [buildElapsedLine(`耗时：${formatDurationMs(input.elapsedMs)}`)] : []),
+  ];
+}
+
+function summarizeKnowledgeIngestRawExtractedCount(
+  results: KnowledgeIngestResult[],
+  fallback: Pick<KnowledgeIngestSessionSummaryView, "totalExtractedCount" | "totalDedupedCount">,
+): number {
+  if (results.length === 0) {
+    return fallback.totalExtractedCount + fallback.totalDedupedCount;
+  }
+  return results.reduce((total, result) => {
+    const rawExtractedCount = result.rawExtractedCount ?? result.extractedCount;
+    return total + rawExtractedCount;
+  }, 0);
+}
+
+function resolveKnowledgeIngestFinalSourceLabel(
   results: KnowledgeIngestResult[],
   failures: Array<{ sourceFile: string; reason: string }>,
-): string[] {
-  const maxVisibleItems = 12;
-  const lines: string[] = [];
-  const successLines = results.map((result) => {
-    const rawExtractedCount = result.rawExtractedCount ?? result.extractedCount;
-    const dedupedCount = result.dedupedCount ?? Math.max(0, rawExtractedCount - result.extractedCount);
-    return [
-      `**${escapeText(result.sourceFile)}**`,
-      `入库 ${result.extractedCount} · 提取 ${rawExtractedCount} · 去重 ${dedupedCount}`,
-    ].join("\n");
-  });
-  const failureLines = failures.map((failure) => [
-    `**${escapeText(failure.sourceFile)}**`,
-    `失败 · ${escapeText(failure.reason)}`,
-  ].join("\n"));
-  const allLines = [...successLines, ...failureLines];
-  const visibleLines = allLines.slice(0, maxVisibleItems);
-  lines.push(...visibleLines);
-  const omittedCount = allLines.length - visibleLines.length;
-  if (omittedCount > 0) {
-    lines.push(`其余 ${omittedCount} 个素材已省略，请查看知识库或日志获取完整结果。`);
+): string {
+  const totalCount = results.length + failures.length;
+  if (totalCount === 0) {
+    return "本次素材";
   }
-  return lines;
+  const firstSourceFile = results[0]?.sourceFile ?? failures[0]?.sourceFile ?? "本次素材";
+  if (totalCount === 1) {
+    return firstSourceFile;
+  }
+  return `${firstSourceFile} 等 ${totalCount} 个素材`;
 }
 
 function buildKnowledgeRecordUrl(bitableUrl: string | undefined, recordId: string | undefined): string | undefined {

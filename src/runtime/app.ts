@@ -766,12 +766,26 @@ export class BridgeApp {
     const missingResourceMethod = async (): Promise<never> => {
       throw new Error("当前运行环境不支持飞书资源操作。");
     };
+    const downloadMessageResource = resources.downloadMessageResource;
+    const createBitableRecord = resources.createBitableRecord;
+    const listBitableRecords = resources.listBitableRecords;
+    const updateBitableRecord = resources.updateBitableRecord;
     return {
-      ...this.outbound,
-      downloadMessageResource: resources.downloadMessageResource ?? missingResourceMethod,
-      createBitableRecord: resources.createBitableRecord ?? missingResourceMethod,
-      listBitableRecords: resources.listBitableRecords ?? missingResourceMethod,
-      updateBitableRecord: resources.updateBitableRecord ?? missingResourceMethod,
+      sendMessage: async (chatId, payload) => await this.outbound.sendMessage(chatId, payload),
+      replyMessage: async (messageId, payload, options) => await this.outbound.replyMessage(messageId, payload, options),
+      updateMessage: async (messageId, payload) => await this.outbound.updateMessage(messageId, payload),
+      downloadMessageResource: downloadMessageResource
+        ? async (messageId, fileKey, type) => await downloadMessageResource.call(resources, messageId, fileKey, type)
+        : missingResourceMethod,
+      createBitableRecord: createBitableRecord
+        ? async (appToken, tableId, fields) => await createBitableRecord.call(resources, appToken, tableId, fields)
+        : missingResourceMethod,
+      listBitableRecords: listBitableRecords
+        ? async (appToken, tableId) => await listBitableRecords.call(resources, appToken, tableId)
+        : missingResourceMethod,
+      updateBitableRecord: updateBitableRecord
+        ? async (appToken, tableId, recordId, fields) => await updateBitableRecord.call(resources, appToken, tableId, recordId, fields)
+        : missingResourceMethod,
     };
   }
 
