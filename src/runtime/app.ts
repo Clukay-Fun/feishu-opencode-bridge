@@ -14,7 +14,7 @@ import {
   toInteractiveCardContent,
   type FeishuPostPayload,
 } from "../feishu/shared-primitives.js";
-import { createTextPreview, type Logger, type TranscriptType } from "../logging/logger.js";
+import { createTextPreview, getLogContext, logEvent, type LogContext, type Logger, type TranscriptType } from "../logging/logger.js";
 import {
   type KnowledgeBasePort,
 } from "../knowledge/index.js";
@@ -416,8 +416,9 @@ export class BridgeApp {
     const sessionId = await this.ensureSession(message);
     const executionKey = this.buildExecutionKey(message.conversationKey, sessionId);
     const queue = this.queues.get(executionKey);
+    const turnId = crypto.randomUUID();
     const turn: BridgeTurn = {
-      turnId: crypto.randomUUID(),
+      turnId,
       chatId: message.chatId,
       conversationKey: message.conversationKey,
       threadKey: message.threadKey,
@@ -427,6 +428,7 @@ export class BridgeApp {
       plainText: message.plainText,
       text: toOpencodePromptText(message),
       sessionId,
+      logContext: this.buildTurnLogContext(message, turnId, sessionId),
     };
 
     const result = queue.enqueue(turn);
@@ -645,6 +647,7 @@ export class BridgeApp {
       plainText: `${instruction}\n\n[文件] ${pending.file.fileName}`,
       text: processed.prompt,
       sessionId,
+      logContext: this.buildTurnLogContext(message, turnId, sessionId),
     };
     const result = queue.enqueue(turn);
     if (!result.accepted) {
@@ -1220,14 +1223,38 @@ export class BridgeApp {
     options: { event: string; transcriptType: TranscriptType; textPreview: string; len: number },
     delivery?: { replyToMessageId: string; replyInThread?: boolean },
   ): Promise<{ messageId: string }> {
-    const result = delivery?.replyToMessageId && delivery.replyInThread !== undefined
-      ? await this.outbound.replyMessage(delivery.replyToMessageId, payload, { replyInThread: delivery.replyInThread })
-      : this.config.feishu.behavior.replyInThread && delivery?.replyToMessageId
-        ? await this.outbound.replyMessage(delivery.replyToMessageId, payload)
-        : await this.outbound.sendMessage(chatId, payload);
-    this.logger.log("feishu/reply", options.event, { chatId, messageId: result.messageId, textPreview: options.textPreview, len: options.len });
-    this.logger.logTranscript(options.transcriptType, { chatId, messageId: result.messageId }, prettyPrintPayload(payload));
-    return result;
+    const transportAction = delivery?.replyToMessageId
+      ? "reply"
+      : "send";
+    try {
+      const result = delivery?.replyToMessageId && delivery.replyInThread !== undefined
+        ? await this.outbound.replyMessage(delivery.replyToMessageId, payload, { replyInThread: delivery.replyInThread })
+        : this.config.feishu.behavior.replyInThread && delivery?.replyToMessageId
+          ? await this.outbound.replyMessage(delivery.replyToMessageId, payload)
+          : await this.outbound.sendMessage(chatId, payload);
+      logEvent(this.logger, "feishu/reply", "transport.sent", {
+        chatId,
+        messageId: result.messageId,
+        transportAction,
+        payloadKind: payload.msg_type === "interactive" ? "card" : "post",
+        legacyEvent: options.event,
+        textPreview: options.textPreview,
+        len: options.len,
+      });
+      this.logger.logTranscript(options.transcriptType, { chatId, messageId: result.messageId }, prettyPrintPayload(payload));
+      return result;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      logEvent(this.logger, "feishu/reply", "transport.failed", {
+        chatId,
+        transportAction,
+        payloadKind: payload.msg_type === "interactive" ? "card" : "post",
+        legacyEvent: options.event,
+        errorKind: error instanceof Error ? error.name : "unknown",
+        detail,
+      }, "warn");
+      throw error;
+    }
   }
 
   private async updatePayload(
@@ -1236,10 +1263,47 @@ export class BridgeApp {
     payload: FeishuPostPayload,
     options: { event: string; transcriptType: TranscriptType; textPreview: string; len: number },
   ): Promise<{ messageId: string }> {
-    const result = await this.outbound.updateMessage(messageId, payload);
-    this.logger.log("feishu/reply", options.event, { chatId, messageId: result.messageId, textPreview: options.textPreview, len: options.len });
-    this.logger.logTranscript(options.transcriptType, { chatId, messageId: result.messageId }, prettyPrintPayload(payload));
-    return result;
+    try {
+      const result = await this.outbound.updateMessage(messageId, payload);
+      logEvent(this.logger, "feishu/reply", "transport.sent", {
+        chatId,
+        messageId: result.messageId,
+        transportAction: "update",
+        payloadKind: payload.msg_type === "interactive" ? "card" : "post",
+        legacyEvent: options.event,
+        textPreview: options.textPreview,
+        len: options.len,
+      });
+      this.logger.logTranscript(options.transcriptType, { chatId, messageId: result.messageId }, prettyPrintPayload(payload));
+      return result;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      logEvent(this.logger, "feishu/reply", "transport.failed", {
+        chatId,
+        messageId,
+        transportAction: "update",
+        payloadKind: payload.msg_type === "interactive" ? "card" : "post",
+        legacyEvent: options.event,
+        errorKind: error instanceof Error ? error.name : "unknown",
+        detail,
+      }, "warn");
+      throw error;
+    }
+  }
+
+  private buildTurnLogContext(
+    message: Pick<IncomingChatMessage, "chatId" | "senderOpenId" | "messageId">,
+    turnId: string,
+    sessionId?: string,
+  ): LogContext {
+    return {
+      ...getLogContext(),
+      turnId,
+      chatId: message.chatId,
+      userId: message.senderOpenId,
+      messageId: message.messageId,
+      sessionId,
+    };
   }
 }
 

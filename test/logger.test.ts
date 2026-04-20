@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createLogger, createTextPreview } from "../src/logging/logger.js";
+import { createLogger, createTextPreview, runWithLogContext } from "../src/logging/logger.js";
 
 describe("logger", () => {
   afterEach(() => {
@@ -134,6 +134,43 @@ describe("logger", () => {
     const content = await readFile(path.join(dir, "bridge-2026-04-12.log"), "utf8");
     expect(content).toContain("scope");
     expect(content).toContain("message");
+  });
+
+  it("adds async log context to bridge logs", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-logger-"));
+    const logger = await createLogger(dir, { enableConsole: false });
+    await runWithLogContext({ correlationId: "corr-1", turnId: "turn-1" }, async () => {
+      logger.log("scope", "message", { ok: true });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const content = await readFile(path.join(dir, `bridge-${localDay()}.log`), "utf8");
+    expect(content).toContain("correlationId=\"corr-1\"");
+    expect(content).toContain("turnId=\"turn-1\"");
+  });
+
+  it("writes json bridge logs and redacts configured fields", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-logger-"));
+    const logger = await createLogger(dir, {
+      enableConsole: false,
+      format: "json",
+      redactFields: ["secret"],
+    });
+
+    logger.event?.("scope", "turn.started", {
+      turnId: "turn-1",
+      sessionId: "session-1",
+      chatId: "chat-1",
+      conversationKey: "conversation-1",
+      secret: "hidden",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const content = await readFile(path.join(dir, `bridge-${localDay()}.log`), "utf8");
+    const line = JSON.parse(content) as Record<string, unknown>;
+    expect(line.event).toBe("turn.started");
+    expect(line.turnId).toBe("turn-1");
+    expect(line.secret).toBe("[REDACTED]");
   });
 });
 

@@ -7,7 +7,7 @@ import { TurnWatchdog } from "../bridge/watchdog.js";
 import type { BridgeTurn } from "../bridge/turn.js";
 import { buildPermissionRequestCardPayload } from "../feishu/runtime-cards.js";
 import { buildPostMarkdownPayload, type FeishuPostPayload } from "../feishu/shared-primitives.js";
-import { createTextPreview, type Logger, type TranscriptType } from "../logging/logger.js";
+import { createTextPreview, logEvent, runWithLogContext, type Logger, type TranscriptType } from "../logging/logger.js";
 import { type OpenCodeMessage, type OpenCodeSessionStatus } from "../opencode/client.js";
 import { getEventSessionId, type OpenCodeEvent } from "../opencode/events.js";
 import { type SessionWindowRecord } from "../store/mappings.js";
@@ -203,15 +203,28 @@ export class TurnExecutor {
     const active = queue.peek();
     if (!active) return;
 
+    await runWithLogContext(active.logContext ?? {
+      turnId: active.turnId,
+      chatId: active.chatId,
+      userId: active.senderOpenId,
+      messageId: active.inboundMessageId,
+      sessionId: active.sessionId,
+    }, async () => {
+      await this.runTurnWithContext(queueKey, active);
+    });
+  }
+
+  private async runTurnWithContext(queueKey: string, active: BridgeTurn): Promise<void> {
+    const queue = this.context.queues.get(queueKey);
     let turn = transitionTurn(active, "running");
     queue.replaceActive(turn);
     let hasProcessCard = false;
 
     try {
       const sessionId = turn.sessionId ?? await this.context.ensureSession(turn);
-      turn = { ...turn, sessionId };
+      turn = { ...turn, sessionId, logContext: { ...(turn.logContext ?? {}), sessionId } };
       queue.replaceActive(turn);
-      this.context.logger.log("bridge/queue", "turn started", { turnId: turn.turnId, sessionId, chatId: turn.chatId, conversationKey: turn.conversationKey });
+      logEvent(this.context.logger, "bridge/queue", "turn.started", { turnId: turn.turnId, sessionId, chatId: turn.chatId, conversationKey: turn.conversationKey });
 
       const card = await this.context.turnCardManager.createTurnCard(turn.chatId, turn.turnId, sessionId, turn.inboundMessageId);
       if (card) {
@@ -237,11 +250,31 @@ export class TurnExecutor {
       await this.context.turnCardManager.flushStreamUpdate(turn.turnId, reply, true);
       await this.context.turnCardManager.updateTurnCard(turn.turnId, { status: "已完成", update: `最终回复已生成（${reply.length} 字）`, target: "step" });
       queue.replaceActive(transitionTurn({ ...turn, sessionId }, "done"));
-      this.context.logger.log("bridge/queue", "turn completed", { turnId: turn.turnId, duration: Date.now() - (turn.startedAt ?? Date.now()) });
+      logEvent(this.context.logger, "bridge/queue", "turn.completed", {
+        turnId: turn.turnId,
+        sessionId,
+        durationMs: Date.now() - (turn.startedAt ?? Date.now()),
+        replyLength: reply.length,
+        processMessageId: turn.processMessageId,
+      });
     } catch (error) {
       const detail = normalizeTurnFailureDetail(error);
-      this.context.logger.log("bridge/queue", "run turn failed", { chatId: turn.chatId, conversationKey: turn.conversationKey, turnId: turn.turnId, detail }, "error");
+      logEvent(this.context.logger, "bridge/queue", "turn.failed", {
+        chatId: turn.chatId,
+        conversationKey: turn.conversationKey,
+        turnId: turn.turnId,
+        sessionId: turn.sessionId,
+        errorKind: error instanceof Error ? error.name : "unknown",
+        detail,
+      }, "error");
       if (!hasProcessCard) {
+        logEvent(this.context.logger, "bridge/queue", "turn.fallback_triggered", {
+          turnId: turn.turnId,
+          sessionId: turn.sessionId,
+          chatId: turn.chatId,
+          fallbackKind: "failure-markdown",
+          reason: detail,
+        }, "warn");
         await this.sendTurnFallbackMarkdown(turn.chatId, `处理失败：${escapeMarkdownText(detail)}`, turn.inboundMessageId);
       }
       await this.context.turnCardManager.updateTurnCard(turn.turnId, { status: detail.includes("超时") ? "已超时" : "处理失败", update: detail, target: "step" });
@@ -587,6 +620,14 @@ export class TurnExecutor {
       len: permissionName.length + 16,
     }, { replyToMessageId: turn.inboundMessageId });
     interaction.permissionMessageId = sent.messageId;
+    logEvent(this.context.logger, "bridge/permission", "permission.asked", {
+      turnId: turn.turnId,
+      sessionId: turn.sessionId,
+      permissionId,
+      permissionKind: permissionName,
+      chatId: turn.chatId,
+      messageId: sent.messageId,
+    });
   }
 
   private async runFirstSseFallback(

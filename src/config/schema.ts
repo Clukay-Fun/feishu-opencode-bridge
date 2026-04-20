@@ -243,6 +243,16 @@ export const ConfigSchema = z.object({
     enableConsole: z.boolean().default(true),
     enableColor: z.boolean().default(true),
     rotateDaily: z.boolean().default(true),
+    format: z.enum(["pretty", "json"]).default("pretty"),
+    messagePolicy: z.enum(["full", "preview", "hash", "none"]).default("preview"),
+    redactFields: z.array(z.string().min(1)).default([
+      "feishu.appSecret",
+      "opencode.apiKey",
+      "appSecret",
+      "apiKey",
+      "plainText",
+      "content",
+    ]),
   }).default({}),
   memory: MemoryConfigSchema.default({}),
   knowledgeBase: KnowledgeBaseConfigSchema,
@@ -408,6 +418,9 @@ export type AppConfig = {
     enableConsole: boolean;
     enableColor: boolean;
     rotateDaily: boolean;
+    format?: "pretty" | "json" | undefined;
+    messagePolicy?: "full" | "preview" | "hash" | "none" | undefined;
+    redactFields?: string[] | undefined;
   };
   memory: {
     enabled: boolean;

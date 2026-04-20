@@ -1,3 +1,5 @@
+import type { LogContext } from "../logging/logger.js";
+
 export type BridgeTurn = {
   turnId: string;
   chatId: string;
@@ -13,6 +15,7 @@ export type BridgeTurn = {
   finalMessageId?: string;
   state?: "queued" | "running" | "awaiting-sse" | "done" | "timeout" | "aborted";
   startedAt?: number;
+  logContext?: LogContext;
 };
 
 export type QueueNotice = {

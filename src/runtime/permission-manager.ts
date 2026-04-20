@@ -1,6 +1,6 @@
 import type { PendingPermissionInteraction } from "../bridge/state.js";
 import { buildNoticeCardPayload, type FeishuPostPayload } from "../feishu/shared-primitives.js";
-import type { Logger, TranscriptType } from "../logging/logger.js";
+import { logEvent, type Logger, type TranscriptType } from "../logging/logger.js";
 import type { PermissionPolicy } from "../opencode/client.js";
 import type { PermissionCardActionValue } from "./app.js";
 import { isPermissionCardActionValue } from "./app-helpers.js";
@@ -143,6 +143,14 @@ export class PermissionManager {
         status: "处理中",
         update: resolution === "timeout" ? "权限请求已超时，已默认拒绝" : `已处理权限请求：${interaction.permissionName}`,
         target: "step",
+      });
+      logEvent(this.logger, "bridge/permission", "permission.decided", {
+        turnId: interaction.turnId,
+        sessionId: interaction.sessionId,
+        chatId: interaction.chatId,
+        permissionId: interaction.permissionId,
+        decision: resolution === "deny" || resolution === "timeout" ? "denied" : "approved",
+        decisionSource: resolution === "timeout" ? "timeout" : "user",
       });
     } finally {
       this.processing.delete(interaction.permissionVersion);

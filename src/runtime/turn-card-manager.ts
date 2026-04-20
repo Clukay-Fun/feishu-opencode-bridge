@@ -1,6 +1,6 @@
 import { type FeishuPostPayload, type OutputView, type ToolUpdateView } from "../feishu/shared-primitives.js";
 import { buildTurnStatusCardPayload, type TurnStatusCardView } from "../feishu/runtime-cards.js";
-import { createTextPreview, type Logger, type TranscriptType } from "../logging/logger.js";
+import { createTextPreview, logEvent, type Logger, type TranscriptType } from "../logging/logger.js";
 import {
   appendProgressUpdate,
   formatDuration,
@@ -83,7 +83,15 @@ export class TurnCardManager {
       return { messageId: result.messageId };
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      this.logger.log("feishu/reply", "process card send failed", { chatId, turnId, detail }, "warn");
+      logEvent(this.logger, "feishu/reply", "transport.failed", {
+        chatId,
+        turnId,
+        transportAction: this.replyInThread ? "reply" : "send",
+        payloadKind: "card",
+        legacyEvent: "process card send failed",
+        errorKind: error instanceof Error ? error.name : "unknown",
+        detail,
+      }, "warn");
       return null;
     }
   }
@@ -149,16 +157,27 @@ export class TurnCardManager {
     try {
       const payload = buildTurnStatusCardPayload(this.toTurnCardView(card));
       const result = await this.outbound.updateMessage(card.messageId, payload);
-      this.logger.log("feishu/reply", "process message updated", {
+      logEvent(this.logger, "feishu/reply", "transport.sent", {
         messageId: result.messageId,
         turnId,
+        transportAction: "update",
+        payloadKind: "card",
+        legacyEvent: "process message updated",
         textPreview: createTextPreview([...card.progressUpdates, ...card.toolUpdates.map((item) => item.view.label)].join(" | ")),
         len: [...card.progressUpdates, ...card.toolUpdates.map((item) => item.view.label)].join("\n").length,
       });
       this.logger.logTranscript("outbound-process", { messageId: result.messageId }, prettyPrintPayload(payload));
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      this.logger.log("feishu/reply", "process card update failed", { messageId: card.messageId, turnId, detail }, "warn");
+      logEvent(this.logger, "feishu/reply", "transport.failed", {
+        messageId: card.messageId,
+        turnId,
+        transportAction: "update",
+        payloadKind: "card",
+        legacyEvent: "process card update failed",
+        errorKind: error instanceof Error ? error.name : "unknown",
+        detail,
+      }, "warn");
     }
   }
 
@@ -189,7 +208,15 @@ export class TurnCardManager {
     const result = this.replyInThread && delivery?.replyToMessageId
       ? await this.outbound.replyMessage(delivery.replyToMessageId, payload)
       : await this.outbound.sendMessage(chatId, payload);
-    this.logger.log("feishu/reply", options.event, { chatId, messageId: result.messageId, textPreview: options.textPreview, len: options.len });
+    logEvent(this.logger, "feishu/reply", "transport.sent", {
+      chatId,
+      messageId: result.messageId,
+      transportAction: this.replyInThread && delivery?.replyToMessageId ? "reply" : "send",
+      payloadKind: payload.msg_type === "interactive" ? "card" : "post",
+      legacyEvent: options.event,
+      textPreview: options.textPreview,
+      len: options.len,
+    });
     this.logger.logTranscript(options.transcriptType, { chatId, messageId: result.messageId }, prettyPrintPayload(payload));
     return result;
   }

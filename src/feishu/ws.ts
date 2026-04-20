@@ -1,7 +1,10 @@
+import { randomUUID } from "node:crypto";
+
 import * as lark from "@larksuiteoapi/node-sdk";
 
 import { routeIncomingText } from "../bridge/router.js";
 import type { AppConfig } from "../config/schema.js";
+import { runWithLogContext } from "../logging/logger.js";
 import type { IncomingChatMessage } from "../runtime/app.js";
 import type { ChatWhitelist } from "../store/whitelist.js";
 
@@ -143,6 +146,17 @@ export class FeishuWsClient {
   }
 
   private async handleEvent(payload: FeishuReceiveEvent): Promise<void> {
+    await runWithLogContext({
+      correlationId: randomUUID(),
+      chatId: payload.message?.chat_id,
+      messageId: payload.message?.message_id,
+      userId: payload.sender?.sender_id?.open_id,
+    }, async () => {
+      await this.handleEventWithContext(payload);
+    });
+  }
+
+  private async handleEventWithContext(payload: FeishuReceiveEvent): Promise<void> {
     const duplicateMessageId = this.markMessageSeen(payload.message?.message_id);
     if (duplicateMessageId) {
       this.logger.log("feishu/ws", "duplicate message skipped", { messageId: duplicateMessageId }, "warn");
