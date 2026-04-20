@@ -7,7 +7,7 @@ type FormatterExportSnapshot = {
 };
 
 const FORMATTER_PATH = path.resolve("src/feishu/formatter.ts");
-const SNAPSHOT_PATH = path.resolve("docs/plans/formatter-export-snapshot.json");
+const SNAPSHOT_PATH = path.resolve("docs/archive/design-history/formatter-export-snapshot.json");
 
 async function main(): Promise<void> {
   const [sourceText, snapshotText] = await Promise.all([

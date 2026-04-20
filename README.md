@@ -14,7 +14,7 @@
 ## 📢 项目动态
 
 - **2026-04-19** · 冻结后 backlog 全部清零，`TurnExecutor` settlement 控制器落地，进入日常维护节奏
-- **2026-04-10** · 框架冻结验收通过，[架构基线](docs/architecture-baseline.md) 与 [新功能自检清单](docs/plans/new-feature-checklist.md) 成为 PR 准入标准
+- **2026-04-10** · 框架冻结验收通过，[架构基线](docs/architecture-baseline.md) 与 [新功能自检清单](docs/guidelines/new-feature-checklist.md) 成为 PR 准入标准
 - **2026-03** · Runtime Module 抽象完成，知识 / 合同 / 劳动 / 记忆四大模块全部收敛到统一 seam
 - **2026-02** · `FeishuTransport` 成为飞书侧唯一出口，卡片拆分为独立 family 文件
 
@@ -316,11 +316,11 @@ test/                  # Vitest 单元测试与集成测试
 ## 📚 文档入口
 
 - [架构基线](docs/architecture-baseline.md) — 冻结后的分层边界、扩展 seam 与禁止绕开的核心约束
-- [新功能自检清单](docs/plans/new-feature-checklist.md) — 新功能进入 PR 前必须核对的架构、测试、文档与部署检查项
+- [新功能自检清单](docs/guidelines/new-feature-checklist.md) — 新功能进入 PR 前必须核对的架构、测试、文档与部署检查项
 - [飞书 Markdown 输出规范](docs/feishu-markdown.md) — 面向飞书消息的 Markdown 输出规则和长文本排版约束
 - [部署说明](docs/deploy.md) — 本地与服务器部署、环境变量、Caddy、健康检查和验收步骤
-- [Formatter 迁移记录](docs/plans/formatter-migration.md) — 卡片 formatter 拆分的迁移背景、边界和收尾记录
-- [框架冻结验收](docs/plans/freeze-acceptance.md) — 框架冻结时的验收范围、证据和后续准入要求
+- [Formatter 迁移记录](docs/archive/design-history/formatter-migration.md) — 卡片 formatter 拆分的迁移背景、边界和收尾记录
+- [框架冻结验收](docs/archive/qa-and-submission/freeze-acceptance.md) — 框架冻结时的验收范围、证据和后续准入要求
 
 ## 🚢 部署
 
@@ -346,7 +346,7 @@ test/                  # Vitest 单元测试与集成测试
 - 不要在 `src/runtime/app.ts`、`src/runtime/turn-executor.ts`、`src/bridge/router.ts` 里新增业务特定分支，除非同步更新架构基线
 - 新卡片走 `src/feishu/*-cards.ts` family entrypoint，不要继续扩张 `formatter.ts`
 - 模块状态持久化复用共享基础设施，不复制 timer + JSON persist 逻辑
-- PR 描述里建议附上 [新功能自检清单](docs/plans/new-feature-checklist.md) 的自检结果
+- PR 描述里建议附上 [新功能自检清单](docs/guidelines/new-feature-checklist.md) 的自检结果
 
 ## ⭐ Star 历史
 

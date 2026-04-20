@@ -375,8 +375,8 @@ No feature may directly persist or mutate another feature's internal state file 
 
 Reviewers reject PRs that violate these rules.
 If a violation is genuinely unavoidable, update this baseline first, then proceed.
-Feature PRs should also run through [new-feature-checklist.md](/Users/clukay/Program/feishu-opencode-bridge/docs/plans/new-feature-checklist.md).
-Compatibility debt tracked during freeze lives in [compatibility-cleanup.md](/Users/clukay/Program/feishu-opencode-bridge/docs/plans/compatibility-cleanup.md).
+Feature PRs should also run through [new-feature-checklist.md](/Users/clukay/Program/feishu-opencode-bridge/docs/guidelines/new-feature-checklist.md).
+Compatibility debt tracked during freeze lives in [compatibility-cleanup.md](/Users/clukay/Program/feishu-opencode-bridge/docs/backlog/compatibility-cleanup.md).
 
 ## Current Debt That Blocks Clean Expansion
 
@@ -495,6 +495,6 @@ If a real feature cannot land cleanly inside these seams, the framework has not 
 
 ## Relationship to Existing Docs
 
-- `docs/runtime-layering.md` describes the runtime split direction
+- `docs/archive/design-history/runtime-layering.md` describes the runtime split direction
 - this document defines the stricter post-demo baseline and extension rules
-- feature plans under `docs/plans/` remain useful, but they do not override this baseline
+- legacy feature plans under `docs/archive/` or `docs/guidelines/` remain useful, but they do not override this baseline

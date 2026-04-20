@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.32 - 2026-04-20
+
+### Changed
+- Reorganized documentation into current entry points, guidelines, modules, backlog, and archive directories.
+- Updated README links, architecture references, and formatter export snapshot checks to use the new documentation layout.
+- Added an issue writing standard for normalizing future GitHub issues.
+
 ## 0.1.31 - 2026-04-20
 
 ### Changed

@@ -8,7 +8,7 @@ The following checklist items are enforced by CI:
 
 - core boundary: `npm run lint:deps` prevents `src/runtime/app.ts`, `src/runtime/turn-executor.ts`, and `src/bridge/router.ts` from importing domain modules at runtime; type-only seam references remain allowed.
 - transport boundary: `npm run lint:deps` restricts direct Feishu SDK imports to the transport and ingress boundary files.
-- formatter boundary: `npm run lint:deps` prevents new runtime imports of `src/feishu/formatter.ts`, and `npm run check:formatter-exports` keeps the compatibility export surface pinned to `docs/plans/formatter-export-snapshot.json`.
+- formatter boundary: `npm run lint:deps` prevents new runtime imports of `src/feishu/formatter.ts`, and `npm run check:formatter-exports` keeps the compatibility export surface pinned to `docs/archive/design-history/formatter-export-snapshot.json`.
 - config boundary: `npm run lint` prevents direct `config.json` reads in `src` outside `src/config/loader.ts` for the common direct-read forms.
 - docs boundary: `npm run check:docs-diff` emits a CI warning when seam files change without `docs/architecture-baseline.md`.
 

@@ -14,7 +14,7 @@
 ## 📢 News
 
 - **2026-04-19** · Post-freeze backlog cleared, the `TurnExecutor` settlement controller landed, and the project moved into regular maintenance
-- **2026-04-10** · Framework freeze accepted; [architecture baseline](docs/architecture-baseline.md) and [new feature checklist](docs/plans/new-feature-checklist.md) became PR entry gates
+- **2026-04-10** · Framework freeze accepted; [architecture baseline](docs/architecture-baseline.md) and [new feature checklist](docs/guidelines/new-feature-checklist.md) became PR entry gates
 - **2026-03** · Runtime Module abstraction completed; knowledge, contract, labor, and memory modules converged on a shared seam
 - **2026-02** · `FeishuTransport` became the single Feishu-side delivery boundary, and cards were split into family files
 
@@ -316,11 +316,11 @@ test/                  # Vitest unit and integration tests
 ## 📚 Documentation
 
 - [Architecture baseline](docs/architecture-baseline.md)
-- [New feature checklist](docs/plans/new-feature-checklist.md)
+- [New feature checklist](docs/guidelines/new-feature-checklist.md)
 - [Feishu Markdown rules](docs/feishu-markdown.md)
 - [Deployment](docs/deploy.md)
-- [Formatter migration record](docs/plans/formatter-migration.md)
-- [Framework freeze acceptance](docs/plans/freeze-acceptance.md)
+- [Formatter migration record](docs/archive/design-history/formatter-migration.md)
+- [Framework freeze acceptance](docs/archive/qa-and-submission/freeze-acceptance.md)
 
 ## 🚢 Deployment
 
@@ -346,7 +346,7 @@ The framework has been frozen. Future feature work should follow these rules:
 - Do not add business-specific branches to `src/runtime/app.ts`, `src/runtime/turn-executor.ts`, or `src/bridge/router.ts` unless the architecture baseline is updated first
 - Add new cards through `src/feishu/*-cards.ts` family entrypoints instead of growing `formatter.ts`
 - Reuse shared state persistence infrastructure instead of copying timer + JSON persist logic
-- Include the [new-feature-checklist](docs/plans/new-feature-checklist.md) self-check in PR descriptions
+- Include the [new-feature-checklist](docs/guidelines/new-feature-checklist.md) self-check in PR descriptions
 
 ## ⭐ Star History
 
