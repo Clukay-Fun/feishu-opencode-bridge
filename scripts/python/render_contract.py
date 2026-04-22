@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
+"""
+职责: 提供旧式 `--state/--output` 参数接口的合同渲染包装脚本。
+关注点:
+- 把文件参数翻译为 `contract_render.py` 的 JSON 输入。
+- 透传 stdout/stderr，兼容已有调用方。
+"""
 import json
 from pathlib import Path
 import subprocess
 import sys
 
 
+"""Bridge argv-style rendering requests to the JSON-based renderer."""
 def main() -> int:
     parser_compatible = len(sys.argv) == 5 and sys.argv[1] == "--state" and sys.argv[3] == "--output"
     if not parser_compatible:

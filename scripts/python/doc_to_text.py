@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""
+职责: 抽取 DOCX/TXT/Markdown 文本内容，供上游流程统一消费。
+关注点:
+- 处理正文段落和表格单元格文本。
+- 通过 JSON stdin/stdout 与 Node 侧脚本通信。
+"""
 from pathlib import Path
 import sys
 
@@ -7,6 +13,7 @@ from docx import Document  # type: ignore
 from common.io import read_json_stdin, write_error_stderr, write_json_stdout
 
 
+"""Flatten all non-empty table cell paragraphs into plain text lines."""
 def extract_table_lines(document: Document) -> list[str]:
     lines: list[str] = []
     for table in document.tables:
@@ -19,6 +26,7 @@ def extract_table_lines(document: Document) -> list[str]:
     return lines
 
 
+"""Extract visible paragraph and table text from a DOCX file."""
 def extract_docx_text(input_path: Path) -> str:
     document = Document(str(input_path))
     lines = [paragraph.text.strip() for paragraph in document.paragraphs if paragraph.text.strip()]
@@ -26,6 +34,7 @@ def extract_docx_text(input_path: Path) -> str:
     return "\n".join(lines)
 
 
+"""Dispatch text extraction based on the input file suffix."""
 def extract_text(input_path: Path) -> tuple[str, str]:
     suffix = input_path.suffix.lower()
     if suffix == ".docx":
@@ -37,6 +46,7 @@ def extract_text(input_path: Path) -> tuple[str, str]:
     raise ValueError(f"unsupported file type: {suffix}")
 
 
+"""Read JSON input, extract text, and emit the normalized payload."""
 def main() -> int:
     try:
         payload = read_json_stdin()

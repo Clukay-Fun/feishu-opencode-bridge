@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""
+职责: 根据合同工作台状态渲染新的 DOCX 合同草稿。
+关注点:
+- 统一标题、正文、附件等排版结构。
+- 通过 JSON 接口与 Node 侧工作流衔接。
+"""
 from pathlib import Path
 
 from docx import Document  # type: ignore
@@ -17,12 +23,14 @@ from common.styles import (
 )
 
 
+"""Apply the default body font settings to the Word document."""
 def apply_default_style(document: Document) -> None:
     normal = document.styles["Normal"]
     normal.font.name = BODY_FONT_NAME
     normal.font.size = Pt(BODY_FONT_SIZE_PT)
 
 
+"""Render the contract title as a centered heading."""
 def add_title(document: Document, title: str) -> None:
     paragraph = document.add_paragraph()
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -32,6 +40,7 @@ def add_title(document: Document, title: str) -> None:
     run.font.size = Pt(TITLE_FONT_SIZE_PT)
 
 
+"""Render the contract party metadata block under the title."""
 def add_meta(document: Document, parties: dict) -> None:
     lines = [
         f"甲方：{parties.get('clientName') or '【待补】'}",
@@ -48,6 +57,7 @@ def add_meta(document: Document, parties: dict) -> None:
         paragraph.add_run(line)
 
 
+"""Render one contract clause heading plus its paragraph body."""
 def add_clause(document: Document, clause: dict) -> None:
     title = f"{clause.get('number') or ''} {clause.get('title') or ''}".strip()
     heading = document.add_paragraph()
@@ -64,6 +74,7 @@ def add_clause(document: Document, clause: dict) -> None:
         paragraph.add_run(block)
 
 
+"""Render appendices on a dedicated trailing section when present."""
 def add_appendices(document: Document, appendices: list) -> None:
     if not appendices:
         return
@@ -86,6 +97,7 @@ def add_appendices(document: Document, appendices: list) -> None:
             paragraph.add_run(block)
 
 
+"""Render the full contract state into a DOCX file on disk."""
 def render_document(state: dict, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     document = Document()
@@ -109,6 +121,7 @@ def render_document(state: dict, output_path: Path) -> None:
     document.save(str(output_path))
 
 
+"""Read JSON input, render the contract document, and emit output metadata."""
 def main() -> int:
     try:
         payload = read_json_stdin()

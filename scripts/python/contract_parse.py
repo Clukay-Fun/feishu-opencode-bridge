@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""
+职责: 从合同 DOCX 中抽取标题、当事人、条款和附件等结构化信息。
+关注点:
+- 用轻量规则识别条款起点和附件边界。
+- 给合同工作台初始化提供可编辑的状态草稿。
+"""
 import re
 from pathlib import Path
 
@@ -13,15 +19,18 @@ CLAUSE_PATTERNS = [
 ]
 
 
+"""Read non-empty paragraph text from a DOCX contract."""
 def read_docx_paragraphs(input_path: Path) -> list[str]:
     document = Document(str(input_path))
     return [paragraph.text.strip() for paragraph in document.paragraphs if paragraph.text.strip()]
 
 
+"""Detect whether a line likely starts a new contract clause."""
 def is_clause_start(line: str) -> bool:
     return any(pattern.search(line) for pattern in CLAUSE_PATTERNS)
 
 
+"""Split a clause heading into its number prefix and title text."""
 def split_clause_heading(line: str) -> tuple[str, str]:
     for pattern in CLAUSE_PATTERNS:
         match = pattern.search(line)
@@ -32,6 +41,7 @@ def split_clause_heading(line: str) -> tuple[str, str]:
     return "", line.strip() or "未命名条款"
 
 
+"""Infer key party fields from well-known contract labels."""
 def infer_parties(lines: list[str]) -> dict:
     parties: dict[str, str] = {}
     for line in lines:
@@ -46,6 +56,7 @@ def infer_parties(lines: list[str]) -> dict:
     return parties
 
 
+"""Choose a human-readable contract title from the opening paragraphs."""
 def infer_title(lines: list[str], input_path: Path) -> str:
     for line in lines[:20]:
         if "合同" in line:
@@ -53,6 +64,7 @@ def infer_title(lines: list[str], input_path: Path) -> str:
     return input_path.stem
 
 
+"""Parse raw contract lines into the state shape used by the contract workbench."""
 def parse_contract(lines: list[str], input_path: Path) -> dict:
     title = infer_title(lines, input_path)
     parties = infer_parties(lines)
@@ -105,6 +117,7 @@ def parse_contract(lines: list[str], input_path: Path) -> dict:
     }
 
 
+"""Read JSON input, parse the source DOCX contract, and emit structured JSON."""
 def main() -> int:
     try:
         payload = read_json_stdin()

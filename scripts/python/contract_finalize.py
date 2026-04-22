@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""
+职责: 基于模板合同和字段数据生成接近交付态的最终 DOCX。
+关注点:
+- 直接改写模板中的关键占位段落。
+- 清理签署区、收费方式和风险代理告知书等可选内容。
+"""
 from copy import deepcopy
 from pathlib import Path
 
@@ -10,14 +16,17 @@ from docx.text.paragraph import Paragraph  # type: ignore
 from common.io import read_json_stdin, write_error_stderr, write_json_stdout
 
 
+"""Return trimmed paragraph text."""
 def get_text(paragraph):
     return paragraph.text.strip()
 
 
+"""Normalize text for fuzzy matching across spaces and line breaks."""
 def normalize_match_text(text: str) -> str:
     return "".join(text.split())
 
 
+"""Replace a paragraph's runs with new text while preserving the paragraph node."""
 def clear_and_set_text(paragraph, text: str) -> None:
     for run in list(paragraph.runs):
         run.clear()
@@ -27,6 +36,7 @@ def clear_and_set_text(paragraph, text: str) -> None:
         paragraph.add_run(text)
 
 
+"""Delete one paragraph from the XML tree."""
 def delete_paragraph(paragraph) -> None:
     element = paragraph._element
     parent = element.getparent()
@@ -34,6 +44,7 @@ def delete_paragraph(paragraph) -> None:
         parent.remove(element)
 
 
+"""Insert a new paragraph after an anchor and clone paragraph properties when possible."""
 def insert_paragraph_after(anchor, text: str, style_source=None):
     new_element = OxmlElement("w:p")
     source = style_source if style_source is not None else anchor
@@ -45,6 +56,7 @@ def insert_paragraph_after(anchor, text: str, style_source=None):
     return paragraph
 
 
+"""Yield paragraphs from a document-like container, including nested tables."""
 def iter_container_paragraphs(container):
     for paragraph in container.paragraphs:
         yield paragraph
@@ -52,12 +64,14 @@ def iter_container_paragraphs(container):
         yield from iter_table_paragraphs(table)
 
 
+"""Yield all paragraphs nested inside a table."""
 def iter_table_paragraphs(table: Table):
     for row in table.rows:
         for cell in row.cells:
             yield from iter_container_paragraphs(cell)
 
 
+"""Detect paragraphs around the signature block that need empty-line cleanup."""
 def is_signature_cleanup_anchor(text: str) -> bool:
     normalized = normalize_match_text(text)
     anchors = [
@@ -81,6 +95,7 @@ def is_signature_cleanup_anchor(text: str) -> bool:
     )
 
 
+"""Remove empty paragraphs that only pad the signature or appendix area."""
 def remove_targeted_empty_paragraphs(document: Document) -> None:
     paragraphs = list(document.paragraphs)
     for index in range(len(paragraphs) - 1, -1, -1):
@@ -101,6 +116,7 @@ def remove_targeted_empty_paragraphs(document: Document) -> None:
             delete_paragraph(paragraph)
 
 
+"""Append a signature block when the template does not already contain one."""
 def ensure_signature_block(document: Document) -> None:
     paragraphs = list(document.paragraphs)
     has_signature_placeholders = any(
@@ -129,6 +145,7 @@ def ensure_signature_block(document: Document) -> None:
     insert_paragraph_after(anchor, "签约时间：  202 年   月     日", signature_anchor)
 
 
+"""Rewrite the template document in place based on the finalized contract data."""
 def process_document(document: Document, data: dict) -> None:
     client_name = str(data.get("client_name") or "").strip()
     client_id_code = str(data.get("client_id_code") or "").strip()
@@ -301,6 +318,7 @@ def process_document(document: Document, data: dict) -> None:
     remove_targeted_empty_paragraphs(document)
 
 
+"""Read JSON input, finalize the contract document, and emit the saved path."""
 def main() -> int:
     try:
         payload = read_json_stdin()

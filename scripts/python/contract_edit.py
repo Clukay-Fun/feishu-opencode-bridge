@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""
+职责: 对合同 DOCX 执行小范围结构编辑，如删条款、替换内容等。
+关注点:
+- 用段落级操作实现工作台发起的轻量编辑。
+- 返回已应用和跳过的操作，便于上游解释结果。
+"""
 import re
 from pathlib import Path
 from typing import Optional
@@ -16,23 +22,28 @@ CLAUSE_PATTERNS = [
 ]
 
 
+"""Wrap a raw XML paragraph element back into a python-docx `Paragraph`."""
 def make_paragraph(element, parent) -> Paragraph:
     return Paragraph(element, parent)
 
 
+"""Return the document's current paragraph list snapshot."""
 def iter_paragraphs(document: Document) -> list[Paragraph]:
     return list(document.paragraphs)
 
 
+"""Normalize paragraph text for matching and emptiness checks."""
 def paragraph_text(paragraph: Paragraph) -> str:
     return paragraph.text.strip()
 
 
+"""Detect whether the paragraph looks like a clause heading."""
 def is_clause_heading(text: str) -> bool:
     stripped = text.strip()
     return any(pattern.search(stripped) for pattern in CLAUSE_PATTERNS)
 
 
+"""Remove one paragraph from the document tree."""
 def remove_paragraph(paragraph: Paragraph) -> None:
     element = paragraph._element
     parent = element.getparent()
@@ -40,6 +51,7 @@ def remove_paragraph(paragraph: Paragraph) -> None:
         parent.remove(element)
 
 
+"""Insert a new paragraph after the anchor, optionally copying the body style."""
 def insert_paragraph_after(anchor: Paragraph, text: str, style_name: Optional[str] = None) -> Paragraph:
     new_element = OxmlElement("w:p")
     anchor._element.addnext(new_element)
@@ -50,6 +62,7 @@ def insert_paragraph_after(anchor: Paragraph, text: str, style_name: Optional[st
     return paragraph
 
 
+"""Find the paragraph range that belongs to a target clause."""
 def find_clause_range(paragraphs: list[Paragraph], clause_number: Optional[str] = None, heading: Optional[str] = None):
     start = -1
     for index, paragraph in enumerate(paragraphs):
@@ -75,6 +88,7 @@ def find_clause_range(paragraphs: list[Paragraph], clause_number: Optional[str] 
     return start, end
 
 
+"""Delete the matching clause block from the document."""
 def delete_clause(document: Document, clause_number: Optional[str], heading: Optional[str]) -> bool:
     paragraphs = iter_paragraphs(document)
     clause_range = find_clause_range(paragraphs, clause_number=clause_number, heading=heading)
@@ -86,6 +100,7 @@ def delete_clause(document: Document, clause_number: Optional[str], heading: Opt
     return True
 
 
+"""Replace the body paragraphs under a matching clause heading."""
 def replace_clause_content(document: Document, clause_number: Optional[str], heading: Optional[str], new_content: str) -> bool:
     paragraphs = iter_paragraphs(document)
     clause_range = find_clause_range(paragraphs, clause_number=clause_number, heading=heading)
@@ -107,6 +122,7 @@ def replace_clause_content(document: Document, clause_number: Optional[str], hea
     return True
 
 
+"""Delete everything from the first matching heading to the end of the document."""
 def delete_by_heading(document: Document, heading: str) -> bool:
     paragraphs = iter_paragraphs(document)
     start = -1
@@ -121,6 +137,7 @@ def delete_by_heading(document: Document, heading: str) -> bool:
     return True
 
 
+"""Apply supported edit operations and report which ones were skipped."""
 def apply_operations(document: Document, operations: list[dict]) -> tuple[int, list[dict]]:
     applied = 0
     skipped: list[dict] = []
@@ -169,6 +186,7 @@ def apply_operations(document: Document, operations: list[dict]) -> tuple[int, l
     return applied, skipped
 
 
+"""Read JSON input, edit the source DOCX, and emit edit results."""
 def main() -> int:
     try:
         payload = read_json_stdin()

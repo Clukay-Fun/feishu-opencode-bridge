@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
+"""
+职责: 提供兼容旧调用方式的 PDF 转 Markdown 包装入口。
+关注点:
+- 以命令行参数形式接收输入/输出路径。
+- 复用 JSON stdin/stdout 版本的核心转换脚本。
+"""
 from pathlib import Path
 import subprocess
 import sys
 
 
+"""Translate argv-style invocation into the JSON contract used by the core converter."""
 def main() -> int:
     if len(sys.argv) != 3:
         print("usage: pdf_to_md.py <input.pdf> <output.md>", file=sys.stderr)
