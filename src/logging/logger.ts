@@ -1,3 +1,10 @@
+/**
+ * 职责: 提供系统日志与对话副本日志的统一记录能力。
+ * 关注点:
+ * - 写入 bridge.log 与 transcript.log 两类日志。
+ * - 支持上下文透传、脱敏策略和结构化事件输出。
+ * - 为运行时调试、审计和回放提供基础设施。
+ */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { appendFile, mkdir } from "node:fs/promises";
@@ -83,15 +90,20 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
 
 const logContextStorage = new AsyncLocalStorage<LogContext>();
 
+// #region 对外接口
+
+/** 在异步调用链中挂载日志上下文。 */
 export async function runWithLogContext<T>(context: LogContext, callback: () => Promise<T>): Promise<T> {
   const parent = logContextStorage.getStore() ?? {};
   return await logContextStorage.run({ ...parent, ...compactContext(context) }, callback);
 }
 
+/** 读取当前异步上下文中的日志字段。 */
 export function getLogContext(): LogContext {
   return logContextStorage.getStore() ?? {};
 }
 
+/** 优先走结构化 event 接口；无 event 实现时退回普通日志。 */
 export function logEvent(
   logger: Pick<Logger, "log" | "event">,
   scope: string,
@@ -106,6 +118,7 @@ export function logEvent(
   logger.log(scope, event, { event, ...fields }, level);
 }
 
+/** 创建日志实例，并初始化日志目录。 */
 export async function createLogger(loggingDir: string, options: LoggerInputOptions = {}): Promise<Logger> {
   await mkdir(loggingDir, { recursive: true });
   const resolvedOptions: LoggerOptions = {
@@ -145,10 +158,15 @@ export async function createLogger(loggingDir: string, options: LoggerInputOptio
   };
 }
 
+/** 生成适合日志展示的短文本预览。 */
 export function createTextPreview(text: string): string {
   const normalized = text.replace(/\s+/g, " ").trim();
   return normalized.length > 80 ? `${normalized.slice(0, 77)}...` : normalized;
 }
+
+// #endregion
+
+// #region 内部格式化与落盘
 
 function timeStamp(): string {
   return new Date().toTimeString().slice(0, 8);
@@ -211,6 +229,8 @@ function writeBridgeLog(
     console.log(options.enableColor && options.format === "pretty" ? colorizeLine(line, level) : line);
   }
 }
+
+// #endregion
 
 function prepareFields(fields: Record<string, unknown>, options: LoggerOptions): Record<string, unknown> {
   return applyMessagePolicy(redactFields({

@@ -1,3 +1,9 @@
+/**
+ * 职责: 提供飞书卡片元素级别的构建基元。
+ * 关注点:
+ * - 封装 markdown、column、columnSet 等低层元素拼装。
+ * - 统一图标和列布局相关的轻量类型定义。
+ */
 export type IconDef = {
   token: string;
   color?: string;
@@ -5,6 +11,7 @@ export type IconDef = {
 
 export type ColumnDef = Record<string, unknown>;
 
+/** 构建基础 markdown 元素。 */
 export function markdown(content: string, opts?: { icon?: IconDef; size?: string }): Record<string, unknown> {
   return {
     tag: "markdown",
@@ -16,6 +23,7 @@ export function markdown(content: string, opts?: { icon?: IconDef; size?: string
   };
 }
 
+/** 构建基础 column_set 元素。 */
 export function columnSet(columns: ColumnDef[]): Record<string, unknown> {
   return {
     tag: "column_set",
@@ -26,6 +34,7 @@ export function columnSet(columns: ColumnDef[]): Record<string, unknown> {
   };
 }
 
+/** 构建基础 column 元素。 */
 export function column(elements: Record<string, unknown>[], opts?: { bg?: string; weight?: number }): Record<string, unknown> {
   return {
     tag: "column",
@@ -43,12 +52,14 @@ export function column(elements: Record<string, unknown>[], opts?: { bg?: string
   };
 }
 
+/** 构建分隔线元素。 */
 export function divider(): Record<string, unknown> {
   return {
     tag: "hr",
   };
 }
 
+/** 构建标准图标定义。 */
 export function standardIcon(token: string, color = "grey"): Record<string, unknown> {
   return {
     tag: "standard_icon",

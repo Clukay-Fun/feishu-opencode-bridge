@@ -1,3 +1,10 @@
+/**
+ * 职责: 定义运行时模块接口，以及模块链路之间共享的上下文契约。
+ * 关注点:
+ * - 约束 handleMessage、beforeTurn、afterTurn 三个扩展入口。
+ * - 提供模块执行时使用的上下文类型。
+ * - 定义 ModuleManager 对模块编排层的最小接口。
+ */
 import type { IncomingChatMessage } from "../runtime/app.js";
 import type { RoutedText } from "./router.js";
 import type { BridgeTurn } from "./turn.js";
@@ -36,32 +43,40 @@ export interface RuntimeModule {
   afterTurn?(context: RuntimeModuleAfterTurnContext): Promise<void>;
 }
 
+/**
+ * 负责管理 RuntimeModule 的注册顺序和钩子调用。
+ */
 export class ModuleManager {
   private readonly modules: RuntimeModule[] = [];
 
   constructor(private readonly logger?: Pick<Logger, "log" | "event">) {}
 
+  /** 注册模块，并按优先级重新排序。 */
   register(module: RuntimeModule): void {
     this.modules.push(module);
     this.modules.sort((left, right) => left.priority - right.priority);
   }
 
+  /** 返回当前已注册模块列表。 */
   list(): readonly RuntimeModule[] {
     return this.modules;
   }
 
+  /** 按注册顺序启动所有模块。 */
   async start(): Promise<void> {
     for (const module of this.modules) {
       await module.start?.();
     }
   }
 
+  /** 按逆序停止所有模块。 */
   async stop(): Promise<void> {
     for (const module of [...this.modules].reverse()) {
       await module.stop?.();
     }
   }
 
+  /** 依次执行模块的消息拦截入口，直到有模块认领。 */
   async handleMessage(context: RuntimeModuleMessageContext): Promise<RuntimeModuleHandleResult> {
     for (const module of this.modules) {
       const startedAt = Date.now();
@@ -80,6 +95,7 @@ export class ModuleManager {
     return { claimed: false };
   }
 
+  /** 汇总所有模块注入的 beforeTurn system blocks。 */
   async collectBeforeTurnBlocks(context: RuntimeModuleBeforeTurnContext): Promise<string[]> {
     const blocks: string[] = [];
     for (const module of this.modules) {
@@ -107,6 +123,7 @@ export class ModuleManager {
     return blocks;
   }
 
+  /** 在 turn 完成后顺序执行各模块的 afterTurn 钩子。 */
   async runAfterTurnHooks(context: RuntimeModuleAfterTurnContext): Promise<void> {
     for (const module of this.modules) {
       if (!module.afterTurn) {
@@ -123,6 +140,7 @@ export class ModuleManager {
     }
   }
 
+  /** 记录模块调用成功日志。 */
   private logModuleInvoked(
     module: RuntimeModule,
     hook: "handleMessage" | "beforeTurn" | "afterTurn" | "stop",
@@ -140,6 +158,7 @@ export class ModuleManager {
     });
   }
 
+  /** 记录模块调用失败日志。 */
   private logModuleFailed(
     module: RuntimeModule,
     hook: "handleMessage" | "beforeTurn" | "afterTurn" | "stop",

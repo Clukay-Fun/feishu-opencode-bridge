@@ -1,3 +1,9 @@
+/**
+ * 职责: 存放 BridgeApp 使用的纯辅助函数。
+ * 关注点:
+ * - 组装 Prompt 请求、系统提示和标题等派生内容。
+ * - 提供回复提取、问题格式化和动作值类型守卫等工具函数。
+ */
 import type { PendingQuestionInteraction } from "../bridge/state.js";
 import type { BridgeTurn } from "../bridge/turn.js";
 import type { FeishuPostPayload, OutputView, ToolUpdateView } from "../feishu/shared-primitives.js";
@@ -7,6 +13,8 @@ import type { SessionBindingRecord, SessionWindowRecord } from "../store/mapping
 import type { IncomingChatMessage, PermissionCardActionValue } from "./app.js";
 import { getVisibleSessions } from "./session-windows.js";
 
+//#region Prompt composition
+// Build an OpenCode prompt payload from plain text and optional system prompt.
 export function buildPromptRequest(text: string, system?: string): { system?: string; parts: Array<{ type: "text"; text: string }> } {
   return system
     ? {
@@ -18,6 +26,7 @@ export function buildPromptRequest(text: string, system?: string): { system?: st
     };
 }
 
+// Merge multiple optional system prompt fragments into one stable prompt body.
 export function composeSystemPrompt(...sections: Array<string | undefined>): string | undefined {
   const normalized = sections
     .map((section) => section?.trim())
@@ -28,6 +37,7 @@ export function composeSystemPrompt(...sections: Array<string | undefined>): str
   return normalized.join("\n\n");
 }
 
+// Add group-chat sender context so upstream models can distinguish the speaker.
 export function toOpencodePromptText(message: Pick<IncomingChatMessage, "chatType" | "senderOpenId" | "plainText">): string {
   if (message.chatType === "p2p") {
     return message.plainText;
@@ -36,6 +46,7 @@ export function toOpencodePromptText(message: Pick<IncomingChatMessage, "chatTyp
   return `[群聊消息][发送者 ${message.senderOpenId}]\n${message.plainText}`;
 }
 
+// Derive a readable session title from chat and thread identity.
 export function buildSessionTitle(chatId: string, chatType: string | undefined, threadKey?: string): string {
   if (chatType === "p2p" || !chatType) {
     return `Feishu ${chatId}`;
@@ -43,7 +54,10 @@ export function buildSessionTitle(chatId: string, chatType: string | undefined, 
 
   return threadKey ? `Feishu ${chatType} ${chatId} ${threadKey}` : `Feishu ${chatType} ${chatId}`;
 }
+//#endregion
 
+//#region Interaction parsing
+// Narrow card callback values to permission actions before the runtime consumes them.
 export function isPermissionCardActionValue(value: Record<string, unknown>): value is PermissionCardActionValue {
   return value.kind === "permission"
     && typeof value.conversationKey === "string"
@@ -54,6 +68,7 @@ export function isPermissionCardActionValue(value: Record<string, unknown>): val
     && typeof value.nonce === "string";
 }
 
+// Convert model-generated question requests into bridge-owned interaction state.
 export function toQuestionRequest(properties: Record<string, unknown>, sessionId: string): { id: string; sessionId: string; questions: Array<{ header: string; question: string }> } | null {
   const requestId = readOptionalString(properties, "id");
   const rawQuestions = properties.questions;
@@ -70,10 +85,14 @@ export function toQuestionRequest(properties: Record<string, unknown>, sessionId
   return { id: requestId, sessionId, questions };
 }
 
+// Render a multi-question prompt into the text shown back to the user.
 export function formatQuestionPrompt(questions: PendingQuestionInteraction["questions"]): string {
   return ["OpenCode 需要你回答：", ...questions.map((question, index) => `${index + 1}. ${escapeMarkdownText(question.header)}\n${escapeMarkdownText(question.question)}`)].join("\n\n");
 }
+//#endregion
 
+//#region Model listing
+// Build the card view used by `/models` and optional provider filtering.
 export function buildModelCardView(
   providers: OpenCodeProvidersResponse,
   requestedProvider?: string,
@@ -98,6 +117,7 @@ export function buildModelCardView(
   };
 }
 
+// Normalize a provider record into the compact card model list shape.
 export function toProviderCardView(
   provider: Record<string, unknown>,
   defaults: Record<string, string>,
@@ -136,6 +156,7 @@ export function toProviderCardView(
   return { id, name, models };
 }
 
+// Normalize one provider model entry and mark whether it is the default.
 export function toProviderModelView(
   value: unknown,
   defaultModel: string | undefined,
@@ -156,7 +177,10 @@ export function toProviderModelView(
     ...(typeof value.release_date === "string" ? { releaseDate: value.release_date } : {}),
   };
 }
+//#endregion
 
+//#region Bridge state prompts
+// Inject authoritative bridge session state into the system prompt for the model.
 export function buildBridgeSystemPrompt(
   turn: Pick<BridgeTurn, "chatType" | "conversationKey" | "senderOpenId" | "sessionId">,
   window: SessionWindowRecord,
@@ -180,7 +204,10 @@ export function buildBridgeSystemPrompt(
   ];
   return lines.join("\n");
 }
+//#endregion
 
+//#region Session labels
+// Prefer server-side session metadata when the stored label is clearly placeholder text.
 export function resolveDisplayLabel(session: OpenCodeSession | undefined, currentLabel: string, sessionId: string): string {
   if (!shouldHydrateLabelFromSessionMeta(currentLabel, sessionId)) {
     return currentLabel;
@@ -189,6 +216,7 @@ export function resolveDisplayLabel(session: OpenCodeSession | undefined, curren
   return session?.title?.trim() || session?.slug?.trim() || currentLabel || sessionId;
 }
 
+// Detect whether a stored label should be refreshed from session metadata.
 export function shouldHydrateLabelFromSessionMeta(currentLabel: string, sessionId: string): boolean {
   return currentLabel === sessionId || isBridgePollutedSessionLabel(currentLabel);
 }
@@ -202,6 +230,7 @@ function isBridgePollutedSessionLabel(currentLabel: string): boolean {
   ].includes(currentLabel.trim());
 }
 
+// Create a short label preview from free-form user text.
 export function summarizeSessionLabel(plainText: string): string {
   const normalized = plainText.trim().replace(/\s+/g, " ");
   if (!normalized) {
@@ -209,7 +238,10 @@ export function summarizeSessionLabel(plainText: string): string {
   }
   return normalized.slice(0, 20);
 }
+//#endregion
 
+//#region Output extraction
+// Extract plain assistant text from mixed OpenCode message payloads.
 export function extractAssistantText(message: OpenCodeMessage | null): string {
   if (!message) return "";
   return message.parts

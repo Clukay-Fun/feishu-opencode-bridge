@@ -1,3 +1,9 @@
+/**
+ * 职责: 组装合同助手模块使用的各类提示词模板。
+ * 关注点:
+ * - 覆盖合同起草、合同提取、案件创建与更新等场景。
+ * - 将业务上下文整理成稳定、可复用的模型输入。
+ */
 export function buildContractDraftPrompt(
   request: string,
   templateName: string,

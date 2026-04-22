@@ -1,3 +1,9 @@
+/**
+ * 职责: 将本地记忆数据同步到 Obsidian 知识库。
+ * 关注点:
+ * - 按计划任务定期生成同步文件。
+ * - 处理 Obsidian 友好的链接与文本格式。
+ */
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -23,6 +29,9 @@ export class ObsidianSyncService {
     private readonly logger: Logger,
   ) {}
 
+  // #region 生命周期
+
+  /** 启动 Obsidian 同步任务，并补做启动补偿同步。 */
   async start(): Promise<void> {
     if (!this.config.enabled) {
       return;
@@ -44,6 +53,7 @@ export class ObsidianSyncService {
     await this.runStartupCompensation();
   }
 
+  /** 停止定时任务，并等待正在进行的同步完成。 */
   async stop(): Promise<void> {
     this.task?.stop();
     this.task?.destroy();
@@ -53,6 +63,7 @@ export class ObsidianSyncService {
     }
   }
 
+  /** 触发一次同步；如已有同步进行中则复用同一 Promise。 */
   async sync(reason: "cron" | "startup"): Promise<void> {
     if (this.syncPromise) {
       return this.syncPromise;
@@ -64,6 +75,11 @@ export class ObsidianSyncService {
     return this.syncPromise;
   }
 
+  // #endregion
+
+  // #region 内部辅助
+
+  /** 根据上次同步时间判断启动时是否需要补偿同步。 */
   private async runStartupCompensation(): Promise<void> {
     const lastSyncedAt = this.db.getObsidianLastSyncedAt();
     if (!lastSyncedAt) {
@@ -77,6 +93,7 @@ export class ObsidianSyncService {
     }
   }
 
+  /** 计算某个时间点之后的下一次 cron 触发时间。 */
   private getNextRunAfter(timestamp: number): Date | null {
     const matcher = (this.task as ScheduledTask & {
       timeMatcher?: { getNextMatch(date: Date): Date };
@@ -87,6 +104,7 @@ export class ObsidianSyncService {
     return matcher.getNextMatch(new Date(timestamp));
   }
 
+  /** 执行真正的同步流程，并为每个用户写 profile 文件。 */
   private async performSync(reason: "cron" | "startup"): Promise<void> {
     const startedAt = Date.now();
     const userIds = this.db.listUsers();
@@ -104,6 +122,7 @@ export class ObsidianSyncService {
     });
   }
 
+  /** 为指定用户写出 Obsidian profile.md。 */
   private async writeUserProfile(userId: string, facts: MemoryFactRecord[]): Promise<void> {
     if (!this.config.vaultPath) {
       return;
@@ -122,8 +141,11 @@ export class ObsidianSyncService {
       preview: createTextPreview(markdown),
     });
   }
+
+  // #endregion
 }
 
+/** 把用户事实渲染为 Obsidian profile Markdown。 */
 export function buildProfileMarkdown(
   userId: string,
   facts: MemoryFactRecord[],
@@ -147,10 +169,12 @@ export function buildProfileMarkdown(
   return lines.join("\n");
 }
 
+/** 把符合模式的 token 转成 wiki links。 */
 function linkifyFact(fact: string): string {
   return fact.replace(/\b([A-Za-z0-9][A-Za-z0-9._/-]*[-_/][A-Za-z0-9._/-]+)\b/g, "[[$1]]");
 }
 
+/** 格式化同步时间戳。 */
 function formatTimestamp(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");

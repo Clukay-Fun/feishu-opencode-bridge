@@ -1,3 +1,9 @@
+/**
+ * 职责: 统一封装 Python 工具脚本的进程调用。
+ * 关注点:
+ * - 自动寻找可用的 Python 解释器。
+ * - 处理脚本执行超时、标准输出解析与错误透传。
+ */
 import { spawn } from "node:child_process";
 import path from "node:path";
 
@@ -20,6 +26,7 @@ type SpawnPythonToolOptions = {
   scriptPath?: string | undefined;
 };
 
+/** 调用指定 Python 脚本，并解析 JSON 结果。 */
 export async function spawnPythonTool<T>(
   script: string,
   input: unknown,
@@ -89,6 +96,7 @@ export async function spawnPythonTool<T>(
   });
 }
 
+/** 从候选列表中找到当前环境可用的 Python 命令。 */
 export async function resolvePythonCommand(candidates?: string[]): Promise<string | null> {
   for (const command of dedupeCommands([
     ...(candidates ?? []),
@@ -105,6 +113,7 @@ export async function resolvePythonCommand(candidates?: string[]): Promise<strin
   return null;
 }
 
+/** 检查某个 Python 命令是否可执行。 */
 async function checkPythonCommand(command: string): Promise<boolean> {
   return await new Promise<boolean>((resolve) => {
     const child = spawn(command, ["--version"], { stdio: ["ignore", "ignore", "ignore"] });
@@ -113,6 +122,7 @@ async function checkPythonCommand(command: string): Promise<boolean> {
   });
 }
 
+/** 去重并清理候选命令列表。 */
 function dedupeCommands(values: Array<string | undefined>): string[] {
   return [...new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value)))];
 }

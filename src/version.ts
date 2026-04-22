@@ -1,7 +1,14 @@
+/**
+ * 职责: 从 package.json 解析应用版本号。
+ * 关注点:
+ * - 自当前目录向上查找 package.json。
+ * - 在缺失或解析失败时返回安全默认值。
+ */
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+/** 自起始目录向上查找本项目的 package.json。 */
 function findPackageJsonPath(startDir: string): string | null {
   let currentDir = startDir;
 
@@ -27,6 +34,7 @@ function findPackageJsonPath(startDir: string): string | null {
   return null;
 }
 
+/** 读取 package.json 中的 version 字段。 */
 function loadAppVersion(): string {
   const currentDir = path.dirname(fileURLToPath(import.meta.url));
   const packageJsonPath = findPackageJsonPath(currentDir);

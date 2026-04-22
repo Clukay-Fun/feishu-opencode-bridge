@@ -1,3 +1,9 @@
+/**
+ * 职责: 定义桥接层向飞书发送消息的传输抽象。
+ * 关注点:
+ * - 统一发送、更新和通知类消息接口。
+ * - 约束传输日志记录所需的最小字段。
+ */
 import { buildNoticeCardPayload, type FeishuPostPayload, type NoticeCardView } from "../feishu/shared-primitives.js";
 import { createTextPreview, type TranscriptType } from "../logging/logger.js";
 
@@ -14,18 +20,21 @@ export type FeishuTransportDelivery = {
 };
 
 export interface FeishuTransport {
+  // Send a brand-new message payload into the target chat.
   sendPayload(
     chatId: string,
     payload: FeishuPostPayload,
     options: FeishuTransportLog,
     delivery?: FeishuTransportDelivery,
   ): Promise<{ messageId: string }>;
+  // Update an already-sent message payload in place.
   updatePayload(
     chatId: string,
     messageId: string,
     payload: FeishuPostPayload,
     options: FeishuTransportLog,
   ): Promise<{ messageId: string }>;
+  // Send a lightweight notice card without exposing card-construction details upstream.
   sendNotice(
     message: Pick<FeishuTransportDelivery, "replyToMessageId"> & { chatId: string },
     notice: NoticeCardView,
@@ -39,6 +48,7 @@ export interface FeishuTransport {
   ): Promise<{ messageId: string }>;
 }
 
+// Wrap raw send/update callbacks into the runtime transport contract.
 export function createFeishuTransport(callbacks: {
   sendPayload: FeishuTransport["sendPayload"];
   updatePayload: FeishuTransport["updatePayload"];

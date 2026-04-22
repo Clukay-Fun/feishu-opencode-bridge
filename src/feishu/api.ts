@@ -1,3 +1,10 @@
+/**
+ * 职责: 封装飞书开放平台 API 调用，并处理认证、重试和文件能力。
+ * 关注点:
+ * - 提供消息发送、回复、更新等常用 IM 接口。
+ * - 提供文件上传和消息资源读取能力。
+ * - 缓存并刷新 tenant access token，减少重复鉴权开销。
+ */
 import type { FeishuPostPayload } from "./shared-primitives.js";
 
 const RETRY_MAX_ATTEMPTS = 3;
@@ -9,6 +16,7 @@ export class FeishuApiClient {
 
   constructor(private readonly appId: string, private readonly appSecret: string) {}
 
+  /** 发送一条新消息到指定 chat。 */
   async sendMessage(chatId: string, payload: FeishuPostPayload): Promise<{ messageId: string }> {
     const token = await this.getTenantToken();
     const response = await withRetry(() => fetch("https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id", {
@@ -26,6 +34,7 @@ export class FeishuApiClient {
     return { messageId: body.data.message_id };
   }
 
+  /** 回复一条已有消息。 */
   async replyMessage(messageId: string, payload: FeishuPostPayload, options?: { replyInThread?: boolean }): Promise<{ messageId: string }> {
     const token = await this.getTenantToken();
     const response = await withRetry(() => fetch(`https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/reply`, {
@@ -43,6 +52,7 @@ export class FeishuApiClient {
     return { messageId: body.data.message_id };
   }
 
+  /** 原位更新一条已发送消息。 */
   async updateMessage(messageId: string, payload: FeishuPostPayload): Promise<{ messageId: string }> {
     const token = await this.getTenantToken();
     const response = await withRetry(() => fetch(`https://open.feishu.cn/open-apis/im/v1/messages/${messageId}`, {
@@ -60,6 +70,7 @@ export class FeishuApiClient {
     return { messageId: body.data?.message_id ?? messageId };
   }
 
+  /** 获取或刷新 tenant access token。 */
   async getTenantToken(): Promise<string> {
     if (this.cachedToken && Date.now() < this.cachedToken.expiresAt) {
       return this.cachedToken.token;
@@ -75,6 +86,7 @@ export class FeishuApiClient {
     return this.tokenRequest;
   }
 
+  /** 下载消息关联的文件或图片资源。 */
   async downloadMessageResource(
     messageId: string,
     fileKey: string,
@@ -102,6 +114,7 @@ export class FeishuApiClient {
     };
   }
 
+  /** 创建一条多维表格记录，必要时做单选字段重试。 */
   async createBitableRecord(appToken: string, tableId: string, fields: Record<string, unknown>): Promise<string> {
     const token = await this.getTenantToken();
     const firstAttempt = await this.createBitableRecordOnce(token, appToken, tableId, fields);
@@ -120,6 +133,7 @@ export class FeishuApiClient {
     throw new Error(`Feishu createBitableRecord failed: ${firstAttempt.msg}`);
   }
 
+  /** 更新一条多维表格记录。 */
   async updateBitableRecord(appToken: string, tableId: string, recordId: string, fields: Record<string, unknown>): Promise<void> {
     const token = await this.getTenantToken();
     const response = await withRetry(() => fetch(
@@ -139,6 +153,7 @@ export class FeishuApiClient {
     }
   }
 
+  /** 列出多维表格中的全部记录。 */
   async listBitableRecords(appToken: string, tableId: string): Promise<Array<{ recordId: string; fields: Record<string, unknown> }>> {
     const token = await this.getTenantToken();
     const results: Array<{ recordId: string; fields: Record<string, unknown> }> = [];
@@ -182,6 +197,7 @@ export class FeishuApiClient {
     return results;
   }
 
+  /** 请求新的 tenant token 并更新本地缓存。 */
   private async fetchTenantToken(): Promise<string> {
     const response = await fetch("https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal", {
       method: "POST",
@@ -201,6 +217,7 @@ export class FeishuApiClient {
     return body.tenant_access_token;
   }
 
+  /** 尝试创建一条 bitable 记录，并返回原始成功/失败结果。 */
   private async createBitableRecordOnce(
     token: string,
     appToken: string,

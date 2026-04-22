@@ -1,3 +1,9 @@
+/**
+ * 职责: 提供劳动争议材料分析领域服务。
+ * 关注点:
+ * - 提取单份材料中的证据属性、关键事实和时间线线索。
+ * - 汇总多份材料形成完整的分析结果与风险判断。
+ */
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -83,6 +89,9 @@ export class LaborSkillService {
     this.cacheFilePath = path.join(dataDir, "labor-skill-cache.json");
   }
 
+  // #region 对外分析入口
+
+  /** 执行完整劳动分析流程：逐份提取后再统一汇总。 */
   async analyze(
     files: EvidenceFileRef[],
     notes: string[],
@@ -120,6 +129,7 @@ export class LaborSkillService {
     }, { onProgress });
   }
 
+  /** 提取单份材料中的事实、证据和风险信息。 */
   async extractMaterial(
     file: EvidenceFileRef,
     options?: { onProgress?: ((step: string) => Promise<void> | void) | undefined },
@@ -165,6 +175,7 @@ export class LaborSkillService {
     };
   }
 
+  /** 汇总多份材料，生成工作台 Markdown 和可选的飞书文档。 */
   async finalizeAnalysis(
     input: {
       extractedMaterials: LaborMaterialExtraction[];
@@ -234,6 +245,11 @@ export class LaborSkillService {
     };
   }
 
+  // #endregion
+
+  // #region 内部辅助
+
+  /** 用知识库为劳动争议风险点补充规则支撑。 */
   private async queryKnowledgeSupports(materials: LaborMaterialExtraction[]): Promise<Array<{ issue: string; rule: string; relation: string }>> {
     if (!this.knowledge) {
       return [];
@@ -263,6 +279,7 @@ export class LaborSkillService {
     return supports;
   }
 
+  /** 调用模型生成聚合分析 JSON。 */
   private async askAggregateJson(prompt: string, model?: OpenCodeModelRef): Promise<Record<string, unknown>> {
     const session = await this.opencode.createSession("[bridge] labor-analyze");
     try {
@@ -277,6 +294,7 @@ export class LaborSkillService {
     }
   }
 
+  /** 读取本地缓存；不存在时返回空缓存结构。 */
   private async readCache(): Promise<LaborSkillCacheFile> {
     try {
       const raw = await readFile(this.cacheFilePath, "utf8");
@@ -295,12 +313,16 @@ export class LaborSkillService {
     }
   }
 
+  /** 写回材料提取与汇总分析缓存。 */
   private async writeCache(cache: LaborSkillCacheFile): Promise<void> {
     await mkdir(path.dirname(this.cacheFilePath), { recursive: true });
     await writeFile(this.cacheFilePath, JSON.stringify(cache, null, 2), "utf8");
   }
+
+  // #endregion
 }
 
+/** 规范化单份材料提取结果，并统一做脱敏。 */
 function normalizeMaterialExtraction(value: Record<string, unknown>): LaborMaterialExtraction {
   return {
     materialType: readString(value, "materialType") ?? "其他",
@@ -325,6 +347,7 @@ function normalizeMaterialExtraction(value: Record<string, unknown>): LaborMater
   };
 }
 
+/** 规范化聚合分析结果，并在缺失时回退到知识库支撑。 */
 function normalizeAggregateResult(
   value: Record<string, unknown>,
   fallbackSupports: Array<{ issue: string; rule: string; relation: string }>,
@@ -366,6 +389,7 @@ function normalizeAggregateResult(
   };
 }
 
+/** 把聚合结果渲染为飞书工作台 Markdown。 */
 export function renderLaborWorkbenchMarkdown(result: LaborAggregateResult, materialCount: number, warnings: string[]): string {
   const title = result.caseTitle || "劳动争议案件";
   const timelineDiagram = buildTimelineMermaid(result.timeline);

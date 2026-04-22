@@ -49,7 +49,7 @@ Evidence command:
 rg -n "legal-query|/model\\b|labor-start|labor-end|contract-workbench|案件更新待办" src test docs/plans docs/architecture-baseline.md --glob '!docs/archive/**'
 ```
 
-Result: retired aliases remain only as explicit retirement notices, passthrough tests, and compatibility-cleanup documentation.
+Result: retired aliases remain only as explicit retirement notices and passthrough tests.
 
 Judgment: PASS.
 
@@ -117,7 +117,7 @@ Judgment: PASS.
 
 ### Docs boundary
 
-Evidence: seam changes are documented in `docs/architecture-baseline.md`, `docs/plans/new-feature-checklist.md`, `docs/plans/formatter-migration.md`, and this acceptance note.
+Evidence: seam changes are documented in `docs/architecture-baseline.md`, `docs/guidelines/new-feature-checklist.md`, `docs/archive/design-history/formatter-migration.md`, and this acceptance note.
 
 Judgment: PASS.
 
@@ -125,7 +125,7 @@ Judgment: PASS.
 
 Alias decision: alpha.
 
-Status: compatibility aliases listed in `docs/plans/compatibility-cleanup.md` are retired in this milestone. The runtime may still recognize legacy text to show a retirement notice, but those paths no longer provide duplicate feature entrypoints.
+Status: compatibility aliases are retired in this milestone. The runtime may still recognize legacy text to show a retirement notice, but those paths no longer provide duplicate feature entrypoints.
 
 ## 4. Test Baseline
 
@@ -166,7 +166,7 @@ These were accepted as benign and are recorded for audit clarity:
 
 ## 7. Post-Freeze Backlog
 
-Backlog: `docs/plans/post-freeze-backlog.md`.
+Backlog: `docs/backlog/post-freeze-backlog.md`.
 
 ## 8. Final Sign-Off
 

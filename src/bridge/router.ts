@@ -1,3 +1,10 @@
+/**
+ * 职责: 将飞书原始文本解析为结构化命令，或保留为普通透传消息。
+ * 关注点:
+ * - 清理群聊中的 @mention 前缀等输入噪音。
+ * - 识别桥接层支持的斜杠命令并返回判别联合类型。
+ * - 对未识别输入稳定降级为 passthrough。
+ */
 export type RoutedText =
   | {
     kind: "command";
@@ -25,6 +32,7 @@ export type RoutedText =
   }
   | { kind: "message"; text: string };
 
+/** 解析一条飞书文本消息，识别桥接命令或普通消息。 */
 export function routeIncomingText(text: string): RoutedText {
   const normalized = normalizeCommandCandidate(text);
   if (!normalized.startsWith("/")) {

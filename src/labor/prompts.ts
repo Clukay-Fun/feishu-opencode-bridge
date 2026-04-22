@@ -1,3 +1,9 @@
+/**
+ * 职责: 组装劳动争议分析模块使用的提示词模板。
+ * 关注点:
+ * - 区分单材料提取与多材料汇总两类任务。
+ * - 让模型输出结构稳定、便于后续程序消费。
+ */
 export function buildLaborMaterialExtractPrompt(fileName: string, content: string, localPath?: string): string {
   return [
     "你是劳动争议材料分析助手。",

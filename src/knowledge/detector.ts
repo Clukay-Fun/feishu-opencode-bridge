@@ -1,3 +1,9 @@
+/**
+ * 职责: 识别用户消息中的知识库相关意图。
+ * 关注点:
+ * - 检测知识查询、网页摄入等触发条件。
+ * - 返回命中结果、置信度与判定理由，供上层决定是否分流。
+ */
 export type KnowledgeAutoDetectResult = {
   matched: boolean;
   confidence: number;
@@ -40,6 +46,7 @@ const LEGAL_KEYWORDS = [
 
 const QUESTION_MARKERS = ["吗", "么", "如何", "怎么", "怎么办", "是否", "能否", "可以", "多久", "多长", "合法么"];
 
+/** 根据关键词与问句特征判断消息是否像法律咨询问题。 */
 export function detectLegalQuestion(text: string): KnowledgeAutoDetectResult {
   const normalized = text.replace(/\s+/g, " ").trim().toLowerCase();
   if (!normalized) {
@@ -76,6 +83,7 @@ export function detectLegalQuestion(text: string): KnowledgeAutoDetectResult {
   };
 }
 
+/** 检测消息中是否包含网页入库意图与 URL。 */
 export function detectKnowledgeWebIngest(
   text: string,
   options: { requireIngestIntent?: boolean } = {},
@@ -103,6 +111,7 @@ export function detectKnowledgeWebIngest(
   };
 }
 
+/** 从文本中提取第一个 URL。 */
 function extractFirstUrl(text: string): string | undefined {
   const match = text.match(/https?:\/\/[^\s<>"'，。；、）)】\]]+/i);
   if (!match?.[0]) {

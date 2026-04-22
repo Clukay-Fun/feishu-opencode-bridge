@@ -1,81 +1,81 @@
-# Observability Event Schema
+# 可观测性事件规范
 
-> Last updated: 2026-04-19
+> 最后更新：2026-04-19
 >
-> This document defines the first stable event vocabulary for bridge runtime logs.
-> It is documentation-first on purpose: code should migrate toward these names instead of inventing new text per call site.
+> 这份文档定义了 bridge 运行时第一版稳定事件词表。
+> 它刻意采用“文档先行”的方式：代码应逐步收敛到这些事件名，而不是在各调用点继续自由发明日志文本。
 
-## Goal
+## 目标
 
-Make one bridge turn traceable from ingress to final delivery with stable event names and predictable fields.
+让一次 bridge turn 从 ingress 到最终回包都能被完整追踪，并且事件名稳定、字段可预期。
 
-The runtime already has a shared logger. The next observability phase should add request context propagation, JSON line output, and event helpers without replacing that logger wholesale.
+运行时已经有共享 logger。下一阶段的可观测性工作，应在不整体替换 logger 的前提下，补齐 request context 传播、JSON line 输出和事件 helper。
 
-## Common Envelope
+## 通用包络
 
-Every structured bridge event should use this envelope:
+每条结构化 bridge 事件都应使用下面这组基础字段：
 
-- `ts`: ISO timestamp emitted by the logger
-- `level`: `debug`, `info`, `warn`, or `error`
-- `scope`: stable logger scope, such as `bridge/queue` or `feishu/reply`
-- `event`: one of the event names in this document
-- `msg`: short human-readable message for local debugging
-- `correlationId`: id shared by one inbound Feishu event and all work it triggers
-- `turnId`: bridge turn id, when a turn exists
-- `sessionId`: OpenCode session id, when available
-- `chatId`: Feishu chat id, when available
-- `userId`: Feishu sender id, when available
-- `messageId`: Feishu message id, when available
+- `ts`：logger 输出的 ISO 时间戳
+- `level`：`debug`、`info`、`warn` 或 `error`
+- `scope`：稳定的 logger scope，例如 `bridge/queue` 或 `feishu/reply`
+- `event`：本文定义的事件名之一
+- `msg`：用于本地调试的简短可读消息
+- `correlationId`：同一条 Feishu 入站事件及其后续工作共享的关联 id
+- `turnId`：存在 turn 时的 bridge turn id
+- `sessionId`：存在时的 OpenCode session id
+- `chatId`：存在时的 Feishu chat id
+- `userId`：存在时的 Feishu sender id
+- `messageId`：存在时的 Feishu message id
 
-Field rules:
+字段规则：
 
-- Event-specific fields may be added, but must use stable names.
-- Raw user message content must not be logged by default.
-- Message previews must follow the configured message logging policy.
-- Transcript files remain separate from structured bridge events.
+- 允许补充事件专属字段，但字段名必须稳定。
+- 默认不应记录原始用户消息内容。
+- 消息预览应遵循配置中的 message logging policy。
+- transcript 文件与结构化 bridge 事件应保持分离。
 
-## Event Names
+## 事件名
 
 ### `turn.started`
 
-Emitted when a queued turn begins execution.
+在排队中的 turn 开始执行时发出。
 
-Required fields:
+必填字段：
 
 - `turnId`
 - `sessionId`
 - `chatId`
 - `conversationKey`
 
-Trigger point:
+触发点：
 
-- `TurnExecutor` after the turn enters active execution.
+- `TurnExecutor` 进入 active execution 之后。
 
 ### `turn.completed`
 
-Emitted when a turn finishes successfully.
+在 turn 成功完成时发出。
 
-Required fields:
+必填字段：
 
 - `turnId`
 - `sessionId`
 - `durationMs`
 
-Optional fields:
+可选字段：
 
 - `replyLength`
 - `processMessageId`
 - `finalMessageId`
 
-Trigger point:
+触发点：
 
-- `TurnExecutor` after final reply delivery and cleanup.
+- `TurnExecutor` 完成最终回复发送和清理之后。
 
 ### `turn.failed`
 
-Emitted when a turn fails before normal completion.
+在 turn 未正常完成、提前失败时发出。
 
-Required fields:
+必填字段：
 
 - `turnId`
 - `chatId`
@@ -83,206 +83,206 @@ Required fields:
 - `errorKind`
 - `detail`
 
-Optional fields:
+可选字段：
 
 - `sessionId`
 - `durationMs`
 
-Trigger point:
+触发点：
 
-- `TurnExecutor` catch path around turn execution.
+- `TurnExecutor` 包裹 turn 执行的 catch 路径。
 
 ### `turn.fallback_triggered`
 
-Emitted when the bridge falls back to a degraded turn behavior.
+在 bridge 退化到某种 fallback 行为时发出。
 
-Required fields:
+必填字段：
 
 - `turnId`
 - `fallbackKind`
 - `reason`
 
-Optional fields:
+可选字段：
 
 - `sessionId`
 - `chatId`
 
-Trigger point:
+触发点：
 
-- Runtime fallback branches, such as degraded reply or process-card fallback.
+- 运行时 fallback 分支，例如 degraded reply 或 process-card fallback。
 
 ### `permission.asked`
 
-Emitted when the bridge asks the user to approve or deny a runtime permission request.
+在 bridge 向用户发出运行时权限请求时发出。
 
-Required fields:
+必填字段：
 
 - `turnId`
 - `permissionId`
 - `permissionKind`
 - `chatId`
 
-Optional fields:
+可选字段：
 
 - `sessionId`
 - `toolName`
 
-Trigger point:
+触发点：
 
-- `PermissionManager` after sending the permission card.
+- `PermissionManager` 发送权限卡片之后。
 
 ### `permission.decided`
 
-Emitted when the user or timeout path decides a permission request.
+在权限请求被用户或超时路径决策后发出。
 
-Required fields:
+必填字段：
 
 - `turnId`
 - `permissionId`
 - `decision`
 - `decisionSource`
 
-Optional fields:
+可选字段：
 
 - `sessionId`
 - `chatId`
 - `durationMs`
 
-Allowed values:
+允许值：
 
-- `decision`: `approved`, `denied`
-- `decisionSource`: `user`, `timeout`, `system`
+- `decision`：`approved`、`denied`
+- `decisionSource`：`user`、`timeout`、`system`
 
-Trigger point:
+触发点：
 
-- `PermissionManager` card action and auto-deny paths.
+- `PermissionManager` 的卡片 action 路径与 auto-deny 路径。
 
 ### `module.invoked`
 
-Emitted when a runtime module claims or processes a message or hook.
+在某个 runtime module 认领或处理消息 / hook 时发出。
 
-Required fields:
+必填字段：
 
 - `moduleId`
 - `hook`
 - `result`
 
-Optional fields:
+可选字段：
 
 - `turnId`
 - `chatId`
 - `conversationKey`
 - `durationMs`
 
-Allowed values:
+允许值：
 
-- `hook`: `handleMessage`, `beforeTurn`, `afterTurn`, `stop`
-- `result`: `claimed`, `ignored`, `completed`
+- `hook`：`handleMessage`、`beforeTurn`、`afterTurn`、`stop`
+- `result`：`claimed`、`ignored`、`completed`
 
-Trigger point:
+触发点：
 
-- `RuntimeModuleManager` around module hook dispatch.
+- `RuntimeModuleManager` 包裹 module hook 分发时。
 
 ### `module.failed`
 
-Emitted when a runtime module hook throws or returns an invalid result.
+在 runtime module hook 抛错或返回非法结果时发出。
 
-Required fields:
+必填字段：
 
 - `moduleId`
 - `hook`
 - `errorKind`
 - `detail`
 
-Optional fields:
+可选字段：
 
 - `turnId`
 - `chatId`
 - `conversationKey`
 
-Trigger point:
+触发点：
 
-- `RuntimeModuleManager` error handling around module hook dispatch.
+- `RuntimeModuleManager` 包裹 module hook 分发时的错误处理路径。
 
 ### `transport.sent`
 
-Emitted when the Feishu transport successfully sends or updates a bridge-owned message.
+在 Feishu transport 成功发送或更新一条 bridge-owned 消息时发出。
 
-Required fields:
+必填字段：
 
 - `chatId`
 - `messageId`
 - `transportAction`
 - `payloadKind`
 
-Optional fields:
+可选字段：
 
 - `turnId`
 - `textPreview`
 - `len`
 
-Allowed values:
+允许值：
 
-- `transportAction`: `send`, `update`, `reply`, `thread_reply`
-- `payloadKind`: `card`, `post`, `text`, `markdown`
+- `transportAction`：`send`、`update`、`reply`、`thread_reply`
+- `payloadKind`：`card`、`post`、`text`、`markdown`
 
-Trigger point:
+触发点：
 
-- Feishu transport and turn card manager send/update success paths.
+- Feishu transport 和 turn card manager 的发送 / 更新成功路径。
 
 ### `transport.failed`
 
-Emitted when the Feishu transport fails to send or update a bridge-owned message.
+在 Feishu transport 发送或更新 bridge-owned 消息失败时发出。
 
-Required fields:
+必填字段：
 
 - `transportAction`
 - `payloadKind`
 - `errorKind`
 - `detail`
 
-Optional fields:
+可选字段：
 
 - `turnId`
 - `chatId`
 - `messageId`
 
-Trigger point:
+触发点：
 
-- Feishu transport and turn card manager send/update failure paths.
+- Feishu transport 和 turn card manager 的发送 / 更新失败路径。
 
-## Privacy Policy
+## 隐私策略
 
-Structured logs should default to operational metadata, not content.
+结构化日志默认应记录运行元数据，而不是内容本身。
 
-Default redaction list:
+默认脱敏清单：
 
 - `feishu.appSecret`
 - `opencode.apiKey`
-- raw inbound user message content
-- raw OpenCode reply content
-- file contents and attachment contents
+- 原始入站用户消息内容
+- 原始 OpenCode 回复内容
+- 文件内容和附件内容
 
-Recommended message policies:
+建议的 message policy：
 
-- `none`: do not log message content or preview
-- `hash`: log only a deterministic hash
-- `preview`: log a short normalized preview
-- `full`: log full content only for local diagnosis
+- `none`：不记录消息内容或预览
+- `hash`：只记录稳定哈希
+- `preview`：记录简短、归一化后的预览
+- `full`：仅在本地诊断时记录完整内容
 
-The default production policy should be `preview` or stricter.
+生产环境默认策略应为 `preview` 或更严格。
 
-## Migration Order
+## 迁移顺序
 
-1. Add request context propagation so `correlationId` and `turnId` are automatic.
-2. Add JSON line output while keeping pretty local output configurable.
-3. Add `logger.event(event, fields)` with the event names above.
-4. Migrate seam files one group at a time.
+1. 先补 request context 传播，让 `correlationId` 和 `turnId` 自动注入。
+2. 再补 JSON line 输出，同时保留可配置的本地 pretty 输出。
+3. 再补 `logger.event(event, fields)`，统一使用本文事件名。
+4. 最后按 seam 分组逐步迁移代码。
 
-Initial seam groups:
+初始 seam 分组：
 
-- ingress: `src/feishu/ws.ts`, `src/http/server.ts`
-- turn runtime: `src/runtime/turn-executor.ts`
-- permissions: `src/runtime/permission-manager.ts`
-- modules: `src/runtime/runtime-modules.ts`
-- transport: `src/runtime/feishu-transport.ts`, `src/runtime/turn-card-manager.ts`
+- ingress：`src/feishu/ws.ts`、`src/http/server.ts`
+- turn runtime：`src/runtime/turn-executor.ts`
+- permissions：`src/runtime/permission-manager.ts`
+- modules：`src/runtime/runtime-modules.ts`
+- transport：`src/runtime/feishu-transport.ts`、`src/runtime/turn-card-manager.ts`

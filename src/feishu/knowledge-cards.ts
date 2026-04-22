@@ -1,3 +1,9 @@
+/**
+ * 职责: 构建知识库模块使用的飞书卡片。
+ * 关注点:
+ * - 覆盖查询结果、摄入进度、摄入摘要等展示场景。
+ * - 复用共享卡片原语组织统计、步骤和引用信息。
+ */
 import type { KnowledgeIngestResult, KnowledgeQueryResult } from "../knowledge/index.js";
 import {
   buildDivider,
@@ -56,6 +62,9 @@ export type KnowledgeIngestSessionSummaryView = {
   failures?: Array<{ sourceFile: string; reason: string }> | undefined;
 };
 
+// #region 知识查询卡片
+
+/** 构建知识查询命中结果卡。 */
 export function buildKnowledgeQueryPayload(view: KnowledgeQueryResult): FeishuPostPayload {
   const footerTip = view.bitableUrl
     ? `以上内容仅供参考，不构成法律意见。\n\n[查看知识库](${escapeText(view.bitableUrl)})`
@@ -88,6 +97,7 @@ export function buildKnowledgeQueryPayload(view: KnowledgeQueryResult): FeishuPo
   });
 }
 
+/** 构建知识查询未命中卡。 */
 export function buildKnowledgeQueryEmptyPayload(view: KnowledgeQueryEmptyCardView): FeishuPostPayload {
   return buildInteractivePayload({
     title: "法律咨询",
@@ -101,6 +111,11 @@ export function buildKnowledgeQueryEmptyPayload(view: KnowledgeQueryEmptyCardVie
   });
 }
 
+// #endregion
+
+// #region 知识入库卡片
+
+/** 构建“已进入知识入库模式”提示卡。 */
 export function buildKnowledgeIngestReadyPayload(): FeishuPostPayload {
   return buildInteractivePayload({
     title: "知识入库已开启",
@@ -116,6 +131,7 @@ export function buildKnowledgeIngestReadyPayload(): FeishuPostPayload {
   });
 }
 
+/** 构建知识入库会话摘要卡。 */
 export function buildKnowledgeIngestSessionPayload(view: KnowledgeIngestSessionSummaryView): FeishuPostPayload {
   const bodyParts = [
     `**已完成**\n${view.completedCount} 个素材`,
@@ -138,6 +154,7 @@ export function buildKnowledgeIngestSessionPayload(view: KnowledgeIngestSessionS
   });
 }
 
+/** 构建知识入库会话最终汇总卡。 */
 export function buildKnowledgeIngestSessionFinalPayload(view: KnowledgeIngestSessionSummaryView): FeishuPostPayload {
   const results = view.results ?? [];
   const failures = view.failures ?? [];
@@ -162,6 +179,7 @@ export function buildKnowledgeIngestSessionFinalPayload(view: KnowledgeIngestSes
   });
 }
 
+/** 构建单个素材入库完成卡。 */
 export function buildKnowledgeIngestPayload(view: KnowledgeIngestResult): FeishuPostPayload {
   const rawExtractedCount = view.rawExtractedCount ?? view.extractedCount;
   const dedupedCount = view.dedupedCount ?? Math.max(0, rawExtractedCount - view.extractedCount);
@@ -185,6 +203,7 @@ export function buildKnowledgeIngestPayload(view: KnowledgeIngestResult): Feishu
   });
 }
 
+/** 构建入库排队提示卡。 */
 export function buildKnowledgeIngestQueuedPayload(view: KnowledgeIngestQueuedCardView): FeishuPostPayload {
   return buildInteractivePayload({
     title: "知识入库排队中",
@@ -203,6 +222,7 @@ export function buildKnowledgeIngestQueuedPayload(view: KnowledgeIngestQueuedCar
   });
 }
 
+/** 构建入库失败卡。 */
 export function buildKnowledgeIngestFailurePayload(view: KnowledgeIngestFailureCardView): FeishuPostPayload {
   return buildInteractivePayload({
     title: "入库失败",
@@ -218,6 +238,7 @@ export function buildKnowledgeIngestFailurePayload(view: KnowledgeIngestFailureC
   });
 }
 
+/** 构建入库处理中卡。 */
 export function buildKnowledgeIngestProcessingPayload(view: KnowledgeIngestProgressCardView): FeishuPostPayload {
   const stepElements = view.steps.flatMap((step) => buildKnowledgeIngestProgressStepElements(step));
   return buildInteractivePayload({
@@ -232,6 +253,8 @@ export function buildKnowledgeIngestProcessingPayload(view: KnowledgeIngestProgr
     ],
   });
 }
+
+// #endregion
 
 function summarizeKnowledgeIngestTagCounts(results: KnowledgeIngestResult[]): Record<string, number> {
   const counts = new Map<string, number>();

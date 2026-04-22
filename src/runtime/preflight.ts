@@ -1,3 +1,9 @@
+/**
+ * 职责: 在应用启动前验证关键依赖、配置和运行环境。
+ * 关注点:
+ * - 检查目录权限、飞书鉴权与 OpenCode 健康状态。
+ * - 尽早暴露配置缺失和外部依赖不可用的问题。
+ */
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 
@@ -10,6 +16,7 @@ type FeishuPreflightPort = {
 
 type ReportFn = (line: string) => void;
 
+/** 执行启动前检查，确保核心依赖与配置都可用。 */
 export async function runStartupPreflight(
   config: AppConfig,
   feishu: FeishuPreflightPort,
@@ -62,6 +69,7 @@ export async function runStartupPreflight(
   }
 }
 
+/** 运行单项检查，并把失败包装成更友好的启动错误。 */
 async function runCheck(name: string, report: ReportFn, fn: () => Promise<void>): Promise<void> {
   report(`正在检查 ${name}`);
   try {
@@ -73,6 +81,7 @@ async function runCheck(name: string, report: ReportFn, fn: () => Promise<void>)
   report(`已通过 ${name}`);
 }
 
+/** 检查目标目录当前是否具备可读写权限。 */
 async function ensureWritable(target: string): Promise<void> {
   await access(target, constants.R_OK | constants.W_OK);
 }

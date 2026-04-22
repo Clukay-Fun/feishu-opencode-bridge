@@ -1,3 +1,9 @@
+/**
+ * 职责: 处理 bridge 自有命令，并协调会话管理类操作。
+ * 关注点:
+ * - 处理 /new、/status、/sessions、/allow 等命令。
+ * - 连接会话窗口状态、OpenCode 能力和飞书卡片输出。
+ */
 import type { PendingInteraction, PendingPermissionInteraction, PendingSessionSelectionInteraction } from "../bridge/state.js";
 import type { RoutedText } from "../bridge/router.js";
 import {
@@ -127,13 +133,16 @@ const BRIDGE_OWNED_COMMAND_KINDS = new Set<Extract<RoutedText, { kind: "command"
   "passthrough",
 ]);
 
+/** 判断命令是否由 bridge 核心层而不是业务模块处理。 */
 export function isBridgeOwnedCommand(command: Extract<RoutedText, { kind: "command" }>["command"]): boolean {
   return BRIDGE_OWNED_COMMAND_KINDS.has(command.kind);
 }
 
+/** 承载 bridge 自有命令的执行逻辑。 */
 export class CommandHandler {
   constructor(private readonly context: BridgeAppContext) {}
 
+  /** 分发并执行一条 bridge 自有命令。 */
   async handleCommand(message: CommandMessage, routed: CommandRouted): Promise<void> {
     const { command } = routed;
     if (command.kind === "new") {

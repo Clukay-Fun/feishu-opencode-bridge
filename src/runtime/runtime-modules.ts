@@ -1,3 +1,9 @@
+/**
+ * 职责: 装配所有运行时模块及其依赖。
+ * 关注点:
+ * - 实例化各业务模块并注入所需服务。
+ * - 产出可供 BridgeApp 使用的 ModuleManager 和相关运行时资源。
+ */
 import type { ModuleManager } from "../bridge/module.js";
 import { ModuleManager as RuntimeModuleManager } from "../bridge/module.js";
 import { DEFAULT_CONTRACT_ASSISTANT_CONFIG, DEFAULT_LABOR_SKILL_CONFIG, type AppConfig } from "../config/schema.js";
@@ -40,6 +46,7 @@ export type RuntimeModuleAssemblyResult = {
   knowledgeModule: KnowledgeRuntimeModule;
 };
 
+/** 创建并装配运行时模块树。 */
 export function createRuntimeModules(options: {
   config: AppConfig;
   outbound: RuntimeModuleOutboundPort;
@@ -103,6 +110,7 @@ export function createRuntimeModules(options: {
   };
 }
 
+/** 在启用记忆功能时创建记忆服务。 */
 function createMemoryService(
   config: AppConfig,
   logger: Logger,
@@ -119,6 +127,7 @@ function createMemoryService(
   );
 }
 
+/** 在启用知识库功能时创建知识库服务。 */
 function createKnowledgeService(
   config: AppConfig,
   outbound: RuntimeModuleOutboundPort,
@@ -136,6 +145,7 @@ function createKnowledgeService(
   );
 }
 
+/** 在启用合同助手功能时创建合同助手服务。 */
 function createContractAssistantService(
   config: AppConfig,
   outbound: RuntimeModuleOutboundPort,
@@ -155,6 +165,7 @@ function createContractAssistantService(
   );
 }
 
+/** 在启用劳动分析功能时创建劳动分析服务。 */
 function createLaborSkillService(
   config: AppConfig,
   outbound: RuntimeModuleOutboundPort,

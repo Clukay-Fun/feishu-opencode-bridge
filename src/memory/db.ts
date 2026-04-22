@@ -1,3 +1,9 @@
+/**
+ * 职责: 提供记忆模块的本地存储层。
+ * 关注点:
+ * - 持久化用户事实及其访问时间。
+ * - 支持新增、查询、触碰更新时间等基础操作。
+ */
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
@@ -37,6 +43,9 @@ export class MemoryDb {
     this.init();
   }
 
+  // #region 写入与更新
+
+  /** 兼容旧接口：批量保存 facts 并返回保存数量。 */
   add(userId: string, facts: string[], sourceMessage: string): { saved: number } {
     const ids = this.saveFacts(
       userId,
@@ -45,6 +54,7 @@ export class MemoryDb {
     return { saved: ids.length };
   }
 
+  /** 批量写入事实；重复事实只更新时间，不重复插入。 */
   saveFacts(userId: string, facts: Array<{ fact: string; sourceMessage: string }>): number[] {
     const normalizedFacts = dedupeFactEntries(facts, this.sourcePreviewLength);
     if (normalizedFacts.length === 0) {
@@ -106,6 +116,7 @@ export class MemoryDb {
     return ids;
   }
 
+  /** 为指定记忆写入 embedding 与模型名。 */
   updateEmbedding(id: number, embedding: number[], model: string): void {
     this.db.prepare(`
       UPDATE memories
@@ -119,6 +130,11 @@ export class MemoryDb {
     });
   }
 
+  // #endregion
+
+  // #region 查询
+
+  /** 返回具备 embedding 的召回候选。 */
   listEmbeddingCandidates(userId: string, model: string): MemoryEmbeddingCandidate[] {
     const rows = this.db.prepare(`
       SELECT id, fact, embedding_json
@@ -149,6 +165,7 @@ export class MemoryDb {
     });
   }
 
+  /** 返回最近访问的记忆。 */
   listRecent(userId: string, limit: number): MemoryFactRecord[] {
     return this.db.prepare(`
       SELECT id, fact, created_at, accessed_at
@@ -159,6 +176,7 @@ export class MemoryDb {
     `).all({ userId, limit }) as MemoryFactRecord[];
   }
 
+  /** 更新若干记忆的 accessedAt 时间。 */
   touch(ids: number[]): void {
     if (ids.length === 0) {
       return;
@@ -171,6 +189,7 @@ export class MemoryDb {
     `).run(...ids);
   }
 
+  /** 列出当前有记忆数据的所有用户。 */
   listUsers(): string[] {
     const rows = this.db.prepare(`
       SELECT DISTINCT user_id
@@ -180,6 +199,7 @@ export class MemoryDb {
     return rows.map((row) => row.user_id);
   }
 
+  /** 列出指定用户的所有记忆。 */
   listFactsForUser(userId: string): MemoryFactRecord[] {
     return this.db.prepare(`
       SELECT id, fact, created_at, accessed_at
@@ -189,6 +209,7 @@ export class MemoryDb {
     `).all({ userId }) as MemoryFactRecord[];
   }
 
+  /** 读取 Obsidian 最近一次同步时间。 */
   getObsidianLastSyncedAt(): number | null {
     const row = this.db.prepare(`
       SELECT value
@@ -202,6 +223,7 @@ export class MemoryDb {
     return Number.isFinite(value) ? value : null;
   }
 
+  /** 更新 Obsidian 最近一次同步时间。 */
   setObsidianLastSyncedAt(timestamp: number): void {
     this.db.prepare(`
       INSERT INTO metadata (key, value)
@@ -210,6 +232,7 @@ export class MemoryDb {
     `).run({ value: String(timestamp) });
   }
 
+  /** 使用 FTS 在用户记忆中做关键词搜索。 */
   search(userId: string, query: string, limit: number): string[] {
     const sanitizedQuery = sanitizeSearchQuery(query);
     if (!sanitizedQuery) {
@@ -230,10 +253,14 @@ export class MemoryDb {
     return rows.map((row) => row.fact);
   }
 
+  // #endregion
+
+  /** 关闭数据库连接。 */
   close(): void {
     this.db.close();
   }
 
+  /** 初始化表结构、索引和 FTS 同步触发器。 */
   private init(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS memories (
@@ -286,6 +313,7 @@ export class MemoryDb {
     }
   }
 
+  /** 控制单用户记忆上限，淘汰最久未访问的记录。 */
   private evict(userId: string): void {
     const row = this.db.prepare(`
       SELECT COUNT(*) AS count

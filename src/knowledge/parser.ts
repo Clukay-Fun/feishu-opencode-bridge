@@ -1,3 +1,10 @@
+/**
+ * 职责: 解析知识库输入文档，并切分为适合检索的内容块。
+ * 关注点:
+ * - 按文件类型分发到对应解析器。
+ * - 统一 PDF、DOCX、TXT 等来源的文本抽取结果。
+ * - 负责切块与结构信息整理，供后续摄入使用。
+ */
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -34,6 +41,8 @@ export type ParsedKnowledgeChapter = {
   skipped: boolean;
 };
 
+//#region File parsing
+// Parse one uploaded file into normalized markdown plus structured sections.
 export async function parseKnowledgeFile(
   fileName: string,
   buffer: Buffer,
@@ -67,6 +76,7 @@ export async function parseKnowledgeFile(
   throw new Error(`暂不支持的文件格式：${extension || "unknown"}`);
 }
 
+// Prefer the Python PDF pipeline when richer structure can be recovered.
 async function parsePdfWithPython(buffer: Buffer): Promise<ParsedKnowledgeDocument> {
   const tempDir = await mkdtemp(path.join(tmpdir(), "bridge-knowledge-pdf-"));
   const inputPath = path.join(tempDir, "input.pdf");
@@ -87,6 +97,7 @@ async function parsePdfWithPython(buffer: Buffer): Promise<ParsedKnowledgeDocume
   }
 }
 
+// Fall back to `pdf-parse` when the Python parser is unavailable or fails.
 async function parsePdfWithPdfParse(buffer: Buffer): Promise<ParsedKnowledgeDocument> {
   const pdfModule = await import("pdf-parse");
   const parser = new pdfModule.PDFParse({ data: buffer });
@@ -103,7 +114,10 @@ async function parsePdfWithPdfParse(buffer: Buffer): Promise<ParsedKnowledgeDocu
     parserUsed: "pdf-parse",
   };
 }
+//#endregion
 
+//#region Chunking and chaptering
+// Merge sections into retrieval-sized chunks with optional previous-context carryover.
 export function chunkKnowledgeSections(
   sections: ParsedKnowledgeSection[],
   options: { chunkSize?: number; overlap?: number; prevContextSize?: number } = {},
@@ -165,6 +179,7 @@ export function chunkKnowledgeSections(
   }));
 }
 
+// Detect chapter headings and group sections into higher-level chapter slices.
 export function groupKnowledgeSectionsByChapter(sections: ParsedKnowledgeSection[]): {
   chapters: ParsedKnowledgeChapter[];
   skippedTitles: string[];
@@ -211,7 +226,10 @@ export function groupKnowledgeSectionsByChapter(sections: ParsedKnowledgeSection
 
   return { chapters, skippedTitles };
 }
+//#endregion
 
+//#region Text normalization
+// Normalize plain text or markdown into a stable paragraph-separated format.
 function normalizePlainMarkdown(text: string): string {
   return text
     .replace(/\r\n/g, "\n")
@@ -221,6 +239,7 @@ function normalizePlainMarkdown(text: string): string {
     .trim();
 }
 
+// Split normalized markdown into numbered sections for downstream processing.
 function normalizeSectionsFromMarkdown(markdown: string, prefix: string): ParsedKnowledgeSection[] {
   if (!markdown) {
     return [];
@@ -235,6 +254,7 @@ function normalizeSectionsFromMarkdown(markdown: string, prefix: string): Parsed
   }));
 }
 
+// Detect chapter-like titles from single-line section content.
 function detectChapterTitle(text: string): string | undefined {
   const normalized = text.trim();
   if (!normalized || normalized.includes("\n")) {
@@ -256,16 +276,19 @@ function detectChapterTitle(text: string): string | undefined {
   return undefined;
 }
 
+// Skip front-matter or appendix titles that should not become chapter bodies.
 function isIgnoredChapterTitle(title: string): boolean {
   return /^(?:卷首语|序言|目录|前言|出版说明|作者简介|推荐序|参考文献|附录|索引|后记|致谢)$/.test(
     title.replace(/\s+/g, ""),
   );
 }
 
+// Normalize one PDF page's extracted text.
 function normalizePageText(text: string): string {
   return normalizePlainMarkdown(text);
 }
 
+// Normalize chunk text before sizing or concatenation.
 function normalizeChunkText(text: string): string {
   return text
     .replace(/\r\n/g, "\n")
@@ -274,6 +297,7 @@ function normalizeChunkText(text: string): string {
     .trim();
 }
 
+// Split one oversized section into overlapping retrieval chunks.
 function splitOversizedSection(location: string, text: string, chunkSize: number, overlap: number): Array<{ location: string; text: string }> {
   const chunks: Array<{ location: string; text: string }> = [];
   let start = 0;
@@ -293,6 +317,7 @@ function splitOversizedSection(location: string, text: string, chunkSize: number
   return chunks;
 }
 
+// Summarize a section span into one human-readable location label.
 function summarizeSectionRange(sections: ParsedKnowledgeSection[]): string {
   const first = sections[0];
   const last = sections[sections.length - 1];
@@ -313,11 +338,13 @@ function summarizeSectionRange(sections: ParsedKnowledgeSection[]): string {
   return `${first.location} - ${last.location}`;
 }
 
+// Extract and normalize the file extension used for parser dispatch.
 function normalizeExtension(fileName: string): string {
   const match = fileName.toLowerCase().match(/\.[a-z0-9]+$/);
   return match?.[0] ?? "";
 }
 
+// Decode plain-text buffers and fall back to GB18030 when UTF-8 looks mojibake.
 function decodePlainTextBuffer(buffer: Buffer): string {
   const utf8 = buffer.toString("utf8");
   if (!looksMojibake(utf8)) {
@@ -332,6 +359,7 @@ function decodePlainTextBuffer(buffer: Buffer): string {
   }
 }
 
+// Heuristically detect likely mojibake output.
 function looksMojibake(text: string): boolean {
   if (!text) {
     return false;
@@ -339,9 +367,11 @@ function looksMojibake(text: string): boolean {
   return text.includes("\uFFFD") || /(Ã.|Â.|ä.|å.|æ.|ç.|è.|é.)/.test(text);
 }
 
+// Score candidate decodings by readability to choose the better text.
 function scoreReadableText(text: string): number {
   const cjkMatches = text.match(/[\u4E00-\u9FFF]/g)?.length ?? 0;
   const replacementMatches = text.match(/\uFFFD/g)?.length ?? 0;
   const mojibakeMatches = text.match(/(Ã.|Â.|ä.|å.|æ.|ç.|è.|é.)/g)?.length ?? 0;
   return cjkMatches * 2 - replacementMatches * 3 - mojibakeMatches;
 }
+//#endregion

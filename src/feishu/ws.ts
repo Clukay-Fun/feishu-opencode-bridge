@@ -1,3 +1,10 @@
+/**
+ * 职责: 维护飞书长连接，并把推送事件转换为桥接层可消费的输入。
+ * 关注点:
+ * - 建立与飞书开放平台的 WebSocket 连接。
+ * - 解析事件、提取消息内容并交给上层处理。
+ * - 处理重连、心跳和链路状态日志。
+ */
 import { randomUUID } from "node:crypto";
 
 import * as lark from "@larksuiteoapi/node-sdk";
@@ -136,15 +143,21 @@ export class FeishuWsClient {
     });
   }
 
+  //#region Lifecycle
+  // Start the Feishu websocket client and register the event dispatcher.
   async start(): Promise<void> {
     await this.client.start({ eventDispatcher: this.dispatcher });
     this.logger.log("feishu/ws", "connection opened", {});
   }
 
+  // Stop the websocket client and release the long-lived connection.
   async stop(): Promise<void> {
     this.client.stop();
   }
+  //#endregion
 
+  //#region Event handling
+  // Wrap one event in log context before forwarding to the runtime pipeline.
   private async handleEvent(payload: FeishuReceiveEvent): Promise<void> {
     await runWithLogContext({
       correlationId: randomUUID(),
@@ -156,6 +169,7 @@ export class FeishuWsClient {
     });
   }
 
+  // Deduplicate, inspect, and dispatch one normalized incoming message.
   private async handleEventWithContext(payload: FeishuReceiveEvent): Promise<void> {
     const duplicateMessageId = this.markMessageSeen(payload.message?.message_id);
     if (duplicateMessageId) {
@@ -236,6 +250,7 @@ export class FeishuWsClient {
     await this.handler(incoming);
   }
 
+  // Remember recently seen message ids to suppress duplicate delivery.
   private markMessageSeen(messageId: string | undefined): string | null {
     const normalized = nonEmptyString(messageId);
     if (!normalized) {
@@ -256,8 +271,11 @@ export class FeishuWsClient {
     this.recentMessageIds.set(normalized, now);
     return null;
   }
+  //#endregion
 }
 
+//#region Option and message normalization
+// Build normalized ingress behavior flags from app configuration.
 export function createFeishuIngressOptions(feishu: AppConfig["feishu"]): FeishuIngressOptions {
   const botOpenIds = new Set(feishu.botOpenIds);
   if (feishu.botOpenId) {
@@ -275,6 +293,7 @@ export function createFeishuIngressOptions(feishu: AppConfig["feishu"]): FeishuI
   };
 }
 
+// Normalize a receive event into the runtime message shape used by the bridge.
 export function normalizeIncomingMessage(payload: FeishuReceiveEvent, options: FeishuIngressOptions): IncomingChatMessage | null {
   const inspection = inspectIncomingMessage(payload, options);
   if (!inspection.accepted) {
@@ -293,6 +312,7 @@ export function normalizeIncomingMessage(payload: FeishuReceiveEvent, options: F
   return inspection.incoming;
 }
 
+// Inspect one event for general normalization-only use cases.
 function inspectIncomingMessage(payload: FeishuReceiveEvent, options: FeishuIngressOptions): IncomingMessageInspection {
   const parsed = parseIncomingMessage(payload, options);
     if (!parsed.accepted) {
@@ -313,6 +333,7 @@ function inspectIncomingMessage(payload: FeishuReceiveEvent, options: FeishuIngr
   return parsed;
 }
 
+// Inspect one event before runtime dispatch, including whitelist-aware gating.
 async function inspectIncomingMessageForDispatch(
   payload: FeishuReceiveEvent,
   options: FeishuIngressOptions,
@@ -398,6 +419,7 @@ async function inspectIncomingMessageForDispatch(
   };
 }
 
+// Parse the raw Feishu event into a structured incoming message or rejection reason.
 function parseIncomingMessage(payload: FeishuReceiveEvent, options: FeishuIngressOptions): IncomingMessageInspection {
   const message = payload.message;
   if (!message) {
@@ -495,6 +517,7 @@ function parseIncomingMessage(payload: FeishuReceiveEvent, options: FeishuIngres
   };
 }
 
+// Resolve whether current mention data satisfies the runtime's mention policy.
 function resolveMentionMatch(
   inspection: Extract<IncomingMessageInspection, { accepted: true }>,
   options: FeishuIngressOptions,
@@ -504,6 +527,7 @@ function resolveMentionMatch(
     : inspection.hasExactBotMention || inspection.hasAnyMention;
 }
 
+// Check whether the current chat type is enabled by configuration.
 function isChatTypeEnabled(chatType: string, options: FeishuIngressOptions): boolean {
   if (chatType === "p2p") {
     return options.enableP2p;

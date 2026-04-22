@@ -1,3 +1,9 @@
+/**
+ * 职责: 管理 turn 生命周期中的飞书过程卡与最终输出。
+ * 关注点:
+ * - 创建、更新和收尾进度卡。
+ * - 汇总流式事件、工具更新和最终结果，输出给飞书。
+ */
 import { type FeishuPostPayload, type OutputView, type ToolUpdateView } from "../feishu/shared-primitives.js";
 import { buildTurnStatusCardPayload, type TurnStatusCardView } from "../feishu/runtime-cards.js";
 import { createTextPreview, logEvent, type Logger, type TranscriptType } from "../logging/logger.js";
@@ -48,6 +54,9 @@ export class TurnCardManager {
     private readonly replyInThread: boolean,
   ) {}
 
+  // #region 生命周期
+
+  /** 停止所有待刷新的定时器。 */
   stop(): void {
     for (const state of this.streamFlushStates.values()) {
       if (state.timer) clearTimeout(state.timer);
@@ -55,11 +64,13 @@ export class TurnCardManager {
     this.streamFlushStates.clear();
   }
 
+  /** 清理指定 turn 的卡片状态与流式刷新状态。 */
   cleanup(turnId: string): void {
     this.turnCards.delete(turnId);
     this.clearStreamFlushState(turnId);
   }
 
+  /** 创建 turn 过程卡；发送失败时返回 null。 */
   async createTurnCard(chatId: string, turnId: string, sessionId: string, replyToMessageId: string): Promise<{ messageId: string } | null> {
     const state: TurnCardState = {
       messageId: "",
@@ -96,6 +107,11 @@ export class TurnCardManager {
     }
   }
 
+  // #endregion
+
+  // #region 流式更新
+
+  /** 调度一次流式文本刷新，避免过高频率更新卡片。 */
   async scheduleStreamUpdate(turnId: string, text: string): Promise<void> {
     const card = this.turnCards.get(turnId);
     if (!card) return;
@@ -119,6 +135,7 @@ export class TurnCardManager {
     }, delay);
   }
 
+  /** 立即把当前文本刷新到卡片。 */
   async flushStreamUpdate(turnId: string, text: string, force: boolean): Promise<void> {
     const state = this.streamFlushStates.get(turnId);
     if (state?.timer) {
@@ -137,6 +154,7 @@ export class TurnCardManager {
     }
   }
 
+  /** 更新 turn 卡片中的状态、步骤、工具或最终输出。 */
   async updateTurnCard(turnId: string, update: { status?: string; update?: string; sanitize?: boolean; target?: "step" | "tool" | "final"; toolKey?: string }): Promise<void> {
     const card = this.turnCards.get(turnId);
     if (!card) return;
@@ -181,12 +199,18 @@ export class TurnCardManager {
     }
   }
 
+  // #endregion
+
+  // #region 内部辅助
+
+  /** 清理单个 turn 的流式刷新状态。 */
   private clearStreamFlushState(turnId: string): void {
     const state = this.streamFlushStates.get(turnId);
     if (state?.timer) clearTimeout(state.timer);
     this.streamFlushStates.delete(turnId);
   }
 
+  /** 将内部状态转换为运行时卡片视图。 */
   private toTurnCardView(card: TurnCardState): TurnStatusCardView {
     return {
       title: card.status.includes("完成") ? "已完成" : card.status.includes("失败") || card.status.includes("超时") ? "处理异常" : "处理中",
@@ -199,6 +223,7 @@ export class TurnCardManager {
     };
   }
 
+  /** 发送过程卡，并统一记录传输日志。 */
   private async sendPayload(
     chatId: string,
     payload: FeishuPostPayload,
@@ -220,4 +245,6 @@ export class TurnCardManager {
     this.logger.logTranscript(options.transcriptType, { chatId, messageId: result.messageId }, prettyPrintPayload(payload));
     return result;
   }
+
+  // #endregion
 }

@@ -1,3 +1,9 @@
+/**
+ * 职责: 封装 OpenCode 事件流连接，并向上层分发事件。
+ * 关注点:
+ * - 连接 OpenCode 的事件端点并维护生命周期。
+ * - 解析事件、通知监听器并管理连接状态切换。
+ */
 import { createOpenCodeHeaders } from "./client.js";
 
 type EventListener = (event: OpenCodeEvent) => void | Promise<void>;
@@ -53,6 +59,9 @@ export class OpenCodeEventStream {
 
   constructor(private readonly baseUrl: URL, private readonly logger: LoggerLike) {}
 
+  // #region 生命周期与订阅
+
+  /** 启动后台事件流循环。 */
   async start(): Promise<void> {
     if (this.loopPromise) {
       return;
@@ -68,6 +77,7 @@ export class OpenCodeEventStream {
     });
   }
 
+  /** 停止事件流并等待后台循环退出。 */
   async stop(): Promise<void> {
     this.state = "stopped";
     this.controller?.abort();
@@ -76,6 +86,7 @@ export class OpenCodeEventStream {
     this.loopPromise = null;
   }
 
+  /** 订阅事件流，并返回取消订阅函数。 */
   subscribe(listener: EventListener): () => void {
     this.listeners.add(listener);
     return () => {
@@ -83,16 +94,23 @@ export class OpenCodeEventStream {
     };
   }
 
+  /** 返回当前连接状态。 */
   getConnectionState(): OpenCodeConnectionState {
     return this.state;
   }
 
+  /** 向所有订阅者广播一条事件。 */
   async emit(event: OpenCodeEvent): Promise<void> {
     for (const listener of this.listeners) {
       await listener(event);
     }
   }
 
+  // #endregion
+
+  // #region 连接与消费
+
+  /** 维持带重连能力的事件流主循环。 */
   private async run(signal: AbortSignal): Promise<void> {
     let attempt = 0;
 
@@ -126,6 +144,7 @@ export class OpenCodeEventStream {
     this.state = "stopped";
   }
 
+  /** 依次尝试已知事件端点，直到连接成功。 */
   private async connect(signal: AbortSignal): Promise<{ response: Response; endpoint: StreamEndpoint }> {
     const endpoints: StreamEndpoint[] = ["/event", "/global/event"];
     let lastError: Error | null = null;
@@ -152,6 +171,7 @@ export class OpenCodeEventStream {
     throw lastError ?? new Error("OpenCode event stream failed");
   }
 
+  /** 读取 SSE 响应体，并逐块解析成事件。 */
   private async consumeStream(response: Response, endpoint: StreamEndpoint, signal: AbortSignal): Promise<void> {
     const reader = response.body?.getReader();
     if (!reader) {
@@ -190,8 +210,11 @@ export class OpenCodeEventStream {
       }
     }
   }
+
+  // #endregion
 }
 
+/** 从事件对象中解析 sessionId。 */
 export function getEventSessionId(event: Pick<OpenCodeEvent, "properties" | "sessionId">): string | null {
   if (typeof event.sessionId === "string") {
     return event.sessionId;

@@ -1,3 +1,9 @@
+/**
+ * 职责: 定义应用配置的结构、默认值和校验规则。
+ * 关注点:
+ * - 为各子模块提供统一的 Zod schema。
+ * - 在启动阶段尽早发现缺失或非法配置。
+ */
 import { z } from "zod";
 
 const SessionModeSchema = z.enum(["single", "multi"]);

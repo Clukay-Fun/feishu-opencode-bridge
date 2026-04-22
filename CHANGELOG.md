@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.33 - 2026-04-22
+
+### Changed
+- Added role-focused code comments across bridge runtime, Feishu transport, runtime modules, stores, memory, and knowledge-base files to make ownership and call paths easier to review.
+- Trimmed archive documentation down to long-lived reference material and added README guidance for retained historical directories.
+- Rewrote active documentation pages in Chinese and aligned them more clearly with `AGENTS.md`, the architecture baseline, and the post-freeze checklist.
+
 ## 0.1.32 - 2026-04-20
 
 ### Changed

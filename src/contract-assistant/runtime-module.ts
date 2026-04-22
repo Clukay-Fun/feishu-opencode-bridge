@@ -1,3 +1,10 @@
+/**
+ * 职责: 将合同助手能力接入运行时模块体系。
+ * 关注点:
+ * - 拦截合同、案件、发票相关命令并启动对应流程。
+ * - 管理上传态交互和进度卡的桥接逻辑。
+ * - 协调领域服务、卡片构建和会话上下文。
+ */
 import { DEFAULT_CONTRACT_ASSISTANT_CONFIG, type AppConfig, type ContractAssistantConfig } from "../config/schema.js";
 import path from "node:path";
 import type { RuntimeModule, RuntimeModuleHandleResult, RuntimeModuleMessageContext } from "../bridge/module.js";
@@ -131,6 +138,9 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     });
   }
 
+  // #region 生命周期与入口
+
+  /** 恢复交互状态，并按需启动提醒轮询。 */
   async start(): Promise<void> {
     await this.interactions.restore();
     if (!this.featureConfig.enabled || !this.featureConfig.reminder.enabled || !this.deps.service) {
@@ -142,6 +152,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     await this.tickReminders();
   }
 
+  /** 停止状态管理器与提醒轮询。 */
   async stop(): Promise<void> {
     await this.interactions.stop();
     if (this.reminderTimer) {
@@ -150,6 +161,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     }
   }
 
+  /** 处理合同助手命令、上传态交互和工作台对话。 */
   async handleMessage(context: RuntimeModuleMessageContext): Promise<RuntimeModuleHandleResult> {
     const { message, routed } = context;
     const pending = this.interactions.get(message.conversationKey) ?? null;
@@ -190,6 +202,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     return { claimed: handled };
   }
 
+  /** 处理合同、案件、发票和工作台相关命令。 */
   private async handleCommand(
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "threadKey" | "senderOpenId">,
     command: ContractAssistantCommand,
@@ -1778,6 +1791,8 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     ].filter((item): item is string => Boolean(item));
     return lines.join("，");
   }
+
+  // #endregion
 }
 
 function renderReminderPlainText(result: ReminderListResult): string {

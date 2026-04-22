@@ -1,3 +1,9 @@
+/**
+ * 职责: 提供知识库的本地命令行入口，用于诊断和离线操作。
+ * 关注点:
+ * - 暴露 doctor、ingest、query、stats 等子命令。
+ * - 复用应用配置与知识库服务，方便本地排障和验收。
+ */
 import { spawn } from "node:child_process";
 import { access, readdir } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";

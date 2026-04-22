@@ -1,3 +1,10 @@
+/**
+ * 职责: 作为桥接应用的核心编排器，接收飞书输入并驱动整条执行链路。
+ * 关注点:
+ * - 管理会话分配、执行队列、挂起交互和权限流程。
+ * - 将消息解析后分发给运行时模块与 OpenCode。
+ * - 协调卡片更新、状态持久化和异常兜底。
+ */
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -114,21 +121,21 @@ type BridgeAppDeps = {
 };
 
 type OpenCodePort = Pick<OpenCodeClient,
-    | "health"
-    | "getCurrentProject"
-    | "createSession"
-    | "listSessions"
-    | "deleteSession"
-    | "getSessionStatuses"
-    | "getSessionMessages"
-    | "promptAsync"
-    | "abort"
-    | "listProviders"
-    | "runCommand"
-    | "replyPermission"
-    | "replyQuestion"
-    | "postMessageSync"
-  >;
+  | "health"
+  | "getCurrentProject"
+  | "createSession"
+  | "listSessions"
+  | "deleteSession"
+  | "getSessionStatuses"
+  | "getSessionMessages"
+  | "promptAsync"
+  | "abort"
+  | "listProviders"
+  | "runCommand"
+  | "replyPermission"
+  | "replyQuestion"
+  | "postMessageSync"
+>;
 
 type OpenCodeEventStreamPort = Pick<OpenCodeEventStream, "start" | "stop" | "subscribe" | "getConnectionState">;
 
@@ -158,6 +165,13 @@ export type PermissionCardActionValue = {
   nonce: string;
 };
 
+/**
+ * 职责: 作为桥接应用的核心编排器，接收飞书输入并驱动整条执行链路。
+ * 关注点:
+ * - 管理会话分配、执行队列、挂起交互和权限流程。
+ * - 将消息解析后分发给运行时模块与 OpenCode。
+ * - 协调卡片更新、状态持久化和异常兜底。
+ */
 export class BridgeApp {
   private readonly queues: QueueRegistry;
   private readonly mappings: MappingStore;
@@ -250,6 +264,11 @@ export class BridgeApp {
     });
   }
 
+  // #region 生命周期与外部入口
+
+  /**
+   * 启动桥接应用，并完成映射恢复、模块装配和事件流订阅。
+   */
   async start(): Promise<void> {
     this.sessionMap = await this.mappings.load();
     const health = await this.opencode.health();
@@ -273,6 +292,9 @@ export class BridgeApp {
     });
   }
 
+  /**
+   * 停止桥接应用，并清理定时器、模块、事件流和临时资源。
+   */
   async stop(): Promise<void> {
     this.globalEventUnsubscribe?.();
     this.globalEventUnsubscribe = null;
@@ -286,6 +308,9 @@ export class BridgeApp {
     await this.eventStream.stop();
   }
 
+  /**
+   * 处理飞书权限卡片回调，并转交给权限管理器。
+   */
   async handlePermissionCardAction(
     actorOpenId: string,
     openMessageId: string,
@@ -294,6 +319,13 @@ export class BridgeApp {
     return await this.permissionManager.handleCardAction(actorOpenId, openMessageId, value);
   }
 
+  // #endregion
+
+  // #region 消息入口与主处理链路
+
+  /**
+   * 处理一条飞书消息，并完成鉴权、分流、排队和模块分派。
+   */
   async handleIncomingMessage(message: IncomingChatMessage): Promise<void> {
     if (this.config.feishu.allowedOpenIds.size > 0 && !this.config.feishu.allowedOpenIds.has(message.senderOpenId)) {
       await this.sendPayload(message.chatId, buildPostMarkdownPayload("当前账号未加入白名单。"), {
@@ -461,18 +493,34 @@ export class BridgeApp {
     }
   }
 
+  // #endregion
+
+  // #region 队列调度
+
+  /**
+   * 消费指定执行队列中的所有待处理 turn。
+   */
   private async processChat(conversationKey: string): Promise<void> {
     await this.turnExecutor.processChat(conversationKey);
   }
 
+  /**
+   * 触发指定队列继续执行当前 turn。
+   */
   private async runTurn(conversationKey: string): Promise<void> {
     await this.turnExecutor.runTurn(conversationKey);
   }
 
+  /**
+   * 生成 conversation 与 session 维度的执行键。
+   */
   private buildExecutionKey(conversationKey: string, sessionId: string): string {
     return `${conversationKey}::${sessionId}`;
   }
 
+  /**
+   * 查询当前窗口或指定 session 的执行状态与积压数量。
+   */
   private getQueueState(conversationKey: string, sessionId?: string | null): { activeTurn: BridgeTurn | null; pendingCount: number } {
     if (sessionId) {
       const queue = this.queues.getIfExists(this.buildExecutionKey(conversationKey, sessionId))
@@ -496,6 +544,13 @@ export class BridgeApp {
     return { activeTurn: null, pendingCount: 0 };
   }
 
+  // #endregion
+
+  // #region 指令与挂起交互
+
+  /**
+   * 处理桥接层命令，并把桥接自有命令与模块命令分流。
+   */
   private async handleCommand(
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "threadKey" | "senderOpenId">,
     routed: Extract<RoutedText, { kind: "command" }>,
@@ -541,6 +596,9 @@ export class BridgeApp {
     await this.moduleManager.handleMessage({ message: message as IncomingChatMessage, routed });
   }
 
+  /**
+   * 处理 question / permission 等核心挂起交互。
+   */
   private async handlePendingInteraction(message: IncomingChatMessage, pending: PendingInteraction): Promise<boolean> {
     if (pending.kind === "question") {
       if (message.messageType === "file") {
@@ -581,10 +639,16 @@ export class BridgeApp {
     return false;
   }
 
+  /**
+   * 判断挂起交互是否属于需要优先拦截的核心类型。
+   */
   private isCorePendingInteraction(pending: PendingInteraction): boolean {
     return pending.kind === "question" || pending.kind === "permission";
   }
 
+  /**
+   * 处理“先传文件，后补说明”这一类挂起文件指令流程。
+   */
   private async handleFileInstructionPending(
     message: IncomingChatMessage,
     pending: Extract<PendingInteraction, { kind: "file-await-instruction" }>,
@@ -670,14 +734,29 @@ export class BridgeApp {
     return true;
   }
 
+  // #endregion
+
+  // #region 业务模块桥接接口
+
+  /**
+   * 返回当前窗口中的知识库入库挂起状态。
+   */
   getKnowledgeIngestInteraction(conversationKey: string): PendingKnowledgeIngestInteraction | null {
     return this.knowledgeModule.getInteraction(conversationKey);
   }
 
+  /**
+   * 清理当前窗口里的知识库入库挂起状态。
+   */
   async clearKnowledgeIngestPending(conversationKey: string, chatType: string): Promise<boolean> {
     return await this.knowledgeModule.clearPending(conversationKey, chatType);
   }
 
+  // #region 会话绑定与锚点认领
+
+  /**
+   * 为当前消息找到可用 session；必要时创建并绑定新 session。
+   */
   private async ensureSession(
     source: SessionSource,
   ): Promise<string> {
@@ -705,6 +784,9 @@ export class BridgeApp {
     return entry.sessionId;
   }
 
+  /**
+   * 尝试认领由 `/new` 等流程提前创建、但尚未绑定窗口的 session。
+   */
   private async maybeAdoptPendingNewSessionAnchor(
     source: Pick<SessionSource, "chatType" | "conversationKey" | "rootId" | "parentId">,
     openCodeSessions: Map<string, OpenCodeSession>,
@@ -740,6 +822,9 @@ export class BridgeApp {
     this.clearPendingNewSessionAnchor(anchorMessageId);
   }
 
+  /**
+   * 根据 root / parent 消息链查找待认领的 session 锚点。
+   */
   private findPendingNewSessionAnchor(source: Pick<SessionSource, "rootId" | "parentId">): { messageId: string; pending: PendingNewSessionAnchor } | null {
     const candidates = [source.rootId, source.parentId]
       .filter((value): value is string => Boolean(value));
@@ -752,6 +837,13 @@ export class BridgeApp {
     return null;
   }
 
+  // #endregion
+
+  // #region 资源与附件处理
+
+  /**
+   * 组装 runtime modules 所需的消息与资源能力集合。
+   */
   private getRuntimeModuleOutbound(): OutboundPort & KnowledgeResourcePort {
     const resources = this.outbound as OutboundPort & Partial<KnowledgeResourcePort>;
     const missing = [
@@ -789,6 +881,9 @@ export class BridgeApp {
     };
   }
 
+  /**
+   * 判断当前是否启用了依赖飞书资源接口的功能模块。
+   */
   private hasResourceBackedFeatureEnabled(): boolean {
     return Boolean(
       this.config.knowledgeBase.enabled
@@ -797,6 +892,9 @@ export class BridgeApp {
     );
   }
 
+  /**
+   * 下载挂起文件并拼装交给 OpenCode 的文件处理提示词。
+   */
   private async prepareFileForOpenCodeTurn(
     turnId: string,
     pending: Extract<PendingInteraction, { kind: "file-await-instruction" }>,
@@ -827,6 +925,9 @@ export class BridgeApp {
     };
   }
 
+  /**
+   * 将上传附件保存到 turn 级临时目录，并注册清理动作。
+   */
   private async saveUploadedFileForTurn(turnId: string, fileName: string, buffer: Buffer): Promise<string> {
     const tempDir = await mkdtemp(path.join(tmpdir(), "bridge-turn-file-"));
     const targetPath = path.join(tempDir, sanitizeUploadedFileName(fileName));
@@ -835,6 +936,9 @@ export class BridgeApp {
     return targetPath;
   }
 
+  /**
+   * 校验普通附件的扩展名与大小限制。
+   */
   private validateRegularFileInput(fileName: string, sizeBytes?: number): void {
     const extension = fileName.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? "";
     if (!REGULAR_FILE_ALLOWED_EXTENSIONS.includes(extension as typeof REGULAR_FILE_ALLOWED_EXTENSIONS[number])) {
@@ -849,6 +953,13 @@ export class BridgeApp {
     }
   }
 
+  // #endregion
+
+  // #region 服务探活与全局事件
+
+  /**
+   * 在正式入队前确认 OpenCode 服务当前可用。
+   */
   private async ensureServerAvailableForMessage(message: Pick<IncomingChatMessage, "chatId" | "messageId">): Promise<boolean> {
     if (this.eventStream.getConnectionState() === "connected") {
       return true;
@@ -863,6 +974,9 @@ export class BridgeApp {
     }
   }
 
+  /**
+   * 处理全局 session 状态事件，并维护本地状态快照。
+   */
   private async handleGlobalEvent(event: OpenCodeEvent): Promise<void> {
     if (event.type === "session.status") {
       const sessionId = getEventSessionId(event);
@@ -881,11 +995,21 @@ export class BridgeApp {
     }
   }
 
+  // #endregion
+
+  // #region 会话窗口存储
+
+  /**
+   * 读取并规范化指定窗口的 session 记录。
+   */
   private getSessionWindow(conversationKey: string, chatType?: string): SessionWindowRecord {
     const mode = resolveSessionMode(chatType, this.config.bridge.sessionModes);
     return normalizeSessionWindowRecord(this.sessionMap[this.resolveSessionWindowKey(conversationKey, chatType)], mode, this.config.bridge.maxSessionsPerWindow);
   }
 
+  /**
+   * 保存窗口状态，并处理空窗口和旧键兼容。
+   */
   private async saveSessionWindow(conversationKey: string, window: SessionWindowRecord): Promise<void> {
     const storageKey = this.resolveSessionWindowKey(conversationKey);
     const legacyKey = this.resolveLegacyP2pWindowKey(conversationKey);
@@ -900,6 +1024,9 @@ export class BridgeApp {
     await this.mappings.save(this.sessionMap);
   }
 
+  /**
+   * 解析窗口存储键，并在需要时迁移旧版单聊键。
+   */
   private resolveSessionWindowKey(conversationKey: string, chatType?: string): string {
     if (chatType === "p2p" && conversationKey.endsWith(":main")) {
       const legacyKey = this.resolveLegacyP2pWindowKey(conversationKey);
@@ -916,6 +1043,9 @@ export class BridgeApp {
     return conversationKey;
   }
 
+  /**
+   * 返回旧版 p2p 窗口键；如果不是旧格式则返回 null。
+   */
   private resolveLegacyP2pWindowKey(conversationKey: string): string | null {
     if (!conversationKey.endsWith(":main")) {
       return null;
@@ -923,6 +1053,9 @@ export class BridgeApp {
     return conversationKey.slice(0, -":main".length);
   }
 
+  /**
+   * 合并当前窗口与旧版窗口记录，并重新规范化。
+   */
   private mergeSessionWindows(
     current: SessionWindowRecord | undefined,
     legacy: SessionWindowRecord,
@@ -941,6 +1074,13 @@ export class BridgeApp {
     }, mode, this.config.bridge.maxSessionsPerWindow);
   }
 
+  // #endregion
+
+  // #region Session 管理
+
+  /**
+   * 创建新 session，并立即绑定到当前窗口且设为活跃。
+   */
   private async createAndBindSession(
     source: SessionSource,
     preferredLabel?: string,
@@ -952,6 +1092,9 @@ export class BridgeApp {
     return entry;
   }
 
+  /**
+   * 将已有 session 绑定进窗口，但不切换当前活跃 session。
+   */
   private async bindSessionWithoutActivating(
     source: SessionSource,
     entry: SessionBindingRecord,
@@ -962,6 +1105,9 @@ export class BridgeApp {
     return entry;
   }
 
+  /**
+   * 仅在 OpenCode 侧创建 session，并返回本地绑定记录。
+   */
   private async createDetachedSession(
     source: SessionSource,
     preferredLabel?: string,
@@ -971,6 +1117,9 @@ export class BridgeApp {
     return createSessionEntry(session.id, Date.now(), normalizedLabel);
   }
 
+  /**
+   * 为新建但未绑定的 session 注册临时锚点，便于后续认领。
+   */
   private registerPendingNewSessionAnchor(replyMessageId: string, sourceConversationKey: string, entry: SessionBindingRecord): void {
     this.clearPendingNewSessionAnchor(replyMessageId);
     this.pendingNewSessionAnchors.set(replyMessageId, {
@@ -985,6 +1134,9 @@ export class BridgeApp {
     this.pendingNewSessionAnchorTimers.set(replyMessageId, timer);
   }
 
+  /**
+   * 清理某个待认领 session 锚点及其超时器。
+   */
   private clearPendingNewSessionAnchor(replyMessageId: string): void {
     this.pendingNewSessionAnchors.delete(replyMessageId);
     const timer = this.pendingNewSessionAnchorTimers.get(replyMessageId);
@@ -994,6 +1146,9 @@ export class BridgeApp {
     }
   }
 
+  /**
+   * 在 session 仍为默认名时，尝试根据用户首条输入补齐标题。
+   */
   private async maybeUpdateSessionLabel(turn: BridgeTurn & { sessionId: string }): Promise<void> {
     const window = this.getSessionWindow(turn.conversationKey, turn.chatType);
     const currentSession = window.sessions.find((session) => session.sessionId === turn.sessionId);
@@ -1010,11 +1165,17 @@ export class BridgeApp {
     await this.saveSessionWindow(turn.conversationKey, nextWindow);
   }
 
+  /**
+   * 获取当前所有 OpenCode sessions，并按 id 建立索引。
+   */
   private async listOpenCodeSessionsById(): Promise<Map<string, OpenCodeSession>> {
     const sessions = await this.opencode.listSessions();
     return new Map(sessions.map((session) => [session.id, session]));
   }
 
+  /**
+   * 返回指定 session 的消息数量；失败时降级为 0。
+   */
   private async getSessionMessageCount(sessionId: string): Promise<number> {
     try {
       return (await this.opencode.getSessionMessages(sessionId, 200)).length;
@@ -1023,6 +1184,9 @@ export class BridgeApp {
     }
   }
 
+  /**
+   * 启动时用 OpenCode 元数据回填本地缓存中的 session 标题。
+   */
   private async syncStoredSessionLabels(): Promise<void> {
     const sessionsById = await this.listOpenCodeSessionsById();
     let changed = false;
@@ -1048,6 +1212,13 @@ export class BridgeApp {
     }
   }
 
+  // #endregion
+
+  // #region 挂起交互状态管理
+
+  /**
+   * 设置当前窗口的挂起交互，并按类型注册超时器。
+   */
   private setPendingInteraction(conversationKey: string, interaction: PendingInteraction): void {
     this.clearPendingInteraction(conversationKey, false);
     this.pendingInteractions.set(conversationKey, interaction);
@@ -1078,6 +1249,9 @@ export class BridgeApp {
 
   }
 
+  /**
+   * 清理当前窗口的挂起交互，并在需要时保留非过期类型。
+   */
   private clearPendingInteraction(
     conversationKey: string,
     keepNonExpiring: boolean,
@@ -1098,6 +1272,9 @@ export class BridgeApp {
     this.pendingInteractions.delete(conversationKey);
   }
 
+  /**
+   * 仅在挂起交互属于当前 turn 时才执行清理，避免误删。
+   */
   private clearTurnOwnedPendingInteraction(conversationKey: string, turnId: string): void {
     const current = this.pendingInteractions.get(conversationKey);
     if (!current) {
@@ -1112,6 +1289,9 @@ export class BridgeApp {
     }
   }
 
+  /**
+   * 处理权限请求超时，并交给权限管理器做收尾。
+   */
   private async handlePermissionTimeout(conversationKey: string, pending: PendingPermissionInteraction): Promise<void> {
     const current = this.pendingInteractions.get(conversationKey);
     if (!current || current.kind !== "permission" || current.permissionId !== pending.permissionId) {
@@ -1121,12 +1301,22 @@ export class BridgeApp {
     await this.permissionManager.expireInteraction(current, true);
   }
 
+  // #endregion
+
+  // #region Session 指令解析
+
+  /**
+   * 判断指定 session 当前是否仍在执行中。
+   */
   private isSessionBusy(conversationKey: string, sessionId: string): boolean {
     const active = this.queues.getIfExists(this.buildExecutionKey(conversationKey, sessionId))?.peek()
       ?? this.queues.getIfExists(conversationKey)?.peek();
     return active?.sessionId === sessionId;
   }
 
+  /**
+   * 将 `/switch 2`、`/close 1` 这类索引命令解析为真实 session。
+   */
   private async resolveSessionCommandTarget(
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey">,
     index: number | undefined,
@@ -1190,6 +1380,9 @@ export class BridgeApp {
     return { ok: true, window, session, index };
   }
 
+  /**
+   * 将会话区间命令解析为一组去重后的目标 sessions。
+   */
   private async resolveSessionCommandTargets(
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey">,
     range: { start: number; end: number },
@@ -1199,7 +1392,7 @@ export class BridgeApp {
   > {
     const indices = buildSessionRangeIndices(range);
     if (indices.length === 0) {
-      return { ok: false, message: "无效的会话编号范围，请重新输入。"};
+      return { ok: false, message: "无效的会话编号范围，请重新输入。" };
     }
 
     const sessions: SessionWindowRecord["sessions"] = [];
@@ -1218,10 +1411,20 @@ export class BridgeApp {
     return { ok: true, window: window ?? this.getSessionWindow(message.conversationKey, message.chatType), sessions, indices };
   }
 
+  // #endregion
+
+  // #region 飞书消息发送
+
+  /**
+   * 将统一 payload 转换为飞书 interactive card content。
+   */
   private toCardContent(payload: FeishuPostPayload): Record<string, unknown> {
     return toInteractiveCardContent(payload);
   }
 
+  /**
+   * 发送一条简短 Markdown 消息。
+   */
   private async sendMarkdown(chatId: string, markdown: string, replyToMessageId?: string): Promise<void> {
     await this.sendPayload(chatId, buildPostMarkdownPayload(markdown), {
       event: "final message sent",
@@ -1231,6 +1434,9 @@ export class BridgeApp {
     }, replyToMessageId ? { replyToMessageId } : undefined);
   }
 
+  /**
+   * 统一发送飞书消息，并记录传输日志。
+   */
   private async sendPayload(
     chatId: string,
     payload: FeishuPostPayload,
@@ -1271,6 +1477,9 @@ export class BridgeApp {
     }
   }
 
+  /**
+   * 原位更新已发送的飞书消息或卡片。
+   */
   private async updatePayload(
     chatId: string,
     messageId: string,
@@ -1305,6 +1514,13 @@ export class BridgeApp {
     }
   }
 
+  // #endregion
+
+  // #region 日志上下文
+
+  /**
+   * 为当前 turn 组装统一的日志上下文字段。
+   */
   private buildTurnLogContext(
     message: Pick<IncomingChatMessage, "chatId" | "senderOpenId" | "messageId">,
     turnId: string,
@@ -1319,6 +1535,8 @@ export class BridgeApp {
       sessionId,
     };
   }
+
+  // #endregion
 }
 
 function sanitizeUploadedFileName(fileName: string): string {

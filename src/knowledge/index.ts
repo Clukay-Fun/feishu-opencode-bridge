@@ -1,3 +1,10 @@
+/**
+ * 职责: 承载知识库核心业务，负责摄入、检索与结果编排。
+ * 关注点:
+ * - 解析文档并生成可检索的知识条目。
+ * - 执行语义检索、结果排序和引用组织。
+ * - 作为运行时模块与存储层之间的业务接口。
+ */
 import crypto from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -188,6 +195,9 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     );
   }
 
+  // #region 查询与入库入口
+
+  /** 查询知识库，并返回重排后的候选结果。 */
   async query(question: string): Promise<KnowledgeQueryResult> {
     const queryEmbedding = await this.embeddingClient.embed(question);
     const embeddingMatches = this.db.searchByEmbedding(queryEmbedding, this.embeddingClient.model, this.config.query.topK);
@@ -202,6 +212,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     };
   }
 
+  /** 从飞书消息附件下载文件并执行入库。 */
   async ingestFile(file: KnowledgeFileRef, options?: KnowledgeIngestOptions): Promise<KnowledgeIngestResult> {
     await this.reportProgress(options, {
       step: "read",
@@ -219,6 +230,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     }, options);
   }
 
+  /** 读取公开网页正文并按文档入库流程处理。 */
   async ingestWebPage(request: KnowledgeWebPageIngestRequest, options?: KnowledgeIngestOptions): Promise<KnowledgeIngestResult> {
     await this.reportProgress(options, {
       step: "read",
@@ -238,6 +250,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     }, options);
   }
 
+  /** 对本地文件执行入库流程。 */
   async ingestLocalFile(filePath: string, options?: KnowledgeIngestOptions): Promise<KnowledgeIngestResult> {
     const resolvedPath = path.resolve(filePath);
     const fileName = path.basename(resolvedPath);
@@ -255,6 +268,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     }, options);
   }
 
+  /** 仅解析本地文件，返回抽取后的 Markdown 与章节统计。 */
   async parseLocalFile(filePath: string): Promise<KnowledgeParsedFileResult> {
     const resolvedPath = path.resolve(filePath);
     const fileName = path.basename(resolvedPath);
@@ -269,6 +283,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     };
   }
 
+  /** 预览本地文件的提取效果，但不真正写入知识库。 */
   async previewLocalFileExtraction(
     filePath: string,
     options?: { maxQas?: number | undefined; onProgress?: KnowledgeIngestOptions["onProgress"] },
@@ -368,6 +383,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     };
   }
 
+  /** 列出知识库中的文档摘要。 */
   async listDocuments(options?: { limit?: number | undefined; status?: string | undefined }): Promise<KnowledgeDocumentSummary[]> {
     return this.db.listDocuments({
       limit: options?.limit,
@@ -375,6 +391,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     });
   }
 
+  /** 获取单篇文档及其样例条目。 */
   async getDocument(id: number): Promise<KnowledgeDocumentDetail | null> {
     const document = this.db.getDocumentById(id);
     if (!document) {
@@ -390,6 +407,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     };
   }
 
+  /** 返回知识库的整体统计信息。 */
   async getStats(): Promise<KnowledgeStatsResult> {
     const documents = this.db.listAllDocuments();
     const entries = this.db.listAllEntries();
@@ -404,6 +422,11 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     };
   }
 
+  // #endregion
+
+  // #region 入库主流程
+
+  /** 执行统一入库流程：解析、提取、去重、写入。 */
   private async ingestBuffer(input: {
     fileName: string;
     buffer: Buffer;
@@ -687,6 +710,11 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     };
   }
 
+  // #endregion
+
+  // #region 外部同步与关闭
+
+  /** 从 Bitable 反向同步已有知识记录到本地数据库。 */
   async syncMirror(): Promise<void> {
     const records = await this.resources.listBitableRecords(
       this.config.storage.bitable.appToken,
@@ -738,10 +766,16 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     }
   }
 
+  /** 关闭知识库数据库连接。 */
   close(): void {
     this.db.close();
   }
 
+  // #endregion
+
+  // #region 模型辅助步骤
+
+  /** 读取网页正文并整理成可入库的 Markdown。 */
   private async readWebPageMarkdown(url: string, instruction?: string | undefined): Promise<string> {
     const session = await this.opencode.createSession("[bridge] knowledge-web-ingest");
     try {
@@ -774,6 +808,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     }
   }
 
+  /** 从单个文本分段中提取可入库的问答对。 */
   private async extractQa(fileName: string, pageSection: string, chunk: string, prevContext?: string | undefined): Promise<ExtractedQa[]> {
     const session = await this.opencode.createSession("[bridge] knowledge-extract");
     try {
@@ -818,6 +853,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     }
   }
 
+  /** 带重试地执行单段问答提取。 */
   private async extractQaWithRetry(
     fileName: string,
     pageSection: string,
@@ -846,6 +882,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     throw new Error("知识提取重试失败");
   }
 
+  /** 为结构化问答文档补充标签和法条信息。 */
   private async enrichDetectedQaPairs(
     fileName: string,
     pairs: DetectedQaPair[],
@@ -870,6 +907,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     return enriched;
   }
 
+  /** 批量补充结构化问答的 tags 与 statute 字段。 */
   private async enrichDetectedQaBatch(
     fileName: string,
     batch: DetectedQaPair[],
@@ -909,6 +947,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     }
   }
 
+  /** 用模型对候选检索结果做二次重排。 */
   private async rerank(question: string, candidates: KnowledgeEntryCandidate[]): Promise<KnowledgeEntryCandidate[]> {
     if (candidates.length <= 1) {
       return candidates;
@@ -964,6 +1003,8 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
       await this.opencode.deleteSession(session.id).catch(() => undefined);
     }
   }
+
+  // #endregion
 
   private async saveDocumentRecord(
     fileName: string,

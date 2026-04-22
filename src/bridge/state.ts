@@ -1,4 +1,11 @@
+/**
+ * 职责: 定义桥接层所有挂起交互的状态结构。
+ * 关注点:
+ * - 覆盖提问、权限申请、会话选择、文件上传等等待用户继续操作的场景。
+ * - 为持久化、超时恢复和卡片回调提供统一的数据形状。
+ */
 export type PendingQuestionInteraction = {
+  // Awaiting explicit answers to model-generated questions.
   kind: "question";
   turnId: string;
   requestId: string;
@@ -7,6 +14,7 @@ export type PendingQuestionInteraction = {
 };
 
 export type PendingPermissionInteraction = {
+  // Awaiting a permission decision from a bridge-owned card.
   kind: "permission";
   chatId: string;
   conversationKey: string;
@@ -24,12 +32,14 @@ export type PendingPermissionInteraction = {
 };
 
 export type PendingSessionSelectionInteraction = {
+  // Awaiting a user choice from a rendered session list.
   kind: "session-select";
   options: Array<{ index: number; sessionId: string; title: string; current?: boolean; inWindow?: boolean }>;
   expiresAt: number;
 };
 
 export type PendingSessionDeleteConfirmationInteraction = {
+  // Awaiting confirmation before deleting one or more sessions.
   kind: "session-delete-confirm";
   index?: number | undefined;
   indices?: number[] | undefined;
@@ -43,6 +53,7 @@ export type PendingSessionDeleteConfirmationInteraction = {
 };
 
 export type PendingKnowledgeIngestInteraction = {
+  // Awaiting a local file upload for a knowledge-ingest flow.
   kind: "knowledge-ingest-await-file";
   chatId: string;
   chatType: string;
@@ -58,6 +69,7 @@ export type PendingKnowledgeIngestInteraction = {
 };
 
 export type PendingFileInstructionInteraction = {
+  // Awaiting a follow-up instruction for a file that was just uploaded.
   kind: "file-await-instruction";
   chatId: string;
   conversationKey: string;

@@ -1,3 +1,9 @@
+/**
+ * 职责: 从对话内容中提取值得长期保留的用户事实。
+ * 关注点:
+ * - 借助 OpenCode 生成结构化记忆候选。
+ * - 同时支持同步调用与异步轮询两种交互方式。
+ */
 import type { Logger } from "../logging/logger.js";
 import type { OpenCodeClient, OpenCodeMessage, OpenCodePromptRequest } from "../opencode/client.js";
 
@@ -23,6 +29,7 @@ export class OpenCodeMemoryExtractor implements MemoryExtractor {
     private readonly logger: Logger,
   ) {}
 
+  /** 优先同步提取，失败时退回异步轮询提取。 */
   async extract(userMessage: string, assistantMessage: string): Promise<string[]> {
     const prompt = buildExtractionPrompt(userMessage, assistantMessage);
     const syncSession = await this.client.createSession("Memory Extraction");
@@ -54,6 +61,7 @@ export class OpenCodeMemoryExtractor implements MemoryExtractor {
     }
   }
 
+  /** 删除临时 session；失败时只记录日志。 */
   private async cleanupSession(sessionId: string, mode: "sync" | "fallback"): Promise<void> {
     try {
       await this.client.deleteSession(sessionId);
@@ -68,6 +76,7 @@ export class OpenCodeMemoryExtractor implements MemoryExtractor {
   }
 }
 
+/** 组装记忆提取提示词正文。 */
 function buildExtractionPrompt(userMessage: string, assistantMessage: string): string {
   return [
     "以下是一段对话，请提取值得长期记住的用户事实：",
@@ -76,6 +85,7 @@ function buildExtractionPrompt(userMessage: string, assistantMessage: string): s
   ].join("\n");
 }
 
+/** 构建供 OpenCode 使用的提取请求。 */
 function buildExtractionRequest(prompt: string): OpenCodePromptRequest {
   return {
     system: EXTRACTION_SYSTEM_PROMPT,
@@ -83,6 +93,7 @@ function buildExtractionRequest(prompt: string): OpenCodePromptRequest {
   };
 }
 
+/** 轮询 session，直到拿到完整 assistant 回复或超时。 */
 async function pollForAssistantText(client: OpenCodeClient, sessionId: string, timeoutMs: number): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   let lastSeenText = "";
@@ -105,6 +116,7 @@ async function pollForAssistantText(client: OpenCodeClient, sessionId: string, t
   return lastSeenText;
 }
 
+/** 从 assistant 消息中提取纯文本。 */
 function extractAssistantText(message: OpenCodeMessage | null): string {
   if (!message) {
     return "";
@@ -117,6 +129,7 @@ function extractAssistantText(message: OpenCodeMessage | null): string {
     .trim();
 }
 
+/** 判断 assistant 消息是否已经完成。 */
 function isCompletedMessage(message: OpenCodeMessage): boolean {
   const time = typeof message.info.time === "object" && message.info.time !== null
     ? message.info.time as Record<string, unknown>
@@ -124,6 +137,7 @@ function isCompletedMessage(message: OpenCodeMessage): boolean {
   return typeof message.info.finish === "string" || typeof time?.completed === "number";
 }
 
+/** 过滤并规范化可记忆事实列表。 */
 function parseFacts(text: string): string[] {
   const lines = text
     .split("\n")
@@ -132,10 +146,12 @@ function parseFacts(text: string): string[] {
   return [...new Set(lines)];
 }
 
+/** 控制进入 prompt 的消息长度。 */
 function sliceForPrompt(text: string): string {
   return text.trim().slice(0, MESSAGE_SLICE_LIMIT);
 }
 
+/** 简单的异步 sleep。 */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);

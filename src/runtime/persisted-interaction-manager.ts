@@ -1,3 +1,9 @@
+/**
+ * 职责: 持久化挂起交互状态，并在重启后恢复有效记录。
+ * 关注点:
+ * - 将交互写入磁盘，降低进程重启对用户流程的影响。
+ * - 管理 TTL、过期回调和恢复后的重新挂载。
+ */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -19,6 +25,8 @@ export class PersistedInteractionManager<T> {
 
   constructor(private readonly options: PersistedInteractionManagerOptions<T>) {}
 
+  //#region Lifecycle
+  // Restore persisted interactions and re-arm expiry timers for still-valid records.
   async restore(): Promise<void> {
     const interactions = await this.readPersistedInteractions();
     const now = Date.now();
@@ -39,6 +47,7 @@ export class PersistedInteractionManager<T> {
     }
   }
 
+  // Flush pending writes and clear all in-memory timers during shutdown.
   async stop(): Promise<void> {
     await this.flush();
     for (const timer of this.timers.values()) {
@@ -47,15 +56,20 @@ export class PersistedInteractionManager<T> {
     this.timers.clear();
     this.interactions.clear();
   }
+  //#endregion
 
+  //#region In-memory access
+  // Read one interaction by its stable key.
   get(key: string): T | undefined {
     return this.interactions.get(key);
   }
 
+  // Check whether an interaction is currently tracked.
   has(key: string): boolean {
     return this.interactions.has(key);
   }
 
+  // Store or replace an interaction and keep its persistence/expiry state in sync.
   set(interaction: T): void {
     const key = this.options.getKey(interaction);
     const expiresAt = this.options.getExpiresAt(interaction);
@@ -68,6 +82,7 @@ export class PersistedInteractionManager<T> {
     this.schedulePersist();
   }
 
+  // Remove one interaction and cancel its expiry timer.
   delete(key: string): boolean {
     const removed = this.interactions.delete(key);
     const timer = this.timers.get(key);
@@ -81,6 +96,7 @@ export class PersistedInteractionManager<T> {
     return removed;
   }
 
+  // Refresh one interaction's expiry without replacing its payload.
   touch(key: string, expiresAt: number): void {
     const interaction = this.interactions.get(key);
     if (!interaction) {
@@ -94,10 +110,12 @@ export class PersistedInteractionManager<T> {
     this.schedulePersist();
   }
 
+  // Iterate over tracked interactions as `[key, value]` pairs.
   entries(): IterableIterator<[string, T]> {
     return this.interactions.entries();
   }
 
+  // Iterate over tracked interaction payloads only.
   values(): IterableIterator<T> {
     return this.interactions.values();
   }
@@ -107,7 +125,10 @@ export class PersistedInteractionManager<T> {
   async flush(): Promise<void> {
     await this.persistChain;
   }
+  //#endregion
 
+  //#region Internal helpers
+  // Recreate the expiry timer for one interaction key.
   private restoreTimer(key: string, timeoutMs: number): void {
     const existing = this.timers.get(key);
     if (existing) {
@@ -119,6 +140,7 @@ export class PersistedInteractionManager<T> {
     this.timers.set(key, timer);
   }
 
+  // Delete an expired interaction and notify the optional expiration hook.
   private async expireInteraction(key: string): Promise<void> {
     const interaction = this.interactions.get(key);
     if (!interaction) {
@@ -135,6 +157,7 @@ export class PersistedInteractionManager<T> {
     }
   }
 
+  // Load the last persisted interaction snapshot from disk.
   private async readPersistedInteractions(): Promise<T[]> {
     try {
       const raw = await readFile(this.options.stateFilePath, "utf8");
@@ -145,6 +168,7 @@ export class PersistedInteractionManager<T> {
     }
   }
 
+  // Serialize the latest interaction map to disk in write-order.
   private schedulePersist(): void {
     this.persistChain = this.persistChain
       .catch(() => undefined)
@@ -161,4 +185,5 @@ export class PersistedInteractionManager<T> {
         }, "warn");
       });
   }
+  //#endregion
 }

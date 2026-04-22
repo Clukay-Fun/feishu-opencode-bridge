@@ -1,3 +1,9 @@
+/**
+ * 职责: 执行单个 BridgeTurn，并驱动与 OpenCode 的交互过程。
+ * 关注点:
+ * - 监听事件流并处理提问、权限、完成等关键事件。
+ * - 协调看门狗、模块钩子、卡片管理器和错误收尾逻辑。
+ */
 import crypto from "node:crypto";
 
 import type { PendingPermissionInteraction } from "../bridge/state.js";
@@ -34,6 +40,9 @@ import { cleanAssistantReply } from "./sanitize.js";
 const FIRST_SSE_FALLBACK_MS = 5_000;
 const PERMISSION_TTL_MS = 120_000;
 
+/**
+ * 负责管理一次 turn 执行的收敛过程，避免重复完成或重复报错。
+ */
 type TurnExecutionSettlementOptions = {
   finalize: () => Promise<string>;
   reject: (reason?: unknown) => void;
@@ -49,6 +58,7 @@ class TurnExecutionSettlement {
 
   constructor(private readonly options: TurnExecutionSettlementOptions) {}
 
+  /** 在首个 SSE 长时间未到达时触发兜底检查。 */
   startFallback(runFallback: () => void): void {
     this.fallbackTimer = setTimeout(() => {
       if (!this.seenSessionEvent) {
@@ -57,11 +67,13 @@ class TurnExecutionSettlement {
     }, FIRST_SSE_FALLBACK_MS);
   }
 
+  /** 标记已经收到当前 session 的事件。 */
   markSessionEvent(): void {
     this.seenSessionEvent = true;
     this.clearFallbackTimer();
   }
 
+  /** 根据事件节奏刷新或延长看门狗计时。 */
   markWatchdogEvent(nextWatchdogGapMs: number | null): void {
     if (nextWatchdogGapMs !== null) {
       this.options.watchdog.snoozeEventGap(nextWatchdogGapMs);
@@ -71,6 +83,7 @@ class TurnExecutionSettlement {
     this.options.watchdog.markEvent();
   }
 
+  /** 以错误结束本次执行。 */
   settleWithError(error: Error): void {
     if (this.settled) return;
     this.settled = true;
@@ -78,6 +91,7 @@ class TurnExecutionSettlement {
     this.options.reject(error);
   }
 
+  /** 正常完成本次执行，并在需要时做最终文本收敛。 */
   async settleWithText(): Promise<void> {
     if (this.settled) return;
     this.settled = true;
@@ -169,6 +183,9 @@ export type TurnExecutorContext = {
 export class TurnExecutor {
   constructor(private readonly context: TurnExecutorContext) {}
 
+  // #region 队列入口
+
+  /** 持续消费指定队列中的 turn，直到队列清空。 */
   async processChat(queueKey: string): Promise<void> {
     const queue = this.context.queues.get(queueKey);
     while (queue.current()) {
@@ -177,6 +194,7 @@ export class TurnExecutor {
     }
   }
 
+  /** 在 assistant 消息 id 确定后回放之前积压的文本事件。 */
   private async flushPendingTextEvents(
     assistantMessageId: string,
     pendingTextEvents: Array<{ messageId: string; kind: "delta" | "set"; value: string }>,
@@ -198,6 +216,7 @@ export class TurnExecutor {
     }
   }
 
+  /** 执行当前队列头部的 turn，并补齐日志上下文。 */
   async runTurn(queueKey: string): Promise<void> {
     const queue = this.context.queues.get(queueKey);
     const active = queue.peek();
@@ -214,6 +233,7 @@ export class TurnExecutor {
     });
   }
 
+  /** 包裹单个 turn 的完整执行与收尾逻辑。 */
   private async runTurnWithContext(queueKey: string, active: BridgeTurn): Promise<void> {
     const queue = this.context.queues.get(queueKey);
     let turn = transitionTurn(active, "running");
@@ -286,6 +306,11 @@ export class TurnExecutor {
     }
   }
 
+  // #endregion
+
+  // #region Turn 执行准备
+
+  /** 收集执行 turn 前所需的 session 基线和 system prompt。 */
   private async prepareTurnExecution(
     queueKey: string,
     turn: BridgeTurn & { sessionId: string },
@@ -312,6 +337,7 @@ export class TurnExecutor {
     };
   }
 
+  /** 准备完成后真正执行 turn。 */
   private async executeTurn(queueKey: string, turn: BridgeTurn & { sessionId: string }): Promise<string> {
     const {
       baselineAssistantId,
@@ -326,6 +352,7 @@ export class TurnExecutor {
     });
   }
 
+  /** 通过事件流驱动一次 prompt 执行，并实时汇总回复文本。 */
   private async executePromptWithEventStream(
     turn: BridgeTurn & { sessionId: string },
     queue: RuntimeQueue,
@@ -438,6 +465,11 @@ export class TurnExecutor {
     });
   }
 
+  // #endregion
+
+  // #region 事件处理
+
+  /** 处理单条 OpenCode 事件，并把变化同步到 turn 运行时。 */
   private async handleEvent(
     turn: BridgeTurn & { sessionId: string },
     event: OpenCodeEvent,
@@ -566,6 +598,7 @@ export class TurnExecutor {
     }
   }
 
+  /** 处理权限请求事件，并向飞书发出审批卡片或文本提示。 */
   private async handlePermissionAskedEvent(
     turn: BridgeTurn & { sessionId: string },
     event: OpenCodeEvent,
@@ -630,6 +663,11 @@ export class TurnExecutor {
     });
   }
 
+  // #endregion
+
+  // #region 回复收敛与兜底
+
+  /** 在首个 SSE 长时间未到达时，直接从 session 历史里尝试补捞回复。 */
   private async runFirstSseFallback(
     sessionId: string,
     baseline: {
@@ -663,6 +701,7 @@ export class TurnExecutor {
     }
   }
 
+  /** 对流式文本和最终消息做统一收敛，返回最终 assistant 回复。 */
   private async finalizeAssistantReply(
     sessionId: string,
     currentText: string,
@@ -689,6 +728,7 @@ export class TurnExecutor {
     return text;
   }
 
+  /** 按 assistantMessageId 或 baseline 条件解析最终 assistant 消息。 */
   private async resolveAssistantMessage(
     sessionId: string,
     baseline: {
@@ -711,6 +751,7 @@ export class TurnExecutor {
     });
   }
 
+  /** 返回满足 baseline 条件的最新 assistant 消息。 */
   private async getLatestAssistantMessage(
     sessionId: string,
     options?: {
@@ -722,11 +763,13 @@ export class TurnExecutor {
     return [...messages].reverse().find((message) => isAssistantMessageAfterBaseline(message, options)) ?? null;
   }
 
+  /** 按消息 id 精确查找 assistant 消息。 */
   private async getAssistantMessageById(sessionId: string, messageId: string): Promise<OpenCodeMessage | null> {
     const messages = await this.context.opencode.getSessionMessages(sessionId, 200);
     return messages.find((message) => message.info.id === messageId && message.info.role === "assistant") ?? null;
   }
 
+  /** 在没有过程卡可用时，直接发出兜底 Markdown 回复。 */
   private async sendTurnFallbackMarkdown(chatId: string, markdown: string, replyToMessageId: string): Promise<void> {
     await this.context.sendPayload(chatId, buildPostMarkdownPayload(markdown), {
       event: "fallback final message sent",
@@ -735,8 +778,11 @@ export class TurnExecutor {
       len: markdown.length,
     }, { replyToMessageId });
   }
+
+  // #endregion
 }
 
+/** 将底层异常转换为更适合用户侧展示的错误文案。 */
 function normalizeTurnFailureDetail(error: unknown): string {
   const detail = cleanAssistantReply(error instanceof Error ? error.message : String(error));
   const normalized = detail.toLowerCase();

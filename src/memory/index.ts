@@ -1,3 +1,9 @@
+/**
+ * 职责: 编排记忆模块的提取、存储、召回与同步能力。
+ * 关注点:
+ * - 管理 learn 和 recall 两条主流程。
+ * - 组合不同检索策略与可选的同步能力。
+ */
 import type { Logger } from "../logging/logger.js";
 import type { OpenCodeClient } from "../opencode/client.js";
 import type { AppConfig } from "../config/schema.js";
@@ -67,10 +73,14 @@ export class MemoryService {
       : null;
   }
 
+  // #region 生命周期与入口
+
+  /** 启动记忆相关后台能力。 */
   async start(): Promise<void> {
     await this.obsidianSync?.start();
   }
 
+  /** 停止记忆服务，并尽量排空学习队列。 */
   async stop(): Promise<void> {
     this.accepting = false;
     await this.drain(this.config.shutdownDrainTimeoutMs);
@@ -79,6 +89,7 @@ export class MemoryService {
     this.db.close();
   }
 
+  /** 召回与当前 query 相关的记忆，并拼成 system block。 */
   async buildRecallBlock(userId: string, query: string): Promise<string> {
     const facts = await this.retriever.recall(userId, query, this.config.searchLimit);
     this.logger.log("memory/recall", facts.length > 0 ? "hit" : "miss", {
@@ -89,6 +100,7 @@ export class MemoryService {
     return formatRecallBlock(facts);
   }
 
+  /** 把本轮对话加入异步学习队列。 */
   enqueueLearn(userId: string, userMessage: string, assistantMessage: string): void {
     if (!this.accepting) {
       this.logger.log("memory/learn", "dropped", { userId, reason: "closed" }, "warn");
@@ -109,6 +121,7 @@ export class MemoryService {
     this.ensureWorker();
   }
 
+  /** 在关闭前等待学习队列尽量排空。 */
   async drain(timeoutMs = this.config.shutdownDrainTimeoutMs): Promise<void> {
     if (!this.processing && this.queue.length === 0) {
       return;
@@ -124,6 +137,11 @@ export class MemoryService {
     ]);
   }
 
+  // #endregion
+
+  // #region 队列处理
+
+  /** 确保后台学习 worker 已启动。 */
   private ensureWorker(): void {
     if (this.processing) {
       return;
@@ -136,6 +154,7 @@ export class MemoryService {
     });
   }
 
+  /** 顺序消费学习队列并写入记忆库。 */
   private async processQueue(): Promise<void> {
     while (this.queue.length > 0) {
       const task = this.queue.shift();
@@ -167,6 +186,7 @@ export class MemoryService {
     }
   }
 
+  /** 为新写入的事实补充向量嵌入。 */
   private async updateEmbeddings(ids: number[], facts: string[]): Promise<void> {
     if (!this.embeddingClient) {
       return;
@@ -190,6 +210,7 @@ export class MemoryService {
     }
   }
 
+  /** 在队列清空时唤醒 drain 等待者。 */
   private notifyIdle(): void {
     if (this.processing || this.queue.length > 0) {
       return;
@@ -199,8 +220,11 @@ export class MemoryService {
     }
     this.idleWaiters.clear();
   }
+
+  // #endregion
 }
 
+/** 把召回结果格式化为统一的 system block。 */
 export function formatRecallBlock(facts: string[]): string {
   if (facts.length === 0) {
     return "";
@@ -208,6 +232,7 @@ export function formatRecallBlock(facts: string[]): string {
   return ["[Memory Recall]", ...facts.map((fact) => `- ${fact}`)].join("\n");
 }
 
+/** 在已有 system prompt 后追加一段新 block。 */
 export function appendSystemBlock(systemPrompt: string | undefined, block: string): string | undefined {
   const normalizedBlock = block.trim();
   if (!normalizedBlock) {
@@ -218,11 +243,13 @@ export function appendSystemBlock(systemPrompt: string | undefined, block: strin
   return normalizedSystem ? `${normalizedSystem}\n\n${normalizedBlock}` : normalizedBlock;
 }
 
+/** 生成用于日志的消息预览。 */
 function createSourcePreview(text: string, maxLength: number): string {
   const normalized = text.replace(/\s+/g, " ").trim();
   return normalized.length > maxLength ? normalized.slice(0, maxLength) : normalized;
 }
 
+/** 对提取到的事实去重并保持原始顺序。 */
 function dedupeFacts(facts: string[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];

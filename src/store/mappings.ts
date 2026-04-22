@@ -1,3 +1,9 @@
+/**
+ * 职责: 持久化聊天窗口与会话绑定关系。
+ * 关注点:
+ * - 保存窗口模式、当前活跃会话和历史会话列表。
+ * - 支持本地存储版本迁移与兼容读取。
+ */
 import { JsonStore } from "./json-store.js";
 
 export type SessionMode = "single" | "multi";
@@ -40,6 +46,8 @@ export class MappingStore extends JsonStore<unknown> {
     super(dataDir, fileName, { version: MAPPING_STORE_VERSION, mappings: {} } satisfies MappingFile);
   }
 
+  //#region Persistence API
+  // Load mappings from disk and migrate older layouts into the current schema.
   override async load(): Promise<MappingRecord> {
     const loaded = await super.load();
     if (isMappingFile(loaded)) {
@@ -70,26 +78,33 @@ export class MappingStore extends JsonStore<unknown> {
     return {};
   }
 
+  // Save mappings back to disk after normalizing and trimming old window entries.
   override async save(value: MappingRecord): Promise<void> {
     await super.save({
       version: MAPPING_STORE_VERSION,
       mappings: trimMappings(normalizeMappings(value), this.maxEntries),
     } satisfies MappingFile);
   }
+  //#endregion
 }
 
+//#region Schema guards
+// Detect the current versioned mapping file shape.
 function isMappingFile(value: unknown): value is MappingFile {
   return isRecord(value) && value.version === MAPPING_STORE_VERSION && isRecord(value.mappings);
 }
 
+// Detect version 2 mapping payloads for migration.
 function isVersion2MappingFile(value: unknown): value is { version: 2; mappings: Record<string, unknown> } {
   return isRecord(value) && value.version === 2 && isRecord(value.mappings);
 }
 
+// Detect version 3 mapping payloads for migration.
 function isVersion3MappingFile(value: unknown): value is { version: 3; mappings: Record<string, unknown> } {
   return isRecord(value) && value.version === 3 && isRecord(value.mappings);
 }
 
+// Detect the earliest unversioned mapping format.
 function isLegacyMappingFile(value: unknown): value is Record<string, unknown> {
   if (!isRecord(value)) {
     return false;
@@ -101,7 +116,10 @@ function isLegacyMappingFile(value: unknown): value is Record<string, unknown> {
 
   return Object.keys(value).length > 0 || Object.values(value).some((entry) => typeof entry === "string" || isRecord(entry));
 }
+//#endregion
 
+//#region Normalization and migration
+// Normalize arbitrary mapping data into the runtime window record shape.
 function normalizeMappings(value: unknown): MappingRecord {
   if (!isRecord(value)) {
     return {};
@@ -120,11 +138,13 @@ function normalizeMappings(value: unknown): MappingRecord {
   return Object.fromEntries(normalizedEntries);
 }
 
+// Keep only the most recently used windows to bound local storage size.
 function trimMappings(value: MappingRecord, maxEntries: number): MappingRecord {
   const sorted = Object.entries(value).sort((a, b) => getWindowLastUsedAt(b[1]) - getWindowLastUsedAt(a[1]));
   return Object.fromEntries(sorted.slice(0, maxEntries));
 }
 
+// Upgrade version 2 records into the current session-window structure.
 function migrateVersion2Mappings(value: Record<string, unknown>): MappingRecord {
   const now = Date.now();
   const migratedEntries = Object.entries(value)
@@ -145,6 +165,7 @@ function migrateVersion2Mappings(value: Record<string, unknown>): MappingRecord 
   return Object.fromEntries(migratedEntries);
 }
 
+// Upgrade pre-versioned records into the current session-window structure.
 function migrateLegacyMappings(value: Record<string, unknown>): MappingRecord {
   const now = Date.now();
   const migratedEntries = Object.entries(value)
@@ -163,6 +184,7 @@ function migrateLegacyMappings(value: Record<string, unknown>): MappingRecord {
   return Object.fromEntries(migratedEntries);
 }
 
+// Normalize one window record and repair invalid active-session references.
 function normalizeWindowRecord(value: unknown): SessionWindowRecord | null {
   if (!isRecord(value)) {
     return null;
@@ -215,6 +237,7 @@ function normalizeWindowRecord(value: unknown): SessionWindowRecord | null {
     };
 }
 
+// Normalize one session binding entry and backfill timestamps or labels.
 function normalizeSessionBindingRecord(value: unknown, now: number): SessionBindingRecord | null {
   if (!isRecord(value) || typeof value.sessionId !== "string") {
     return null;
@@ -231,6 +254,7 @@ function normalizeSessionBindingRecord(value: unknown, now: number): SessionBind
   };
 }
 
+// Build a single-session window record for migrated legacy data.
 function createSingleWindow(sessionId: string, now: number, label: string): SessionWindowRecord {
   return {
     mode: "single",
@@ -245,18 +269,22 @@ function createSingleWindow(sessionId: string, now: number, label: string): Sess
   };
 }
 
+// Normalize interaction mode values and default unknown values safely.
 function normalizeInteractionMode(value: unknown): InteractionMode {
   return value === "knowledge" ? "knowledge" : "default";
 }
 
+// Read the latest session activity timestamp from a window record.
 function getWindowLastUsedAt(window: SessionWindowRecord): number {
   return window.sessions.reduce((max, session) => Math.max(max, session.lastUsedAt), 0);
 }
 
+// Pick the most recently used session from a candidate list.
 function pickMostRecentSession(sessions: SessionBindingRecord[]): SessionBindingRecord | null {
   return [...sessions].sort((a, b) => b.lastUsedAt - a.lastUsedAt)[0] ?? null;
 }
 
+// Find a session by id within one window record.
 function findSessionById(sessions: SessionBindingRecord[], sessionId: string | null): SessionBindingRecord | null {
   if (!sessionId) {
     return null;
@@ -264,6 +292,8 @@ function findSessionById(sessions: SessionBindingRecord[], sessionId: string | n
   return sessions.find((session) => session.sessionId === sessionId) ?? null;
 }
 
+// Narrow unknown JSON values to plain records.
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
+//#endregion

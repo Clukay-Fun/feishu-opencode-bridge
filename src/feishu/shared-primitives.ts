@@ -1,3 +1,9 @@
+/**
+ * 职责: 提供飞书消息载荷与共享卡片片段的基础构建能力。
+ * 关注点:
+ * - 统一 post、interactive、notice 等消息类型的拼装方式。
+ * - 抽离各业务卡片都会复用的块级组件与辅助函数。
+ */
 import type { QueueNotice } from "../bridge/turn.js";
 import { column, columnSet, markdown, standardIcon, type IconDef } from "./card-builder.js";
 
@@ -28,10 +34,14 @@ export type NoticeCardView = {
   showMessageIcon?: boolean;
 };
 
+// #region 基础消息载荷
+
+/** 把队列提示渲染为最简 Markdown 消息。 */
 export function buildQueueNoticePayload(notice: QueueNotice): FeishuPostPayload {
   return buildPostMarkdownPayload(notice.message);
 }
 
+/** 构建纯 Markdown 的飞书 post 消息。 */
 export function buildPostMarkdownPayload(markdownText: string): FeishuPostPayload {
   return {
     msg_type: "post",
@@ -44,6 +54,7 @@ export function buildPostMarkdownPayload(markdownText: string): FeishuPostPayloa
   };
 }
 
+/** 构建带标题的普通文本 post 消息。 */
 export function buildPostPayload(title: string, text: string): FeishuPostPayload {
   return {
     msg_type: "post",
@@ -56,6 +67,7 @@ export function buildPostPayload(title: string, text: string): FeishuPostPayload
   };
 }
 
+/** 构建统一样式的提示卡片。 */
 export function buildNoticeCardPayload(view: NoticeCardView): FeishuPostPayload {
   return buildInteractivePayload({
     title: view.title,
@@ -72,10 +84,12 @@ export function buildNoticeCardPayload(view: NoticeCardView): FeishuPostPayload 
   });
 }
 
+/** 将统一 payload 还原为 interactive card content。 */
 export function toInteractiveCardContent(payload: FeishuPostPayload): Record<string, unknown> {
   return JSON.parse(payload.content) as Record<string, unknown>;
 }
 
+/** 构建通用 interactive 卡片载荷。 */
 export function buildInteractivePayload(options: {
   title: string;
   template: "blue" | "green" | "red" | "wathet" | "grey" | "orange" | "yellow" | "purple" | "indigo";
@@ -120,6 +134,11 @@ export function buildInteractivePayload(options: {
   };
 }
 
+// #endregion
+
+// #region 共享卡片块
+
+/** 构建通知正文块，可按需带图标。 */
 export function buildNoticeBodyBlock(
   message: string,
   iconToken = "info_outlined",
@@ -137,6 +156,7 @@ export function buildNoticeBodyBlock(
   ]);
 }
 
+/** 构建分隔线元素。 */
 export function buildDivider(): Record<string, unknown> {
   return {
     tag: "hr",
@@ -144,6 +164,7 @@ export function buildDivider(): Record<string, unknown> {
   };
 }
 
+/** 构建底部提示条。 */
 export function buildFooterTipBlock(text: string, iconToken: string, iconColor: string, textSize: "notation" | "normal_v2"): Record<string, unknown> {
   return {
     ...columnSet([
@@ -158,10 +179,12 @@ export function buildFooterTipBlock(text: string, iconToken: string, iconColor: 
   };
 }
 
+/** 转义卡片中可能破坏结构的尖括号。 */
 export function escapeText(text: string): string {
   return text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/** 构建带尺寸与图标选项的 Markdown 元素。 */
 export function cardMarkdown(content: string, textSize = "normal", opts?: { icon?: IconDef; textAlign?: string }): Record<string, unknown> {
   return {
     tag: "markdown",
@@ -173,6 +196,7 @@ export function cardMarkdown(content: string, textSize = "normal", opts?: { icon
   };
 }
 
+/** 构建通用标题行。 */
 export function buildTitleLine(content: string, icon?: IconDef): Record<string, unknown> {
   return buildStretchColumnSet([
     {
@@ -183,6 +207,7 @@ export function buildTitleLine(content: string, icon?: IconDef): Record<string, 
   ]);
 }
 
+/** 构建灰底面板。 */
 export function buildGreyPanel(elements: Array<Record<string, unknown>>, opts: { padding?: string } = {}): Record<string, unknown> {
   return buildStretchColumnSet([
     buildWeightedColumn(elements, {
@@ -193,6 +218,7 @@ export function buildGreyPanel(elements: Array<Record<string, unknown>>, opts: {
   ]);
 }
 
+/** 构建引用风格的一行内容。 */
 export function buildQuoteLine(content: string): Record<string, unknown> {
   return buildStretchColumnSet([
     buildWeightedColumn([
@@ -201,6 +227,7 @@ export function buildQuoteLine(content: string): Record<string, unknown> {
   ], "8px");
 }
 
+/** 构建耗时展示行。 */
 export function buildElapsedLine(content: string): Record<string, unknown> {
   return {
     tag: "div",
@@ -217,6 +244,7 @@ export function buildElapsedLine(content: string): Record<string, unknown> {
   };
 }
 
+/** 构建居中统计行。 */
 export function buildStatsRow(labels: string[]): Record<string, unknown> {
   return {
     ...buildStretchColumnSet(labels.map((label) => buildWeightedColumn([
@@ -230,6 +258,7 @@ export function buildStatsRow(labels: string[]): Record<string, unknown> {
   };
 }
 
+/** 构建标签占比图和可选跳转链接。 */
 export function buildTagChartSection(
   tagCounts: Record<string, number>,
   bitableUrl?: string,
@@ -275,6 +304,7 @@ export function buildTagChartSection(
   ], "8px");
 }
 
+/** 构建知识库入库单步进度的卡片元素。 */
 export function buildKnowledgeIngestProgressStepElements(step: ToolUpdateView): Array<Record<string, unknown>> {
   const elements: Array<Record<string, unknown>> = [
     buildGreyPanel([
@@ -290,11 +320,17 @@ export function buildKnowledgeIngestProgressStepElements(step: ToolUpdateView): 
   return elements;
 }
 
+// #endregion
+
+// #region 展示辅助
+
+/** 根据显式耗时或 startedAt 生成耗时文案。 */
 export function resolveElapsedText(view: { elapsedMs?: number | undefined; startedAt?: number | undefined }): string {
   const elapsedMs = view.elapsedMs ?? (view.startedAt ? Date.now() - view.startedAt : 0);
   return `耗时：${formatDurationMs(elapsedMs)}`;
 }
 
+/** 把毫秒格式化为秒或分秒文本。 */
 export function formatDurationMs(durationMs: number): string {
   const seconds = Math.max(1, Math.round(durationMs / 1000));
   if (seconds < 60) {
@@ -305,6 +341,7 @@ export function formatDurationMs(durationMs: number): string {
   return remainingSeconds > 0 ? `${minutes} 分 ${remainingSeconds} 秒` : `${minutes} 分`;
 }
 
+/** 将知识入库步骤状态映射为行内文案。 */
 export function formatKnowledgeIngestInlineStatus(step: ToolUpdateView): string {
   switch (step.status) {
     case "completed":
@@ -320,6 +357,7 @@ export function formatKnowledgeIngestInlineStatus(step: ToolUpdateView): string 
   }
 }
 
+/** 规范化知识入库步骤详情，避免显示无意义占位文案。 */
 export function normalizeKnowledgeIngestDetail(step: ToolUpdateView): string {
   if (!step.detail || step.detail === "等待开始" || step.detail === "已完成" || step.detail === "处理中" || step.detail === "执行失败") {
     return "";
@@ -333,6 +371,7 @@ export function normalizeKnowledgeIngestDetail(step: ToolUpdateView): string {
   return escapeText(step.detail);
 }
 
+/** 为知识入库步骤状态选择对应图标。 */
 export function mapKnowledgeIngestStepIcon(status: ToolUpdateView["status"]): IconDef {
   switch (status) {
     case "completed":
@@ -347,6 +386,8 @@ export function mapKnowledgeIngestStepIcon(status: ToolUpdateView["status"]): Ic
       return { token: "info_outlined", color: "grey" };
   }
 }
+
+// #endregion
 
 function buildWeightedColumn(
   elements: Array<Record<string, unknown>>,

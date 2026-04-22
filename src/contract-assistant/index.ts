@@ -1,3 +1,10 @@
+/**
+ * 职责: 提供合同助手领域服务，承载合同、案件和发票相关业务流程。
+ * 关注点:
+ * - 基于模板起草合同文档。
+ * - 从合同与发票文件中提取结构化信息。
+ * - 处理案件台账与提醒类操作。
+ */
 import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -181,6 +188,7 @@ type ContractDraftProgressCallback = (stage: ContractDraftProgressStage, detail?
 export class ContractAssistantService {
   private readonly evidenceExtractor: EvidenceExtractService;
 
+  // Wire contract-domain resources, model access, and workflow helpers together.
   constructor(
     private readonly config: ContractAssistantConfig,
     private readonly dataDir: string,
@@ -191,6 +199,8 @@ export class ContractAssistantService {
     this.evidenceExtractor = new EvidenceExtractService(resources, opencode, logger);
   }
 
+  //#region Contract and document workflows
+  // Draft a contract from free-form requirements and an internal Word template.
   async draftContract(
     request: string,
     optionsOrProgress?: { requesterOpenId?: string | undefined } | ContractDraftProgressCallback,
@@ -252,6 +262,7 @@ export class ContractAssistantService {
     return { docTitle, wordPath, markdown, recordId, warnings };
   }
 
+  // List locally available draft templates that can be matched during contract drafting.
   async listDraftTemplates(): Promise<string[]> {
     const templateDir = path.resolve(process.cwd(), "templates/contracts");
     const entries = await readdir(templateDir, { withFileTypes: true }).catch(() => []);
@@ -261,6 +272,7 @@ export class ContractAssistantService {
       .sort((left, right) => left.localeCompare(right, "zh-Hans-CN"));
   }
 
+  // Extract structured contract information from an uploaded document.
   async extractContract(file: ContractAssistantFileRef): Promise<ContractExtractResult> {
     const { result } = await this.evidenceExtractor.extractJson({
       file,
@@ -281,6 +293,7 @@ export class ContractAssistantService {
     return { summary, record, recordId };
   }
 
+  // Recognize invoice fields from an uploaded invoice file and match related contract context.
   async recognizeInvoice(file: ContractAssistantFileRef): Promise<InvoiceRecognizeResult> {
     const { result } = await this.evidenceExtractor.extractJson({
       file,
@@ -312,7 +325,10 @@ export class ContractAssistantService {
       recordId,
     };
   }
+  //#endregion
 
+  //#region Case workflows
+  // Create a new case record from free-form user instructions.
   async createCase(request: string): Promise<CaseCreateResult> {
     const result = await this.askForJson(await resolveCaseCreatePrompt(request), resolveModel(this.config, "caseManage"));
     const record = normalizeCaseRecord(readRecord(result, "record"));
@@ -325,6 +341,7 @@ export class ContractAssistantService {
     return { summary, record, recordId };
   }
 
+  // Update an existing case record by matching the target and patching its fields.
   async updateCase(request: string): Promise<CaseUpdateResult> {
     const result = await this.askForJson(await resolveCaseUpdatePrompt(request), resolveModel(this.config, "caseManage"));
     const caseNo = readString(result, "caseNo");
@@ -357,6 +374,7 @@ export class ContractAssistantService {
     };
   }
 
+  // List case todo items, optionally filtered by a free-form query.
   async listCaseTodos(query = ""): Promise<CaseTodoResult> {
     const records = await this.resources.listBitableRecords(this.config.storage.baseToken, this.config.storage.caseTableId);
     const normalizedQuery = query.trim();
@@ -384,6 +402,7 @@ export class ContractAssistantService {
     return { lines };
   }
 
+  // List upcoming case reminders within the configured lookahead window.
   async listCaseReminders(query = "", lookaheadDays = 7): Promise<CaseReminderResult> {
     const records = await this.resources.listBitableRecords(this.config.storage.baseToken, this.config.storage.caseTableId);
     const now = Date.now();
@@ -411,6 +430,7 @@ export class ContractAssistantService {
     return { lines };
   }
 
+  // Add a reminder to a matched case record and return the updated fields.
   async addCaseReminder(request: string): Promise<CaseReminderAddResult> {
     const parsed = parseCaseReminderRequest(request);
     const records = await this.resources.listBitableRecords(this.config.storage.baseToken, this.config.storage.caseTableId);
@@ -445,6 +465,7 @@ export class ContractAssistantService {
     };
   }
 
+  // Merge reminder candidates across contract, invoice, and case dimensions.
   async listReminderItems(lookaheadDays: number): Promise<{ contractLines: string[]; invoiceLines: string[]; caseLines: string[] }> {
     const [contracts, invoices, cases] = await Promise.all([
       this.resources.listBitableRecords(this.config.storage.baseToken, this.config.storage.contractTableId),

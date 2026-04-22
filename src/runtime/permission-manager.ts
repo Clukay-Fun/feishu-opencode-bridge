@@ -1,3 +1,10 @@
+/**
+ * 职责: 管理模型工具调用权限请求的完整生命周期。
+ * 关注点:
+ * - 创建挂起权限交互并展示审批卡片。
+ * - 处理用户决策、超时和状态清理。
+ * - 将权限结果回传给 OpenCode。
+ */
 import type { PendingPermissionInteraction } from "../bridge/state.js";
 import { buildNoticeCardPayload, type FeishuPostPayload } from "../feishu/shared-primitives.js";
 import { logEvent, type Logger, type TranscriptType } from "../logging/logger.js";
@@ -40,10 +47,14 @@ export class PermissionManager {
     private readonly callbacks: PermissionManagerCallbacks,
   ) {}
 
+  // #region 对外入口
+
+  /** 注册一条新的权限请求。 */
   registerInteraction(interaction: PendingPermissionInteraction): void {
     this.interactions.set(interaction.permissionVersion, interaction);
   }
 
+  /** 处理来自飞书卡片的权限审批动作。 */
   async handleCardAction(
     actorOpenId: string,
     openMessageId: string,
@@ -89,6 +100,7 @@ export class PermissionManager {
     }
   }
 
+  /** 为权限卡片构建动作按钮。 */
   buildActionButtons(interaction: PendingPermissionInteraction): Array<{
     label: string;
     type: "default" | "primary" | "danger";
@@ -113,6 +125,7 @@ export class PermissionManager {
     ];
   }
 
+  /** 根据处理结果构建最终提示卡片。 */
   buildResolutionPayload(resolution: PermissionResolution): FeishuPostPayload {
     if (resolution === "once") {
       return this.buildNoticePayload("信息提示", "green", "yes_outlined", "当前权限请求已确认，可继续执行。");
@@ -129,6 +142,7 @@ export class PermissionManager {
     return this.buildNoticePayload("错误", "red", "more-close_outlined", "当前权限请求已拒绝。");
   }
 
+  /** 将权限结果回传给 OpenCode，并同步本地状态。 */
   async resolveInteraction(interaction: PendingPermissionInteraction, resolution: PermissionResolution): Promise<void> {
     const remember = resolution === "always";
     const response: PermissionPolicy = resolution === "deny" || resolution === "timeout" ? "reject" : resolution;
@@ -157,6 +171,7 @@ export class PermissionManager {
     }
   }
 
+  /** 处理权限超时，并按需通知聊天窗口。 */
   async expireInteraction(interaction: PendingPermissionInteraction, notifyChat: boolean): Promise<void> {
     if (interaction.resolvedAt && interaction.resolution) {
       return;
@@ -194,6 +209,11 @@ export class PermissionManager {
     }, { replyToMessageId: interaction.replyToMessageId });
   }
 
+  // #endregion
+
+  // #region 内部辅助
+
+  /** 构建卡片按钮 value。 */
   private buildActionValue(
     interaction: PendingPermissionInteraction,
     policy: PermissionCardActionValue["policy"],
@@ -209,6 +229,7 @@ export class PermissionManager {
     };
   }
 
+  /** 校验卡片回调与当前权限请求是否匹配。 */
   private matchesAction(
     interaction: PendingPermissionInteraction,
     value: PermissionCardActionValue,
@@ -224,6 +245,7 @@ export class PermissionManager {
       && matchesMessageId;
   }
 
+  /** 构建统一样式的提示卡片。 */
   private buildNoticePayload(
     title: string,
     template: "blue" | "yellow" | "red" | "green",
@@ -239,4 +261,6 @@ export class PermissionManager {
       messageIconColor: template,
     });
   }
+
+  // #endregion
 }

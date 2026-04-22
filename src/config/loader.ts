@@ -1,9 +1,16 @@
+/**
+ * 职责: 读取并规范化应用配置，输出可直接使用的 AppConfig。
+ * 关注点:
+ * - 从配置文件加载原始 JSON 并通过 schema 校验。
+ * - 处理默认值、路径归一化和运行时友好的字段转换。
+ */
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { AppConfig } from "./schema.js";
 import { ConfigSchema } from "./schema.js";
 
+/** 从配置文件读取、校验并返回完整运行时配置。 */
 export async function loadConfig(configPath?: string): Promise<AppConfig> {
   const resolvedConfigPath = configPath ? path.resolve(configPath) : path.resolve("config.json");
   const raw = JSON.parse(await readFile(resolvedConfigPath, "utf8")) as unknown;

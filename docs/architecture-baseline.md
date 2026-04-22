@@ -1,84 +1,84 @@
-# Architecture Baseline
+# 架构基线
 
-> Last updated: 2026-04-18
+> 最后更新：2026-04-18
 >
-> This document defines the architecture baseline for the post-demo phase.
-> If it conflicts with demo-oriented notes, this document wins for code organization.
+> 这份文档定义了 post-demo 阶段的架构基线。
+> 如果它与 demo 导向的说明冲突，以这份文档的代码组织规则为准。
 
-## Goal
+## 目标
 
-Framework is frozen at the seams; features expand inside them.
+框架在 seam 上冻结，功能在 seam 内扩展。
 
-This repository is now moving from "demo-first stabilization" to "framework freeze + feature expansion".
+这个仓库正在从“demo 优先的稳定化”转向“框架冻结 + 功能扩展”。
 
-The goal of the baseline is not to redesign the project.
-The goal is to fix the boundaries that must stay stable while new features continue to land.
+这份基线的目标不是重新设计整个项目。
+它的目标是固定那些在后续继续加功能时必须保持稳定的边界。
 
-Current scope remains intentionally narrow:
+当前范围刻意保持收敛：
 
-- Feishu is the only channel
-- OpenCode remains the only runtime backend owned by the bridge
-- deployment stays single-host
-- the bridge remains a TypeScript service, not a desktop app and not a multi-channel platform
+- Feishu 是唯一渠道
+- OpenCode 仍然是 bridge 自己维护的唯一运行时后端
+- 部署仍然是单机形态
+- bridge 仍然是一个 TypeScript 服务，而不是桌面应用，也不是多渠道平台
 
-## Product Positioning
+## 产品定位
 
-This project is a Feishu-native runtime bridge for OpenCode.
+这个项目是一个面向 OpenCode 的 Feishu 原生运行时桥接层。
 
-It is not:
+它不是什么：
 
-- a generic IM bot framework
-- a desktop AI shell
-- a multi-channel agent platform
-- a pure business workflow app
+- 通用 IM bot 框架
+- 桌面 AI shell
+- 多渠道 agent 平台
+- 纯业务工作流应用
 
-It is:
+它是什么：
 
-- a Feishu ingress and egress layer
-- a session-aware runtime shell
-- a bridge-owned command and process-control surface
-- a host for business modules such as knowledge, contract assistant, labor, and memory
+- Feishu ingress 与 egress 层
+- 具备会话语义的运行时 shell
+- 由 bridge 自己管理的命令面与过程控制面
+- knowledge、contract assistant、labor、memory 等业务模块的宿主
 
-## Baseline Principles
+## 基线原则
 
-### 1. Keep the Core Small
+### 1. 保持 Core 足够小
 
-`core` owns runtime mechanics only.
+`core` 只负责运行时机制。
 
-It may know:
+它可以知道：
 
-- message ingress and egress
-- session windows
+- 消息 ingress 和 egress
+- session window
 - queueing
-- turn lifecycle
-- process cards and final replies
-- permission and question interactions
-- bridge-owned commands
+- turn 生命周期
+- process card 和 final reply
+- permission 与 question 交互
+- bridge 自己的命令面
 
-It must not keep growing business-specific branches.
+它不应继续长出更多业务分支。
 
-### 2. Feishu-Only, But Not Feishu-Spaghetti
+### 2. 只做 Feishu，但不要变成 Feishu 意大利面
 
-We do not need a generic multi-channel abstraction.
-We do need a clean Feishu transport boundary.
+我们不需要一个通用多渠道抽象。
+但我们需要一个干净的 Feishu transport 边界。
 
-That means Feishu-specific delivery concerns should converge behind stable transport-style APIs instead of being reimplemented inside every module.
+这意味着所有 Feishu 相关的投递细节，都应收敛到稳定的 transport 风格 API 后面，而不是在每个模块里重复实现。
 
-### 3. Business Logic Lives in Modules and Services
+### 3. 业务逻辑放在 Modules 和 Services
 
-Business modules may own:
+业务模块可以拥有：
 
-- command interpretation inside their own namespace
-- pending interactions
-- feature state persistence
-- prompt overlays
-- orchestration of their own services and workflows
+- 自己命名空间内的命令解释
+- pending interaction
+- feature 自己的状态持久化
+- prompt overlay
+- 自己 services 和 workflows 的编排
 
-Business modules must not take over bridge session control.
+业务模块不能接管 bridge 的 session control。
 
-### 4. Expansion Must Reuse Existing Seams
+### 4. 扩展必须复用既有 Seam
 
-New features should plug into:
+新功能应接入：
 
 - `RuntimeModule.handleMessage()`
 - `RuntimeModule.beforeTurn()`
@@ -86,9 +86,9 @@ New features should plug into:
 - service / workflow helpers
 - dedicated stores
 
-New features should not expand the core through ad-hoc hooks.
+新功能不应通过临时 hooks 继续膨胀 core。
 
-## Target Layer Boundaries
+## 目标分层边界
 
 ```text
 Feishu Transport
@@ -100,37 +100,37 @@ Feishu Transport
 
 ### 1. Feishu Transport
 
-Current implementation is spread across:
+当前实现分散在：
 
 - `src/feishu/api.ts`
 - `src/feishu/ws.ts`
 - `src/feishu/formatter.ts`
-- parts of `src/http/server.ts`
-- parts of `src/runtime/app.ts`
+- `src/http/server.ts` 的一部分
+- `src/runtime/app.ts` 的一部分
 
-Stable responsibilities:
+稳定职责：
 
-- parse Feishu inbound messages and attachments
-- send and update messages and cards
-- normalize callback inputs
-- handle Feishu markdown and card payload rules
-- encapsulate delivery details such as reply vs thread reply
-- emit logs and transcripts through the shared logger pipeline using stable scope naming and the observability event schema
+- 解析 Feishu 入站消息与附件
+- 发送与更新消息和卡片
+- 归一化 callback 输入
+- 处理 Feishu markdown 与 card payload 规则
+- 封装 reply 与 thread reply 等投递细节
+- 通过共享 logger pipeline，以稳定 scope 命名和 observability event schema 输出日志与 transcript
 
-Must not own:
+不应负责：
 
-- business command semantics
-- session switching logic
-- knowledge / contract / labor decisions
-- custom log sinks or feature-specific transcript stores
+- 业务命令语义
+- session 切换逻辑
+- knowledge / contract / labor 决策
+- 自定义 log sink 或 feature 专属 transcript store
 
-Target direction:
+目标方向：
 
-- converge repeated `sendPayload` / `updatePayload` / notice-card flows into a stable Feishu transport helper layer
+- 把重复的 `sendPayload` / `updatePayload` / notice-card 流程收敛到稳定的 Feishu transport helper 层
 
 ### 2. Core Runtime
 
-Current implementation is mainly:
+当前主要实现位置：
 
 - `src/runtime/app.ts`
 - `src/runtime/command-handler.ts`
@@ -139,287 +139,287 @@ Current implementation is mainly:
 - `src/runtime/session-windows.ts`
 - `src/bridge/*`
 
-Stable responsibilities:
+稳定职责：
 
-- route inbound messages into command, pending interaction, module chain, or default turn flow
-- own bridge command surface such as `/new`, `/sessions`, `/status`, `/close`, `/delete`
-- own queueing, turn execution, watchdog, process-card lifecycle, and final reply delivery
-- own session-window state and interaction mode state
-- emit turn, permission, and module lifecycle events using the observability event schema
+- 把入站消息路由到 command、pending interaction、module chain 或默认 turn flow
+- 管理 bridge 命令面，例如 `/new`、`/sessions`、`/status`、`/close`、`/delete`
+- 管理 queueing、turn execution、watchdog、process-card 生命周期和 final reply 投递
+- 管理 session-window 状态与 interaction mode 状态
+- 使用 observability event schema 输出 turn、permission 和 module 生命周期事件
 
-Must not own:
+不应负责：
 
-- feature-specific pending state machines
-- feature-specific ingest queues
-- feature-specific persistence files
-- feature-specific command aliases
+- feature 专属 pending state machine
+- feature 专属 ingest queue
+- feature 专属 persistence file
+- feature 专属 command alias
 
 ### 3. Runtime Modules
 
-Current modules:
+当前模块：
 
 - `knowledge`
 - `contract-assistant`
 - `labor`
 - `memory`
 
-Stable responsibilities:
+稳定职责：
 
-- claim or ignore messages through `RuntimeModule`
-- inject system prompt blocks through `beforeTurn`
-- do feature-specific after-turn work through `afterTurn`
-- persist only their own state
-- implement `stop()` when owning timers, workers, handles, or temporary runtime resources
+- 通过 `RuntimeModule` 认领或忽略消息
+- 通过 `beforeTurn` 注入 system prompt block
+- 通过 `afterTurn` 执行 feature 专属 after-turn 工作
+- 只持久化自己的状态
+- 如果持有 timer、worker、handle 或临时运行时资源，就实现 `stop()`
 
-Must not own:
+不应负责：
 
-- direct manipulation of other modules' state
-- bridge session creation, deletion, rename, or switch semantics
-- generic Feishu delivery policy
+- 直接操纵其他模块的状态
+- bridge session 的创建、删除、重命名或切换语义
+- 通用 Feishu 投递策略
 
-Stop contract:
+停止契约：
 
-- `stop()` must leave no owned timer, interval, worker, temp resource, or pending background handle behind
-- cleanup that is required for correctness must not be deferred to process exit
+- `stop()` 之后，不应留下任何自己拥有的 timer、interval、worker、临时资源或后台 handle
+- 正确性所需的清理不能推迟到进程退出时再做
 
-### 4. Domain Services and Workflows
+### 4. Domain Services 与 Workflows
 
-Representative files:
+代表性文件：
 
 - `src/knowledge/index.ts`
 - `src/contract-assistant/index.ts`
 - `src/labor/index.ts`
 - `src/workflows/evidence-extract.ts`
 
-Stable responsibilities:
+稳定职责：
 
-- pure or mostly pure feature logic
-- OpenCode prompt composition for domain tasks
-- local file and data transformations
-- external system interaction wrappers relevant to that feature
+- 纯或近似纯的 feature 逻辑
+- 面向领域任务的 OpenCode prompt 组装
+- 本地文件与数据转换
+- 与该 feature 相关的外部系统交互封装
 
-Must not own:
+不应负责：
 
-- chat UI behavior
-- pending interaction TTL management
-- conversation routing
+- 聊天 UI 行为
+- pending interaction TTL 管理
+- 会话路由
 
-### 5. Stores and Scripts
+### 5. Stores 与 Scripts
 
-Representative files:
+代表性文件：
 
 - `src/store/*`
 - `scripts/*`
 
-Stable responsibilities:
+稳定职责：
 
-- persistence
-- local CLI entrypoints
-- startup and diagnosis tools
+- 持久化
+- 本地 CLI 入口
+- 启动与诊断工具
 
-Must not leak back into runtime flow as feature orchestration shortcuts.
+这些部分不应反向渗透回运行时主流程，成为 feature 编排捷径。
 
-`src/runtime/preflight.ts` and `scripts/checks.mjs` belong to the same diagnostic surface:
+`src/runtime/preflight.ts` 与 `scripts/checks.mjs` 属于同一诊断面：
 
-- preflight runs during startup as a runtime gate
-- doctor and checks run standalone without entering the runtime handler chain
+- preflight 在启动时作为 runtime gate 运行
+- doctor 与 checks 独立运行，不进入 runtime handler chain
 
 ### 6. Configuration
 
-Representative files:
+代表性文件：
 
 - `src/config/schema.ts`
 - `src/config/loader.ts`
 
-Stable responsibilities:
+稳定职责：
 
-- define the shared configuration schema and cross-field validation
-- resolve paths, URLs, defaults, and compatibility fallbacks into a runtime-ready config object
-- provide the single configuration entrypoint for core, modules, and scripts
+- 定义共享配置 schema 与跨字段校验
+- 将路径、URL、默认值和兼容性 fallback 解析为可直接给运行时使用的 config 对象
+- 作为 core、modules 与 scripts 的唯一配置入口
 
-Must not own:
+不应负责：
 
-- runtime state
+- 运行时状态
 - feature interaction state
-- per-feature ad-hoc config loading paths
+- 每个 feature 各自维护的 ad-hoc config 加载路径
 
-Rule:
+规则：
 
-- all feature configuration goes through the shared schema and loader
-- modules may consume injected config only; they must not read `config.json` directly or maintain parallel feature config files
+- 所有 feature 配置都必须经过共享 schema 和 loader
+- modules 只能消费注入进来的 config；不能直接读 `config.json`，也不能维护并行的 feature config 文件
 
-### 7. Logging and Observability
+### 7. Logging 与 Observability
 
-Representative files:
+代表性文件：
 
 - `src/logging/logger.ts`
-- transcript and payload logging call sites in `src/runtime/*` and feature modules
+- `src/runtime/*` 与 feature modules 中的 transcript 和 payload logging 调用点
 
-Stable responsibilities:
+稳定职责：
 
-- provide the shared logging and transcript pipeline for runtime, transport, and modules
-- enforce consistent scope naming so logs remain queryable across features
+- 为 runtime、transport 与 modules 提供共享日志与 transcript pipeline
+- 强制使用一致的 scope 命名，让日志在跨 feature 查询时仍然可用
 
-Rule:
+规则：
 
-- features must log through the shared logger only
-- log scopes should follow `area/subject` style such as `bridge/app`, `knowledge/sync`, or `contract-assistant/state`
-- features must not introduce separate log sinks, sidecar log files, or ad-hoc transcript stores
+- features 只能通过共享 logger 打日志
+- log scope 应遵循 `area/subject` 风格，例如 `bridge/app`、`knowledge/sync`、`contract-assistant/state`
+- features 不能引入独立 log sink、sidecar log file 或 ad-hoc transcript store
 
-## Fixed Extension Seams
+## 固定扩展 Seam
 
-These are the preferred places to extend the system.
+这些是系统首选的扩展位置。
 
-### New Runtime Capability
+### 新的 Runtime Capability
 
-Use a new `RuntimeModule`.
+使用新的 `RuntimeModule`。
 
-Good fit:
+适合：
 
-- a feature that needs its own command surface
-- a feature that needs pending interaction state
-- a feature that needs prompt overlays or after-turn hooks
+- 需要自己命令面的功能
+- 需要 pending interaction state 的功能
+- 需要 prompt overlay 或 after-turn hook 的功能
 
-Bad fit:
+不适合：
 
-- a single helper function
-- a one-off formatting tweak
+- 单个 helper 函数
+- 一次性的格式化微调
 
-### New Business Logic
+### 新的业务逻辑
 
-Use a service or workflow helper.
+使用 service 或 workflow helper。
 
-Good fit:
+适合：
 
-- parsing, extraction, normalization, rendering, syncing
+- parsing、extraction、normalization、rendering、syncing
 
-Bad fit:
+不适合：
 
-- inline logic directly inside `app.ts` or `turn-executor.ts`
+- 直接把逻辑内联写进 `app.ts` 或 `turn-executor.ts`
 
-### New Persistence
+### 新的持久化
 
-Use a dedicated store or a module-owned state file.
+使用 dedicated store 或 module 自己的 state file。
 
-Rule:
+规则：
 
-- state belongs to exactly one feature owner
+- 一份状态只能属于一个明确的 feature owner
 
-### New Prompt Rule
+### 新的 Prompt Rule
 
-Use:
+使用：
 
-- bridge-level system prompt only for bridge runtime rules
-- module `beforeTurn()` for feature overlays
+- bridge 级 system prompt 仅承载 bridge runtime 规则
+- module `beforeTurn()` 承载 feature overlay
 
-Rule:
+规则：
 
-- prompt additions must be layered, not appended ad hoc across unrelated files
+- prompt 增量必须是分层叠加的，不能在互不相关的文件里 ad hoc 追加
 
-## What Must Stop Growing
+## 必须停止继续增长的部分
 
-The following growth paths are now explicitly disallowed.
+下面这些增长路径现在明确禁止继续扩张。
 
-### 1. New Business Branches in Core
+### 1. Core 里新增业务分支
 
-Do not add more feature-specific `if` branches into the core runtime just because it is convenient.
+不要因为方便，就继续在 core runtime 里加 feature 专属 `if` 分支。
 
-Examples of bad direction:
+不好的方向示例：
 
-- core learning feature-specific ingest modes
-- core storing feature-specific pending interactions
-- core special-casing one module's commands or outputs
+- core 学会 feature 专属 ingest mode
+- core 存 feature 专属 pending interaction
+- core 针对某个模块的命令或输出做 special-case
 
-### 2. Raw Delivery Logic Scattered Across Modules
+### 2. 原始投递逻辑散落在各个模块里
 
-Modules should not each reinvent:
+模块不应各自重新发明：
 
-- notice-card delivery
-- processing-card transitions
-- reply threading policy
+- notice-card 投递
+- processing-card 切换
+- reply threading 策略
 - payload logging metadata
 
-The current codebase still has repetition here.
-New code must reduce that repetition, not copy it.
+当前代码库这里仍然有重复。
+新代码必须减少这种重复，而不是继续复制。
 
-### 3. Command Alias Explosion
+### 3. 命令别名爆炸
 
-Every new alias increases:
+每新增一个 alias，都会增加：
 
-- parser complexity
-- test matrix size
-- documentation cost
+- parser 复杂度
+- test matrix 大小
+- 文档成本
 
-Rule:
+规则：
 
-- one primary command name per feature action
-- at most one compatibility alias when justified
+- 每个 feature action 保留一个主命令名
+- 只有在确有必要时，最多再保留一个兼容 alias
 
-### 4. Demo-Specific Behavior in Production Paths
+### 4. 生产路径里残留 Demo 专属行为
 
-Demo copy, demo shortcuts, and half-connected commands must not remain in active product flows.
+demo 文案、demo 捷径、半连通命令，不应继续留在活跃产品路径里。
 
-If a command is not really supported, do one of two things:
+如果某个命令并未真正支持，只能二选一：
 
-- complete it
-- remove or hide it
+- 把它做完
+- 把它移除或隐藏
 
-Do not keep expanding recognized-but-not-implemented surfaces.
-Any recognized-but-not-implemented command must be completed, hidden, or removed before the next major feature PR lands.
+不要继续扩大“能识别但没实现”的表面。
+任何“能识别但没实现”的命令，都必须在下一条 major feature PR 落地前被完成、隐藏或移除。
 
-### 5. Cross-Feature State Coupling
+### 5. 跨 Feature 的状态耦合
 
-No feature may directly persist or mutate another feature's internal state file or in-memory interaction state.
+任何 feature 都不能直接持久化或修改其他 feature 的内部状态文件或内存交互状态。
 
-## Enforcement
+## 执行方式
 
-Reviewers reject PRs that violate these rules.
-If a violation is genuinely unavoidable, update this baseline first, then proceed.
-Feature PRs should also run through [new-feature-checklist.md](/Users/clukay/Program/feishu-opencode-bridge/docs/guidelines/new-feature-checklist.md).
-Compatibility debt tracked during freeze lives in [compatibility-cleanup.md](/Users/clukay/Program/feishu-opencode-bridge/docs/backlog/compatibility-cleanup.md).
+reviewer 应拒绝违反这些规则的 PR。
+如果某处违规确实无法避免，应先更新这份 baseline，再继续推进。
+feature PR 也应同时经过 [new-feature-checklist.md](/Users/clukay/Program/feishu-opencode-bridge/docs/guidelines/new-feature-checklist.md)。
+freeze 之后仍然活跃的后续债务集中在 [post-freeze-backlog.md](/Users/clukay/Program/feishu-opencode-bridge/docs/backlog/post-freeze-backlog.md)。
 
-## Current Debt That Blocks Clean Expansion
+## 当前会阻碍干净扩展的债务
 
-These are the most important debts to address before major feature growth.
+这些是 major feature growth 之前最值得先处理的债务。
 
-### P1. Core Still Knows Too Much About Concrete Modules
+### P1. Core 仍然知道太多具体模块细节
 
-`BridgeApp` still constructs and wires concrete modules directly.
-That is acceptable for now, but the dependency surface should stop growing.
+`BridgeApp` 仍然直接构造和组装具体模块。
+这在当前阶段还能接受，但依赖面不应继续扩大。
 
-Near-term rule:
+近期规则：
 
-- no new feature should require widening `BridgeApp` with more feature-specific behavior outside module registration and stable deps
+- 任何新功能都不应迫使 `BridgeApp` 在 module registration 与 stable deps 之外继续长出更多 feature 专属行为
 
-### P1. Ordinary File Handling Leaks Temp Files
+### P1. 普通文件处理仍然泄漏临时文件
 
-Regular uploaded files are written to temp directories for OpenCode turns.
-Those paths are not yet cleaned up after turn completion.
+普通上传文件会为了 OpenCode turn 被写到临时目录。
+这些路径在 turn 完成后还没有被清理。
 
-This should be fixed before file-heavy features grow further.
+在文件密集型功能继续扩张之前，这个问题应先修掉。
 
-### P1. Module State Persistence Is Reimplemented Per Feature
+### P1. Module 状态持久化仍在按 Feature 复制实现
 
-Contract assistant and labor each maintain similar patterns for:
+contract assistant 和 labor 目前都维护了相似模式：
 
 - restore
 - TTL timers
 - persist chain
 - flush
 
-This should become shared infrastructure instead of a copied pattern.
+这应成为共享基础设施，而不是继续复制。
 
-### P2. Output Construction Is Becoming a New Monolith
+### P2. 输出构造正在变成新的单体
 
-`src/feishu/formatter.ts` is now large enough to become the next structural bottleneck.
+`src/feishu/formatter.ts` 已经大到足以成为下一个结构瓶颈。
 
-Target split should be by view family, not by arbitrary helper extraction.
-The split should happen in two levels:
+目标拆分应该按 view family，而不是按随意 helper 拆。
+拆分应分两层：
 
-- shared post and notice primitives
-- feature-facing card families that depend on those primitives
+- shared post 与 notice primitives
+- 面向 feature 的 card families，在这些 primitives 之上构建
 
-Suggested direction:
+建议方向：
 
 - runtime cards
 - session cards
@@ -428,73 +428,72 @@ Suggested direction:
 - labor cards
 - shared post / notice primitives
 
-### P2. Turn Execution Is Too Dense
+### P2. Turn Execution 过于密集
 
-`TurnExecutor.executeTurn()` is still the hardest logic path in the codebase.
+`TurnExecutor.executeTurn()` 仍然是当前代码库里最难读的逻辑路径。
 
-Before adding more runtime behaviors, split it by responsibility:
+在继续新增运行时行为之前，应按职责拆分：
 
 - stream session setup
 - event accumulation
-- permission and question handling
+- permission 与 question 处理
 - fallback resolution
-- finalize and cleanup
+- finalize 与 cleanup
 
-### P2. Command Parsing Needs a Registry Direction
+### P2. Command Parsing 需要走向 Registry
 
-`src/bridge/router.ts` currently encodes many rules inline.
-This is still manageable, but it should not continue scaling linearly forever.
+`src/bridge/router.ts` 当前仍把很多规则直接写死在文件里。
+现在还勉强可控，但不能继续线性膨胀下去。
 
-Do not rewrite it prematurely.
-Do treat command growth as a signal to move toward registries.
+不要过早重写它。
+但命令面继续增长时，应把它当成走向 registry 的信号。
 
-## Deletion and Archival Direction
+## 删除与归档方向
 
-The following cleanup direction is part of the baseline.
+下面这些清理方向本身就是基线的一部分。
 
 ### Archive
 
-- demo-only plans and script materials
-- one-off submission and acceptance notes
-- outdated scale and metrics snapshots
+- 只服务 demo 的计划与脚本材料
+- 一次性的提交与验收说明
+- 过期的规模与指标快照
 
-Suggested home:
+建议归档到：
 
-- `docs/archive/demo/`
-- `docs/archive/qa/`
+- `docs/archive/`
 
-Archived documents are read-only snapshots and should not be edited in place.
+归档文档是只读快照，不应直接在原地继续编辑。
 
 ### Remove or Consolidate
 
-- thin wrapper scripts that duplicate a single CLI entrypoint
-- obsolete command aliases after a compatibility window
-- feature surfaces that are recognized but not actually implemented
+- 只包装单一 CLI 入口的薄 wrapper 脚本
+- 兼容窗口结束后的过时命令别名
+- 能识别但实际上未实现的 feature surface
 
-## Definition of Done for "Framework Freeze"
+## “Framework Freeze” 的完成定义
 
-The framework can be considered frozen enough for expansion when all of the following are true:
+只有当下面这些条件全部满足时，才能认为框架已经冻结到足够支撑扩展：
 
-- adding a new feature does not require adding business logic to `core`
-- adding a new feature does not require copying another module's state persistence pattern
-- adding a new feature does not require duplicating raw Feishu delivery code
-- prompt additions can be placed in a known layer without ambiguity
-- unsupported commands are removed instead of acknowledged vaguely
+- 新增一个 feature 不需要把业务逻辑重新加回 `core`
+- 新增一个 feature 不需要复制另一个模块的状态持久化模式
+- 新增一个 feature 不需要重复写原始 Feishu 投递代码
+- prompt 增量能明确落在某个已知层里，而不是到处乱加
+- 不支持的命令会被移除，而不是模糊承认它存在
 
-DoD is verified by attempting one real feature addition and checking whether any of the rules above were violated.
-If a real feature cannot land cleanly inside these seams, the framework has not yet been frozen enough.
+这个 DoD 应通过一次真实功能接入来验证：检查上述规则是否有任何一条被打破。
+如果真实功能仍然无法干净地落在这些 seams 内，说明框架还没有冻结到足够扩展的程度。
 
-## Next Recommended Sequence
+## 下一步建议顺序
 
-1. Fix temp file cleanup for ordinary uploaded files
-2. Extract shared module interaction-state persistence helpers
-3. Narrow `BridgeApp` module wiring surface and stop widening feature-specific deps
-4. Split `feishu/formatter.ts` into per-feature card families plus shared post / notice primitives
-5. Tighten command surface and remove weak aliases
-6. Archive demo-first documents that no longer define the product direction
+1. 修复普通上传文件的临时文件清理
+2. 抽取共享的 module interaction-state 持久化 helper
+3. 收窄 `BridgeApp` 的模块组装面，停止继续扩大 feature 专属依赖
+4. 将 `feishu/formatter.ts` 拆成按 feature 划分的 card family 与共享 post / notice primitives
+5. 收紧命令面，移除弱 alias
+6. 把不再定义产品方向的 demo-first 文档归档
 
-## Relationship to Existing Docs
+## 与现有文档的关系
 
-- `docs/archive/design-history/runtime-layering.md` describes the runtime split direction
-- this document defines the stricter post-demo baseline and extension rules
-- legacy feature plans under `docs/archive/` or `docs/guidelines/` remain useful, but they do not override this baseline
+- `docs/archive/design-history/runtime-layering.md` 描述了 runtime split 的历史方向
+- 本文定义的是更严格的 post-demo 基线与扩展规则
+- `docs/archive/` 或 `docs/guidelines/` 下的旧规划文档仍可提供背景，但不能覆盖这份基线

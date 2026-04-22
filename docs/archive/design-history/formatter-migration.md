@@ -14,7 +14,7 @@ Family entrypoints are the only legal import surface for card builders and their
 
 Callers must not add new imports from `src/feishu/formatter.ts`. Existing direct imports should be removed as each family migrates.
 
-This rule mirrors the checklist in [new-feature-checklist.md](/Users/clukay/Program/feishu-opencode-bridge/docs/plans/new-feature-checklist.md).
+This rule mirrors the checklist in [new-feature-checklist.md](/Users/clukay/Program/feishu-opencode-bridge/docs/guidelines/new-feature-checklist.md).
 
 ## Migration Order
 

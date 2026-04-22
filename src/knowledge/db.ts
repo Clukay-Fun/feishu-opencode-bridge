@@ -1,3 +1,10 @@
+/**
+ * 职责: 提供知识库的本地存储层，管理文档与条目数据。
+ * 关注点:
+ * - 持久化文档元数据与问答条目。
+ * - 提供写入、检索、摘要统计等数据库接口。
+ * - 支撑基于 embedding 的相似度搜索。
+ */
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
@@ -95,12 +102,15 @@ type KnowledgeExtractChunkRow = {
 export class KnowledgeDb {
   private readonly db: Database.Database;
 
+  // Open the local SQLite database and initialize required tables and indexes.
   constructor(dbPath: string) {
     mkdirSync(path.dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
     this.init();
   }
 
+  //#region Document and entry writes
+  // Upsert one source document record and return the canonical stored row.
   saveDocument(input: {
     sourceType: string;
     title: string;
@@ -159,6 +169,7 @@ export class KnowledgeDb {
     `).get({ checksum: input.checksum }) as KnowledgeDocumentRecord;
   }
 
+  // Upsert one extracted knowledge entry under its parent document.
   saveEntry(input: {
     documentId: number;
     question: string;
@@ -237,6 +248,7 @@ export class KnowledgeDb {
     return row.id;
   }
 
+  // Mark a document's ingestion lifecycle status.
   updateDocumentStatus(id: number, status: string): void {
     this.db.prepare(`
       UPDATE knowledge_documents
@@ -244,7 +256,10 @@ export class KnowledgeDb {
       WHERE id = @id
     `).run({ id, status });
   }
+  //#endregion
 
+  //#region Document and chunk reads
+  // List recent documents with aggregate entry and chunk counts.
   listDocuments(options?: {
     limit?: number | undefined;
     statuses?: string[] | undefined;
@@ -272,6 +287,7 @@ export class KnowledgeDb {
     return rows.map((row) => toDocumentSummary(row));
   }
 
+  // Read one document summary by id.
   getDocumentById(id: number): KnowledgeDocumentSummary | null {
     const row = this.db.prepare(`
       SELECT
@@ -288,6 +304,7 @@ export class KnowledgeDb {
     return row ? toDocumentSummary(row) : null;
   }
 
+  // List all extracted chunk records for one document.
   listExtractedChunks(documentId: number): KnowledgeExtractChunkRecord[] {
     const rows = this.db.prepare(`
       SELECT
@@ -320,6 +337,7 @@ export class KnowledgeDb {
     }));
   }
 
+  // Upsert one extracted chunk snapshot for resumable ingestion.
   saveExtractedChunk(input: {
     documentId: number;
     chunkIndex: number;
@@ -358,13 +376,17 @@ export class KnowledgeDb {
     });
   }
 
+  // Remove all extracted chunks associated with one document.
   clearExtractedChunks(documentId: number): void {
     this.db.prepare(`
       DELETE FROM knowledge_extract_chunks
       WHERE document_id = @documentId
     `).run({ documentId });
   }
+  //#endregion
 
+  //#region Search and retrieval
+  // Store the embedding generated for one knowledge entry.
   updateEntryEmbedding(id: number, model: string, embedding: number[]): void {
     this.db.prepare(`
       UPDATE knowledge_entries
@@ -378,6 +400,7 @@ export class KnowledgeDb {
     });
   }
 
+  // Score all embedded entries against a query embedding and keep the top matches.
   searchByEmbedding(queryEmbedding: number[], model: string, limit: number): KnowledgeEntryCandidate[] {
     const rows = this.db.prepare(`
       SELECT *
@@ -404,6 +427,7 @@ export class KnowledgeDb {
       .slice(0, limit);
   }
 
+  // Search entries through the FTS index and convert BM25 scores into a simple confidence score.
   searchByKeyword(query: string, limit: number): KnowledgeEntryCandidate[] {
     const tokens = sanitizeSearchQuery(query);
     if (!tokens) {
@@ -427,6 +451,7 @@ export class KnowledgeDb {
     }));
   }
 
+  // List every stored entry, primarily for diagnostics or export paths.
   listAllEntries(): KnowledgeEntryRecord[] {
     const rows = this.db.prepare(`
       SELECT *
@@ -436,6 +461,7 @@ export class KnowledgeDb {
     return rows.map((row) => toEntryRecord(row));
   }
 
+  // List entries that belong to one document, optionally with a limit.
   listEntriesByDocument(documentId: number, limit?: number): KnowledgeEntryRecord[] {
     const sql = limit === undefined
       ? `
@@ -455,6 +481,7 @@ export class KnowledgeDb {
     return rows.map((row) => toEntryRecord(row));
   }
 
+  // List all stored documents without summary aggregation.
   listAllDocuments(): KnowledgeDocumentRecord[] {
     const rows = this.db.prepare(`
       SELECT *
@@ -464,10 +491,13 @@ export class KnowledgeDb {
     return rows.map((row) => toDocumentRecord(row));
   }
 
+  // Close the underlying SQLite handle.
   close(): void {
     this.db.close();
   }
+  //#endregion
 
+  // Create database tables, indexes, and FTS structures if they do not exist yet.
   private init(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS knowledge_documents (

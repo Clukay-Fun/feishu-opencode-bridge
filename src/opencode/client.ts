@@ -1,3 +1,9 @@
+/**
+ * 职责: 封装与 OpenCode 服务的 HTTP 交互。
+ * 关注点:
+ * - 提供会话创建、消息发送、异步提示和模型查询等接口。
+ * - 暴露桥接层需要使用的核心类型定义。
+ */
 export type OpenCodeHealth = {
   healthy: true;
   version: string;
@@ -112,14 +118,17 @@ type RequestOptions = {
 export class OpenCodeClient {
   constructor(private readonly baseUrl: URL) {}
 
+  /** 检查 OpenCode 服务健康状态。 */
   async health(): Promise<OpenCodeHealth> {
     return this.request("/global/health", { method: "GET" });
   }
 
+  /** 获取当前 OpenCode 项目信息。 */
   async getCurrentProject(): Promise<OpenCodeProject> {
     return this.request("/project/current", { method: "GET" });
   }
 
+  /** 创建新的 OpenCode session。 */
   async createSession(title: string): Promise<OpenCodeSession> {
     return this.request("/session", {
       method: "POST",
@@ -127,18 +136,22 @@ export class OpenCodeClient {
     });
   }
 
+  /** 列出所有 OpenCode sessions。 */
   async listSessions(): Promise<OpenCodeSession[]> {
     return this.request("/session", { method: "GET" });
   }
 
+  /** 删除指定 session。 */
   async deleteSession(sessionId: string): Promise<boolean> {
     return this.request(`/session/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
   }
 
+  /** 获取各 session 的当前状态。 */
   async getSessionStatuses(): Promise<Record<string, OpenCodeSessionStatus>> {
     return this.request("/session/status", { method: "GET" });
   }
 
+  /** 获取指定 session 的消息列表。 */
   async getSessionMessages(sessionId: string, limit?: number): Promise<OpenCodeMessage[]> {
     if (limit === undefined) {
       return this.request(`/session/${encodeURIComponent(sessionId)}/message`, {
@@ -152,6 +165,7 @@ export class OpenCodeClient {
     });
   }
 
+  /** 以同步方式发送消息，并等待 assistant 回复。 */
   async postMessageSync(sessionId: string, request: OpenCodePromptRequest): Promise<OpenCodeMessage> {
     return this.request(`/session/${encodeURIComponent(sessionId)}/message`, {
       method: "POST",
@@ -159,6 +173,7 @@ export class OpenCodeClient {
     });
   }
 
+  /** 异步提交 prompt，请求通过事件流继续返回结果。 */
   async promptAsync(sessionId: string, request: OpenCodePromptRequest): Promise<OpenCodePromptAccepted> {
     await this.request(`/session/${encodeURIComponent(sessionId)}/prompt_async`, {
       method: "POST",
@@ -168,14 +183,17 @@ export class OpenCodeClient {
     return { accepted: true };
   }
 
+  /** 中止指定 session 当前执行。 */
   async abort(sessionId: string): Promise<boolean> {
     return this.request(`/session/${encodeURIComponent(sessionId)}/abort`, { method: "POST" });
   }
 
+  /** 获取模型提供方配置列表。 */
   async listProviders(): Promise<OpenCodeProvidersResponse> {
     return this.request("/config/providers", { method: "GET" });
   }
 
+  /** 以命令模式调用 OpenCode。 */
   async runCommand(sessionId: string, request: OpenCodeCommandRequest): Promise<OpenCodeMessage> {
     return this.request(`/session/${encodeURIComponent(sessionId)}/command`, {
       method: "POST",
@@ -183,6 +201,7 @@ export class OpenCodeClient {
     });
   }
 
+  /** 回应一条权限请求。 */
   async replyPermission(sessionId: string, permissionId: string, response: PermissionPolicy, remember: boolean): Promise<boolean> {
     return this.request(`/session/${encodeURIComponent(sessionId)}/permissions/${encodeURIComponent(permissionId)}`, {
       method: "POST",
@@ -190,6 +209,7 @@ export class OpenCodeClient {
     });
   }
 
+  /** 回答模型提出的问题。 */
   async replyQuestion(requestId: string, answers: string[]): Promise<void> {
     await this.request(`/question/${encodeURIComponent(requestId)}`, {
       method: "POST",
@@ -197,6 +217,7 @@ export class OpenCodeClient {
     });
   }
 
+  /** 统一执行 HTTP 请求并处理状态码与 JSON 解析。 */
   private async request<T>(pathName: string, options: RequestOptions): Promise<T> {
     const url = new URL(pathName.replace(/^\//, ""), this.baseUrl);
     for (const [key, value] of Object.entries(options.query ?? {})) {

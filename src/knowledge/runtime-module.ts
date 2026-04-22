@@ -1,3 +1,10 @@
+/**
+ * 职责: 将知识库能力接入运行时模块体系。
+ * 关注点:
+ * - 拦截知识查询、摄入相关命令并切换交互流程。
+ * - 管理知识摄入过程中的挂起状态与卡片更新。
+ * - 在需要时向模型注入知识检索相关上下文。
+ */
 import type { AppConfig } from "../config/schema.js";
 import type { RuntimeModule, RuntimeModuleHandleResult, RuntimeModuleMessageContext } from "../bridge/module.js";
 import type { PendingKnowledgeIngestInteraction } from "../bridge/state.js";
@@ -106,6 +113,9 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     this.activeKnowledgeIngests = new ActiveKnowledgeIngestStore(deps.config.storage.dataDir);
   }
 
+  // #region 生命周期与入口
+
+  /** 恢复持久化状态，并在可用时同步知识镜像。 */
   async start(): Promise<void> {
     this.activeKnowledgeIngestMap = await this.activeKnowledgeIngests.load();
     await this.interruptPersistedKnowledgeIngests();
@@ -121,6 +131,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     }
   }
 
+  /** 清理计时器并关闭知识库资源。 */
   async stop(): Promise<void> {
     for (const timeout of this.timers.values()) {
       clearTimeout(timeout);
@@ -129,6 +140,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     this.deps.knowledge?.close();
   }
 
+  /** 处理知识查询、知识入库和知识模式相关输入。 */
   async handleMessage(context: RuntimeModuleMessageContext): Promise<RuntimeModuleHandleResult> {
     const { message, routed, pendingInteraction } = context;
     const activeKnowledgeIngest = this.findKnowledgeIngestInteraction(message);
@@ -163,10 +175,12 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     return { claimed };
   }
 
+  /** 获取当前窗口的知识入库挂起状态。 */
   getInteraction(conversationKey: string): PendingKnowledgeIngestInteraction | null {
     return this.interactions.get(conversationKey) ?? null;
   }
 
+  /** 清理指定窗口中的知识入库挂起状态与队列。 */
   async clearPending(conversationKey: string, chatType: string): Promise<boolean> {
     const pending = this.getInteraction(conversationKey);
     if (!pending) {
@@ -181,6 +195,11 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     return true;
   }
 
+  // #endregion
+
+  // #region 命令与交互流程
+
+  /** 处理知识模块自有命令。 */
   private async handleKnowledgeCommand(
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "threadKey" | "senderOpenId">,
     command: KnowledgeCommand,
@@ -1184,6 +1203,8 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
   ): Promise<{ messageId: string }> {
     return await this.deps.transport.updatePayload(chatId, messageId, payload, options);
   }
+
+  // #endregion
 }
 
 type KnowledgeIngestProgressState = {

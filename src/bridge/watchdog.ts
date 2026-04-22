@@ -1,3 +1,9 @@
+/**
+ * 职责: 监控 turn 执行过程中的关键超时，并触发对应兜底回调。
+ * 关注点:
+ * - 检查首个事件超时、事件间隔超时和总执行时长超时。
+ * - 将超时处理与具体业务逻辑解耦，交由外部回调完成。
+ */
 type WatchdogHandlers = {
   onFirstEventTimeout: () => void;
   onEventGapTimeout: () => void;
@@ -18,11 +24,13 @@ export class TurnWatchdog {
 
   constructor(private readonly config: WatchdogConfig, private readonly handlers: WatchdogHandlers) {}
 
+  /** 启动首包和总时长两个超时计时器。 */
   start(): void {
     this.firstEventTimer = setTimeout(() => this.handlers.onFirstEventTimeout(), this.config.firstEventTimeoutMs);
     this.totalTimer = setTimeout(() => this.handlers.onTotalTimeout(), this.config.totalTimeoutMs);
   }
 
+  /** 标记收到新事件，并刷新事件间隔超时。 */
   markEvent(): void {
     if (!this.seenEvent) {
       this.markFirstEventSeen();
@@ -31,6 +39,7 @@ export class TurnWatchdog {
     this.scheduleEventGap(this.config.eventGapTimeoutMs);
   }
 
+  /** 在权限等待等场景临时延长事件间隔超时。 */
   snoozeEventGap(timeoutMs: number): void {
     if (!this.seenEvent) {
       this.markFirstEventSeen();
@@ -38,6 +47,7 @@ export class TurnWatchdog {
     this.scheduleEventGap(timeoutMs);
   }
 
+  /** 清理所有计时器。 */
   clear(): void {
     if (this.firstEventTimer) {
       clearTimeout(this.firstEventTimer);
@@ -53,6 +63,7 @@ export class TurnWatchdog {
     }
   }
 
+  /** 标记已经见到首个事件，并关闭首包超时。 */
   private markFirstEventSeen(): void {
     this.seenEvent = true;
     if (this.firstEventTimer) {
@@ -61,6 +72,7 @@ export class TurnWatchdog {
     }
   }
 
+  /** 重新安排事件间隔超时。 */
   private scheduleEventGap(timeoutMs: number): void {
     if (this.eventGapTimer) {
       clearTimeout(this.eventGapTimer);

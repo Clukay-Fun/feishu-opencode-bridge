@@ -1,3 +1,9 @@
+/**
+ * 职责: 将劳动争议分析能力接入运行时模块体系。
+ * 关注点:
+ * - 拦截劳动分析相关命令并组织执行流程。
+ * - 管理材料上传态交互以及进度卡、结果卡更新。
+ */
 import { DEFAULT_LABOR_SKILL_CONFIG, type AppConfig } from "../config/schema.js";
 import path from "node:path";
 import type { RuntimeModule, RuntimeModuleHandleResult, RuntimeModuleMessageContext } from "../bridge/module.js";
@@ -85,14 +91,19 @@ export class LaborRuntimeModule implements RuntimeModule {
     });
   }
 
+  // #region 生命周期与入口
+
+  /** 恢复持久化的劳动分析交互状态。 */
   async start(): Promise<void> {
     await this.interactions.restore();
   }
 
+  /** 停止交互状态管理器。 */
   async stop(): Promise<void> {
     await this.interactions.stop();
   }
 
+  /** 处理劳动分析命令、收集态输入和结束指令。 */
   async handleMessage(context: RuntimeModuleMessageContext): Promise<RuntimeModuleHandleResult> {
     const { message, routed } = context;
     const pending = this.findInteraction(message);
@@ -124,6 +135,7 @@ export class LaborRuntimeModule implements RuntimeModule {
     return { claimed: await this.handleCommand(message, routed.command) };
   }
 
+  /** 处理劳动模块自有命令。 */
   private async handleCommand(
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "senderOpenId">,
     command: LaborCommand,
@@ -163,6 +175,7 @@ export class LaborRuntimeModule implements RuntimeModule {
     return true;
   }
 
+  /** 从入口命令启动劳动分析收集流程。 */
   private async startFromEntry(
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "senderOpenId">,
     title?: string,
@@ -180,6 +193,7 @@ export class LaborRuntimeModule implements RuntimeModule {
     await this.startCollection(message, title);
   }
 
+  /** 创建新的劳动分析收集态交互。 */
   private async startCollection(
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "senderOpenId">,
     title?: string,
@@ -214,6 +228,7 @@ export class LaborRuntimeModule implements RuntimeModule {
     });
   }
 
+  /** 在收集态中接收文件和补充说明。 */
   private async collectInput(message: IncomingChatMessage, pending: PendingLaborInteraction): Promise<void> {
     pending.expiresAt = Date.now() + this.featureConfig.ingest.pendingTtlMs;
     this.interactions.touch(pending.conversationKey, pending.expiresAt);
@@ -235,6 +250,7 @@ export class LaborRuntimeModule implements RuntimeModule {
     }
   }
 
+  /** 结束收集阶段，并正式启动劳动分析。 */
   private async finishCollection(
     message: Pick<IncomingChatMessage, "chatId" | "messageId" | "conversationKey" | "senderOpenId">,
     pending: PendingLaborInteraction,
@@ -559,6 +575,8 @@ export class LaborRuntimeModule implements RuntimeModule {
       replyInThread: pending.deliveryMode === "group_thread",
     });
   }
+
+  // #endregion
 }
 
 function isLaborEndCommand(command: LaborCommand): boolean {

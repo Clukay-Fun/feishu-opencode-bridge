@@ -1,3 +1,9 @@
+/**
+ * 职责: 作为应用入口，完成启动装配与优雅关闭编排。
+ * 关注点:
+ * - 加载配置、初始化依赖并启动各类运行时组件。
+ * - 处理信号退出时的资源回收与停止顺序。
+ */
 import { createLogger } from "./logging/logger.js";
 import { loadConfig } from "./config/loader.js";
 import { BridgeApp } from "./runtime/app.js";
@@ -8,6 +14,7 @@ import { runStartupPreflight } from "./runtime/preflight.js";
 import { startBridgeHttpServer } from "./http/server.js";
 import { APP_VERSION } from "./version.js";
 
+/** 组装并启动整个 bridge 运行时。 */
 async function main(): Promise<void> {
   const config = await loadConfig();
   const outbound = new FeishuApiClient(config.feishu.appId, config.feishu.appSecret);

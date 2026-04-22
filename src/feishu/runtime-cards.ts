@@ -1,3 +1,9 @@
+/**
+ * 职责: 构建桥接运行时通用卡片。
+ * 关注点:
+ * - 覆盖 turn 状态、会话列表、模型列表、权限请求等运行时交互。
+ * - 为桥接层的过程消息与系统通知提供一致的 UI 结构。
+ */
 import { column, columnSet, markdown, standardIcon } from "./card-builder.js";
 import {
   buildDivider,
@@ -87,6 +93,9 @@ export type PermissionRequestCardView = {
   expiresInSeconds: number;
 };
 
+// #region 运行时主卡片
+
+/** 构建 turn 过程卡。 */
 export function buildTurnStatusCardPayload(view: TurnStatusCardView): FeishuPostPayload {
   const state = resolveCardState(view.status);
   const toolElements = buildToolElements(view.toolUpdates);
@@ -99,6 +108,7 @@ export function buildTurnStatusCardPayload(view: TurnStatusCardView): FeishuPost
   });
 }
 
+/** 构建 `/status` 结果卡。 */
 export function buildStatusCommandCardPayload(view: StatusCommandCardView): FeishuPostPayload {
   return buildInteractivePayload({
     title: "会话状态",
@@ -113,6 +123,7 @@ export function buildStatusCommandCardPayload(view: StatusCommandCardView): Feis
   });
 }
 
+/** 构建会话列表卡。 */
 export function buildSessionListCardPayload(view: SessionListCardView): FeishuPostPayload {
   const bodyElements = view.items.length === 0
     ? [
@@ -134,6 +145,7 @@ export function buildSessionListCardPayload(view: SessionListCardView): FeishuPo
   });
 }
 
+/** 构建会话切换或创建结果卡。 */
 export function buildSessionTransitionCardPayload(view: SessionTransitionCardView): FeishuPostPayload {
   const bodyElements: Array<Record<string, unknown>> = [];
   if (view.previousLabel) {
@@ -159,6 +171,7 @@ export function buildSessionTransitionCardPayload(view: SessionTransitionCardVie
   });
 }
 
+/** 构建 `/who` 结果卡。 */
 export function buildWhoCommandCardPayload(view: WhoCommandCardView): FeishuPostPayload {
   return buildInteractivePayload({
     title: "群聊绑定状态",
@@ -173,6 +186,7 @@ export function buildWhoCommandCardPayload(view: WhoCommandCardView): FeishuPost
   });
 }
 
+/** 构建 `/leave` 结果卡。 */
 export function buildLeaveCommandCardPayload(view: LeaveCommandCardView): FeishuPostPayload {
   return buildInteractivePayload({
     title: view.unbound ? "已解除绑定" : "无需解除绑定",
@@ -218,6 +232,7 @@ export function buildLeaveCommandCardPayload(view: LeaveCommandCardView): Feishu
   });
 }
 
+/** 构建模型列表卡。 */
 export function buildModelListCardPayload(view: ModelListCardView): FeishuPostPayload {
   return buildInteractivePayload({
     title: "可用模型",
@@ -245,6 +260,7 @@ export function buildModelListCardPayload(view: ModelListCardView): FeishuPostPa
   });
 }
 
+/** 构建权限请求卡。 */
 export function buildPermissionRequestCardPayload(view: PermissionRequestCardView): FeishuPostPayload {
   return buildInteractivePayload({
     title: "权限请求",
@@ -263,6 +279,8 @@ export function buildPermissionRequestCardPayload(view: PermissionRequestCardVie
     ],
   });
 }
+
+// #endregion
 
 type CardState = {
   kind: "running" | "completed" | "error";

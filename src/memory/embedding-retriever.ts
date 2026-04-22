@@ -1,3 +1,9 @@
+/**
+ * 职责: 提供基于向量嵌入的记忆检索实现。
+ * 关注点:
+ * - 封装兼容 OpenAI 风格接口的 embedding 客户端。
+ * - 基于余弦相似度完成记忆召回。
+ */
 import type { Logger } from "../logging/logger.js";
 import type { MemoryDb } from "./db.js";
 import type { MemoryRetriever } from "./retriever.js";
@@ -24,6 +30,7 @@ export class OpenAICompatibleEmbeddingClient implements EmbeddingProviderClient 
     this.model = model;
   }
 
+  /** 调用兼容 OpenAI 的 embeddings 接口生成向量。 */
   async embed(text: string): Promise<number[]> {
     const url = new URL("embeddings", ensureTrailingSlash(this.baseUrl));
     const response = await fetch(url, {
@@ -60,6 +67,7 @@ export class EmbeddingRetriever implements MemoryRetriever {
     private readonly logger: Logger,
   ) {}
 
+  /** 优先做向量召回；失败或无命中时退回备用检索器。 */
   async recall(userId: string, query: string, limit: number): Promise<string[]> {
     let queryEmbedding: number[];
     try {
@@ -96,6 +104,7 @@ export class EmbeddingRetriever implements MemoryRetriever {
   }
 }
 
+/** 计算两个向量的余弦相似度。 */
 export function cosineSimilarity(left: number[], right: number[]): number {
   if (left.length === 0 || right.length === 0 || left.length !== right.length) {
     return Number.NaN;
@@ -118,6 +127,7 @@ export function cosineSimilarity(left: number[], right: number[]): number {
   return dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm));
 }
 
+/** 确保基础 URL 以斜杠结尾，便于拼接子路径。 */
 function ensureTrailingSlash(url: URL): URL {
   return new URL(url.toString().endsWith("/") ? url.toString() : `${url.toString()}/`);
 }

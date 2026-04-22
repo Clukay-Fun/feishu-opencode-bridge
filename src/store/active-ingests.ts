@@ -1,3 +1,9 @@
+/**
+ * 职责: 持久化正在进行中的知识库摄入会话状态。
+ * 关注点:
+ * - 以 conversation 维度记录摄入锚点、请求人和消息关联信息。
+ * - 为摄入恢复、续传和状态查询提供基础数据。
+ */
 import { JsonStore } from "./json-store.js";
 
 export type ActiveKnowledgeIngestRecord = {
@@ -27,6 +33,7 @@ export class ActiveKnowledgeIngestStore extends JsonStore<unknown> {
     super(dataDir, fileName, { version: ACTIVE_KNOWLEDGE_INGEST_STORE_VERSION, records: {} } satisfies ActiveKnowledgeIngestFile);
   }
 
+  /** 读取并规范化当前活跃入库记录。 */
   override async load(): Promise<ActiveKnowledgeIngestRecordMap> {
     const loaded = await super.load();
     if (!isStoreFile(loaded)) {
@@ -39,6 +46,7 @@ export class ActiveKnowledgeIngestStore extends JsonStore<unknown> {
     );
   }
 
+  /** 保存整批活跃入库记录。 */
   async saveRecords(records: ActiveKnowledgeIngestRecordMap): Promise<void> {
     await super.save({
       version: ACTIVE_KNOWLEDGE_INGEST_STORE_VERSION,
@@ -47,10 +55,12 @@ export class ActiveKnowledgeIngestStore extends JsonStore<unknown> {
   }
 }
 
+/** 判断对象是否符合 active ingest 存储结构。 */
 function isStoreFile(value: unknown): value is ActiveKnowledgeIngestFile {
   return isRecord(value) && value.version === ACTIVE_KNOWLEDGE_INGEST_STORE_VERSION && isRecord(value.records);
 }
 
+/** 规范化单条 active ingest 记录。 */
 function normalizeRecord(value: unknown): ActiveKnowledgeIngestRecord | null {
   if (!isRecord(value)) {
     return null;
@@ -81,6 +91,7 @@ function normalizeRecord(value: unknown): ActiveKnowledgeIngestRecord | null {
   };
 }
 
+/** 判断值是否为普通对象。 */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

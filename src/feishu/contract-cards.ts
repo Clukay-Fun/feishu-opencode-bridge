@@ -1,3 +1,9 @@
+/**
+ * 职责: 构建合同助手相关的飞书卡片视图与消息载荷。
+ * 关注点:
+ * - 覆盖合同起草、发票识别、案件管理和提醒等场景。
+ * - 统一进度卡、结果卡与按钮区的输出结构。
+ */
 import path from "node:path";
 
 import type {
@@ -33,6 +39,9 @@ export type ReminderListResult = {
   caseLines: string[];
 };
 
+// #region 进度与结果卡
+
+/** 构建案件录入进行中卡。 */
 export function buildCaseCreateProcessingPayload(request: string): FeishuPostPayload {
   return buildInteractiveCardPayload({
     title: "案件信息录入中",
@@ -63,6 +72,7 @@ export function buildCaseCreateProcessingPayload(request: string): FeishuPostPay
   });
 }
 
+/** 构建合同起草进度卡。 */
 export function buildContractDraftProgressPayload(view: ContractDraftProgressView): FeishuPostPayload {
   return buildInteractiveCardPayload({
     title: "合同起草",
@@ -90,6 +100,7 @@ export function buildContractDraftProgressPayload(view: ContractDraftProgressVie
   });
 }
 
+/** 构建合同起草完成卡。 */
 export function buildContractDraftCompletedPayload(
   view: ContractDraftProgressView,
   result: { wordPath: string; recordId?: string | undefined; warnings: string[] },
@@ -144,6 +155,7 @@ export function buildContractDraftCompletedPayload(
   });
 }
 
+/** 构建案件录入完成卡。 */
 export function buildCaseCreateCompletedPayload(result: CaseCreateResult, recordUrl: string, request: string): FeishuPostPayload {
   const record = result.record;
   const fallback = parseCaseCreateRequestPreview(request);
@@ -184,6 +196,7 @@ export function buildCaseCreateCompletedPayload(result: CaseCreateResult, record
   });
 }
 
+/** 构建发票识别进度卡。 */
 export function buildInvoiceRecognizeProgressPayload(view: InvoiceRecognizeProgressView): FeishuPostPayload {
   return buildInteractiveCardPayload({
     title: "发票识别",
@@ -205,6 +218,7 @@ export function buildInvoiceRecognizeProgressPayload(view: InvoiceRecognizeProgr
   });
 }
 
+/** 构建发票识别完成卡。 */
 export function buildInvoiceRecognizeCompletedPayload(
   result: InvoiceRecognizeResult,
   options: { elapsedMs: number; recordUrl: string },
@@ -251,6 +265,8 @@ export function buildInvoiceRecognizeCompletedPayload(
     ],
   });
 }
+
+// #endregion
 
 export function buildReminderProgressPayload(): FeishuPostPayload {
   return buildInteractiveCardPayload({
