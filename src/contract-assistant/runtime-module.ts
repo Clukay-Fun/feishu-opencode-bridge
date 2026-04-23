@@ -8,6 +8,8 @@
 import { DEFAULT_CONTRACT_ASSISTANT_CONFIG, type AppConfig, type ContractAssistantConfig } from "../config/schema.js";
 import path from "node:path";
 import type { RuntimeModule, RuntimeModuleHandleResult, RuntimeModuleMessageContext } from "../bridge/module.js";
+import { routeIncomingText } from "../bridge/router.js";
+import type { PendingFileInstructionInteraction } from "../bridge/state.js";
 import { buildNoticeCardPayload } from "../feishu/shared-primitives.js";
 import {
   applyContractDraftProgress,
@@ -115,6 +117,9 @@ type PendingWorkbenchInteraction = {
 
 type PendingInteraction = PendingUploadInteraction | PendingDraftInteraction | PendingWorkbenchInteraction;
 
+const CONTRACT_EXTRACT_COMMAND_ALIASES = new Set(["contract-extract", "合同录入"]);
+const INVOICE_RECOGNIZE_COMMAND_ALIASES = new Set(["invoice-recognize", "识别发票"]);
+
 export class ContractAssistantRuntimeModule implements RuntimeModule {
   readonly name = "contract-assistant";
   readonly priority = 30;
@@ -200,6 +205,50 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
 
     const handled = await this.handlePendingUpload(message, pending);
     return { claimed: handled };
+  }
+
+  async claimFileInstruction(
+    pending: PendingFileInstructionInteraction,
+    message: IncomingChatMessage,
+  ): Promise<boolean> {
+    if (message.messageType === "file" || message.senderOpenId !== pending.requesterOpenId) {
+      return false;
+    }
+    const pendingKind = detectPendingUploadKind(message.plainText);
+    if (!pendingKind) {
+      return false;
+    }
+    if (!this.featureConfig.enabled || !this.deps.service) {
+      await this.sendNotice(message, {
+        title: "合同助手未启用",
+        template: "yellow",
+        icon: "maybe_outlined",
+        message: "当前未启用 contract assistant，请先补充 `contractAssistant` 配置。",
+      });
+      return true;
+    }
+    if (!this.isFileAcceptableFor(pendingKind, pending.file.fileName)) {
+      await this.startPendingUpload(
+        message,
+        pendingKind,
+        pendingKind === "contract-extract"
+          ? `最近上传的《${pending.file.fileName}》不像合同文件，请重新上传 1 份合同文件，我会提取字段并写入合同台账。`
+          : `最近上传的《${pending.file.fileName}》不像发票文件，请重新上传 1 份发票文件，我会识别字段并写入发票记录。`,
+      );
+      return true;
+    }
+    const fileRef: ContractAssistantFileRef = {
+      messageId: pending.file.messageId,
+      fileKey: pending.file.fileKey,
+      fileName: pending.file.fileName,
+      size: pending.file.size,
+    };
+    if (pendingKind === "contract-extract") {
+      await this.handleContractExtract(message, fileRef);
+      return true;
+    }
+    await this.handleInvoiceRecognize(message, fileRef);
+    return true;
   }
 
   /** 处理合同、案件、发票和工作台相关命令。 */
@@ -1293,6 +1342,14 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     this.interactions.touch(conversationKey, interaction.expiresAt);
   }
 
+  private isFileAcceptableFor(kind: PendingUploadKind, fileName: string): boolean {
+    const extension = path.extname(fileName).toLowerCase();
+    const allowedExtensions = kind === "contract-extract"
+      ? this.featureConfig.ingest.contractAllowedExtensions
+      : this.featureConfig.ingest.invoiceAllowedExtensions;
+    return allowedExtensions.includes(extension);
+  }
+
   private async sendWorkbenchReject(
     message: Pick<IncomingChatMessage, "chatId" | "messageId">,
   ): Promise<void> {
@@ -1966,4 +2023,25 @@ function formatClauseLabel(clause: ContractClause): string {
 
 function pushRecentMessages(current: string[], next: string): string[] {
   return [...current, next.trim()].filter((item) => item.length > 0).slice(-8);
+}
+
+function detectPendingUploadKind(text: string): PendingUploadKind | null {
+  const routed = routeIncomingText(text.trim());
+  if (routed.kind === "command" && routed.command.kind === "passthrough") {
+    const normalizedCommand = routed.command.name.trim().toLowerCase();
+    if (CONTRACT_EXTRACT_COMMAND_ALIASES.has(normalizedCommand)) {
+      return "contract-extract";
+    }
+    if (INVOICE_RECOGNIZE_COMMAND_ALIASES.has(normalizedCommand)) {
+      return "invoice-recognize";
+    }
+  }
+  const normalizedText = text.trim().replace(/^\/+/, "").toLowerCase();
+  if (CONTRACT_EXTRACT_COMMAND_ALIASES.has(normalizedText)) {
+    return "contract-extract";
+  }
+  if (INVOICE_RECOGNIZE_COMMAND_ALIASES.has(normalizedText)) {
+    return "invoice-recognize";
+  }
+  return null;
 }

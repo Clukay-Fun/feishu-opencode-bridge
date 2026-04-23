@@ -198,6 +198,60 @@ async function cleanupModule(module: ContractAssistantRuntimeModule, tempDir: st
 }
 
 describe("ContractAssistantRuntimeModule onboard draft", () => {
+  it("claims file-await-instruction for invoice recognize and reuses the uploaded file", async () => {
+    const { module, recognizeInvoice, tempDir } = createModule();
+    try {
+      const claimed = await module.claimFileInstruction?.({
+        kind: "file-await-instruction",
+        chatId: "chat-1",
+        conversationKey: "chat-1:thread-1",
+        requesterOpenId: "ou_user",
+        replyToMessageId: "msg-file",
+        file: {
+          messageId: "msg-file",
+          fileKey: "file_1",
+          fileName: "invoice.pdf",
+          size: 1024,
+        },
+      }, createTextMessage("识别发票"));
+
+      expect(claimed).toBe(true);
+      expect(recognizeInvoice).toHaveBeenCalledTimes(1);
+      expect(recognizeInvoice).toHaveBeenCalledWith(expect.objectContaining({
+        messageId: "msg-file",
+        fileKey: "file_1",
+        fileName: "invoice.pdf",
+      }));
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("falls back to waiting for a new upload when the pending file type is incompatible", async () => {
+    const { module, sendPayload, recognizeInvoice, tempDir } = createModule();
+    try {
+      const claimed = await module.claimFileInstruction?.({
+        kind: "file-await-instruction",
+        chatId: "chat-1",
+        conversationKey: "chat-1:thread-1",
+        requesterOpenId: "ou_user",
+        replyToMessageId: "msg-file",
+        file: {
+          messageId: "msg-file",
+          fileKey: "file_1",
+          fileName: "contract.docx",
+          size: 1024,
+        },
+      }, createTextMessage("/识别发票"));
+
+      expect(claimed).toBe(true);
+      expect(recognizeInvoice).not.toHaveBeenCalled();
+      expect(JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {})).toContain("重新上传 1 份发票文件");
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
   it("starts guided onboarding with explicit command", async () => {
     const { module, sendPayload, listDraftTemplates, tempDir } = await createModule();
     try {

@@ -112,4 +112,52 @@ describe("module manager", () => {
       "after-memory",
     ]);
   });
+
+  it("asks modules to claim file-await-instruction in priority order", async () => {
+    const calls: string[] = [];
+    const manager = new ModuleManager();
+
+    manager.register({
+      name: "knowledge",
+      priority: 20,
+      async claimFileInstruction() {
+        calls.push("knowledge");
+        return false;
+      },
+    } satisfies RuntimeModule);
+    manager.register({
+      name: "contract",
+      priority: 10,
+      async claimFileInstruction() {
+        calls.push("contract");
+        return true;
+      },
+    } satisfies RuntimeModule);
+
+    const claimed = await manager.claimFileInstruction({
+      kind: "file-await-instruction",
+      chatId: "oc_p2p_1",
+      conversationKey: "oc_p2p_1",
+      requesterOpenId: "ou_123",
+      replyToMessageId: "om_file",
+      file: {
+        messageId: "om_file",
+        fileKey: "file_1",
+        fileName: "invoice.pdf",
+      },
+    }, {
+      chatId: "oc_p2p_1",
+      chatType: "p2p",
+      senderOpenId: "ou_123",
+      messageId: "om_2",
+      rawContent: "识别发票",
+      plainText: "识别发票",
+      threadKey: "om_1",
+      conversationKey: "oc_p2p_1",
+      messageType: "text",
+    });
+
+    expect(claimed).toBe(true);
+    expect(calls).toEqual(["contract"]);
+  });
 });

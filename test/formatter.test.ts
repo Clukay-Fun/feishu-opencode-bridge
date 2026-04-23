@@ -10,6 +10,8 @@ import {
   buildKnowledgeIngestSessionPayload,
   buildKnowledgeQueryEmptyPayload,
   buildKnowledgeQueryPayload,
+  buildLaborAnalysisCompletedPayload,
+  buildLaborAnalysisProgressPayload,
   buildNoticeCardPayload,
   buildLeaveCommandCardPayload,
   buildPostMarkdownPayload,
@@ -460,6 +462,21 @@ describe("buildPostPayload", () => {
     expect(serialized).toContain("耗时");
   });
 
+  it("renders step error labels consistently after shared helper rename", () => {
+    const payload = buildKnowledgeIngestProcessingPayload({
+      sourceLabel: "劳动合同.txt",
+      steps: [
+        { label: "写入知识库", detail: "Bitable 限流", status: "error" },
+      ],
+    });
+
+    const serialized = JSON.stringify(JSON.parse(payload.content));
+    expect(serialized).toContain("写入失败");
+    expect(serialized).toContain("Bitable 限流");
+    expect(serialized).toContain("/retry");
+    expect(serialized).toContain("more-close_outlined");
+  });
+
   it("renders knowledge ingest queued and failure cards", () => {
     const queuedPayload = buildKnowledgeIngestQueuedPayload({
       sourceLabel: "经济补偿计算规则.docx",
@@ -526,6 +543,41 @@ describe("buildPostPayload", () => {
     expect(finalSerialized).toContain("\"tag\":\"劳动\"");
     expect(finalSerialized).toContain("查看知识库");
     expect(finalSerialized).toContain("耗时：3 分 42 秒");
+  });
+
+  it("renders labor analysis progress and completed cards through formatter exports", () => {
+    const progressPayload = buildLaborAnalysisProgressPayload({
+      sourceLabel: "仲裁申请书.pdf",
+      steps: [
+        { label: "提取事实", detail: "正在识别关键事实", status: "running" },
+        { label: "整理证据", detail: "等待开始", status: "pending" },
+      ],
+      progressText: "正在聚合争议焦点",
+      elapsedMs: 9_000,
+    });
+    const completedPayload = buildLaborAnalysisCompletedPayload({
+      title: "张三劳动争议案",
+      materialCount: 6,
+      evidenceCount: 12,
+      issueCount: 3,
+      tagCounts: { 仲裁: 4, 加班费: 2 },
+      docUrl: "https://example.com/doc/123",
+    });
+
+    const progressSerialized = JSON.stringify(JSON.parse(progressPayload.content));
+    const completedSerialized = JSON.stringify(JSON.parse(completedPayload.content));
+
+    expect(progressSerialized).toContain("劳动分析进行中");
+    expect(progressSerialized).toContain("仲裁申请书.pdf");
+    expect(progressSerialized).toContain("提取事实");
+    expect(progressSerialized).toContain("当前进度");
+    expect(progressSerialized).toContain("耗时：9s");
+    expect(completedSerialized).toContain("劳动分析完成");
+    expect(completedSerialized).toContain("张三劳动争议案");
+    expect(completedSerialized).toContain("材料 6");
+    expect(completedSerialized).toContain("证据 12");
+    expect(completedSerialized).toContain("焦点 3");
+    expect(completedSerialized).toContain("打开分析文档");
   });
 
   it("renders a notice card without body icon when disabled", () => {

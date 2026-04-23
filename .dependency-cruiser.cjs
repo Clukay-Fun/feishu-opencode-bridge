@@ -38,6 +38,18 @@ module.exports = {
         dependencyTypesNot: ["type-only"],
       },
     },
+    {
+      name: "business-card-templates-only-via-family-adapters",
+      severity: "error",
+      comment: "业务模板运行时只能由 feishu card family adapter 调用；runtime 和业务模块不得直接 import 模板目录。",
+      from: {
+        path: "^src/(runtime/|labor/|knowledge/|contract-assistant/)",
+      },
+      to: {
+        path: "^src/feishu/templates/",
+        dependencyTypesNot: ["type-only"],
+      },
+    },
   ],
   options: {
     doNotFollow: {

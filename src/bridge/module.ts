@@ -9,7 +9,7 @@ import type { IncomingChatMessage } from "../runtime/app.js";
 import type { RoutedText } from "./router.js";
 import type { BridgeTurn } from "./turn.js";
 import type { SessionWindowRecord } from "../store/mappings.js";
-import type { PendingInteraction } from "./state.js";
+import type { PendingFileInstructionInteraction, PendingInteraction } from "./state.js";
 import { logEvent, type Logger } from "../logging/logger.js";
 
 export type RuntimeModuleHandleResult =
@@ -39,6 +39,10 @@ export interface RuntimeModule {
   start?(): Promise<void>;
   stop?(): Promise<void>;
   handleMessage?(context: RuntimeModuleMessageContext): Promise<RuntimeModuleHandleResult>;
+  claimFileInstruction?(
+    pending: PendingFileInstructionInteraction,
+    message: IncomingChatMessage,
+  ): Promise<boolean>;
   beforeTurn?(context: RuntimeModuleBeforeTurnContext): Promise<{ systemBlocks?: string[] } | void>;
   afterTurn?(context: RuntimeModuleAfterTurnContext): Promise<void>;
 }
@@ -95,6 +99,31 @@ export class ModuleManager {
     return { claimed: false };
   }
 
+  /** 依次询问模块是否要接管“先上传文件，后补指令”的挂起流程。 */
+  async claimFileInstruction(
+    pending: PendingFileInstructionInteraction,
+    message: IncomingChatMessage,
+  ): Promise<boolean> {
+    for (const module of this.modules) {
+      if (!module.claimFileInstruction) {
+        continue;
+      }
+      const startedAt = Date.now();
+      let claimed = false;
+      try {
+        claimed = await module.claimFileInstruction(pending, message);
+      } catch (error) {
+        this.logModuleFailed(module, "claimFileInstruction", error);
+        throw error;
+      }
+      if (claimed) {
+        this.logModuleInvoked(module, "claimFileInstruction", "claimed", startedAt);
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** 汇总所有模块注入的 beforeTurn system blocks。 */
   async collectBeforeTurnBlocks(context: RuntimeModuleBeforeTurnContext): Promise<string[]> {
     const blocks: string[] = [];
@@ -143,7 +172,7 @@ export class ModuleManager {
   /** 记录模块调用成功日志。 */
   private logModuleInvoked(
     module: RuntimeModule,
-    hook: "handleMessage" | "beforeTurn" | "afterTurn" | "stop",
+    hook: "handleMessage" | "claimFileInstruction" | "beforeTurn" | "afterTurn" | "stop",
     result: "claimed" | "completed",
     startedAt: number,
   ): void {
@@ -161,7 +190,7 @@ export class ModuleManager {
   /** 记录模块调用失败日志。 */
   private logModuleFailed(
     module: RuntimeModule,
-    hook: "handleMessage" | "beforeTurn" | "afterTurn" | "stop",
+    hook: "handleMessage" | "claimFileInstruction" | "beforeTurn" | "afterTurn" | "stop",
     error: unknown,
   ): void {
     if (!this.logger) {

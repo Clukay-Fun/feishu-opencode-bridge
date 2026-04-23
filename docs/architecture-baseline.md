@@ -142,6 +142,7 @@ Feishu Transport
 稳定职责：
 
 - 把入站消息路由到 command、pending interaction、module chain 或默认 turn flow
+- 维护通用 `file-await-instruction` 挂起状态，并在兜底处理前按模块顺序询问是否接管
 - 管理 bridge 命令面，例如 `/new`、`/sessions`、`/status`、`/close`、`/delete`
 - 管理 queueing、turn execution、watchdog、process-card 生命周期和 final reply 投递
 - 管理 session-window 状态与 interaction mode 状态
@@ -166,6 +167,7 @@ Feishu Transport
 稳定职责：
 
 - 通过 `RuntimeModule` 认领或忽略消息
+- 可通过 `claimFileInstruction()` 接入通用 `file-await-instruction`，把自己的文件后续动作接回模块内
 - 通过 `beforeTurn` 注入 system prompt block
 - 通过 `afterTurn` 执行 feature 专属 after-turn 工作
 - 只持久化自己的状态
@@ -419,6 +421,14 @@ contract assistant 和 labor 目前都维护了相似模式：
 - shared post 与 notice primitives
 - 面向 feature 的 card families，在这些 primitives 之上构建
 
+当前进一步收口方向：
+
+- `shared-primitives.ts` 只保留 Feishu payload 拼装与通用卡片块 helper
+- `runtime-cards.ts` 保留 bridge 自有运行时 / 会话 / 权限卡片
+- 业务展示卡默认通过 `business template runtime + family adapter` 接入
+- `src/feishu/templates/*` 只承载业务模板注册、schema 校验与薄 spec 渲染，不直接暴露给 runtime 或业务模块
+- `BusinessCardBlock.kind` 统一使用小写驼峰命名，例如 `tagChart`、`stepList`、`elapsed`；不要在不同 PR 中混用短横线、下划线或同义别名
+
 建议方向：
 
 - runtime cards
@@ -426,6 +436,8 @@ contract assistant 和 labor 目前都维护了相似模式：
 - knowledge cards
 - contract cards
 - labor cards
+- business template runtime
+- business template adapters
 - shared post / notice primitives
 
 ### P2. Turn Execution 过于密集

@@ -304,16 +304,16 @@ export function buildTagChartSection(
   ], "8px");
 }
 
-/** 构建知识库入库单步进度的卡片元素。 */
-export function buildKnowledgeIngestProgressStepElements(step: ToolUpdateView): Array<Record<string, unknown>> {
+/** 构建单步进度状态的卡片元素。 */
+export function buildProgressStepElements(step: ToolUpdateView): Array<Record<string, unknown>> {
   const elements: Array<Record<string, unknown>> = [
     buildGreyPanel([
-      cardMarkdown(`**${escapeText(step.label)}**：${formatKnowledgeIngestInlineStatus(step)}`, "normal", {
-        icon: mapKnowledgeIngestStepIcon(step.status),
+      cardMarkdown(`**${escapeText(step.label)}**：${formatStepInlineStatus(step)}`, "normal", {
+        icon: mapStepStatusIcon(step.status),
       }),
     ]),
   ];
-  const detail = normalizeKnowledgeIngestDetail(step);
+  const detail = normalizeStepDetail(step);
   if (detail) {
     elements.push(buildQuoteLine(detail));
   }
@@ -341,8 +341,8 @@ export function formatDurationMs(durationMs: number): string {
   return remainingSeconds > 0 ? `${minutes} 分 ${remainingSeconds} 秒` : `${minutes} 分`;
 }
 
-/** 将知识入库步骤状态映射为行内文案。 */
-export function formatKnowledgeIngestInlineStatus(step: ToolUpdateView): string {
+/** 将步骤状态映射为行内文案。 */
+export function formatStepInlineStatus(step: ToolUpdateView): string {
   switch (step.status) {
     case "completed":
       return "已完成";
@@ -357,8 +357,8 @@ export function formatKnowledgeIngestInlineStatus(step: ToolUpdateView): string 
   }
 }
 
-/** 规范化知识入库步骤详情，避免显示无意义占位文案。 */
-export function normalizeKnowledgeIngestDetail(step: ToolUpdateView): string {
+/** 规范化步骤详情，避免显示无意义占位文案。 */
+export function normalizeStepDetail(step: ToolUpdateView): string {
   if (!step.detail || step.detail === "等待开始" || step.detail === "已完成" || step.detail === "处理中" || step.detail === "执行失败") {
     return "";
   }
@@ -371,8 +371,8 @@ export function normalizeKnowledgeIngestDetail(step: ToolUpdateView): string {
   return escapeText(step.detail);
 }
 
-/** 为知识入库步骤状态选择对应图标。 */
-export function mapKnowledgeIngestStepIcon(status: ToolUpdateView["status"]): IconDef {
+/** 为步骤状态选择对应图标。 */
+export function mapStepStatusIcon(status: ToolUpdateView["status"]): IconDef {
   switch (status) {
     case "completed":
       return { token: "yes_outlined", color: "green" };

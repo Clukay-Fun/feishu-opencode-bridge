@@ -5,19 +5,15 @@
  * - 组织事实、风险、时间线等劳动分析结果的展示结构。
  */
 import {
-  buildDivider,
-  buildElapsedLine,
-  buildInteractivePayload,
-  buildKnowledgeIngestProgressStepElements,
-  buildQuoteLine,
-  buildStatsRow,
-  buildTagChartSection,
-  buildTitleLine,
-  escapeText,
-  resolveElapsedText,
+  buildNoticeCardPayload,
   type FeishuPostPayload,
   type ToolUpdateView,
 } from "./shared-primitives.js";
+import { renderBusinessCard } from "./templates/runtime.js";
+import {
+  LABOR_ANALYSIS_COMPLETED_TEMPLATE_ID,
+  LABOR_ANALYSIS_PROGRESS_TEMPLATE_ID,
+} from "./templates/labor-analysis.js";
 
 export type LaborAnalysisProgressCardView = {
   sourceLabel: string;
@@ -37,35 +33,30 @@ export type LaborAnalysisCompletedCardView = {
 };
 
 export function buildLaborAnalysisProgressPayload(view: LaborAnalysisProgressCardView): FeishuPostPayload {
-  const stepElements = view.steps.flatMap((step) => buildKnowledgeIngestProgressStepElements(step));
-  return buildInteractivePayload({
-    title: "劳动分析进行中",
-    template: "indigo",
-    iconToken: "start_outlined",
-    bodyElements: [
-      buildTitleLine(`处理文件：**${escapeText(view.sourceLabel)}**`),
-      ...stepElements,
-      ...(view.progressText ? [buildQuoteLine(escapeText(view.progressText))] : []),
-      buildDivider(),
-      buildElapsedLine(resolveElapsedText(view)),
-    ],
-  });
+  return buildLaborTemplatePayload(LABOR_ANALYSIS_PROGRESS_TEMPLATE_ID, view);
 }
 
 export function buildLaborAnalysisCompletedPayload(view: LaborAnalysisCompletedCardView): FeishuPostPayload {
-  const bodyElements: Array<Record<string, unknown>> = [
-    buildTitleLine(`案件：**${escapeText(view.title)}**`),
-    buildStatsRow([
-      `材料 ${view.materialCount}`,
-      `证据 ${view.evidenceCount}`,
-      `焦点 ${view.issueCount}`,
-    ]),
-    buildTagChartSection(view.tagCounts, view.docUrl, "材料占比", "打开分析文档"),
-  ];
-  return buildInteractivePayload({
-    title: "劳动分析完成",
-    template: "green",
-    iconToken: "yes_filled",
-    bodyElements,
-  });
+  return buildLaborTemplatePayload(LABOR_ANALYSIS_COMPLETED_TEMPLATE_ID, view);
+}
+
+function buildLaborTemplatePayload(
+  templateId: typeof LABOR_ANALYSIS_PROGRESS_TEMPLATE_ID | typeof LABOR_ANALYSIS_COMPLETED_TEMPLATE_ID,
+  input: LaborAnalysisProgressCardView | LaborAnalysisCompletedCardView,
+): FeishuPostPayload {
+  try {
+    return renderBusinessCard(templateId, input, { onError: "throw" });
+  } catch (error) {
+    console.warn("[feishu/card-template] labor template render failed", {
+      templateId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return buildNoticeCardPayload({
+      title: "劳动分析卡片渲染失败",
+      template: "red",
+      iconToken: "error-hollow_filled",
+      message: "劳动分析结果已生成，但卡片渲染失败，请查看日志后重试。",
+      showMessageIcon: false,
+    });
+  }
 }

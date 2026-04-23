@@ -1,0 +1,66 @@
+import { z } from "zod";
+
+import { escapeText, resolveElapsedText } from "../shared-primitives.js";
+import type { BusinessCardTemplateDefinition } from "./runtime.js";
+
+const ToolUpdateViewSchema = z.object({
+  label: z.string(),
+  detail: z.string(),
+  status: z.enum(["pending", "running", "completed", "error", "unknown"]),
+});
+
+const LaborAnalysisProgressCardViewSchema = z.object({
+  sourceLabel: z.string(),
+  steps: z.array(ToolUpdateViewSchema),
+  progressText: z.string().optional(),
+  startedAt: z.number().optional(),
+  elapsedMs: z.number().optional(),
+});
+
+const LaborAnalysisCompletedCardViewSchema = z.object({
+  title: z.string(),
+  materialCount: z.number(),
+  evidenceCount: z.number(),
+  issueCount: z.number(),
+  tagCounts: z.record(z.string(), z.number()),
+  docUrl: z.string().optional(),
+});
+
+export const LABOR_ANALYSIS_PROGRESS_TEMPLATE_ID = "labor.analysis.progress";
+export const LABOR_ANALYSIS_COMPLETED_TEMPLATE_ID = "labor.analysis.completed";
+
+export const laborAnalysisProgressTemplate: BusinessCardTemplateDefinition<typeof LaborAnalysisProgressCardViewSchema> = {
+  id: LABOR_ANALYSIS_PROGRESS_TEMPLATE_ID,
+  schema: LaborAnalysisProgressCardViewSchema,
+  render(input) {
+    return {
+      title: "劳动分析进行中",
+      template: "indigo",
+      iconToken: "start_outlined",
+      blocks: [
+        { kind: "title", content: `处理文件：**${escapeText(input.sourceLabel)}**` },
+        { kind: "steps", steps: input.steps },
+        ...(input.progressText ? [{ kind: "quote" as const, content: escapeText(input.progressText) }] : []),
+        { kind: "divider" },
+        { kind: "elapsed", content: resolveElapsedText(input) },
+      ],
+    };
+  },
+};
+
+export const laborAnalysisCompletedTemplate: BusinessCardTemplateDefinition<typeof LaborAnalysisCompletedCardViewSchema> = {
+  id: LABOR_ANALYSIS_COMPLETED_TEMPLATE_ID,
+  schema: LaborAnalysisCompletedCardViewSchema,
+  render(input) {
+    return {
+      title: "劳动分析完成",
+      template: "green",
+      iconToken: "yes_filled",
+      blocks: [
+        { kind: "title", content: `案件：**${escapeText(input.title)}**` },
+        { kind: "stats", labels: [`材料 ${input.materialCount}`, `证据 ${input.evidenceCount}`, `焦点 ${input.issueCount}`] },
+        { kind: "tagChart", tagCounts: input.tagCounts, bitableUrl: input.docUrl, title: "材料占比", linkLabel: "打开分析文档" },
+      ],
+    };
+  },
+};

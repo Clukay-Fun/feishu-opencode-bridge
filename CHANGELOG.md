@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.36 - 2026-04-23
+
+### Added
+- Added a business card template runtime plus labor-analysis template definitions and regression coverage for template rendering.
+- Added `RuntimeModule.claimFileInstruction()` so modules can reclaim generic file-await-instruction flows before bridge fallback handling.
+
+### Changed
+- Routed labor analysis cards through the new business-template runtime and tightened dependency boundaries so runtime and business modules do not import `src/feishu/templates/*` directly.
+
 ## 0.1.35 - 2026-04-23
 
 ### Added

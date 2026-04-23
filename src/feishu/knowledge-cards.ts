@@ -6,12 +6,12 @@
  */
 import type { KnowledgeIngestResult, KnowledgeQueryResult } from "../knowledge/index.js";
 import {
+  buildProgressStepElements,
   buildDivider,
   buildElapsedLine,
   buildFooterTipBlock,
   buildGreyPanel,
   buildInteractivePayload,
-  buildKnowledgeIngestProgressStepElements,
   buildNoticeBodyBlock,
   buildQuoteLine,
   buildStatsRow,
@@ -240,7 +240,7 @@ export function buildKnowledgeIngestFailurePayload(view: KnowledgeIngestFailureC
 
 /** 构建入库处理中卡。 */
 export function buildKnowledgeIngestProcessingPayload(view: KnowledgeIngestProgressCardView): FeishuPostPayload {
-  const stepElements = view.steps.flatMap((step) => buildKnowledgeIngestProgressStepElements(step));
+  const stepElements = view.steps.flatMap((step) => buildProgressStepElements(step));
   return buildInteractivePayload({
     title: "知识入库进行中",
     template: "indigo",

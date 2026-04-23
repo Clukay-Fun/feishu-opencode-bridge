@@ -379,6 +379,11 @@ export class BridgeApp {
     }
 
     if (pending?.kind === "file-await-instruction") {
+      const claimedByModule = await this.moduleManager.claimFileInstruction(pending, message);
+      if (claimedByModule) {
+        this.clearPendingInteraction(message.conversationKey, false);
+        return;
+      }
       const consumed = await this.handleFileInstructionPending(message, pending);
       if (consumed) {
         return;

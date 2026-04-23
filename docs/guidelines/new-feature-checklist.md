@@ -25,7 +25,7 @@
 - `transport` 边界：飞书消息回复、更新和通知都应经过 `FeishuTransport`；不要新增临时的 send/update 包装层
 - `state` 边界：模块级 pending interaction 持久化应复用共享 persisted interaction 基础设施；不要复制 timer + JSON 持久化逻辑
 - `command` 边界：每个动作保留一个主命令，最多再保留一个兼容别名
-- `formatter` 边界：新卡片应通过 family entrypoints（`shared-primitives`、`runtime-cards`、`knowledge-cards`、`labor-cards`、`contract-cards`）接入，而不是继续扩大对 `formatter.ts` 的直接依赖面
+- `formatter` 边界：新卡片应通过 family entrypoints（`shared-primitives`、`runtime-cards`、`knowledge-cards`、`labor-cards`、`contract-cards`）接入；业务展示卡默认走 `business template runtime + family adapter`，runtime 与业务模块不得直接依赖 `src/feishu/templates/*`，也不要继续扩大对 `formatter.ts` 的直接依赖面
 - `config` 边界：所有配置变更都应经过 `src/config/schema.ts` 和 `src/config/loader.ts`；不要直接读取 `config.json`
 - `docs` 边界：如果功能修改了某个 seam，必须在同一个 PR 中同步更新 `docs/architecture-baseline.md`
 

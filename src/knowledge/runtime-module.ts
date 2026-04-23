@@ -7,7 +7,7 @@
  */
 import type { AppConfig } from "../config/schema.js";
 import type { RuntimeModule, RuntimeModuleHandleResult, RuntimeModuleMessageContext } from "../bridge/module.js";
-import type { PendingKnowledgeIngestInteraction } from "../bridge/state.js";
+import type { PendingFileInstructionInteraction, PendingKnowledgeIngestInteraction } from "../bridge/state.js";
 import {
   buildKnowledgeIngestFailurePayload,
   buildKnowledgeIngestProcessingPayload,
@@ -33,7 +33,7 @@ import {
 } from "../runtime/session-windows.js";
 import type { SessionBindingRecord, SessionWindowRecord } from "../store/mappings.js";
 import { ActiveKnowledgeIngestStore, type ActiveKnowledgeIngestRecordMap } from "../store/active-ingests.js";
-import type { RoutedText } from "../bridge/router.js";
+import { routeIncomingText, type RoutedText } from "../bridge/router.js";
 import { detectKnowledgeWebIngest, detectLegalQuestion } from "./detector.js";
 import {
   type KnowledgeBasePort,
@@ -83,6 +83,8 @@ type KnowledgeIngestSessionStats = {
   results: KnowledgeIngestResult[];
   failures: Array<{ sourceFile: string; reason: string }>;
 };
+
+const KNOWLEDGE_INGEST_TEXT_PATTERN = /(^|[\s/])(?:kb-ingest-start|入库|导入|收录|加入知识库|添加到知识库|写入知识库|保存到知识库|放进知识库|同步到知识库)(?=$|\s)/i;
 
 type KnowledgeRuntimeModuleDeps = {
   config: AppConfig;
@@ -173,6 +175,20 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       ? false
       : await this.handleKnowledgeQueryMessage(message);
     return { claimed };
+  }
+
+  async claimFileInstruction(
+    pending: PendingFileInstructionInteraction,
+    message: IncomingChatMessage,
+  ): Promise<boolean> {
+    if (message.messageType === "file" || message.senderOpenId !== pending.requesterOpenId) {
+      return false;
+    }
+    if (!matchesKnowledgeIngestInstruction(message.plainText)) {
+      return false;
+    }
+    await this.startKnowledgeIngestFromPendingFile(pending, message);
+    return true;
   }
 
   /** 获取当前窗口的知识入库挂起状态。 */
@@ -446,6 +462,79 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     }
 
     return false;
+  }
+
+  private async startKnowledgeIngestFromPendingFile(
+    pendingFile: PendingFileInstructionInteraction,
+    message: IncomingChatMessage,
+  ): Promise<void> {
+    if (!this.deps.knowledge) {
+      await this.sendNotice(message, {
+        title: "知识库未启用",
+        template: "yellow",
+        icon: "maybe_outlined",
+        message: "当前未启用法律知识库，请联系部署者补充 knowledgeBase 配置。",
+      });
+      return;
+    }
+    let pending = this.getInteraction(message.conversationKey);
+    if (!pending || pending.requesterOpenId !== message.senderOpenId) {
+      pending = await this.openKnowledgeIngestInteraction(message);
+    }
+    const fileMessage: IncomingChatMessage = {
+      ...message,
+      messageId: pendingFile.file.messageId,
+      rawContent: pendingFile.file.fileName,
+      plainText: pendingFile.file.fileName,
+      messageType: "file",
+      file: {
+        fileKey: pendingFile.file.fileKey,
+        fileName: pendingFile.file.fileName,
+        size: pendingFile.file.size,
+      },
+    };
+    await this.enqueueKnowledgeIngestInput(fileMessage, pending);
+  }
+
+  private async openKnowledgeIngestInteraction(
+    message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "threadKey" | "senderOpenId">,
+  ): Promise<PendingKnowledgeIngestInteraction> {
+    const window = this.deps.getSessionWindow(message.conversationKey, message.chatType);
+    const previousSession = getActiveSession(window);
+    const entry = await this.deps.createAndBindSession(message);
+    const nextWindow = updateSessionLabel(
+      this.deps.getSessionWindow(message.conversationKey, message.chatType),
+      entry.sessionId,
+      "知识入库",
+      this.deps.config.bridge.maxSessionsPerWindow,
+    );
+    await this.deps.saveSessionWindow(message.conversationKey, nextWindow);
+    const deliveryMode = message.chatType === "p2p" ? "p2p_reply" : "group_thread";
+    const ready = await this.sendPayload(message.chatId, buildKnowledgeIngestReadyPayload(), {
+      event: "knowledge ingest pending",
+      transcriptType: "outbound-final",
+      textPreview: "已进入知识入库模式",
+      len: 9,
+    }, { replyToMessageId: message.messageId, replyInThread: deliveryMode === "group_thread" });
+    const interaction: PendingKnowledgeIngestInteraction = {
+      kind: "knowledge-ingest-await-file",
+      chatId: message.chatId,
+      chatType: message.chatType,
+      conversationKey: message.conversationKey,
+      requesterOpenId: message.senderOpenId,
+      replyToMessageId: ready.messageId,
+      rootMessageId: message.messageId,
+      anchorMessageId: ready.messageId,
+      deliveryMode,
+      ingestSessionId: entry.sessionId,
+      previousActiveSessionId: previousSession?.sessionId ?? null,
+      expiresAt: Date.now() + this.deps.config.knowledgeBase.ingest.sessionIdleMs,
+    };
+    this.setKnowledgeIngestInteraction(message.conversationKey, interaction);
+    if (message.chatType !== "p2p") {
+      await this.deps.whitelistBind(message.chatId, message.senderOpenId);
+    }
+    return interaction;
   }
 
   private async handleKnowledgeQueryMessage(message: IncomingChatMessage): Promise<boolean> {
@@ -1227,6 +1316,14 @@ function createKnowledgeIngestProgressState(sourceLabel: string): KnowledgeInges
 
 function getKnowledgeIngestQueueItemLabel(item: KnowledgeIngestQueueItem): string {
   return item.kind === "web" ? item.url : item.fileName;
+}
+
+function matchesKnowledgeIngestInstruction(text: string): boolean {
+  const routed = routeIncomingText(text.trim());
+  if (routed.kind === "command" && routed.command.kind === "knowledge-ingest") {
+    return true;
+  }
+  return KNOWLEDGE_INGEST_TEXT_PATTERN.test(text.trim());
 }
 
 function applyKnowledgeIngestProgress(state: KnowledgeIngestProgressState, update: KnowledgeIngestProgressUpdate): void {
