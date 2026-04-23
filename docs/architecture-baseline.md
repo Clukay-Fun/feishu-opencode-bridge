@@ -188,6 +188,7 @@ Feishu Transport
 
 代表性文件：
 
+- `src/document-pipeline/index.ts`
 - `src/knowledge/index.ts`
 - `src/contract-assistant/index.ts`
 - `src/labor/index.ts`
@@ -199,6 +200,20 @@ Feishu Transport
 - 面向领域任务的 OpenCode prompt 组装
 - 本地文件与数据转换
 - 与该 feature 相关的外部系统交互封装
+- 跨 feature 可复用的 shared workflow，例如证据提取、文档解析、时间线整理和工作台生成
+
+通用文件解析约定：
+
+- 常见文件先经 `document-pipeline` 统一转换为 Markdown / 纯文本 / sections
+- 业务模块消费统一解析结果，不直接分叉维护 PDF、DOCX、HTML 等专项入口
+- Python 侧新调用优先走 `scripts/python/convert_document.py`，旧专项脚本保留为兼容后端
+
+领域能力拆分约定：
+
+- `labor-skill` 是劳动争议领域总入口，负责劳动案件主线 workflow 编排
+- `contract-draft`、`contract-extract`、`invoice-recognize`、`case-manage` 等保持独立专项能力，可被 labor 调用，但不并入 labor 私有状态
+- `evidence-extract` 和 `document-pipeline` 属于 shared workflow，承载跨领域材料处理能力，不承担劳动案件策略判断
+- 详细边界见 [labor-skill-workflows.md](/Users/clukay/Program/feishu-opencode-bridge/docs/modules/labor-skill-workflows.md)
 
 不应负责：
 

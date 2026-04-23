@@ -3,6 +3,7 @@
  * 关注点:
  * - 下载附件、落盘并准备后续分析所需的临时文件。
  * - 按文件类型调用对应解析路径，统一产出可分析文本。
+ * - 作为 contract-assistant 与 labor-skill 之间已经落地的 shared workflow。
  */
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

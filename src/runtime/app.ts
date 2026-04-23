@@ -55,6 +55,7 @@ import { TurnCardManager } from "./turn-card-manager.js";
 import { TurnExecutor } from "./turn-executor.js";
 import { TurnOwnedResourceStore } from "./turn-owned-resources.js";
 import { SlidingWindowRateLimiter } from "./rate-limiter.js";
+import { BridgeMessageContextStore, prependBridgeMessageContext } from "./message-context.js";
 import {
   addSession,
   addSessionWithoutActivating,
@@ -178,6 +179,7 @@ export class BridgeApp {
   private readonly opencode: OpenCodePort;
   private readonly eventStream: OpenCodeEventStreamPort;
   private readonly permissionManager: PermissionManager;
+  private readonly messageContextStore = new BridgeMessageContextStore();
   private readonly turnCardManager: TurnCardManager;
   private readonly turnOwnedResources: TurnOwnedResourceStore;
   private readonly turnExecutor: TurnExecutor;
@@ -356,6 +358,7 @@ export class BridgeApp {
       messageId: message.messageId,
       messageType: message.messageType,
     }, message.plainText);
+    this.messageContextStore.rememberInbound(message);
 
     const routed = message.messageType === "file"
       ? null
@@ -463,7 +466,7 @@ export class BridgeApp {
       senderOpenId: message.senderOpenId,
       inboundMessageId: message.messageId,
       plainText: message.plainText,
-      text: toOpencodePromptText(message),
+      text: this.buildPromptTextWithMessageContext(message, toOpencodePromptText(message)),
       sessionId,
       logContext: this.buildTurnLogContext(message, turnId, sessionId),
     };
@@ -521,6 +524,13 @@ export class BridgeApp {
    */
   private buildExecutionKey(conversationKey: string, sessionId: string): string {
     return `${conversationKey}::${sessionId}`;
+  }
+
+  /**
+   * 将飞书右键回复/话题根消息里已知的短期上下文注入本轮 OpenCode prompt。
+   */
+  private buildPromptTextWithMessageContext(message: IncomingChatMessage, prompt: string): string {
+    return prependBridgeMessageContext(prompt, this.messageContextStore.buildPromptBlock(message));
   }
 
   /**
@@ -714,7 +724,7 @@ export class BridgeApp {
       senderOpenId: message.senderOpenId,
       inboundMessageId: message.messageId,
       plainText: `${instruction}\n\n[文件] ${pending.file.fileName}`,
-      text: processed.prompt,
+      text: this.buildPromptTextWithMessageContext(message, processed.prompt),
       sessionId,
       logContext: this.buildTurnLogContext(message, turnId, sessionId),
     };
@@ -1467,6 +1477,12 @@ export class BridgeApp {
         len: options.len,
       });
       this.logger.logTranscript(options.transcriptType, { chatId, messageId: result.messageId }, prettyPrintPayload(payload));
+      this.messageContextStore.rememberBridgeOutput({
+        messageId: result.messageId,
+        chatId,
+        replyToMessageId: delivery?.replyToMessageId,
+        summary: options.textPreview,
+      });
       return result;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -1503,6 +1519,11 @@ export class BridgeApp {
         len: options.len,
       });
       this.logger.logTranscript(options.transcriptType, { chatId, messageId: result.messageId }, prettyPrintPayload(payload));
+      this.messageContextStore.rememberBridgeOutput({
+        messageId: result.messageId,
+        chatId,
+        summary: options.textPreview,
+      });
       return result;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);

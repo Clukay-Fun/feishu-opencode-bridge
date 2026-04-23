@@ -4,8 +4,8 @@ vi.mock("mammoth", () => ({
   extractRawText: vi.fn(async () => ({ value: "第一段内容\n\n第二段内容" })),
 }));
 
-vi.mock("../src/knowledge/pdf-markdown.js", () => ({
-  spawnPdfToMarkdown: vi.fn(),
+vi.mock("../src/utils/python-tool.js", () => ({
+  spawnPythonTool: vi.fn(),
 }));
 
 vi.mock("pdf-parse", () => ({
@@ -26,7 +26,7 @@ vi.mock("pdf-parse", () => ({
 }));
 
 import { chunkKnowledgeSections, groupKnowledgeSectionsByChapter, parseKnowledgeFile } from "../src/knowledge/parser.js";
-import { spawnPdfToMarkdown } from "../src/knowledge/pdf-markdown.js";
+import { spawnPythonTool } from "../src/utils/python-tool.js";
 
 describe("parseKnowledgeFile", () => {
   it("parses txt sections", async () => {
@@ -46,12 +46,20 @@ describe("parseKnowledgeFile", () => {
   });
 
   it("parses docx sections via mammoth", async () => {
+    vi.mocked(spawnPythonTool).mockResolvedValueOnce({
+      ok: false,
+      error: "python unavailable",
+    });
     const parsed = await parseKnowledgeFile("demo.docx", Buffer.from("fake"));
     expect(parsed.sections.map((item) => item.location)).toEqual(["段落 1", "段落 2"]);
+    expect(parsed.parserUsed).toBe("mammoth");
   });
 
   it("parses pdf pages via pdf-parse", async () => {
-    vi.mocked(spawnPdfToMarkdown).mockRejectedValueOnce(new Error("python unavailable"));
+    vi.mocked(spawnPythonTool).mockResolvedValueOnce({
+      ok: false,
+      error: "python unavailable",
+    });
     const parsed = await parseKnowledgeFile("demo.pdf", Buffer.from("fake"));
     expect(parsed.normalizedMarkdown).toBe("第一页内容\n\n---\n\n第二页内容");
     expect(parsed.parserUsed).toBe("pdf-parse");
@@ -62,9 +70,17 @@ describe("parseKnowledgeFile", () => {
   });
 
   it("prefers python markdown output for pdf files when available", async () => {
-    vi.mocked(spawnPdfToMarkdown).mockResolvedValueOnce({
-      markdown: "# 第一章\n\n这是提取后的正文",
-      parserUsed: "pymupdf4llm",
+    vi.mocked(spawnPythonTool).mockResolvedValueOnce({
+      ok: true,
+      data: {
+        markdown: "# 第一章\n\n这是提取后的正文",
+        plainText: "第一章\n\n这是提取后的正文",
+        sourceFormat: "pdf",
+        tool: "pymupdf4llm",
+        quality: "high",
+        fallbackChain: ["pymupdf4llm"],
+        warnings: [],
+      },
     });
 
     const parsed = await parseKnowledgeFile("demo.pdf", Buffer.from("fake"));
@@ -75,6 +91,13 @@ describe("parseKnowledgeFile", () => {
       { location: "段落 1", text: "# 第一章" },
       { location: "段落 2", text: "这是提取后的正文" },
     ]);
+  });
+
+  it("parses html as an extra unified document format", async () => {
+    const parsed = await parseKnowledgeFile("demo.html", Buffer.from("<h1>标题</h1><p>正文内容</p>", "utf8"));
+    expect(parsed.normalizedMarkdown).toBe("标题\n\n正文内容");
+    expect(parsed.parserUsed).toBe("html-text");
+    expect(parsed.sourceFormat).toBe("html");
   });
 });
 

@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.37 - 2026-04-23
+
+### Added
+- Added a unified document pipeline that converts common files into Markdown, plain text, sections, parser quality, fallback chains, and warnings.
+- Added Feishu reply/create short-term message context injection so follow-up turns can reference known inbound messages or bridge outputs.
+- Added labor-skill workflow layering documentation for domain workflows, specialist capabilities, and shared workflow boundaries.
+
+### Changed
+- Rewired knowledge parsing to consume the shared document pipeline instead of maintaining separate PDF/DOCX/TXT parsing branches.
+
 ## 0.1.36 - 2026-04-23
 
 ### Added

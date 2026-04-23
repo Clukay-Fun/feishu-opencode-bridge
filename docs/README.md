@@ -22,6 +22,7 @@
 ## 模块
 
 - [法律知识库方案](modules/knowledge-base.md)：知识库模块的设计说明与工作流说明。
+- [劳动 Skill 工作流分层](modules/labor-skill-workflows.md)：劳动领域总入口、专项能力和 shared skills 的边界说明。
 
 ## 待办
 

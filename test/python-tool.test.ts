@@ -27,6 +27,33 @@ describe("spawnPythonTool", () => {
     }
   });
 
+  it("runs convert_document with the unified Markdown/text result protocol", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "python-tool-convert-document-"));
+    try {
+      const inputPath = path.join(tempDir, "demo.html");
+      await writeFile(inputPath, "<h1>标题</h1><p>这里是正文。</p>", "utf8");
+
+      const result = await spawnPythonTool<{
+        markdown: string;
+        plainText: string;
+        sourceFormat: string;
+        tool: string;
+        fallbackChain: string[];
+      }>("convert_document", {
+        inputPath,
+      });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.sourceFormat).toBe("html");
+        expect(result.data.markdown).toContain("这里是正文");
+        expect(result.data.fallbackChain).toContain("html-text");
+      }
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("runs contract_parse on the bundled docx template", async () => {
     const inputPath = path.resolve(process.cwd(), "templates/contracts/委托代理合同-民事.docx");
 
