@@ -219,7 +219,7 @@ Feishu Transport
 
 这些部分不应反向渗透回运行时主流程，成为 feature 编排捷径。
 
-`src/runtime/preflight.ts` 与 `scripts/checks.mjs` 属于同一诊断面：
+`src/runtime/preflight.ts` 与 `scripts/runtime/checks.mjs` 属于同一诊断面：
 
 - preflight 在启动时作为 runtime gate 运行
 - doctor 与 checks 独立运行，不进入 runtime handler chain

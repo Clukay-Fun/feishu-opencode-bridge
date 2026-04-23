@@ -14,7 +14,7 @@ import {
   getDoctorExitCode,
   readOpencodeAuth,
   runBridgeChecks,
-} from "../scripts/checks.mjs";
+} from "../scripts/runtime/checks.mjs";
 
 describe("scripts/checks", () => {
   it("skips dependent config checks when config.json is missing", async () => {

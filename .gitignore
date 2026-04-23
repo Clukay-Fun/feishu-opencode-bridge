@@ -1,13 +1,24 @@
+# Build outputs
 node_modules/
 dist/
+
+# Runtime state and local data
 logs/
 data/
 config.json
+
+# Legacy root-level runtime artifacts
 mappings.json
 active-knowledge-ingests.json
 knowledge-base.db
+tmp-knowledge-check.txt
+
+# Local tool state
 .DS_Store
+.claude/
 .opencode/*
 !.opencode/skills/
 !.opencode/skills/**
-tmp-knowledge-check.txt
+
+# Misc logs
+*.log

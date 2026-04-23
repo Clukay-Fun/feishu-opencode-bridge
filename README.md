@@ -308,7 +308,7 @@ src/
   opencode/            # OpenCode 客户端与事件流
   store/               # 会话映射、白名单、活跃入库等 JSON 存储
   workflows/           # 工作流辅助模块
-scripts/               # doctor、onboard、知识库 CLI 包装脚本
+scripts/               # 运行入口、仓库检查、知识库 CLI、wrapper 与 Python 辅助脚本
 docs/                  # 架构、部署、计划与归档演示文档
 test/                  # Vitest 单元测试与集成测试
 ```

@@ -28,7 +28,7 @@
 这是 formatter 兼容导出面的快照文件，不只是历史记录，而是当前仍在使用的检查基线。
 
 - 用途：固定 `src/feishu/formatter.ts` 的兼容导出面
-- 当前调用方：`scripts/check-formatter-exports.ts`
+- 当前调用方：`scripts/checks/check-formatter-exports.ts`
 - 为什么保留：它会直接影响 CI 和本地检查，删掉会破坏现有校验流程
 
 ### `formatter-migration.md`

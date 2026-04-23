@@ -1,3 +1,10 @@
+/**
+ * 职责: 启动本地 Bridge 运行栈，并在需要时拉起 OpenCode 服务。
+ * 关注点:
+ * - 检查 Bridge 端口是否已被当前服务占用。
+ * - 复用或启动 OpenCode Server。
+ * - 选择 dist/tsx 入口启动 Bridge 主进程，并负责退出清理。
+ */
 import { createWriteStream } from "node:fs";
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
@@ -109,6 +116,7 @@ export async function runStart(options = {}) {
   return process.exitCode ?? 0;
 }
 
+// Check whether the configured Bridge port is free or already served by this project.
 export async function ensureBridgePortAvailable(options = {}) {
   const host = options.host ?? "127.0.0.1";
   const port = Number(options.port ?? 3000);
@@ -133,6 +141,7 @@ export async function ensureBridgePortAvailable(options = {}) {
   }
 }
 
+// Probe the Bridge health endpoint to distinguish a live bridge from a random port listener.
 export async function isBridgeHealthy(host, port, fetchImpl = fetch, timeoutMs = 1_000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -155,6 +164,7 @@ export async function isBridgeHealthy(host, port, fetchImpl = fetch, timeoutMs =
   }
 }
 
+// Reuse an existing OpenCode server or start a managed local one when baseUrl is local.
 export async function ensureOpencodeServer(options) {
   const logger = options.logger ?? console;
   const alreadyHealthy = await isOpencodeHealthy(options.opencodeBaseUrl, options.fetchImpl);
@@ -202,6 +212,7 @@ export async function ensureOpencodeServer(options) {
   };
 }
 
+// Resolve whether to launch the built output or fall back to `tsx src/index.ts`.
 export function resolveBridgeLaunch(options) {
   const cwd = options.cwd ?? process.cwd();
   const env = createAugmentedEnv(cwd, options.env ?? process.env);
@@ -226,6 +237,7 @@ export function resolveBridgeLaunch(options) {
   throw new Error("未找到 dist/index.js / dist/src/index.js，也未检测到 tsx。请先执行 npm install 或 npm run build。");
 }
 
+// Stop a child process only when this script owns its lifecycle.
 export async function stopManagedProcess(child, options = {}) {
   if (!options.owned || !child) {
     return;
@@ -233,6 +245,7 @@ export async function stopManagedProcess(child, options = {}) {
   await terminateChild(child, options.platform ?? process.platform);
 }
 
+// Probe OpenCode health using the configured baseUrl.
 export async function isOpencodeHealthy(baseUrl, fetchImpl = fetch) {
   try {
     const response = await fetchImpl(new URL("global/health", ensureTrailingSlash(baseUrl)));
@@ -242,6 +255,7 @@ export async function isOpencodeHealthy(baseUrl, fetchImpl = fetch) {
   }
 }
 
+// Poll until OpenCode becomes healthy or the timeout elapses.
 export async function waitForOpencodeHealth(baseUrl, fetchImpl = fetch, timeoutMs = 10_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -253,6 +267,7 @@ export async function waitForOpencodeHealth(baseUrl, fetchImpl = fetch, timeoutM
   return false;
 }
 
+// Restrict auto-start behavior to loopback OpenCode addresses.
 function isLocalBaseUrl(baseUrl) {
   try {
     const url = new URL(baseUrl);
@@ -262,20 +277,24 @@ function isLocalBaseUrl(baseUrl) {
   }
 }
 
+// Normalize base URLs before appending health paths.
 function ensureTrailingSlash(value) {
   return value.endsWith("/") ? value : `${value}/`;
 }
 
+// Build the local Bridge health URL from host and port settings.
 function buildBridgeHealthUrl(host, port) {
   const hostname = host === "0.0.0.0" ? "127.0.0.1" : host;
   const wrappedHost = hostname.includes(":") && !hostname.startsWith("[") ? `[${hostname}]` : hostname;
   return new URL(`http://${wrappedHost}:${port}/healthz`);
 }
 
+// Guard against missing dist entries or executables.
 function pathExists(target) {
   return Boolean(target) && existsSync(target);
 }
 
+// Sleep between health-check polling attempts.
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

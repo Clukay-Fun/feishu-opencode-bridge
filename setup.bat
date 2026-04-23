@@ -17,7 +17,7 @@ if errorlevel 1 (
     exit /b 1
   )
 )
-"%NODE_EXE%" scripts\onboard.mjs
+"%NODE_EXE%" scripts\runtime\onboard.mjs
 exit /b %errorlevel%
 
 :resolve_node

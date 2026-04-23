@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.34 - 2026-04-23
+
+### Changed
+- Reorganized `scripts/` into clearer `runtime`, `checks`, `kb`, `wrappers`, and `python` subdirectories.
+- Updated package entrypoints, setup/start launchers, and script-focused tests to reference the new script locations.
+- Added directory README notes for script and ops assets, and refreshed related documentation references.
+
 ## 0.1.33 - 2026-04-22
 
 ### Changed

@@ -1,5 +1,12 @@
+/**
+ * 职责: 输出分组后的本地运行环境诊断结果。
+ * 关注点:
+ * - 调用统一检查器收集 bridge/lark/memory 结果。
+ * - 以适合终端阅读的分组格式打印。
+ */
 import { formatCheckHint, formatCheckLine, getDoctorExitCode, isMainModule, runAllChecks } from "./checks.mjs";
 
+// Run all diagnostics and render them by group for local troubleshooting.
 export async function runDoctor(options = {}) {
   const logger = options.logger ?? console;
   const results = await runAllChecks({

@@ -15,7 +15,7 @@ describe("setup entrypoints", () => {
     expect(script).toContain("brew --prefix node@20");
     expect(script).toContain("NODE_DIR=\"$(dirname \"$NODE_BIN\")\"");
     expect(script).toContain("export PATH=\"$NODE_DIR:$PATH\"");
-    expect(script).toContain("\"$NODE_BIN\" scripts/onboard.mjs");
+    expect(script).toContain("\"$NODE_BIN\" scripts/runtime/onboard.mjs");
   });
 
   it("Windows setup resolves a concrete node path after winget install", async () => {
@@ -25,6 +25,6 @@ describe("setup entrypoints", () => {
     expect(script).toContain("%ProgramFiles%\\nodejs\\node.exe");
     expect(script).toContain("%LocalAppData%\\Programs\\nodejs\\node.exe");
     expect(script).toContain("set \"PATH=%NODE_DIR%;%PATH%\"");
-    expect(script).toContain("\"%NODE_EXE%\" scripts\\onboard.mjs");
+    expect(script).toContain("\"%NODE_EXE%\" scripts\\runtime\\onboard.mjs");
   });
 });

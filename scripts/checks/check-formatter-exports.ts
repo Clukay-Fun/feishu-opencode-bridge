@@ -1,3 +1,9 @@
+/**
+ * 职责: 校验 formatter 导出面是否与历史快照一致。
+ * 关注点:
+ * - 防止共享格式化出口被无意改动。
+ * - 在兼容面变化时提示同步更新快照。
+ */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import ts from "typescript";
@@ -9,6 +15,7 @@ type FormatterExportSnapshot = {
 const FORMATTER_PATH = path.resolve("src/feishu/formatter.ts");
 const SNAPSHOT_PATH = path.resolve("docs/archive/design-history/formatter-export-snapshot.json");
 
+// Compare the current formatter exports with the archived compatibility snapshot.
 async function main(): Promise<void> {
   const [sourceText, snapshotText] = await Promise.all([
     readFile(FORMATTER_PATH, "utf8"),
@@ -35,6 +42,7 @@ async function main(): Promise<void> {
   }
 }
 
+// Parse named re-exports from `formatter.ts` and return a sorted list.
 function collectNamedExports(sourceText: string): string[] {
   const sourceFile = ts.createSourceFile(FORMATTER_PATH, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const names = new Set<string>();
@@ -52,6 +60,7 @@ function collectNamedExports(sourceText: string): string[] {
   return [...names].sort(compareNames);
 }
 
+// Keep export names in a stable locale-aware order.
 function compareNames(left: string, right: string): number {
   return left.localeCompare(right, "en");
 }

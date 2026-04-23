@@ -13,13 +13,13 @@ import {
   runOnboard,
   shouldOfferStart,
   shouldRebuildConfig,
-} from "../scripts/onboard.mjs";
+} from "../scripts/runtime/onboard.mjs";
 import {
   ensureBridgePortAvailable,
   isBridgeHealthy,
   ensureOpencodeServer,
   resolveBridgeLaunch,
-} from "../scripts/start.mjs";
+} from "../scripts/runtime/start.mjs";
 
 describe("scripts/onboard", () => {
   it("does not overwrite existing config by default", async () => {

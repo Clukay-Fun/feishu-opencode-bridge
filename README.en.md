@@ -308,7 +308,7 @@ src/
   opencode/            # OpenCode client and event stream
   store/               # JSON stores for mappings, whitelist, active ingests
   workflows/           # workflow helpers
-scripts/               # doctor, onboard, knowledge CLI wrappers
+scripts/               # runtime entrypoints, repo checks, knowledge CLI, wrappers, Python helpers
 docs/                  # architecture, deployment, plans, archived demo docs
 test/                  # Vitest unit and integration tests
 ```

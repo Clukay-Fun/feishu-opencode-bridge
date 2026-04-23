@@ -1,3 +1,9 @@
+/**
+ * 职责: 在架构关键缝合点变更时提醒同步更新架构基线文档。
+ * 关注点:
+ * - 比较当前分支改动与 seam 文件集合。
+ * - 在 CI 或本地给出轻量警告，而不是直接阻断提交。
+ */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -15,6 +21,7 @@ const SEAM_FILES = new Set([
 
 const ARCHITECTURE_BASELINE = "docs/architecture-baseline.md";
 
+// Warn when seam files changed but the architecture baseline document did not.
 async function main(): Promise<void> {
   const changedFiles = await getChangedFiles();
   if (changedFiles.length === 0) {
@@ -39,6 +46,7 @@ async function main(): Promise<void> {
   }
 }
 
+// Resolve changed files from BASE_SHA, merge-base, or local staged/unstaged diffs.
 async function getChangedFiles(): Promise<string[]> {
   const base = process.env.BASE_SHA?.trim();
   if (base) {
@@ -62,6 +70,7 @@ async function getChangedFiles(): Promise<string[]> {
   ]);
 }
 
+// Compute a merge-base when comparing the current branch against `origin/main`.
 async function getMergeBase(left: string, right: string): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync("git", ["merge-base", left, right]);
@@ -71,6 +80,7 @@ async function getMergeBase(left: string, right: string): Promise<string | null>
   }
 }
 
+// Return changed filenames from `git diff --name-only`.
 async function gitDiffNames(args: string[]): Promise<string[]> {
   try {
     const { stdout } = await execFileAsync("git", ["diff", "--name-only", ...args]);
@@ -83,6 +93,7 @@ async function gitDiffNames(args: string[]): Promise<string[]> {
   }
 }
 
+// Escape annotation text for the GitHub Actions workflow command format.
 function escapeGithubAnnotation(value: string): string {
   return value
     .replace(/%/g, "%25")
@@ -92,6 +103,7 @@ function escapeGithubAnnotation(value: string): string {
     .replace(/,/g, "%2C");
 }
 
+// Deduplicate file paths while keeping first-seen order.
 function unique(values: string[]): string[] {
   return [...new Set(values)];
 }

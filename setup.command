@@ -43,4 +43,4 @@ fi
 
 NODE_DIR="$(dirname "$NODE_BIN")"
 export PATH="$NODE_DIR:$PATH"
-"$NODE_BIN" scripts/onboard.mjs
+"$NODE_BIN" scripts/runtime/onboard.mjs

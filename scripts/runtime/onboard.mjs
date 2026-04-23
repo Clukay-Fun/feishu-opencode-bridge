@@ -1,3 +1,10 @@
+/**
+ * 职责: 完成 Bridge 本地开发环境的首次引导。
+ * 关注点:
+ * - 检查 Node、依赖、OpenCode、lark-cli 等基础环境。
+ * - 在需要时安装命令行工具并引导登录。
+ * - 生成 config.json，并在环境就绪时可直接启动完整栈。
+ */
 import { access, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -173,6 +180,7 @@ export async function runOnboard(options = {}) {
   return getDoctorExitCode(results);
 }
 
+// Ask whether an existing config file should be regenerated.
 export async function shouldRebuildConfig(configPath, promptYesNoFn = promptYesNo) {
   if (!(await fileExists(configPath))) {
     return true;
@@ -180,6 +188,7 @@ export async function shouldRebuildConfig(configPath, promptYesNoFn = promptYesN
   return await promptYesNoFn("检测到 config.json 已存在，是否重新配置？", false);
 }
 
+// Install project dependencies when `node_modules` is still missing.
 export async function ensureProjectDependencies({ cwd, env, logger, runCommandFn = runCommand }) {
   if (await fileExists(path.join(cwd, "node_modules"))) {
     logger.log("项目依赖已存在，跳过 npm install。");
@@ -199,6 +208,7 @@ export async function ensureProjectDependencies({ cwd, env, logger, runCommandFn
   }
 }
 
+// Detect or install the OpenCode CLI and refresh PATH resolution afterwards.
 export async function ensureOpencodeInstalled(options) {
   const cwd = options.cwd;
   const logger = options.logger ?? console;
@@ -249,6 +259,7 @@ export async function ensureOpencodeInstalled(options) {
   return { env, path: null };
 }
 
+// Detect or install `lark-cli`, trying global and user-local prefixes.
 export async function ensureLarkCliInstalled(options) {
   const cwd = options.cwd;
   const logger = options.logger ?? console;
@@ -302,6 +313,7 @@ export async function ensureLarkCliInstalled(options) {
   return { env, path: null };
 }
 
+// Resolve Feishu app credentials from lark-cli or prompt fallbacks.
 export async function resolveFeishuCredentials(options) {
   const logger = options.logger ?? console;
   const runCommandFn = options.runCommandFn ?? runCommand;
@@ -334,6 +346,7 @@ export async function resolveFeishuCredentials(options) {
   };
 }
 
+// Ensure the current user completes lark-cli login if required.
 export async function maybeLoginLarkCli(options) {
   const logger = options.logger ?? console;
   const statusResult = await options.runCommandFn(options.larkCliPath, ["auth", "status"], {
@@ -373,6 +386,7 @@ export async function maybeLoginLarkCli(options) {
   return assessLarkAuthPayload(tryParseJson(`${refreshedStatus.stdout}\n${refreshedStatus.stderr}`));
 }
 
+// Ensure at least one OpenCode provider is logged in for model access.
 export async function maybeLoginOpencodeProvider(options) {
   const logger = options.logger ?? console;
   const status = assessOpencodeAuthPayload(await readOpencodeAuth(options.home, {
@@ -407,6 +421,7 @@ export async function maybeLoginOpencodeProvider(options) {
   }));
 }
 
+// Ask lark-cli to create/configure an app and extract credentials from its output.
 export async function tryCreateFeishuAppWithLark(options) {
   const logger = options.logger ?? console;
   const result = await options.runCommandFn(options.larkCliPath, ["config", "init", "--new", "--lang", "zh"], {
@@ -435,6 +450,7 @@ export async function tryCreateFeishuAppWithLark(options) {
   return null;
 }
 
+// Parse `lark-cli config init` output into the credential shape used by onboarding.
 export function parseConfigInitOutput(text) {
   const trimmed = text.trim();
   if (!trimmed) {
@@ -457,6 +473,7 @@ export function parseConfigInitOutput(text) {
   }
 }
 
+// Fill the config template with the credentials and working directory discovered during onboarding.
 export function generateConfigObject(template, options) {
   const next = JSON.parse(JSON.stringify(template));
   if (!next.feishu) {
@@ -471,6 +488,7 @@ export function generateConfigObject(template, options) {
   return next;
 }
 
+// Materialize `config.json` from `config.example.json`.
 export async function generateConfigFile(options) {
   const cwd = options.cwd ?? process.cwd();
   const logger = options.logger ?? console;
@@ -487,6 +505,7 @@ export async function generateConfigFile(options) {
   return configPath;
 }
 
+// Prompt for a yes/no answer, with a default for non-interactive terminals.
 export async function promptYesNo(question, defaultValue = false) {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     return defaultValue;
@@ -504,6 +523,7 @@ export async function promptYesNo(question, defaultValue = false) {
   }
 }
 
+// Prompt for free-form text, again with a non-interactive fallback.
 export async function promptText(question, defaultValue = "") {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     return defaultValue;
@@ -518,6 +538,7 @@ export async function promptText(question, defaultValue = "") {
   }
 }
 
+// Enforce the Node.js version floor before onboarding continues.
 async function ensureNodeVersion(logger) {
   const version = process.version;
   const major = Number.parseInt(version.replace(/^v/, "").split(".")[0] ?? "0", 10);
@@ -529,6 +550,7 @@ async function ensureNodeVersion(logger) {
   return false;
 }
 
+// Check whether a path exists without surfacing ENOENT as an exception.
 async function fileExists(target) {
   try {
     await access(target);
@@ -538,6 +560,7 @@ async function fileExists(target) {
   }
 }
 
+// Normalize ad-hoc credential payloads into a strict `{ appId, appSecret }` shape.
 function normalizeCredentialPayload(payload) {
   if (!payload || typeof payload !== "object") {
     return null;
@@ -553,6 +576,7 @@ function normalizeCredentialPayload(payload) {
   };
 }
 
+// Decide whether onboarding can offer to launch the runtime immediately.
 export function shouldOfferStart(results) {
   return !results.some((result) => (
     result.group === "bridge"
@@ -561,6 +585,7 @@ export function shouldOfferStart(results) {
   ));
 }
 
+// Print manual OpenCode install fallbacks when automatic install is unavailable.
 function printOpencodeManualHints(logger) {
   logger.warn("请按平台任选一种方式安装 OpenCode：");
   logger.warn("  macOS / Linux：brew install opencode");
@@ -570,6 +595,7 @@ function printOpencodeManualHints(logger) {
   logger.warn("  通用：npm i -g opencode-ai@latest");
 }
 
+// Parse JSON helper output without throwing inside onboarding control flow.
 function tryParseJson(text) {
   const trimmed = text.trim();
   if (!trimmed) {

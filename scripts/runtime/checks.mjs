@@ -1,3 +1,10 @@
+/**
+ * 职责: 提供 Bridge 本地运行环境的检查、诊断与辅助执行工具。
+ * 关注点:
+ * - 统一 Bridge、Lark、Memory 三组诊断结果格式。
+ * - 提供命令执行、配置读取、端口检测等脚本基础能力。
+ * - 汇总 doctor/onboard/start 等脚本共享的检查逻辑。
+ */
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { access, constants, readFile } from "node:fs/promises";
@@ -20,6 +27,7 @@ const STATUS_ICON = {
   skip: "--",
 };
 
+// Detect whether the current file is executed directly instead of imported.
 export function isMainModule(metaUrl, argv = process.argv) {
   const entry = argv[1];
   if (!entry) {
@@ -28,6 +36,7 @@ export function isMainModule(metaUrl, argv = process.argv) {
   return pathToFileURL(path.resolve(entry)).href === metaUrl;
 }
 
+// Build one normalized diagnostic result record.
 export function createResult(id, group, label, status, detail, hint) {
   return {
     id,
@@ -39,14 +48,17 @@ export function createResult(id, group, label, status, detail, hint) {
   };
 }
 
+// Format one diagnostic line for console output.
 export function formatCheckLine(result) {
   return `[${STATUS_ICON[result.status]}] ${result.label.padEnd(16, " ")} ${result.detail}`;
 }
 
+// Format the optional remediation hint for a diagnostic result.
 export function formatCheckHint(result) {
   return result.hint ? `     → ${result.hint}` : "";
 }
 
+// Prefer local bin directories before PATH when resolving helper executables.
 export function getPreferredBinDirs(cwd = process.cwd(), env = process.env, home = os.homedir()) {
   const pathDirs = String(env.PATH ?? "")
     .split(path.delimiter)
@@ -58,6 +70,7 @@ export function getPreferredBinDirs(cwd = process.cwd(), env = process.env, home
   return Array.from(new Set([...extraDirs, ...pathDirs]));
 }
 
+// Augment PATH so project-local and user-local bins can be discovered reliably.
 export function createAugmentedEnv(cwd = process.cwd(), env = process.env, home = os.homedir()) {
   return {
     ...env,
@@ -65,6 +78,7 @@ export function createAugmentedEnv(cwd = process.cwd(), env = process.env, home 
   };
 }
 
+// Resolve an executable from PATH-like locations without spawning a shell.
 export function findExecutable(command, options = {}) {
   const cwd = options.cwd ?? process.cwd();
   const env = options.env ?? process.env;
@@ -93,6 +107,7 @@ export function findExecutable(command, options = {}) {
   return null;
 }
 
+// Execute a command with buffered output, timeout handling, and optional streaming hooks.
 export async function runCommand(command, args = [], options = {}) {
   const cwd = options.cwd ?? process.cwd();
   const env = options.env ?? process.env;
@@ -168,6 +183,7 @@ export async function runCommand(command, args = [], options = {}) {
   });
 }
 
+// Read and parse `config.json`, returning existence and parse-state metadata.
 export async function readProjectConfig(cwd = process.cwd(), configPath = path.join(cwd, "config.json")) {
   try {
     const rawText = await readFile(configPath, "utf8");
@@ -198,6 +214,7 @@ export async function readProjectConfig(cwd = process.cwd(), configPath = path.j
   }
 }
 
+// Resolve relative config paths against the config file location.
 export function resolveConfigValue(configPath, value) {
   if (typeof value !== "string" || value.trim().length === 0) {
     return null;
@@ -205,6 +222,7 @@ export function resolveConfigValue(configPath, value) {
   return path.isAbsolute(value) ? value : path.resolve(path.dirname(configPath), value);
 }
 
+// Compare semantic versions without pulling in an extra dependency.
 export function compareSemver(actual, minimum) {
   const actualParts = actual.split(".").map((part) => Number.parseInt(part, 10));
   const minimumParts = minimum.split(".").map((part) => Number.parseInt(part, 10));
@@ -218,11 +236,13 @@ export function compareSemver(actual, minimum) {
   return 0;
 }
 
+// Extract the first `x.y.z` style version from command output.
 export function extractVersion(text) {
   const match = text.match(/(\d+\.\d+\.\d+)/);
   return match?.[1] ?? null;
 }
 
+// Grade `lark-cli auth status` output into a doctor-style result.
 export function assessLarkAuthPayload(payload) {
   if (!payload || typeof payload !== "object") {
     return createResult("lark-auth", LARK_GROUP, "Lark 登录态", "fail", "lark-cli auth status 输出不可识别", "运行 lark-cli auth login");
@@ -265,6 +285,7 @@ export function assessLarkAuthPayload(payload) {
   return createResult("lark-auth", LARK_GROUP, "Lark 登录态", "warn", `identity=${identity}`);
 }
 
+// Grade persisted OpenCode provider credentials into a doctor-style result.
 export function assessOpencodeAuthPayload(payload, now = Date.now()) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return createResult(
@@ -332,6 +353,7 @@ export function assessOpencodeAuthPayload(payload, now = Date.now()) {
   );
 }
 
+// Check whether `config.json` exists and parses correctly.
 export async function checkConfigExists(options = {}) {
   const cwd = options.cwd ?? process.cwd();
   const configPath = options.configPath ?? path.join(cwd, "config.json");
@@ -345,6 +367,7 @@ export async function checkConfigExists(options = {}) {
   return createResult("config-exists", BRIDGE_GROUP, "配置文件", "pass", "config.json 已加载");
 }
 
+// Validate required Feishu credentials in `config.json`.
 export async function checkConfigFeishu(options = {}) {
   const state = options.state ?? await readProjectConfig(options.cwd, options.configPath);
   if (!state.exists || state.error || !state.config) {
@@ -359,6 +382,7 @@ export async function checkConfigFeishu(options = {}) {
   return createResult("config-feishu", BRIDGE_GROUP, "飞书配置", "pass", "appId / appSecret 已填写");
 }
 
+// Validate required OpenCode settings in `config.json`.
 export async function checkConfigOpencode(options = {}) {
   const state = options.state ?? await readProjectConfig(options.cwd, options.configPath);
   if (!state.exists || state.error || !state.config) {
@@ -372,6 +396,7 @@ export async function checkConfigOpencode(options = {}) {
   return createResult("config-opencode", BRIDGE_GROUP, "OpenCode 配置", "pass", "baseUrl / directory 已填写");
 }
 
+// Validate `server.publicBaseUrl` when card actions require a public callback.
 export async function checkConfigPublicUrl(options = {}) {
   const state = options.state ?? await readProjectConfig(options.cwd, options.configPath);
   if (!state.exists || state.error || !state.config) {
@@ -388,6 +413,7 @@ export async function checkConfigPublicUrl(options = {}) {
   return createResult("config-publicurl", BRIDGE_GROUP, "公网回调", "pass", "publicBaseUrl 已配置");
 }
 
+// Check the local Node.js major version against the runtime minimum.
 export async function checkNodeVersion(options = {}) {
   const version = options.version ?? process.version;
   const major = Number.parseInt(String(version).replace(/^v/, "").split(".")[0] ?? "0", 10);
@@ -397,6 +423,7 @@ export async function checkNodeVersion(options = {}) {
   return createResult("node-version", BRIDGE_GROUP, "Node.js", "fail", `当前版本 ${version}，需要 >= v${MIN_NODE_MAJOR}`, `先安装 Node.js ${MIN_NODE_MAJOR}+`);
 }
 
+// Check whether project dependencies have already been installed.
 export async function checkDepsInstalled(options = {}) {
   const cwd = options.cwd ?? process.cwd();
   const nodeModulesDir = path.join(cwd, "node_modules");
@@ -406,6 +433,7 @@ export async function checkDepsInstalled(options = {}) {
   return createResult("deps-installed", BRIDGE_GROUP, "项目依赖", "fail", "未检测到 node_modules", "运行 npm install");
 }
 
+// Detect a usable Python interpreter for document helper scripts.
 export async function checkPythonBin(options = {}) {
   const executable = (options.findExecutableFn ?? findExecutable)("python3", options)
     ?? (options.findExecutableFn ?? findExecutable)("python", options);
@@ -415,6 +443,7 @@ export async function checkPythonBin(options = {}) {
   return createResult("python-bin", BRIDGE_GROUP, "Python", "fail", "未检测到 Python 解释器", "安装 python3 后重试");
 }
 
+// Check whether the Python requirements file is present in the repo.
 export async function checkPythonToolsRequirements(options = {}) {
   const cwd = options.cwd ?? process.cwd();
   const requirementsPath = path.join(cwd, "scripts", "python", "requirements.txt");
@@ -424,6 +453,7 @@ export async function checkPythonToolsRequirements(options = {}) {
   return createResult("python-tools-req", BRIDGE_GROUP, "Python 依赖", "warn", "未检测到 scripts/python/requirements.txt");
 }
 
+// Attempt to import the Python modules required by document helper scripts.
 export async function checkPythonToolModules(options = {}) {
   const executable = (options.findExecutableFn ?? findExecutable)("python3", options)
     ?? (options.findExecutableFn ?? findExecutable)("python", options);
@@ -448,6 +478,7 @@ export async function checkPythonToolModules(options = {}) {
   }
 }
 
+// Detect the `opencode` executable from the current environment.
 export async function checkOpencodeBin(options = {}) {
   const executable = (options.findExecutableFn ?? findExecutable)("opencode", options);
   if (executable) {
@@ -456,6 +487,7 @@ export async function checkOpencodeBin(options = {}) {
   return createResult("opencode-bin", BRIDGE_GROUP, "OpenCode 命令", "fail", "未检测到 opencode", "安装 OpenCode 后重试");
 }
 
+// Call the OpenCode health endpoint defined by the current config.
 export async function checkOpencodeServe(options = {}) {
   const state = options.state ?? await readProjectConfig(options.cwd, options.configPath);
   if (!state.exists || state.error || !state.config) {
@@ -477,6 +509,7 @@ export async function checkOpencodeServe(options = {}) {
   }
 }
 
+// Read persisted OpenCode auth state and report whether providers are ready.
 export async function checkOpencodeAuth(options = {}) {
   const executable = (options.findExecutableFn ?? findExecutable)("opencode", options);
   if (!executable) {
@@ -490,6 +523,7 @@ export async function checkOpencodeAuth(options = {}) {
   return assessOpencodeAuthPayload(payload);
 }
 
+// Inspect available providers/models from the OpenCode config endpoint.
 export async function checkOpencodeModels(options = {}) {
   const state = options.state ?? await readProjectConfig(options.cwd, options.configPath);
   if (!state.exists || state.error || !state.config) {
@@ -531,6 +565,7 @@ export async function checkOpencodeModels(options = {}) {
   }
 }
 
+// Validate the configured OpenCode working directory and its repository shape.
 export async function checkOpencodeDirectory(options = {}) {
   const state = options.state ?? await readProjectConfig(options.cwd, options.configPath);
   if (!state.exists || state.error || !state.config) {
@@ -561,6 +596,7 @@ export async function checkOpencodeDirectory(options = {}) {
   );
 }
 
+// Detect the `lark-cli` executable.
 export async function checkLarkBin(options = {}) {
   const executable = (options.findExecutableFn ?? findExecutable)("lark-cli", options);
   if (executable) {
@@ -569,6 +605,7 @@ export async function checkLarkBin(options = {}) {
   return createResult("lark-bin", LARK_GROUP, "Lark CLI", "fail", "未检测到 lark-cli", "运行 npm install -g @larksuite/cli");
 }
 
+// Check the installed lark-cli version against the recommended minimum.
 export async function checkLarkVersion(options = {}) {
   const executable = (options.findExecutableFn ?? findExecutable)("lark-cli", options);
   if (!executable) {
@@ -593,6 +630,7 @@ export async function checkLarkVersion(options = {}) {
   }
 }
 
+// Run `lark-cli auth status` and normalize the result into doctor output.
 export async function checkLarkAuth(options = {}) {
   const executable = (options.findExecutableFn ?? findExecutable)("lark-cli", options);
   if (!executable) {
@@ -611,6 +649,7 @@ export async function checkLarkAuth(options = {}) {
   }
 }
 
+// Run `lark-cli doctor` and summarize whether the CLI environment looks healthy.
 export async function checkLarkDoctor(options = {}) {
   const executable = (options.findExecutableFn ?? findExecutable)("lark-cli", options);
   if (!executable) {
@@ -632,6 +671,7 @@ export async function checkLarkDoctor(options = {}) {
   }
 }
 
+// Compare the configured app id with local lark-cli app metadata when available.
 export async function checkLarkAppMatch(options = {}) {
   const state = options.state ?? await readProjectConfig(options.cwd, options.configPath);
   if (!state.exists || state.error || !state.config) {
@@ -653,6 +693,7 @@ export async function checkLarkAppMatch(options = {}) {
   return createResult("lark-app-match", LARK_GROUP, "应用一致性", "warn", `bridge=${configAppId}, lark-cli=${larkAppId}`);
 }
 
+// Validate whether Obsidian sync is enabled and correctly pointed at a vault path.
 export async function checkObsidianSync(options = {}) {
   const state = options.state ?? await readProjectConfig(options.cwd, options.configPath);
   if (!state.exists || state.error || !state.config) {
@@ -694,6 +735,7 @@ export async function checkObsidianSync(options = {}) {
   return createResult("obsidian-sync", MEMORY_GROUP, "Obsidian 同步", "pass", vaultPath);
 }
 
+// Check whether a build output exists so the runtime can start without tsx.
 export async function checkBuildExists(options = {}) {
   const cwd = options.cwd ?? process.cwd();
   const distEntry = findBuildEntry(cwd);
@@ -703,6 +745,7 @@ export async function checkBuildExists(options = {}) {
   return createResult("build-exists", BRIDGE_GROUP, "构建产物", "warn", "未检测到 dist/index.js 或 dist/src/index.js");
 }
 
+// Check whether the configured Bridge port is currently free.
 export async function checkPortAvailable(options = {}) {
   const state = options.state ?? await readProjectConfig(options.cwd, options.configPath);
   if (!state.exists || state.error || !state.config) {
@@ -723,6 +766,7 @@ export async function checkPortAvailable(options = {}) {
   }
 }
 
+// Run the bridge-related diagnostics that gate local startup.
 export async function runBridgeChecks(options = {}) {
   const cwd = options.cwd ?? process.cwd();
   const configPath = options.configPath ?? path.join(cwd, "config.json");
@@ -753,6 +797,7 @@ export async function runBridgeChecks(options = {}) {
   return results;
 }
 
+// Run lark-cli related diagnostics separately for grouped doctor output.
 export async function runLarkChecks(options = {}) {
   const cwd = options.cwd ?? process.cwd();
   const configPath = options.configPath ?? path.join(cwd, "config.json");
@@ -773,6 +818,7 @@ export async function runLarkChecks(options = {}) {
   return results;
 }
 
+// Aggregate bridge, lark, and memory diagnostics into one ordered list.
 export async function runAllChecks(options = {}) {
   const bridge = await runBridgeChecks(options);
   const lark = await runLarkChecks(options);
@@ -783,10 +829,12 @@ export async function runAllChecks(options = {}) {
   return [...bridge, ...lark, ...memory];
 }
 
+// Map grouped diagnostic results to the process exit code used by doctor/onboard.
 export function getDoctorExitCode(results) {
   return results.some((result) => result.group === BRIDGE_GROUP && result.status === "fail") ? 1 : 0;
 }
 
+// Read the local `lark-cli` config file when it exists.
 export async function readLarkCliConfig(home = os.homedir()) {
   const configPath = path.join(home, ".lark-cli", "config.json");
   try {
@@ -796,6 +844,7 @@ export async function readLarkCliConfig(home = os.homedir()) {
   }
 }
 
+// Read persisted OpenCode auth credentials from the CLI config directory.
 export async function readOpencodeAuth(home = os.homedir(), options = {}) {
   for (const configPath of getOpencodeAuthPaths(home, options)) {
     try {
@@ -808,6 +857,7 @@ export async function readOpencodeAuth(home = os.homedir(), options = {}) {
   return null;
 }
 
+// Resolve candidate paths where OpenCode auth state may be stored.
 export function getOpencodeAuthPaths(home = os.homedir(), options = {}) {
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
@@ -838,6 +888,7 @@ export function getOpencodeAuthPaths(home = os.homedir(), options = {}) {
   return Array.from(new Set(candidates));
 }
 
+// Find the preferred built Bridge entry file if a build has already been produced.
 export function findBuildEntry(cwd = process.cwd()) {
   const candidates = [
     path.join(cwd, "dist", "index.js"),
@@ -846,6 +897,7 @@ export function findBuildEntry(cwd = process.cwd()) {
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
+// Verify that a TCP port can be bound on the requested host.
 export async function assertPortAvailable(port, host = "127.0.0.1") {
   await new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -862,6 +914,7 @@ export async function assertPortAvailable(port, host = "127.0.0.1") {
   });
 }
 
+// Terminate a spawned child process across supported platforms.
 export async function terminateChild(child, platform = process.platform) {
   if (!child.pid) {
     return;
@@ -901,18 +954,22 @@ export async function terminateChild(child, platform = process.platform) {
   });
 }
 
+// Apply Windows executable extensions when checking PATH candidates.
 function appendExtension(command, extension) {
   return command.toLowerCase().endsWith(extension.toLowerCase()) ? command : `${command}${extension}`;
 }
 
+// Narrow ENOENT-like failures when reading config or auth files.
 function isMissingFileError(error) {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
 }
 
+// Normalize base URLs before appending REST paths.
 function ensureTrailingSlash(value) {
   return value.endsWith("/") ? value : `${value}/`;
 }
 
+// Treat placeholder strings as missing config values.
 function isConfiguredValue(value) {
   if (typeof value !== "string") {
     return false;
@@ -924,6 +981,7 @@ function isConfiguredValue(value) {
   return !["xxx", "cli_xxx", "ou_xxx"].includes(trimmed);
 }
 
+// Format provider ids into more readable names for diagnostics.
 function formatProviderName(providerId) {
   if (providerId === "openai") return "OpenAI";
   if (providerId === "anthropic") return "Anthropic";
@@ -931,10 +989,12 @@ function formatProviderName(providerId) {
   return String(providerId);
 }
 
+// Detect placeholder public URLs copied from examples.
 function isExampleUrl(value) {
   return typeof value === "string" && value.includes("example.com");
 }
 
+// Parse JSON command output without throwing.
 function tryParseJson(text) {
   const trimmed = text.trim();
   if (trimmed.length === 0) {
@@ -947,6 +1007,7 @@ function tryParseJson(text) {
   }
 }
 
+// Compress command output into one diagnostic-friendly summary line.
 function summarizeCommandOutput(result) {
   const text = `${result.stdout}\n${result.stderr}`.trim();
   if (result.timedOut) {
