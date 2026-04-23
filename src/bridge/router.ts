@@ -14,6 +14,8 @@ export type RoutedText =
       | { kind: "status" }
       | { kind: "abort" }
       | { kind: "models"; provider?: string | undefined }
+      | { kind: "model-use"; model: string }
+      | { kind: "model-reset" }
       | { kind: "leave" }
       | { kind: "who" }
       | { kind: "knowledge-query"; question: string; explicit?: boolean | undefined }
@@ -22,10 +24,10 @@ export type RoutedText =
       | { kind: "knowledge-mode-start" }
       | { kind: "knowledge-mode-end" }
       | { kind: "sessions" }
-      | { kind: "sessions-all" }
+      | { kind: "sessions-all"; query?: string | undefined }
       | { kind: "sessions-select"; index?: number | undefined; query?: string | undefined }
       | { kind: "close"; index?: number | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined }
-      | { kind: "delete"; index?: number | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined; confirm: boolean }
+      | { kind: "delete"; index?: number | undefined; sessionId?: string | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined; confirm: boolean }
       | { kind: "allow"; policy: "once" | "always" }
       | { kind: "deny" }
       | { kind: "passthrough"; name: string; arguments: string[] };
@@ -73,6 +75,14 @@ export function routeIncomingText(text: string): RoutedText {
     return { kind: "command", command: { kind: "models", provider: args[0] } };
   }
 
+  if (rawCommand === "model" && args[0] === "use") {
+    return { kind: "command", command: { kind: "model-use", model: args.length === 2 ? args[1] ?? "" : "" } };
+  }
+
+  if (rawCommand === "model" && args.length === 1 && args[0] === "reset") {
+    return { kind: "command", command: { kind: "model-reset" } };
+  }
+
   if (rawCommand === "leave" && args.length === 0) {
     return { kind: "command", command: { kind: "leave" } };
   }
@@ -111,6 +121,14 @@ export function routeIncomingText(text: string): RoutedText {
 
   if (rawCommand === "sessions" && args.length === 1 && args[0] === "all") {
     return { kind: "command", command: { kind: "sessions-all" } };
+  }
+
+  if (rawCommand === "sessions" && args.length > 1 && args[0] === "all") {
+    return { kind: "command", command: { kind: "sessions-all", query: args.slice(1).join(" ").trim() } };
+  }
+
+  if (rawCommand === "sessions" && args.length > 1 && args[0] === "find") {
+    return { kind: "command", command: { kind: "sessions-all", query: args.slice(1).join(" ").trim() } };
   }
 
   if (rawCommand === "sessions" && args.length === 1 && /^\d+$/.test(args[0] ?? "")) {
@@ -218,6 +236,13 @@ export function routeIncomingText(text: string): RoutedText {
     };
   }
 
+  if (rawCommand === "delete" && args.length === 1 && args[0]) {
+    return {
+      kind: "command",
+      command: { kind: "delete", sessionId: args[0], confirm: false },
+    };
+  }
+
   if (rawCommand === "delete" && args.length === 2 && /^\d+$/.test(args[0] ?? "") && args[1] === "confirm") {
     return {
       kind: "command",
@@ -236,6 +261,13 @@ export function routeIncomingText(text: string): RoutedText {
     return {
       kind: "command",
       command: { kind: "delete", range: { start, end }, confirm: true },
+    };
+  }
+
+  if (rawCommand === "delete" && args.length === 2 && args[0] && args[1] === "confirm") {
+    return {
+      kind: "command",
+      command: { kind: "delete", sessionId: args[0], confirm: true },
     };
   }
 

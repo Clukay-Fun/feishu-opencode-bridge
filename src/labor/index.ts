@@ -140,7 +140,7 @@ export class LaborSkillService {
       allowedExtensions: this.config.ingest.allowedExtensions,
       maxFileSizeMb: this.config.ingest.maxFileSizeMb,
       maxExtractedTextLength: 20_000,
-      parseTextExtensions: [".pdf", ".docx", ".txt", ".md", ".xls", ".xlsx", ".csv"],
+      parseTextExtensions: [".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp", ".xls", ".xlsx", ".csv"],
     });
     const cache = await this.readCache();
     const fileHash = buildLaborCacheKey(preparedFile.buffer);

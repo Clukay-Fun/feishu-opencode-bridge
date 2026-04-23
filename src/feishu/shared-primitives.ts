@@ -6,6 +6,7 @@
  */
 import type { QueueNotice } from "../bridge/turn.js";
 import { column, columnSet, markdown, standardIcon, type IconDef } from "./card-builder.js";
+import { normalizeFeishuMarkdown } from "./markdown.js";
 
 export type FeishuPostPayload = {
   msg_type: "post" | "interactive";
@@ -48,7 +49,7 @@ export function buildPostMarkdownPayload(markdownText: string): FeishuPostPayloa
     content: JSON.stringify({
       zh_cn: {
         title: "",
-        content: [[{ tag: "md", text: markdownText }]],
+        content: [[{ tag: "md", text: normalizeFeishuMarkdown(markdownText) }]],
       },
     }),
   };
@@ -188,13 +189,14 @@ export function escapeText(text: string): string {
 export function cardMarkdown(content: string, textSize = "normal", opts?: { icon?: IconDef; textAlign?: string }): Record<string, unknown> {
   return {
     tag: "markdown",
-    content,
+    content: normalizeFeishuMarkdown(content),
     text_align: opts?.textAlign ?? "left",
     text_size: textSize,
     margin: "0px 0px 0px 0px",
     ...(opts?.icon ? { icon: standardIcon(opts.icon.token, opts.icon.color) } : {}),
   };
 }
+
 
 /** 构建通用标题行。 */
 export function buildTitleLine(content: string, icon?: IconDef): Record<string, unknown> {

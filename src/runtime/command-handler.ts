@@ -17,7 +17,7 @@ import {
 import { buildNoticeCardPayload, type FeishuPostPayload } from "../feishu/shared-primitives.js";
 import type { TranscriptType } from "../logging/logger.js";
 import type { OpenCodeMessage, OpenCodeProvidersResponse, OpenCodeSession, OpenCodeSessionStatus } from "../opencode/client.js";
-import type { SessionBindingRecord, SessionWindowRecord } from "../store/mappings.js";
+import type { SessionBindingRecord, SessionWindowModelOverride, SessionWindowRecord } from "../store/mappings.js";
 import type { IncomingChatMessage } from "./app.js";
 import {
   buildModelCardView,
@@ -36,6 +36,7 @@ import {
   normalizeSessionWindowRecord,
   removeSession,
   setActiveSession,
+  setModelOverride,
   updateSessionLabel,
 } from "./session-windows.js";
 
@@ -121,6 +122,8 @@ const BRIDGE_OWNED_COMMAND_KINDS = new Set<Extract<RoutedText, { kind: "command"
   "status",
   "abort",
   "models",
+  "model-use",
+  "model-reset",
   "leave",
   "who",
   "sessions",
@@ -278,6 +281,46 @@ export class CommandHandler {
       return;
     }
 
+    if (command.kind === "model-use") {
+      const modelOverride = parseWindowModelOverride(command.model);
+      if (!modelOverride) {
+        await this.sendNotice(message, {
+          title: "模型切换失败",
+          template: "red",
+          icon: "error_filled",
+          message: "请使用 `/model use <provider/model>`，例如 `/model use openai/gpt-5.4-mini`。",
+        });
+        return;
+      }
+      const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
+      await this.context.saveSessionWindow(
+        message.conversationKey,
+        setModelOverride(window, modelOverride, this.context.config.bridge.maxSessionsPerWindow),
+      );
+      await this.sendNotice(message, {
+        title: "已切换窗口模型",
+        template: "green",
+        icon: "switch_filled",
+        message: `当前窗口后续对话将使用 \`${modelOverride.providerID}/${modelOverride.modelID}\`。\n发送 \`/model reset\` 可恢复 OpenCode 默认模型。`,
+      });
+      return;
+    }
+
+    if (command.kind === "model-reset") {
+      const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
+      await this.context.saveSessionWindow(
+        message.conversationKey,
+        setModelOverride(window, undefined, this.context.config.bridge.maxSessionsPerWindow),
+      );
+      await this.sendNotice(message, {
+        title: "已恢复默认模型",
+        template: "green",
+        icon: "refresh_filled",
+        message: "当前窗口后续对话将使用 OpenCode 默认模型。",
+      });
+      return;
+    }
+
     if (command.kind === "sessions") {
       const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
       const currentSession = getActiveSession(window);
@@ -310,16 +353,23 @@ export class CommandHandler {
       const currentSession = getActiveSession(window);
       const openCodeSessions = await this.context.listOpenCodeSessionsById();
       const visibleIds = new Set(window.sessions.map((session) => session.sessionId));
-      const sessions = [...openCodeSessions.values()].sort((a, b) => (b.time?.updated ?? b.time?.created ?? 0) - (a.time?.updated ?? a.time?.created ?? 0));
+      const query = normalizeSessionLookupText(command.query);
+      const sessions = [...openCodeSessions.values()]
+        .filter((session) => !query || sessionMatchesQuery(session, query))
+        .sort((a, b) => (b.time?.updated ?? b.time?.created ?? 0) - (a.time?.updated ?? a.time?.created ?? 0));
       if (sessions.length === 0) {
-        await this.context.sendPayload(message.chatId, buildSessionListCardPayload({ items: [], footer: "发送 `/new` 创建第一个会话", emptyText: "暂无会话" }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "全部会话", len: 4 }, { replyToMessageId: message.messageId });
+        await this.context.sendPayload(message.chatId, buildSessionListCardPayload({
+          items: [],
+          footer: query ? "发送 `/sessions all` 查看全部会话" : "发送 `/new` 创建第一个会话",
+          emptyText: query ? "未找到匹配会话" : "暂无会话",
+        }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "全部会话", len: 4 }, { replyToMessageId: message.messageId });
         return;
       }
       const options = sessions.map((session, index) => ({ index: index + 1, sessionId: session.id, title: resolveDisplayLabel(session, session.title ?? session.slug ?? session.id, session.id), current: session.id === currentSession?.sessionId, inWindow: visibleIds.has(session.id) }));
       this.context.setPendingInteraction(message.conversationKey, { kind: "session-select", options, expiresAt: Date.now() + SESSION_SELECTION_TTL_MS });
       const pages = chunkArray(options, SESSIONS_ALL_PAGE_SIZE);
       for (const [pageIndex, page] of pages.entries()) {
-        const footer = `第 ${pageIndex + 1}/${pages.length} 页 · 发送 \`/switch <编号>\` 恢复或切换 · \`/delete <编号>\` 彻底删除 · 30s 内有效`;
+        const footer = `${query ? `关键词：${command.query?.trim()} · ` : ""}第 ${pageIndex + 1}/${pages.length} 页 · 发送 \`/switch <编号>\` 恢复或切换 · \`/delete <编号>\` 或 \`/delete <sessionId>\` 彻底删除 · 30s 内有效`;
         await this.context.sendPayload(message.chatId, buildSessionListCardPayload({
           items: page.map((option) => ({ index: option.index, title: option.title, current: option.current, archived: !option.inWindow, meta: option.current ? "当前" : option.inWindow ? "窗口中" : "已隐藏" })),
           footer,
@@ -440,14 +490,39 @@ export class CommandHandler {
         }
         this.context.setPendingInteraction(message.conversationKey, { kind: "session-delete-confirm", all: true, sessionIds: window.sessions.map((session) => session.sessionId), expiresAt: Date.now() + SESSION_DELETE_CONFIRM_TTL_MS });
         await this.sendNotice(message, {
-          title: "提醒",
+          title: "确认彻底删除全部会话",
           template: "yellow",
           icon: "maybe_outlined",
-          message: "确认彻底删除当前窗口全部会话？发送 `/delete all confirm`",
+          message: buildDeleteConfirmMessage({
+            target: `当前窗口全部会话\n数量：${window.sessions.length} 个`,
+            confirmCommand: "/delete all confirm",
+          }),
         });
         return;
       }
       if (!command.confirm) {
+        if (command.sessionId) {
+          const target = await this.resolveDeleteSessionById(message, command.sessionId);
+          if (!target.ok) {
+            await this.context.sendMarkdown(message.chatId, target.message, message.messageId);
+            return;
+          }
+          if (this.context.isSessionBusy(message.conversationKey, target.sessionId)) {
+            await this.sendBusyNotice(message);
+            return;
+          }
+          this.context.setPendingInteraction(message.conversationKey, { kind: "session-delete-confirm", sessionId: target.sessionId, title: target.title, expiresAt: Date.now() + SESSION_DELETE_CONFIRM_TTL_MS });
+          await this.sendNotice(message, {
+            title: "确认彻底删除会话",
+            template: "yellow",
+            icon: "maybe_outlined",
+            message: buildDeleteConfirmMessage({
+              target: `会话：${target.title}\nID：${target.sessionId}`,
+              confirmCommand: `/delete ${target.sessionId} confirm`,
+            }),
+          });
+          return;
+        }
         if (command.range) {
           const targets = await this.context.resolveSessionCommandTargets(message, command.range);
           if (!targets.ok) {
@@ -461,12 +536,14 @@ export class CommandHandler {
           }
           const rangeLabel = `${command.range.start}-${command.range.end}`;
           this.context.setPendingInteraction(message.conversationKey, { kind: "session-delete-confirm", indices: targets.indices, rangeLabel, sessionIds: targets.sessions.map((session) => session.sessionId), titles: targets.sessions.map((session) => session.label), expiresAt: Date.now() + SESSION_DELETE_CONFIRM_TTL_MS });
-          const confirmText = `确认删除会话 #${rangeLabel}？发送 \`/delete ${rangeLabel} confirm\``;
           await this.sendNotice(message, {
-            title: "提醒",
+            title: "确认彻底删除多个会话",
             template: "yellow",
             icon: "maybe_outlined",
-            message: confirmText,
+            message: buildDeleteConfirmMessage({
+              target: `编号：#${rangeLabel}\n数量：${targets.sessions.length} 个\n标题：${targets.sessions.map((session) => session.label).slice(0, 5).join("、")}`,
+              confirmCommand: `/delete ${rangeLabel} confirm`,
+            }),
           });
           return;
         }
@@ -480,12 +557,16 @@ export class CommandHandler {
           return;
         }
         this.context.setPendingInteraction(message.conversationKey, { kind: "session-delete-confirm", index: target.index, sessionId: target.session.sessionId, title: target.session.label, expiresAt: Date.now() + SESSION_DELETE_CONFIRM_TTL_MS });
-        const confirmText = target.index > 0 ? `确认删除会话 #${target.index}？发送 \`/delete ${target.index} confirm\`` : "确认删除当前会话？发送 `/delete confirm`";
         await this.sendNotice(message, {
-          title: "提醒",
+          title: "确认彻底删除会话",
           template: "yellow",
           icon: "maybe_outlined",
-          message: confirmText,
+          message: buildDeleteConfirmMessage({
+            target: target.index > 0
+              ? `编号：#${target.index}\n标题：${target.session.label}`
+              : `当前会话：${target.session.label}`,
+            confirmCommand: target.index > 0 ? `/delete ${target.index} confirm` : "/delete confirm",
+          }),
         });
         return;
       }
@@ -527,6 +608,10 @@ export class CommandHandler {
       }
       if (command.index !== undefined && pending.index !== command.index) {
         await this.context.sendMarkdown(message.chatId, "删除确认编号不匹配，请重新发送 `/delete <编号>`。", message.messageId);
+        return;
+      }
+      if (command.sessionId && pending.sessionId !== command.sessionId) {
+        await this.context.sendMarkdown(message.chatId, "删除确认会话不匹配，请重新发送 `/delete <sessionId>`。", message.messageId);
         return;
       }
       if (command.range) {
@@ -631,7 +716,7 @@ export class CommandHandler {
         title: "命令已更新",
         template: "yellow",
         icon: "maybe_outlined",
-        message: `模型列表入口已从 \`/model\` 迁移到 ${replacement}。切换模型仍继续使用 \`/model use <provider/model>\` 和 \`/model reset\`。`,
+        message: `模型列表入口已从 \`/model\` 迁移到 ${replacement}。切换模型由 bridge 窗口级接管：\`/model use <provider/model>\` 或 \`/model reset\`。`,
       });
       return;
     }
@@ -703,6 +788,34 @@ export class CommandHandler {
     }
 
     await this.switchToSession(message, window, matches[0] as SessionSelectionOption, { clearPending: false, openCodeSessions });
+  }
+
+  private async resolveDeleteSessionById(
+    message: CommandMessage,
+    rawSessionId: string,
+  ): Promise<{ ok: true; sessionId: string; title: string } | { ok: false; message: string }> {
+    const sessionId = rawSessionId.trim();
+    if (!sessionId) {
+      return { ok: false, message: "请在 `/delete` 后输入 sessionId。" };
+    }
+
+    const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
+    const windowSession = window.sessions.find((session) => session.sessionId === sessionId);
+    if (windowSession) {
+      return { ok: true, sessionId, title: windowSession.label };
+    }
+
+    const openCodeSessions = await this.context.listOpenCodeSessionsById();
+    const session = openCodeSessions.get(sessionId);
+    if (!session) {
+      return { ok: false, message: "未找到匹配的 sessionId，请发送 `/sessions all <关键词>` 搜索。" };
+    }
+
+    return {
+      ok: true,
+      sessionId,
+      title: resolveDisplayLabel(session, session.title ?? session.slug ?? session.id, session.id),
+    };
   }
 
   private async switchToSession(
@@ -777,6 +890,39 @@ export class CommandHandler {
       message: "当前会话正在执行任务，请先发送 `/abort`。",
     });
   }
+}
+
+function parseWindowModelOverride(value: string): SessionWindowModelOverride | null {
+  const normalized = value.trim();
+  const slashIndex = normalized.indexOf("/");
+  if (slashIndex <= 0 || slashIndex >= normalized.length - 1) {
+    return null;
+  }
+  const providerID = normalized.slice(0, slashIndex).trim();
+  const modelID = normalized.slice(slashIndex + 1).trim();
+  if (!providerID || !modelID) {
+    return null;
+  }
+  return { providerID, modelID };
+}
+
+function buildDeleteConfirmMessage(input: { target: string; confirmCommand: string }): string {
+  return [
+    "该操作会从当前窗口移除目标，并删除 OpenCode 本地真实 session。",
+    "这不是 `/close` 软删除，删除后不可通过 `/sessions all` 恢复。",
+    "",
+    input.target,
+    "",
+    `确认请发送 \`${input.confirmCommand}\`。`,
+  ].join("\n");
+}
+
+function sessionMatchesQuery(session: OpenCodeSession, normalizedQuery: string): boolean {
+  return [
+    session.id,
+    session.title,
+    session.slug,
+  ].some((value) => normalizeSessionLookupText(value).includes(normalizedQuery));
 }
 
 function normalizeSessionLookupText(value: string | undefined): string {

@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.38 - 2026-04-23
+
+### Added
+- Added window-level `/model use <provider/model>` and `/model reset` handling, with model overrides threaded into OpenCode prompt requests.
+- Added keyword filtering for `/sessions all` plus direct hard-delete confirmation by session id.
+- Added DOCX logical-page deletion support in `contract_edit.py`.
+
+### Changed
+- Normalized Feishu Markdown code fences by removing language markers before post/card rendering.
+- Preserved fallback parser warnings when the document pipeline falls back from Python conversion to local parsers.
+
 ## 0.1.37 - 2026-04-23
 
 ### Added

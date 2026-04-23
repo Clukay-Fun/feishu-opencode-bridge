@@ -102,7 +102,7 @@ export async function parseDocument(fileName: string, buffer: Buffer): Promise<P
       return {
         ...fallback,
         fallbackChain: ["convert_document", ...fallback.fallbackChain],
-        warnings: pythonParsed?.error ? [pythonParsed.error] : [],
+        warnings: combineWarnings(pythonParsed?.error, fallback.warnings),
       };
     }
 
@@ -111,7 +111,7 @@ export async function parseDocument(fileName: string, buffer: Buffer): Promise<P
       return {
         ...fallback,
         fallbackChain: ["convert_document", ...fallback.fallbackChain],
-        warnings: pythonParsed?.error ? [pythonParsed.error] : [],
+        warnings: combineWarnings(pythonParsed?.error, fallback.warnings),
       };
     }
   }
@@ -240,6 +240,13 @@ function detectSectionPrefix(sourceFormat: string): string {
     default:
       return "文本";
   }
+}
+
+function combineWarnings(primary: string | undefined, warnings: string[]): string[] {
+  return [
+    ...(primary ? [primary] : []),
+    ...warnings,
+  ];
 }
 
 function sanitizeFileName(fileName: string): string {

@@ -1,3 +1,5 @@
+import { normalizeFeishuMarkdown } from "./markdown.js";
+
 /**
  * 职责: 提供飞书卡片元素级别的构建基元。
  * 关注点:
@@ -15,7 +17,7 @@ export type ColumnDef = Record<string, unknown>;
 export function markdown(content: string, opts?: { icon?: IconDef; size?: string }): Record<string, unknown> {
   return {
     tag: "markdown",
-    content,
+    content: normalizeFeishuMarkdown(content),
     text_align: "left",
     text_size: opts?.size ?? "normal_v2",
     margin: "0px 0px 0px 0px",

@@ -168,7 +168,7 @@ describe("routeIncomingText", () => {
     });
   });
 
-  it("routes /models to the provider listing command and leaves retired /model aliases as passthrough", () => {
+  it("routes /models to provider listing and model switch commands to bridge-owned window overrides", () => {
     expect(routeIncomingText("/models")).toEqual({
       kind: "command",
       command: { kind: "models" },
@@ -176,6 +176,14 @@ describe("routeIncomingText", () => {
     expect(routeIncomingText("/models openai")).toEqual({
       kind: "command",
       command: { kind: "models", provider: "openai" },
+    });
+    expect(routeIncomingText("/sessions all 劳动")).toEqual({
+      kind: "command",
+      command: { kind: "sessions-all", query: "劳动" },
+    });
+    expect(routeIncomingText("/sessions find 劳动 争议")).toEqual({
+      kind: "command",
+      command: { kind: "sessions-all", query: "劳动 争议" },
     });
     expect(routeIncomingText("/model")).toEqual({
       kind: "command",
@@ -187,11 +195,26 @@ describe("routeIncomingText", () => {
     });
     expect(routeIncomingText("/model use openai/gpt-5.4")).toEqual({
       kind: "command",
-      command: { kind: "passthrough", name: "model", arguments: ["use", "openai/gpt-5.4"] },
+      command: { kind: "model-use", model: "openai/gpt-5.4" },
     });
     expect(routeIncomingText("/model reset")).toEqual({
       kind: "command",
-      command: { kind: "passthrough", name: "model", arguments: ["reset"] },
+      command: { kind: "model-reset" },
+    });
+  });
+
+  it("routes direct session id deletion commands", () => {
+    expect(routeIncomingText("/delete ses_123")).toEqual({
+      kind: "command",
+      command: { kind: "delete", sessionId: "ses_123", confirm: false },
+    });
+    expect(routeIncomingText("/delete ses_123 confirm")).toEqual({
+      kind: "command",
+      command: { kind: "delete", sessionId: "ses_123", confirm: true },
+    });
+    expect(routeIncomingText("/delete 2-6 confirm")).toEqual({
+      kind: "command",
+      command: { kind: "delete", range: { start: 2, end: 6 }, confirm: true },
     });
   });
 

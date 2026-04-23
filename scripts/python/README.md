@@ -7,7 +7,7 @@
 - 合同文档处理
   - `contract_parse.py`
   - `contract_render.py`
-  - `contract_edit.py`
+  - `contract_edit.py`：支持条款删改、按标题删除、基于显式分页符/分节符的逻辑页删除
   - `contract_finalize.py`
   - `render_contract.py`
 - 文档解析

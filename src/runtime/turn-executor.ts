@@ -142,7 +142,7 @@ export type TurnExecutorContext = {
     get(key: string): RuntimeQueue;
   };
   opencode: {
-    promptAsync(sessionId: string, input: { system?: string; parts: Array<{ type: "text"; text: string }> }): Promise<unknown>;
+    promptAsync(sessionId: string, input: ReturnType<typeof buildPromptRequest>): Promise<unknown>;
     getSessionMessages(sessionId: string, limit: number): Promise<OpenCodeMessage[]>;
   };
   eventStream: {
@@ -442,7 +442,7 @@ export class TurnExecutor {
       });
 
       watchdog.start();
-      void this.context.opencode.promptAsync(turn.sessionId, buildPromptRequest(turn.text, systemPrompt))
+      void this.context.opencode.promptAsync(turn.sessionId, buildPromptRequest(turn.text, systemPrompt, turn.model))
         .then(() => {
           queue.replaceActive(transitionTurn(turn, "awaiting-sse"));
           void this.context.turnCardManager.updateTurnCard(turn.turnId, { status: "处理中", update: "请求已发送，等待事件流...", target: "step" });

@@ -53,6 +53,7 @@ describe("parseKnowledgeFile", () => {
     const parsed = await parseKnowledgeFile("demo.docx", Buffer.from("fake"));
     expect(parsed.sections.map((item) => item.location)).toEqual(["段落 1", "段落 2"]);
     expect(parsed.parserUsed).toBe("mammoth");
+    expect(parsed.warnings).toContain("python unavailable");
   });
 
   it("parses pdf pages via pdf-parse", async () => {

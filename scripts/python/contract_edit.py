@@ -5,19 +5,27 @@
 - 用段落级操作实现工作台发起的轻量编辑。
 - 返回已应用和跳过的操作，便于上游解释结果。
 """
+from __future__ import annotations
+
 import re
 from pathlib import Path
 from typing import Optional
 
 from docx import Document  # type: ignore
 from docx.oxml import OxmlElement  # type: ignore
+from docx.oxml.ns import qn  # type: ignore
 from docx.text.paragraph import Paragraph  # type: ignore
 
 from common.io import read_json_stdin, write_error_stderr, write_json_stdout
 
 CLAUSE_PATTERNS = [
     re.compile(r"^第[一二三四五六七八九十百零〇\d]+条"),
+    re.compile(r"^第[一二三四五六七八九十百零〇\d]+款"),
+    re.compile(r"^第[一二三四五六七八九十百零〇\d]+项"),
+    re.compile(r"^附件[一二三四五六七八九十百零〇\d]*"),
     re.compile(r"^[一二三四五六七八九十]+、"),
+    re.compile(r"^\(?[一二三四五六七八九十]+\)?[、.．]"),
+    re.compile(r"^\(?\d+\)?[、.．]"),
     re.compile(r"^\d+(?:\.\d+)+"),
 ]
 
@@ -41,6 +49,21 @@ def paragraph_text(paragraph: Paragraph) -> str:
 def is_clause_heading(text: str) -> bool:
     stripped = text.strip()
     return any(pattern.search(stripped) for pattern in CLAUSE_PATTERNS)
+
+
+"""Return whether a paragraph ends a logical page in DOCX XML."""
+def has_page_boundary(paragraph: Paragraph) -> bool:
+    element = paragraph._element
+    for br in element.iter(qn("w:br")):
+        if br.get(qn("w:type")) == "page":
+            return True
+    for rendered_break in element.iter(qn("w:lastRenderedPageBreak")):
+        if rendered_break is not None:
+            return True
+    for section in element.iter(qn("w:sectPr")):
+        if section is not None:
+            return True
+    return False
 
 
 """Remove one paragraph from the document tree."""
@@ -137,6 +160,29 @@ def delete_by_heading(document: Document, heading: str) -> bool:
     return True
 
 
+"""Delete logical pages split by explicit page/section breaks."""
+def delete_pages(document: Document, page_range: list[int] | tuple[int, int]) -> bool:
+    if len(page_range) != 2:
+        return False
+    start_page = int(page_range[0])
+    end_page = int(page_range[1])
+    if start_page <= 0 or end_page < start_page:
+        return False
+
+    paragraphs = iter_paragraphs(document)
+    targets: list[Paragraph] = []
+    current_page = 1
+    for paragraph in paragraphs:
+        if start_page <= current_page <= end_page:
+            targets.append(paragraph)
+        if has_page_boundary(paragraph):
+            current_page += 1
+
+    for paragraph in targets:
+        remove_paragraph(paragraph)
+    return len(targets) > 0
+
+
 """Apply supported edit operations and report which ones were skipped."""
 def apply_operations(document: Document, operations: list[dict]) -> tuple[int, list[dict]]:
     applied = 0
@@ -164,11 +210,9 @@ def apply_operations(document: Document, operations: list[dict]) -> tuple[int, l
             if heading:
                 ok = delete_by_heading(document, heading)
         elif op_type == "delete_pages":
-            skipped.append({
-                "operation": operation,
-                "reason": "python-docx 第一版暂不支持按页删除",
-            })
-            continue
+            page_range = operation.get("pageRange")
+            if isinstance(page_range, list) and len(page_range) == 2:
+                ok = delete_pages(document, page_range)
         else:
             skipped.append({
                 "operation": operation,

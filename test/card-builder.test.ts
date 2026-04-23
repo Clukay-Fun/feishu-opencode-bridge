@@ -28,6 +28,16 @@ describe("card-builder", () => {
     });
   });
 
+  it("normalizes code fence language markers", () => {
+    expect(markdown(["```sh", "npm test", "```"].join("\n"))).toEqual({
+      tag: "markdown",
+      content: ["```", "npm test", "```"].join("\n"),
+      text_align: "left",
+      text_size: "normal_v2",
+      margin: "0px 0px 0px 0px",
+    });
+  });
+
   it("builds column set with defaults", () => {
     expect(columnSet([{ tag: "column" }])).toEqual({
       tag: "column_set",

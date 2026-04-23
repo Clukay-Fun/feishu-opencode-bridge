@@ -190,6 +190,44 @@ describe("TurnExecutor text buffering", () => {
     expect(scheduleStreamUpdate).toHaveBeenCalledWith("turn_1", "fallback 最终回复");
     expect(replaceActive).toHaveBeenCalledWith(expect.objectContaining({ state: "done" }));
   });
+
+  it("passes a window-level model override to OpenCode prompt requests", async () => {
+    vi.useFakeTimers();
+    const context = createContext();
+    const promptAsync = vi.fn(async () => ({}));
+    context.queues.get = () => ({
+      peek: () => createTurn({ model: { providerID: "openai", modelID: "gpt-5.4-mini" } }),
+      replaceActive() {},
+      current: () => createTurn(),
+      finishActive() {},
+    });
+    context.opencode.promptAsync = promptAsync;
+    context.opencode.getSessionMessages = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([{
+        info: {
+          id: "msg_assistant",
+          role: "assistant",
+          sessionID: "ses_1",
+          finish: "stop",
+          time: { created: Date.now(), completed: Date.now() },
+        },
+        parts: [{ type: "text", text: "fallback 最终回复" }],
+      }]);
+    const executor = new TurnExecutor(context) as unknown as {
+      runTurn: (queueKey: string) => Promise<void>;
+    };
+
+    const run = executor.runTurn("queue-1");
+    await Promise.resolve();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await run;
+
+    expect(promptAsync).toHaveBeenCalledWith("ses_1", expect.objectContaining({
+      model: { providerID: "openai", modelID: "gpt-5.4-mini" },
+    }));
+  });
 });
 
 function createContext(): TurnExecutorContext {
@@ -261,7 +299,7 @@ function createContext(): TurnExecutorContext {
   };
 }
 
-function createTurn() {
+function createTurn(overrides: Record<string, unknown> = {}) {
   return {
     turnId: "turn_1",
     chatId: "oc_p2p_1",
@@ -273,6 +311,7 @@ function createTurn() {
     sessionId: "ses_1",
     plainText: "帮我处理一下",
     text: "帮我处理一下",
+    ...overrides,
   };
 }
 

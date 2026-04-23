@@ -16,9 +16,15 @@ export type SessionBindingRecord = {
   lastUsedAt: number;
 };
 
+export type SessionWindowModelOverride = {
+  providerID: string;
+  modelID: string;
+};
+
 export type SessionWindowRecord = {
   mode: SessionMode;
   interactionMode?: InteractionMode;
+  modelOverride?: SessionWindowModelOverride | undefined;
   activeSessionId: string | null;
   sessions: SessionBindingRecord[];
 };
@@ -213,6 +219,7 @@ function normalizeWindowRecord(value: unknown): SessionWindowRecord | null {
     return {
       mode,
       interactionMode: normalizeInteractionMode(value.interactionMode),
+      modelOverride: normalizeModelOverride(value.modelOverride),
       activeSessionId: null,
       sessions: [],
     };
@@ -226,12 +233,14 @@ function normalizeWindowRecord(value: unknown): SessionWindowRecord | null {
     ? {
       mode,
       interactionMode: normalizeInteractionMode(value.interactionMode),
+      modelOverride: normalizeModelOverride(value.modelOverride),
       activeSessionId,
       sessions: [findSessionById(sessions, activeSessionId) ?? pickMostRecentSession(sessions)!],
     }
     : {
       mode,
       interactionMode: normalizeInteractionMode(value.interactionMode),
+      modelOverride: normalizeModelOverride(value.modelOverride),
       activeSessionId,
       sessions: sessions.sort((a, b) => b.lastUsedAt - a.lastUsedAt),
     };
@@ -272,6 +281,18 @@ function createSingleWindow(sessionId: string, now: number, label: string): Sess
 // Normalize interaction mode values and default unknown values safely.
 function normalizeInteractionMode(value: unknown): InteractionMode {
   return value === "knowledge" ? "knowledge" : "default";
+}
+
+function normalizeModelOverride(value: unknown): SessionWindowModelOverride | undefined {
+  if (!isRecord(value) || typeof value.providerID !== "string" || typeof value.modelID !== "string") {
+    return undefined;
+  }
+  const providerID = value.providerID.trim();
+  const modelID = value.modelID.trim();
+  if (!providerID || !modelID) {
+    return undefined;
+  }
+  return { providerID, modelID };
 }
 
 // Read the latest session activity timestamp from a window record.

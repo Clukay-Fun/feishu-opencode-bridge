@@ -8,22 +8,19 @@ import type { PendingQuestionInteraction } from "../bridge/state.js";
 import type { BridgeTurn } from "../bridge/turn.js";
 import type { FeishuPostPayload, OutputView, ToolUpdateView } from "../feishu/shared-primitives.js";
 import type { ModelListCardView } from "../feishu/runtime-cards.js";
-import type { OpenCodeMessage, OpenCodeProvidersResponse, OpenCodeSession } from "../opencode/client.js";
+import type { OpenCodeMessage, OpenCodeModelRef, OpenCodeProvidersResponse, OpenCodeSession } from "../opencode/client.js";
 import type { SessionBindingRecord, SessionWindowRecord } from "../store/mappings.js";
 import type { IncomingChatMessage, PermissionCardActionValue } from "./app.js";
 import { getVisibleSessions } from "./session-windows.js";
 
 //#region Prompt composition
 // Build an OpenCode prompt payload from plain text and optional system prompt.
-export function buildPromptRequest(text: string, system?: string): { system?: string; parts: Array<{ type: "text"; text: string }> } {
-  return system
-    ? {
-      system,
-      parts: [{ type: "text", text }],
-    }
-    : {
-      parts: [{ type: "text", text }],
-    };
+export function buildPromptRequest(text: string, system?: string, model?: OpenCodeModelRef): { system?: string; model?: OpenCodeModelRef; parts: Array<{ type: "text"; text: string }> } {
+  return {
+    ...(system ? { system } : {}),
+    ...(model ? { model } : {}),
+    parts: [{ type: "text", text }],
+  };
 }
 
 // Merge multiple optional system prompt fragments into one stable prompt body.
@@ -182,7 +179,7 @@ export function toProviderModelView(
 //#region Bridge state prompts
 // Inject authoritative bridge session state into the system prompt for the model.
 export function buildBridgeSystemPrompt(
-  turn: Pick<BridgeTurn, "chatType" | "conversationKey" | "senderOpenId" | "sessionId">,
+  turn: Pick<BridgeTurn, "chatType" | "conversationKey" | "senderOpenId" | "sessionId" | "model">,
   window: SessionWindowRecord,
 ): string {
   const visibleSessions = getVisibleSessions(window);
@@ -191,6 +188,7 @@ export function buildBridgeSystemPrompt(
     `windowType: ${turn.chatType ?? "p2p"}`,
     `conversationKey: ${turn.conversationKey}`,
     `sessionMode: ${window.mode}`,
+    `modelOverride: ${formatModelOverride(turn.model ?? window.modelOverride)}`,
     `activeSessionId: ${window.activeSessionId ?? "none"}`,
     "visibleSessions:",
     ...(visibleSessions.length > 0
@@ -205,6 +203,13 @@ export function buildBridgeSystemPrompt(
   return lines.join("\n");
 }
 //#endregion
+
+function formatModelOverride(model: OpenCodeModelRef | undefined): string {
+  if (!model?.providerID || !model.modelID) {
+    return "default";
+  }
+  return `${model.providerID}/${model.modelID}`;
+}
 
 //#region Session labels
 // Prefer server-side session metadata when the stored label is clearly placeholder text.

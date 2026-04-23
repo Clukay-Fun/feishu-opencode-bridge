@@ -16,6 +16,7 @@ import type { OpenCodeClient, OpenCodeMessage, OpenCodeModelRef, OpenCodePromptR
 import { extractAssistantText } from "../runtime/app-helpers.js";
 
 type OpenCodePort = Pick<OpenCodeClient, "createSession" | "postMessageSync" | "deleteSession">;
+const DEFAULT_PARSE_TEXT_EXTENSIONS = [".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp", ".xls", ".xlsx", ".csv"] as const;
 
 export type EvidenceFileRef = {
   messageId: string;
@@ -80,7 +81,7 @@ export class EvidenceExtractService {
     const localPath = await saveEvidenceTempFile(downloaded.fileName, downloaded.buffer);
 
     let extractedText = "";
-    const parseTextExtensions = (options.parseTextExtensions ?? [".pdf", ".docx", ".txt", ".md", ".xls", ".xlsx", ".csv"]).map((value) => value.trim().toLowerCase());
+    const parseTextExtensions = (options.parseTextExtensions ?? [...DEFAULT_PARSE_TEXT_EXTENSIONS]).map((value) => value.trim().toLowerCase());
     if (parseTextExtensions.includes(extension)) {
       try {
         extractedText = isSpreadsheetExtension(extension)

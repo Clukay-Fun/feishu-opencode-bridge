@@ -24,6 +24,7 @@ describe("runtime prompt helpers", () => {
       sessionId: "ses_2",
     }, {
       mode: "multi",
+      modelOverride: { providerID: "openai", modelID: "gpt-5.4-mini" },
       activeSessionId: "ses_2",
       sessions: [
         { sessionId: "ses_2", label: "当前会话", createdAt: 2, lastUsedAt: 2 },
@@ -33,6 +34,7 @@ describe("runtime prompt helpers", () => {
 
     expect(prompt).toContain("windowType: group");
     expect(prompt).toContain("sessionMode: multi");
+    expect(prompt).toContain("modelOverride: openai/gpt-5.4-mini");
     expect(prompt).toContain("activeSessionId: ses_2");
     expect(prompt).toContain("* 当前会话 (ses_2)");
     expect(prompt).toContain("Bridge owns /new /sessions /switch /status");

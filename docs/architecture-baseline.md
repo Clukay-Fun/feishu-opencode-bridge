@@ -145,7 +145,7 @@ Feishu Transport
 - 维护通用 `file-await-instruction` 挂起状态，并在兜底处理前按模块顺序询问是否接管
 - 管理 bridge 命令面，例如 `/new`、`/sessions`、`/status`、`/close`、`/delete`
 - 管理 queueing、turn execution、watchdog、process-card 生命周期和 final reply 投递
-- 管理 session-window 状态与 interaction mode 状态
+- 管理 session-window 状态、interaction mode 状态，以及窗口级模型 override
 - 使用 observability event schema 输出 turn、permission 和 module 生命周期事件
 
 不应负责：

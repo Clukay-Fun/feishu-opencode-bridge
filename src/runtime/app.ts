@@ -456,6 +456,7 @@ export class BridgeApp {
     const sessionId = await this.ensureSession(message);
     const executionKey = this.buildExecutionKey(message.conversationKey, sessionId);
     const queue = this.queues.get(executionKey);
+    const window = this.getSessionWindow(message.conversationKey, message.chatType);
     const turnId = crypto.randomUUID();
     const turn: BridgeTurn = {
       turnId,
@@ -467,6 +468,7 @@ export class BridgeApp {
       inboundMessageId: message.messageId,
       plainText: message.plainText,
       text: this.buildPromptTextWithMessageContext(message, toOpencodePromptText(message)),
+      model: window.modelOverride,
       sessionId,
       logContext: this.buildTurnLogContext(message, turnId, sessionId),
     };
@@ -715,6 +717,7 @@ export class BridgeApp {
     const sessionId = await this.ensureSession(message);
     const executionKey = this.buildExecutionKey(message.conversationKey, sessionId);
     const queue = this.queues.get(executionKey);
+    const window = this.getSessionWindow(message.conversationKey, message.chatType);
     const turn: BridgeTurn = {
       turnId,
       chatId: message.chatId,
@@ -725,6 +728,7 @@ export class BridgeApp {
       inboundMessageId: message.messageId,
       plainText: `${instruction}\n\n[文件] ${pending.file.fileName}`,
       text: this.buildPromptTextWithMessageContext(message, processed.prompt),
+      model: window.modelOverride,
       sessionId,
       logContext: this.buildTurnLogContext(message, turnId, sessionId),
     };
@@ -1028,7 +1032,7 @@ export class BridgeApp {
   private async saveSessionWindow(conversationKey: string, window: SessionWindowRecord): Promise<void> {
     const storageKey = this.resolveSessionWindowKey(conversationKey);
     const legacyKey = this.resolveLegacyP2pWindowKey(conversationKey);
-    if (window.sessions.length === 0 && window.interactionMode !== "knowledge") {
+    if (window.sessions.length === 0 && window.interactionMode !== "knowledge" && !window.modelOverride) {
       delete this.sessionMap[storageKey];
     } else {
       this.sessionMap[storageKey] = window;
@@ -1084,6 +1088,7 @@ export class BridgeApp {
     return normalizeSessionWindowRecord({
       mode,
       ...((current.interactionMode ?? legacy.interactionMode) ? { interactionMode: current.interactionMode ?? legacy.interactionMode } : {}),
+      ...((current.modelOverride ?? legacy.modelOverride) ? { modelOverride: current.modelOverride ?? legacy.modelOverride } : {}),
       activeSessionId: current.activeSessionId ?? legacy.activeSessionId,
       sessions: [...current.sessions, ...legacy.sessions],
     }, mode, this.config.bridge.maxSessionsPerWindow);

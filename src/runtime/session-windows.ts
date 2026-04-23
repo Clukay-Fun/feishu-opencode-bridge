@@ -4,7 +4,7 @@
  * - 支持单会话、多会话模式以及当前活跃会话切换。
  * - 维护窗口内会话列表、排序和交互模式。
  */
-import type { InteractionMode, SessionBindingRecord, SessionMode, SessionWindowRecord } from "../store/mappings.js";
+import type { InteractionMode, SessionBindingRecord, SessionMode, SessionWindowModelOverride, SessionWindowRecord } from "../store/mappings.js";
 
 const SESSION_LABEL_MAX_LENGTH = 24;
 
@@ -38,6 +38,7 @@ export function normalizeSessionWindowRecord(
     return {
       mode,
       interactionMode,
+      modelOverride: record?.modelOverride,
       activeSessionId: active?.sessionId ?? null,
       sessions: active ? [active] : [],
     };
@@ -48,6 +49,7 @@ export function normalizeSessionWindowRecord(
   return {
     mode,
     interactionMode,
+    modelOverride: record?.modelOverride,
     activeSessionId: active?.sessionId ?? null,
     sessions: uniqueSessions,
   };
@@ -85,6 +87,7 @@ export function setActiveSession(
   return normalizeSessionWindowRecord({
     mode: window.mode,
     interactionMode: resolveInteractionMode(window),
+    modelOverride: window.modelOverride,
     activeSessionId: sessionId,
     sessions: updatedSessions,
   }, window.mode, maxSessions);
@@ -99,6 +102,7 @@ export function addSession(
   return normalizeSessionWindowRecord({
     mode: window.mode,
     interactionMode: resolveInteractionMode(window),
+    modelOverride: window.modelOverride,
     activeSessionId: session.sessionId,
     sessions: [session, ...window.sessions.filter((item) => item.sessionId !== session.sessionId)],
   }, window.mode, maxSessions);
@@ -114,6 +118,7 @@ export function addSessionWithoutActivating(
   return normalizeSessionWindowRecord({
     mode: window.mode,
     interactionMode: resolveInteractionMode(window),
+    modelOverride: window.modelOverride,
     activeSessionId: hasActiveSession ? window.activeSessionId : session.sessionId,
     sessions: [session, ...window.sessions.filter((item) => item.sessionId !== session.sessionId)],
   }, window.mode, maxSessions);
@@ -132,6 +137,7 @@ export function removeSession(
   return normalizeSessionWindowRecord({
     mode: window.mode,
     interactionMode: resolveInteractionMode(window),
+    modelOverride: window.modelOverride,
     activeSessionId: nextActive,
     sessions: remaining,
   }, window.mode, maxSessions);
@@ -152,6 +158,7 @@ export function updateSessionLabel(
   return normalizeSessionWindowRecord({
     mode: window.mode,
     interactionMode: resolveInteractionMode(window),
+    modelOverride: window.modelOverride,
     activeSessionId: window.activeSessionId,
     sessions: window.sessions.map((session) => (
       session.sessionId === sessionId
@@ -170,6 +177,22 @@ export function setInteractionMode(
   return normalizeSessionWindowRecord({
     mode: window.mode,
     interactionMode,
+    modelOverride: window.modelOverride,
+    activeSessionId: window.activeSessionId,
+    sessions: window.sessions,
+  }, window.mode, maxSessions);
+}
+
+/** 设置或清除当前窗口的模型 override。 */
+export function setModelOverride(
+  window: SessionWindowRecord,
+  modelOverride: SessionWindowModelOverride | undefined,
+  maxSessions: number,
+): SessionWindowRecord {
+  return normalizeSessionWindowRecord({
+    mode: window.mode,
+    interactionMode: resolveInteractionMode(window),
+    modelOverride,
     activeSessionId: window.activeSessionId,
     sessions: window.sessions,
   }, window.mode, maxSessions);

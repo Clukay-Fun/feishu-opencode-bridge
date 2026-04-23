@@ -635,6 +635,31 @@ describe("BridgeApp command surface", () => {
     expect(outbound.sendMessage).not.toHaveBeenCalled();
   });
 
+  it("stores a window-level model override for /model use and clears it with /model reset", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const appAny = app as unknown as { sessionMap: Record<string, SessionWindowRecord> };
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "model-use", model: "openai/gpt-5.4-mini" },
+    });
+
+    expect(appAny.sessionMap["oc_p2p_1"]?.modelOverride).toEqual({
+      providerID: "openai",
+      modelID: "gpt-5.4-mini",
+    });
+    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("已切换窗口模型");
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "model-reset" },
+    });
+
+    expect(appAny.sessionMap["oc_p2p_1"]?.modelOverride).toBeUndefined();
+    expect(extractInteractiveHeader(getReplyPayloads(outbound)[1])).toBe("已恢复默认模型");
+  });
+
   it("does not truncate /sessions all by sessionListLimit", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
@@ -662,6 +687,33 @@ describe("BridgeApp command surface", () => {
     expect(getReplyPayloads(outbound)).toHaveLength(1);
     expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("会话12");
     expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("会话1");
+  });
+
+  it("filters /sessions all by keyword and keeps filtered numbering stable", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const listSessions = vi.fn(async () => ([
+      { id: "ses_labor", title: "劳动争议分析", time: { updated: 3 } },
+      { id: "ses_invoice", title: "发票识别", time: { updated: 2 } },
+      { id: "ses_contract", title: "合同审查", time: { updated: 1 } },
+    ]));
+    const appAny = app as unknown as {
+      opencode: { listSessions: typeof listSessions };
+      pendingInteractions: Map<string, PendingInteraction>;
+    };
+    appAny.opencode = { listSessions };
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "sessions-all", query: "劳动" },
+    });
+
+    const pending = appAny.pendingInteractions.get("oc_p2p_1") as Extract<PendingInteraction, { kind: "session-select" }>;
+    expect(pending.options).toEqual([expect.objectContaining({ index: 1, sessionId: "ses_labor" })]);
+    const text = extractInteractiveText(getReplyPayloads(outbound)[0]);
+    expect(text).toContain("劳动争议分析");
+    expect(text).not.toContain("发票识别");
+    expect(text).toContain("关键词：劳动");
   });
 
   it("chunks /sessions all into multiple cards when the list is too long", async () => {
@@ -790,6 +842,37 @@ describe("BridgeApp command surface", () => {
     await callHandleCommand(app, {
       kind: "command",
       command: { kind: "delete", index: 2, confirm: true },
+    });
+
+    expect(deleteSession).toHaveBeenCalledWith("ses_hidden");
+    expect(extractInteractiveHeader(getReplyPayloads(outbound).at(-1))).toBe("已彻底删除会话");
+  });
+
+  it("can hard-delete a session directly by session id", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const listSessions = vi.fn(async () => ([
+      { id: "ses_hidden", title: "已隐藏会话", time: { updated: 1 } },
+    ]));
+    const deleteSession = vi.fn(async () => true);
+    const appAny = app as unknown as {
+      opencode: { listSessions: typeof listSessions; deleteSession: typeof deleteSession };
+      pendingInteractions: Map<string, PendingInteraction>;
+    };
+    appAny.opencode = { listSessions, deleteSession };
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "delete", sessionId: "ses_hidden", confirm: false },
+    });
+    const confirmText = extractInteractiveText(getReplyPayloads(outbound)[0]);
+    expect(confirmText).toContain("删除 OpenCode 本地真实 session");
+    expect(confirmText).toContain("已隐藏会话");
+    expect(confirmText).toContain("/delete ses_hidden confirm");
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "delete", sessionId: "ses_hidden", confirm: true },
     });
 
     expect(deleteSession).toHaveBeenCalledWith("ses_hidden");
@@ -1383,16 +1466,18 @@ type AppCommandSurfaceTestRoute = {
     | { kind: "rename"; title: string }
     | { kind: "abort" }
     | { kind: "models"; provider?: string | undefined }
+    | { kind: "model-use"; model: string }
+    | { kind: "model-reset" }
     | { kind: "passthrough"; name: string; arguments: string[] }
     | { kind: "knowledge-ingest" }
     | { kind: "knowledge-mode-start" }
     | { kind: "knowledge-mode-end" }
     | { kind: "knowledge-ingest-end" }
     | { kind: "sessions" }
-    | { kind: "sessions-all" }
+    | { kind: "sessions-all"; query?: string | undefined }
     | { kind: "sessions-select"; index?: number | undefined; query?: string | undefined }
     | { kind: "close"; index?: number | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined }
-    | { kind: "delete"; index?: number | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined; confirm: boolean };
+    | { kind: "delete"; index?: number | undefined; sessionId?: string | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined; confirm: boolean };
 };
 
 function baseConfig(): AppConfig {

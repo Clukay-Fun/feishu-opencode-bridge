@@ -38,6 +38,12 @@ describe("buildPostPayload", () => {
     expect(content.zh_cn.content[0]?.[0]?.text).toContain("https://example.com");
   });
 
+  it("removes fenced code block language markers for Feishu markdown compatibility", () => {
+    const payload = buildPostMarkdownPayload(["```bash", "npm test", "```"].join("\n"));
+    const content = JSON.parse(payload.content) as { zh_cn: { content: Array<Array<{ tag: string; text: string }>> } };
+    expect(content.zh_cn.content[0]?.[0]?.text).toBe(["```", "npm test", "```"].join("\n"));
+  });
+
   it("renders an interactive turn status card", () => {
     const payload = buildTurnStatusCardPayload({
       title: "处理中",
@@ -91,7 +97,8 @@ describe("buildPostPayload", () => {
     const content = JSON.parse(payload.content) as any;
     const output = content.body.elements[0].columns[0].elements[0].content as string;
 
-    expect(output).toContain("```text");
+    expect(output).toContain("```\n飞书事件 -> ws.ts handleEvent()");
+    expect(output).not.toContain("```text");
     expect(output).toContain("飞书事件 -> ws.ts handleEvent()");
     expect(output).not.toContain("-&gt;");
   });
