@@ -6,10 +6,8 @@
  * - 处理案件台账与提醒类操作。
  */
 import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
 import Docxtemplater from "docxtemplater";
 import PizZip from "pizzip";
 
@@ -34,6 +32,10 @@ import {
   buildContractWorkbenchInitFromPromptPrompt,
   buildInvoiceRecognizePrompt,
 } from "./prompts.js";
+import {
+  buildPromptFromSkillOverride,
+  buildPromptFromSkillOverrideAsync,
+} from "./prompt-overrides.js";
 
 type OpenCodePort = Pick<OpenCodeClient, "createSession" | "postMessageSync" | "deleteSession">;
 
@@ -215,13 +217,13 @@ export class ContractAssistantService {
     const templateContent = await this.loadTemplateContent(template);
     await onProgress?.("prepare-fields", `已匹配模板：${template.name}，正在整理关键字段`);
     const warnings: string[] = [];
-    const parsed = await this.askForJson(buildContractDraftPrompt(
+    const parsed = await this.askForJson(resolveContractDraftPrompt({
       request,
-      template.name,
-      templateContent.mainText,
-      templateContent.riskNoticeText,
-      templateContent.fieldGuideText,
-    ), resolveModel(this.config, "draft")).catch((error) => {
+      templateName: template.name,
+      templateMainText: templateContent.mainText,
+      templateRiskNoticeText: templateContent.riskNoticeText,
+      fieldGuideText: templateContent.fieldGuideText,
+    }), resolveModel(this.config, "draft")).catch((error) => {
       const detail = error instanceof Error ? error.message : String(error);
       warnings.push("模型暂不可用，已按本地规则生成合同初稿。");
       this.logger.log("contract-assistant", "draft contract model fallback", {
@@ -281,7 +283,7 @@ export class ContractAssistantService {
       maxExtractedTextLength: 20_000,
       model: resolveModel(this.config, "extract"),
       createSessionTitle: "[bridge] contract-extract",
-      buildPrompt: ({ fileName, extractedText }) => buildContractExtractPrompt(fileName, extractedText ?? ""),
+      buildPrompt: ({ fileName, extractedText }) => resolveContractExtractPrompt(fileName, extractedText ?? ""),
     });
     const record = normalizeContractRecord(readRecord(result, "record"));
     const summary = readString(result, "summary") ?? "已提取合同台账信息。";
@@ -602,7 +604,7 @@ export class ContractAssistantService {
 
   async initializeWorkbenchFromPrompt(sessionId: string, request: string): Promise<{ state: ContractState; message: string }> {
     const result = await this.askForJson(
-      buildContractWorkbenchInitFromPromptPrompt(request),
+      resolveContractWorkbenchInitFromPromptPrompt(request),
       resolveModel(this.config, "draft"),
     );
     const state = normalizeContractState(readRecord(result, "state"), {
@@ -666,7 +668,7 @@ export class ContractAssistantService {
         throw new Error("未能从上传文件中提取到可编辑的合同文本，请尝试上传可复制文本的 Word、PDF 或文本文件。");
       }
       const result = await this.askForJson(
-        buildContractWorkbenchInitFromDocumentPrompt(preparedFile.fileName, content),
+        resolveContractWorkbenchInitFromDocumentPrompt(preparedFile.fileName, content),
         resolveModel(this.config, "draft"),
       );
       const sourceMode = readString(readRecord(result, "state"), "sourceMode");
@@ -695,7 +697,7 @@ export class ContractAssistantService {
     userMessage: string,
   ): Promise<ContractWorkbenchModelResult> {
     const result = await this.askForJson(
-      buildContractWorkbenchApplyPrompt(
+      resolveContractWorkbenchApplyPrompt(
         JSON.stringify(state, null, 2),
         recentMessages,
         userMessage,
@@ -1006,6 +1008,97 @@ function resolveInvoiceRecognizePrompt(input: {
   );
 }
 
+function resolveContractDraftPrompt(input: {
+  request: string;
+  templateName: string;
+  templateMainText: string;
+  templateRiskNoticeText?: string | undefined;
+  fieldGuideText?: string | undefined;
+}): string {
+  return buildPromptFromSkillOverride(
+    "contract-draft",
+    ["references/runtime-prompt.txt", "references/prompt.txt"],
+    {
+      request: input.request,
+      templateName: input.templateName,
+      templateMainText: input.templateMainText,
+      templateRiskNoticeText: input.templateRiskNoticeText ?? "无",
+      fieldGuideText: input.fieldGuideText ?? "无",
+      templateRiskNoticeBlock: input.templateRiskNoticeText
+        ? `风险告知书模板：\n---风险附件开始---\n${input.templateRiskNoticeText}\n---风险附件结束---`
+        : "风险告知书模板：无",
+      fieldGuideBlock: input.fieldGuideText
+        ? `字段说明：\n---字段说明开始---\n${input.fieldGuideText}\n---字段说明结束---`
+        : "字段说明：无",
+    },
+    () => buildContractDraftPrompt(
+      input.request,
+      input.templateName,
+      input.templateMainText,
+      input.templateRiskNoticeText,
+      input.fieldGuideText,
+    ),
+  );
+}
+
+function resolveContractExtractPrompt(fileName: string, content: string): string {
+  return buildPromptFromSkillOverride(
+    "contract-extract",
+    ["references/runtime-prompt.txt", "references/prompt.txt"],
+    {
+      fileName,
+      content,
+    },
+    () => buildContractExtractPrompt(fileName, content),
+  );
+}
+
+function resolveContractWorkbenchInitFromPromptPrompt(request: string): string {
+  return buildPromptFromSkillOverride(
+    "contract-assistant",
+    [
+      "references/workbench-init-from-prompt.txt",
+      "references/runtime-workbench-init-from-prompt.txt",
+    ],
+    { request },
+    () => buildContractWorkbenchInitFromPromptPrompt(request),
+  );
+}
+
+function resolveContractWorkbenchInitFromDocumentPrompt(fileName: string, content: string): string {
+  return buildPromptFromSkillOverride(
+    "contract-assistant",
+    [
+      "references/workbench-init-from-document.txt",
+      "references/runtime-workbench-init-from-document.txt",
+    ],
+    { fileName, content },
+    () => buildContractWorkbenchInitFromDocumentPrompt(fileName, content),
+  );
+}
+
+function resolveContractWorkbenchApplyPrompt(
+  contractStateJson: string,
+  recentMessages: string[],
+  userMessage: string,
+): string {
+  return buildPromptFromSkillOverride(
+    "contract-assistant",
+    [
+      "references/workbench-apply-prompt.txt",
+      "references/runtime-workbench-apply-prompt.txt",
+    ],
+    {
+      contractStateJson,
+      userMessage,
+      recentMessagesBlock: recentMessages.length > 0
+        ? ["最近上下文：", ...recentMessages.map((item, index) => `${index + 1}. ${item}`)].join("\n")
+        : "最近上下文：无",
+    },
+    () => buildContractWorkbenchApplyPrompt(contractStateJson, recentMessages, userMessage),
+  );
+}
+
 async function resolveCaseCreatePrompt(request: string): Promise<string> {
   return await buildPromptFromSkillOverrideAsync(
     "case-manage",
@@ -1022,62 +1115,6 @@ async function resolveCaseUpdatePrompt(request: string): Promise<string> {
     { request },
     () => buildCaseUpdatePrompt(request),
   );
-}
-
-function buildPromptFromSkillOverride(
-  skillName: string,
-  relativePaths: string[],
-  variables: Record<string, string>,
-  fallback: () => string,
-): string {
-  const template = loadSkillPromptTemplateSync(skillName, relativePaths);
-  return template ? renderPromptTemplate(template, variables) : fallback();
-}
-
-async function buildPromptFromSkillOverrideAsync(
-  skillName: string,
-  relativePaths: string[],
-  variables: Record<string, string>,
-  fallback: () => string,
-): Promise<string> {
-  const template = await loadSkillPromptTemplate(skillName, relativePaths);
-  return template ? renderPromptTemplate(template, variables) : fallback();
-}
-
-function loadSkillPromptTemplateSync(skillName: string, relativePaths: string[]): string | undefined {
-  const baseDir = path.join(homedir(), ".opencode", "skills", skillName);
-  for (const relativePath of relativePaths) {
-    const fullPath = path.join(baseDir, relativePath);
-    try {
-      const content = readFileSync(fullPath, "utf8").trim();
-      if (content) {
-        return content;
-      }
-    } catch {
-      continue;
-    }
-  }
-  return undefined;
-}
-
-async function loadSkillPromptTemplate(skillName: string, relativePaths: string[]): Promise<string | undefined> {
-  const baseDir = path.join(homedir(), ".opencode", "skills", skillName);
-  for (const relativePath of relativePaths) {
-    const fullPath = path.join(baseDir, relativePath);
-    try {
-      const content = (await readFile(fullPath, "utf8")).trim();
-      if (content) {
-        return content;
-      }
-    } catch {
-      continue;
-    }
-  }
-  return undefined;
-}
-
-function renderPromptTemplate(template: string, variables: Record<string, string>): string {
-  return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key: string) => variables[key] ?? "");
 }
 
 function resolveModel(config: ContractAssistantConfig, step: "draft" | "extract" | "invoice" | "caseManage"): OpenCodeModelRef | undefined {

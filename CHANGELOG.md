@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.35 - 2026-04-23
+
+### Added
+- Added contract prompt-override helpers plus regression coverage for loading external skill prompt templates into contract-assistant workbench flows.
+
+### Fixed
+- Fixed knowledge mirror sync so local mirrored entries and orphaned synced documents are removed after their Bitable records are deleted.
+
 ## 0.1.34 - 2026-04-23
 
 ### Changed

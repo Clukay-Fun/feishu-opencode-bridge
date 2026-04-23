@@ -256,6 +256,52 @@ export class KnowledgeDb {
       WHERE id = @id
     `).run({ id, status });
   }
+
+  // List all mirrored Bitable record ids that already exist in the local entry table.
+  listEntryBitableRecordIds(): string[] {
+    const rows = this.db.prepare(`
+      SELECT bitable_record_id
+      FROM knowledge_entries
+      WHERE bitable_record_id IS NOT NULL
+    `).all() as Array<{ bitable_record_id: string | null }>;
+    return rows
+      .map((row) => row.bitable_record_id)
+      .filter((value): value is string => typeof value === "string" && value.length > 0);
+  }
+
+  // Delete mirrored entries that no longer exist in Bitable by record id.
+  deleteEntriesByBitableRecordIds(recordIds: string[]): number {
+    const normalized = [...new Set(recordIds.filter((value) => value.length > 0))];
+    if (normalized.length === 0) {
+      return 0;
+    }
+    const placeholders = normalized.map((_, index) => `@recordId${index}`).join(", ");
+    const params = Object.fromEntries(normalized.map((recordId, index) => [`recordId${index}`, recordId]));
+    const result = this.db.prepare(`
+      DELETE FROM knowledge_entries
+      WHERE bitable_record_id IN (${placeholders})
+    `).run(params);
+    return result.changes;
+  }
+
+  // Remove mirrored documents left empty after entry cleanup.
+  deleteOrphanSyncedDocuments(): number {
+    const result = this.db.prepare(`
+      DELETE FROM knowledge_documents
+      WHERE source_type = 'bitable-sync'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM knowledge_entries e
+          WHERE e.document_id = knowledge_documents.id
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM knowledge_extract_chunks c
+          WHERE c.document_id = knowledge_documents.id
+        )
+    `).run();
+    return result.changes;
+  }
   //#endregion
 
   //#region Document and chunk reads

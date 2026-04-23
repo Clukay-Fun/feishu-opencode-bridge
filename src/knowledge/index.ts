@@ -716,10 +716,12 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
 
   /** 从 Bitable 反向同步已有知识记录到本地数据库。 */
   async syncMirror(): Promise<void> {
+    const localRecordIds = new Set(this.db.listEntryBitableRecordIds());
     const records = await this.resources.listBitableRecords(
       this.config.storage.bitable.appToken,
       this.config.storage.bitable.tableId,
     );
+    const remoteRecordIds = new Set(records.map((record) => record.recordId).filter((value) => value.length > 0));
     for (const record of records) {
       const question = readStringField(record.fields, "问题");
       const answer = readStringField(record.fields, "答案");
@@ -763,6 +765,11 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
         embedding,
         embeddingModel: this.embeddingClient.model,
       });
+    }
+    const removedRecordIds = [...localRecordIds].filter((recordId) => !remoteRecordIds.has(recordId));
+    if (removedRecordIds.length > 0) {
+      this.db.deleteEntriesByBitableRecordIds(removedRecordIds);
+      this.db.deleteOrphanSyncedDocuments();
     }
   }
 

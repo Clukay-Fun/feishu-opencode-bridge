@@ -658,6 +658,90 @@ describe("KnowledgeBaseService", () => {
     service.close();
   });
 
+  it("removes local mirrored entries after the corresponding Bitable records are deleted", async () => {
+    stubEmbeddingFetch();
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-"));
+    tempDirs.push(dir);
+    let remoteRecords = [
+      {
+        recordId: "rec_1",
+        fields: {
+          问题: "员工试用期最长多久？",
+          答案: "最长不超过六个月。",
+          标签: ["劳动"],
+          源文件: "劳动合同法手册.pdf",
+          "页码/章节": "第 23 页",
+        },
+      },
+      {
+        recordId: "rec_2",
+        fields: {
+          问题: "公司不续签需要支付补偿吗？",
+          答案: "符合条件时应支付经济补偿。",
+          标签: ["劳动"],
+          源文件: "经济补偿指引.pdf",
+          "页码/章节": "第 8 页",
+        },
+      },
+    ];
+    const service = new KnowledgeBaseService(
+      {
+        enabled: true,
+        autoDetect: { enabled: false, minConfidence: 0.75 },
+        query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
+        storage: {
+          sqlitePath: join(dir, "knowledge.db"),
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+            documentTableId: undefined,
+          },
+        },
+        embeddingProvider: {
+          baseUrl: new URL("https://example.com/v1/"),
+          apiKey: "token",
+          model: "text-embedding",
+        },
+        models: {},
+        ingest: {
+          allowedExtensions: [".txt"],
+          maxFileSizeMb: 20,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+        },
+      },
+      {
+        async downloadMessageResource() {
+          throw new Error("not used");
+        },
+        async createBitableRecord() {
+          throw new Error("not used");
+        },
+        async listBitableRecords() {
+          return remoteRecords;
+        },
+      },
+      createOpenCodeStub(),
+      logger(),
+    );
+
+    await service.syncMirror();
+    let stats = await service.getStats?.();
+    expect(stats?.documentCount).toBe(2);
+    expect(stats?.entryCount).toBe(2);
+    let documents = await service.listDocuments?.({ limit: 10 });
+    expect(documents?.some((item) => item.fileName === "经济补偿指引.pdf")).toBe(true);
+
+    remoteRecords = [remoteRecords[0]!];
+    await service.syncMirror();
+
+    stats = await service.getStats?.();
+    expect(stats?.documentCount).toBe(1);
+    expect(stats?.entryCount).toBe(1);
+    documents = await service.listDocuments?.({ limit: 10 });
+    expect(documents?.some((item) => item.fileName === "经济补偿指引.pdf")).toBe(false);
+    service.close();
+  });
+
   it("deduplicates equivalent query answers from the same source", async () => {
     stubEmbeddingFetch();
     const dir = mkdtempSync(join(tmpdir(), "knowledge-"));
