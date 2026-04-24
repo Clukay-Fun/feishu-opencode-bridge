@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.41 - 2026-04-24
+
+### Added
+- Added an archived issue completion report covering recently closed GitHub issues and release regression checks.
+
 ## 0.1.40 - 2026-04-24
 
 ### Changed
