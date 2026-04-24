@@ -10,6 +10,21 @@ describe("detectLegalQuestion", () => {
     expect(result.reasons).not.toContain("high-signal-topic");
   });
 
+  it("matches non-labor legal questions across broader practice areas", () => {
+    const questions = [
+      "股东会决议程序违法可以撤销吗？",
+      "注册商标被别人使用怎么主张侵权？",
+      "行政处罚决定不服可以如何救济？",
+      "平台收集个人信息是否涉及数据合规风险？",
+    ];
+
+    for (const question of questions) {
+      const result = detectLegalQuestion(question);
+      expect(result.matched, question).toBe(true);
+      expect(result.confidence, question).toBeGreaterThanOrEqual(0.5);
+    }
+  });
+
   it("does not match unrelated casual messages", () => {
     const result = detectLegalQuestion("今天帮我总结一下周报");
     expect(result.matched).toBe(false);
