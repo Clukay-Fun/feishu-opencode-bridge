@@ -54,6 +54,48 @@ describe("spawnPythonTool", () => {
     }
   });
 
+  it("honors a docling-only PDF provider order", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "python-tool-convert-pdf-provider-"));
+    try {
+      const inputPath = path.join(tempDir, "demo.pdf");
+      const wrapperPath = path.join(tempDir, "convert_document_wrapper.py");
+      await writeFile(inputPath, "%PDF fake", "utf8");
+      await writeFile(wrapperPath, [
+        "import json, pathlib, sys",
+        `sys.path.insert(0, ${JSON.stringify(path.resolve(process.cwd(), "scripts/python"))})`,
+        "import convert_document",
+        "from common.io import read_json_stdin, write_json_stdout",
+        "convert_document.convert_with_pymupdf4llm = lambda _path: '# PyMuPDF4LLM\\n\\n' + ('x' * 200)",
+        "convert_document.convert_with_docling = lambda _path: '# Docling\\n\\nDocling markdown text'",
+        "payload = read_json_stdin()",
+        "input_path = pathlib.Path(payload['inputPath'])",
+        "write_json_stdout(convert_document.convert_document(input_path, 'chi_sim+eng', payload))",
+      ].join("\n"), "utf8");
+
+      const result = await spawnPythonTool<{
+        markdown: string;
+        tool: string;
+        fallbackChain: string[];
+      }>("convert_document", {
+        inputPath,
+        parser: {
+          pdfProviderOrder: ["docling"],
+        },
+      }, {
+        scriptPath: wrapperPath,
+      });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.tool).toBe("docling");
+        expect(result.data.markdown).toContain("Docling markdown");
+        expect(result.data.fallbackChain).toEqual(["docling"]);
+      }
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("runs contract_parse on the bundled docx template", async () => {
     const inputPath = path.resolve(process.cwd(), "templates/contracts/委托代理合同-民事.docx");
 

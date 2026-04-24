@@ -162,7 +162,7 @@ describe("loadConfig memory settings", () => {
       externalApiEnabled: false,
       pdfProviderOrder: ["mineru-agent", "paddleocr-vl", "pymupdf4llm", "docling", "pdf-parse"],
       imageProviderOrder: ["paddleocr-vl", "mineru-agent", "tesseract"],
-      ocrLang: "ch",
+      ocrLang: "chi_sim+eng",
       timeoutMs: 180000,
       pollIntervalMs: 5000,
       maxPollMs: 180000,

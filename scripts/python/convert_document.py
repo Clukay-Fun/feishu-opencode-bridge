@@ -15,6 +15,7 @@ import subprocess
 from common.io import read_json_stdin, write_error_stderr, write_json_stdout
 from doc_to_text import extract_text
 from pdf_to_markdown import convert as convert_pdf
+from pdf_to_markdown import convert_with_docling, convert_with_pymupdf4llm, quality_ok
 from ocr_provider import parse_with_mineru, parse_with_paddleocr
 
 
@@ -125,6 +126,36 @@ def convert_local_pdf_document(input_path: Path) -> dict[str, object]:
     }
 
 
+def convert_pymupdf_pdf_document(input_path: Path) -> dict[str, object]:
+    markdown = normalize_text(convert_with_pymupdf4llm(str(input_path)))
+    if not quality_ok(markdown):
+        raise RuntimeError("PyMuPDF4LLM quality check failed")
+    return {
+        "markdown": markdown,
+        "plainText": markdown_to_plain_text(markdown),
+        "sourceFormat": "pdf",
+        "tool": "pymupdf4llm",
+        "quality": "high",
+        "fallbackChain": ["pymupdf4llm"],
+        "warnings": [],
+    }
+
+
+def convert_docling_pdf_document(input_path: Path) -> dict[str, object]:
+    markdown = normalize_text(convert_with_docling(str(input_path)))
+    if not markdown:
+        raise RuntimeError("Docling did not generate markdown")
+    return {
+        "markdown": markdown,
+        "plainText": markdown_to_plain_text(markdown),
+        "sourceFormat": "pdf",
+        "tool": "docling",
+        "quality": quality_for(markdown),
+        "fallbackChain": ["docling"],
+        "warnings": [],
+    }
+
+
 def convert_tesseract_image(input_path: Path, lang: str) -> dict[str, object]:
     tesseract = shutil.which("tesseract")
     if not tesseract:
@@ -158,11 +189,10 @@ def run_provider(input_path: Path, provider: str, options: dict[str, object], oc
         return parse_with_mineru(input_path, options)
     if provider == "paddleocr-vl":
         return parse_with_paddleocr(input_path, options)
-    if provider in {"pymupdf4llm", "docling"}:
-        result = convert_local_pdf_document(input_path)
-        if result["tool"] != provider:
-            raise RuntimeError(f"{provider} did not produce acceptable markdown")
-        return result
+    if provider == "pymupdf4llm":
+        return convert_pymupdf_pdf_document(input_path)
+    if provider == "docling":
+        return convert_docling_pdf_document(input_path)
     if provider == "tesseract":
         return convert_tesseract_image(input_path, ocr_lang)
     raise RuntimeError(f"unsupported parser provider: {provider}")
