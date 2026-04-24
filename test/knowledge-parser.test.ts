@@ -94,6 +94,40 @@ describe("parseKnowledgeFile", () => {
     ]);
   });
 
+  it("passes OCR parser options and parses image markdown sections", async () => {
+    vi.mocked(spawnPythonTool).mockResolvedValueOnce({
+      ok: true,
+      data: {
+        markdown: "# 图片材料\n\n识别正文",
+        plainText: "图片材料\n\n识别正文",
+        sourceFormat: "png",
+        tool: "paddleocr-vl",
+        quality: "high",
+        fallbackChain: ["paddleocr-vl"],
+        warnings: ["mineru-agent skipped: externalApiEnabled=false"],
+      },
+    });
+
+    const parsed = await parseKnowledgeFile("scan.png", Buffer.from("fake"), {
+      externalApiEnabled: true,
+      imageProviderOrder: ["paddleocr-vl", "mineru-agent", "tesseract"],
+      paddleocr: { enabled: true, apiKey: "key", secretKey: "secret" },
+    });
+
+    expect(spawnPythonTool).toHaveBeenCalledWith("convert_document", expect.objectContaining({
+      parser: expect.objectContaining({
+        externalApiEnabled: true,
+        imageProviderOrder: ["paddleocr-vl", "mineru-agent", "tesseract"],
+      }),
+    }));
+    expect(parsed.parserUsed).toBe("paddleocr-vl");
+    expect(parsed.sections).toEqual([
+      { location: "OCR 1", text: "# 图片材料" },
+      { location: "OCR 2", text: "识别正文" },
+    ]);
+    expect(parsed.warnings).toContain("mineru-agent skipped: externalApiEnabled=false");
+  });
+
   it("parses html as an extra unified document format", async () => {
     const parsed = await parseKnowledgeFile("demo.html", Buffer.from("<h1>标题</h1><p>正文内容</p>", "utf8"));
     expect(parsed.normalizedMarkdown).toBe("标题\n\n正文内容");

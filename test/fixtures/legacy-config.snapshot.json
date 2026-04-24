@@ -1,0 +1,265 @@
+{
+  "feishu": {
+    "appId": "cli_legacy",
+    "appSecret": "secret",
+    "botOpenId": "ou_bot",
+    "botOpenIds": [
+      "ou_bot",
+      "ou_extra"
+    ],
+    "botMentionNames": [
+      "open code",
+      "opencode"
+    ],
+    "selfBotOpenIds": [
+      "ou_self"
+    ],
+    "wsUrl": "wss://open.feishu.cn/open-apis/ws/v2",
+    "allowedOpenIds": [
+      "ou_allowed"
+    ],
+    "behavior": {
+      "enableP2p": true,
+      "enableGroup": true,
+      "requireBotMentionInGroup": true,
+      "strictBotMention": true,
+      "ignoreNonUserSenders": true,
+      "replyInThread": true
+    },
+    "cardActions": {
+      "enabled": true,
+      "path": "/webhook/card",
+      "verificationToken": "verify",
+      "encryptKey": "encrypt"
+    }
+  },
+  "opencode": {
+    "baseUrl": "http://127.0.0.1:4096/",
+    "directory": "<fixtureDir>/workspace"
+  },
+  "storage": {
+    "dataDir": "<fixtureDir>/data",
+    "mappingsFile": "mappings.json"
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 3000,
+    "publicBaseUrl": "https://bridge.example.com/"
+  },
+  "whitelist": {
+    "storePath": "<fixtureDir>/data/whitelist.json"
+  },
+  "bridge": {
+    "queueLimit": 3,
+    "sessionModes": {
+      "p2p": "multi",
+      "group": "single",
+      "topicGroup": "single"
+    },
+    "maxSessionsPerWindow": 20,
+    "sessionListLimit": 10,
+    "injectSystemState": true,
+    "firstEventTimeoutMs": 30000,
+    "eventGapTimeoutMs": 120000,
+    "totalTimeoutMs": 300000
+  },
+  "embeddings": {
+    "provider": {
+      "baseUrl": "https://api.openai.com/v1/",
+      "apiKey": "sk-test",
+      "model": "text-embedding-3-small"
+    },
+    "similarityThreshold": 0.77
+  },
+  "logging": {
+    "dir": "<fixtureDir>/logs",
+    "level": "info",
+    "enableTranscript": true,
+    "enableConsole": true,
+    "enableColor": true,
+    "rotateDaily": true,
+    "format": "pretty",
+    "messagePolicy": "preview",
+    "redactFields": [
+      "feishu.appSecret",
+      "opencode.apiKey",
+      "appSecret",
+      "apiKey",
+      "plainText",
+      "content"
+    ]
+  },
+  "memory": {
+    "enabled": true,
+    "dbPath": "<fixtureDir>/data/memory.db",
+    "maxMemoriesPerUser": 500,
+    "searchLimit": 5,
+    "extractQueueLimit": 100,
+    "sourcePreviewLength": 50,
+    "shutdownDrainTimeoutMs": 5000,
+    "retriever": "embedding",
+    "embeddingProvider": {
+      "baseUrl": "https://api.openai.com/v1/",
+      "apiKey": "sk-test",
+      "model": "text-embedding-3-small"
+    },
+    "obsidian": {
+      "enabled": true,
+      "vaultPath": "<fixtureDir>/vault",
+      "syncCron": "0 2 * * *",
+      "enableWikiLinks": true
+    }
+  },
+  "knowledgeBase": {
+    "enabled": true,
+    "autoDetect": {
+      "enabled": true,
+      "minConfidence": 0.75
+    },
+    "query": {
+      "topK": 10,
+      "finalTopN": 3,
+      "keywordFallbackLimit": 10
+    },
+    "storage": {
+      "sqlitePath": "<fixtureDir>/data/knowledge-base.db",
+      "bitable": {
+        "appToken": "bascn_knowledge",
+        "tableId": "tbl_entries",
+        "documentTableId": "tbl_docs",
+        "sourceFileField": {
+          "name": "资料链接",
+          "type": "hyperlink",
+          "urlTemplate": "https://example.com/files/{{messageId}}/{{fileKey}}",
+          "textTemplate": "{{fileName}}"
+        },
+        "statuteField": {
+          "name": "法条",
+          "type": "hyperlink",
+          "urlTemplate": "https://example.com/law?keyword={{statute}}",
+          "textTemplate": "{{statute}}"
+        }
+      }
+    },
+    "embeddingProvider": {
+      "baseUrl": "https://api.openai.com/v1/",
+      "apiKey": "sk-test",
+      "model": "text-embedding-3-small"
+    },
+    "models": {
+      "default": "minimax-cn-coding-plan/MiniMax-M2.7",
+      "webRead": "minimax-cn-coding-plan/MiniMax-M2.7",
+      "extract": "minimax-cn-coding-plan/MiniMax-M2.7",
+      "rerank": "minimax-cn-coding-plan/MiniMax-M2.7"
+    },
+    "parser": {
+      "externalApiEnabled": false,
+      "pdfProviderOrder": [
+        "mineru-agent",
+        "paddleocr-vl",
+        "pymupdf4llm",
+        "docling",
+        "pdf-parse"
+      ],
+      "imageProviderOrder": [
+        "paddleocr-vl",
+        "mineru-agent",
+        "tesseract"
+      ],
+      "ocrLang": "ch",
+      "timeoutMs": 180000,
+      "pollIntervalMs": 5000,
+      "maxPollMs": 180000,
+      "mineru": {
+        "enabled": false,
+        "endpoint": "https://mineru.net/api/v1/agent"
+      },
+      "paddleocr": {
+        "enabled": false,
+        "apiKey": "",
+        "secretKey": ""
+      }
+    },
+    "ingest": {
+      "allowedExtensions": [
+        ".pdf",
+        ".docx",
+        ".txt",
+        ".md"
+      ],
+      "maxFileSizeMb": 20,
+      "pendingTtlMs": 600000,
+      "sessionIdleMs": 1800000,
+      "concurrency": 3,
+      "maxExtractChunks": 30,
+      "maxExtractQas": 500
+    }
+  },
+  "contractAssistant": {
+    "enabled": false,
+    "storage": {
+      "baseToken": "bascn_contract",
+      "contractTableId": "tbl_contract",
+      "invoiceTableId": "tbl_invoice",
+      "caseTableId": "tbl_case"
+    },
+    "models": {
+      "default": "minimax-cn-coding-plan/MiniMax-M2.7",
+      "draft": "minimax-cn-coding-plan/MiniMax-M2.7",
+      "extract": "minimax-cn-coding-plan/MiniMax-M2.7",
+      "invoice": "minimax-cn-coding-plan/MiniMax-M2.7",
+      "caseManage": "minimax-cn-coding-plan/MiniMax-M2.7"
+    },
+    "ingest": {
+      "contractAllowedExtensions": [
+        ".pdf",
+        ".docx",
+        ".txt",
+        ".md"
+      ],
+      "invoiceAllowedExtensions": [
+        ".pdf",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".txt",
+        ".md"
+      ],
+      "maxFileSizeMb": 20,
+      "pendingTtlMs": 600000
+    },
+    "reminder": {
+      "enabled": false,
+      "targetChatIds": [],
+      "hour": 9,
+      "minute": 0,
+      "lookaheadDays": 7
+    }
+  },
+  "laborSkill": {
+    "enabled": false,
+    "models": {
+      "default": "minimax-cn-coding-plan/MiniMax-M2.7",
+      "extract": "minimax-cn-coding-plan/MiniMax-M2.7",
+      "analyze": "minimax-cn-coding-plan/MiniMax-M2.7"
+    },
+    "ingest": {
+      "allowedExtensions": [
+        ".pdf",
+        ".docx",
+        ".txt",
+        ".md",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".webp",
+        ".xls",
+        ".xlsx",
+        ".csv"
+      ],
+      "maxFileSizeMb": 20,
+      "pendingTtlMs": 600000
+    },
+    "storage": {}
+  }
+}

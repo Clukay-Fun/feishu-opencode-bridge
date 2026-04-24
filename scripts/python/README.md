@@ -10,8 +10,11 @@
   - `contract_edit.py`：支持条款删改、按标题删除、基于显式分页符/分节符的逻辑页删除
   - `contract_finalize.py`
   - `render_contract.py`
+- DOCX 编辑预研
+  - `docx_edit.py`：DOCX package / XML 级 PoC，支持 inspect、unpack、pack、analyze 和单 `w:t` 节点替换
 - 文档解析
   - `convert_document.py`
+  - `ocr_provider.py`：MinerU Agent / PaddleOCR-VL 外部 OCR provider，统一返回 Markdown
   - `doc_to_text.py`
   - `pdf_to_markdown.py`
   - `pdf_to_md.py`

@@ -29,6 +29,8 @@ export type DocumentParserUsed =
   | "pymupdf4llm"
   | "docling"
   | "pdf-parse"
+  | "mineru-agent"
+  | "paddleocr-vl"
   | "tesseract";
 
 export type DocumentParseQuality = "high" | "medium" | "low";
@@ -48,14 +50,41 @@ type PythonDocumentParseResult = {
   markdown?: string;
   plainText?: string;
   sourceFormat?: string;
-  tool?: "doc-to-text" | "pymupdf4llm" | "docling" | "tesseract";
+  tool?: "doc-to-text" | "pymupdf4llm" | "docling" | "mineru-agent" | "paddleocr-vl" | "tesseract";
   quality?: DocumentParseQuality;
   fallbackChain?: string[];
   warnings?: string[];
 };
 
+export type DocumentParserProvider =
+  | "mineru-agent"
+  | "paddleocr-vl"
+  | "pymupdf4llm"
+  | "docling"
+  | "pdf-parse"
+  | "tesseract";
+
+export type DocumentParserOptions = {
+  externalApiEnabled?: boolean | undefined;
+  pdfProviderOrder?: DocumentParserProvider[] | undefined;
+  imageProviderOrder?: DocumentParserProvider[] | undefined;
+  ocrLang?: string | undefined;
+  timeoutMs?: number | undefined;
+  pollIntervalMs?: number | undefined;
+  maxPollMs?: number | undefined;
+  mineru?: {
+    enabled?: boolean | undefined;
+    endpoint?: string | undefined;
+  } | undefined;
+  paddleocr?: {
+    enabled?: boolean | undefined;
+    apiKey?: string | undefined;
+    secretKey?: string | undefined;
+  } | undefined;
+};
+
 /** 解析一个常见文档文件，并产出统一中间结果。 */
-export async function parseDocument(fileName: string, buffer: Buffer): Promise<ParsedDocument> {
+export async function parseDocument(fileName: string, buffer: Buffer, options?: DocumentParserOptions): Promise<ParsedDocument> {
   const extension = normalizeExtension(fileName);
 
   if (extension === ".txt" || extension === ".md") {
@@ -84,7 +113,7 @@ export async function parseDocument(fileName: string, buffer: Buffer): Promise<P
   }
 
   if ([".pdf", ".docx", ".png", ".jpg", ".jpeg", ".webp"].includes(extension)) {
-    const pythonParsed = await parseWithPython(fileName, buffer).catch((error) => {
+    const pythonParsed = await parseWithPython(fileName, buffer, options).catch((error) => {
       if (extension === ".pdf" || extension === ".docx") {
         return {
           error: error instanceof Error ? error.message : String(error),
@@ -119,12 +148,16 @@ export async function parseDocument(fileName: string, buffer: Buffer): Promise<P
   throw new Error(`暂不支持的文件格式：${extension || "unknown"}`);
 }
 
-async function parseWithPython(fileName: string, buffer: Buffer): Promise<{ parsed: ParsedDocument }> {
+async function parseWithPython(fileName: string, buffer: Buffer, options?: DocumentParserOptions): Promise<{ parsed: ParsedDocument }> {
   const tempDir = await mkdtemp(path.join(tmpdir(), "bridge-document-pipeline-"));
   const inputPath = path.join(tempDir, sanitizeFileName(fileName));
   try {
     await writeFile(inputPath, buffer);
-    const result = await spawnPythonTool<PythonDocumentParseResult>("convert_document", { inputPath });
+    const result = await spawnPythonTool<PythonDocumentParseResult>("convert_document", {
+      inputPath,
+      ...(options ? { parser: options } : {}),
+      ...(options?.ocrLang ? { ocrLang: options.ocrLang } : {}),
+    });
     if (!result.ok) {
       throw new Error(result.error);
     }

@@ -9,7 +9,8 @@ import { ModuleManager as RuntimeModuleManager } from "../bridge/module.js";
 import { DEFAULT_CONTRACT_ASSISTANT_CONFIG, DEFAULT_LABOR_SKILL_CONFIG, type AppConfig } from "../config/schema.js";
 import { ContractAssistantService } from "../contract-assistant/index.js";
 import { ContractAssistantRuntimeModule } from "../contract-assistant/runtime-module.js";
-import { KnowledgeBaseService, type KnowledgeBasePort } from "../knowledge/index.js";
+import { createKnowledgeService } from "../knowledge/factory.js";
+import type { KnowledgeBasePort } from "../knowledge/index.js";
 import { KnowledgeRuntimeModule } from "../knowledge/runtime-module.js";
 import { LaborSkillService } from "../labor/index.js";
 import { LaborRuntimeModule } from "../labor/runtime-module.js";
@@ -70,7 +71,12 @@ export function createRuntimeModules(options: {
   createAndBindSession(source: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey">): Promise<SessionBindingRecord>;
 }): RuntimeModuleAssemblyResult {
   const memory = options.memory ?? createMemoryService(options.config, options.logger, options.opencode as OpenCodeClient);
-  const knowledge = options.knowledge ?? createKnowledgeService(options.config, options.outbound, options.opencode as OpenCodeClient, options.logger);
+  const knowledge = options.knowledge ?? createKnowledgeService({
+    config: options.config,
+    resources: options.outbound,
+    opencode: options.opencode as OpenCodeClient,
+    logger: options.logger,
+  });
   const contractAssistant = createContractAssistantService(options.config, options.outbound, options.opencode as OpenCodeClient, options.logger);
   const laborSkill = createLaborSkillService(options.config, options.outbound, options.opencode as OpenCodeClient, options.logger, knowledge);
 
@@ -122,24 +128,6 @@ function createMemoryService(
   return new MemoryService(
     config.memory,
     config.embeddings ?? { provider: undefined, similarityThreshold: 0.75 },
-    opencode,
-    logger,
-  );
-}
-
-/** 在启用知识库功能时创建知识库服务。 */
-function createKnowledgeService(
-  config: AppConfig,
-  outbound: RuntimeModuleOutboundPort,
-  opencode: OpenCodeClient,
-  logger: Logger,
-): KnowledgeBasePort | null {
-  if (!config.knowledgeBase.enabled) {
-    return null;
-  }
-  return new KnowledgeBaseService(
-    config.knowledgeBase,
-    outbound,
     opencode,
     logger,
   );

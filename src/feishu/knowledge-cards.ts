@@ -123,7 +123,7 @@ export function buildKnowledgeIngestReadyPayload(): FeishuPostPayload {
     iconToken: "status-meeting_filled",
     bodyElements: [
       buildGreyPanel([
-        cardMarkdown("**支持格式** ：PDF / DOCX / TXT / MD\n**模式** ：批量入库", "normal"),
+        cardMarkdown("**支持格式** ：PDF / DOCX / TXT / MD / PNG / JPG / WEBP\n**模式** ：批量入库", "normal"),
       ]),
       cardMarkdown("发送文件或 URL 即可入库\n", "normal"),
       cardMarkdown("发送 `/kb-ingest-end` 结束本次任务", "normal_v2"),

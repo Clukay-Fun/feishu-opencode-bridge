@@ -9,7 +9,6 @@ import crypto from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import type { AppConfig } from "../config/schema.js";
 import type { Logger } from "../logging/logger.js";
 import { OpenAICompatibleEmbeddingClient, type EmbeddingProviderClient } from "../memory/embedding-retriever.js";
 import type { OpenCodeClient, OpenCodeModelRef, OpenCodePromptRequest } from "../opencode/client.js";
@@ -20,6 +19,7 @@ import {
   parseKnowledgeFile,
   type KnowledgeParserUsed,
 } from "./parser.js";
+import type { KnowledgeBaseConfig } from "./config.js";
 import {
   KnowledgeDb,
   type KnowledgeDocumentSummary,
@@ -179,7 +179,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
   private readonly embeddingClient: EmbeddingProviderClient;
 
   constructor(
-    private readonly config: AppConfig["knowledgeBase"],
+    private readonly config: KnowledgeBaseConfig,
     private readonly resources: KnowledgeResourcePort,
     private readonly opencode: OpenCodePort,
     private readonly logger: Logger,
@@ -274,7 +274,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     const fileName = path.basename(resolvedPath);
     const buffer = await readFile(resolvedPath);
     validateUploadedFile(fileName, buffer, this.config.ingest.allowedExtensions, this.config.ingest.maxFileSizeMb);
-    const parsed = await parseKnowledgeFile(fileName, buffer);
+    const parsed = await parseKnowledgeFile(fileName, buffer, this.config.parser);
     return {
       sourceFile: fileName,
       markdown: parsed.normalizedMarkdown,
@@ -292,7 +292,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     const fileName = path.basename(resolvedPath);
     const buffer = await readFile(resolvedPath);
     validateUploadedFile(fileName, buffer, this.config.ingest.allowedExtensions, this.config.ingest.maxFileSizeMb);
-    const parsedDocument = await parseKnowledgeFile(fileName, buffer);
+    const parsedDocument = await parseKnowledgeFile(fileName, buffer, this.config.parser);
     const chapterGrouping = groupKnowledgeSectionsByChapter(parsedDocument.sections);
     const extractionSections = chapterGrouping.chapters.length > 0
       ? chapterGrouping.chapters.filter((chapter) => !chapter.skipped).flatMap((chapter) => chapter.sections)
@@ -436,7 +436,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     sourceUrl?: string | undefined;
   }, options?: KnowledgeIngestOptions): Promise<KnowledgeIngestResult> {
     const startedAt = Date.now();
-    const parsedDocument = await parseKnowledgeFile(input.fileName, input.buffer);
+    const parsedDocument = await parseKnowledgeFile(input.fileName, input.buffer, this.config.parser);
     if (parsedDocument.normalizedMarkdown) {
       await this.reportProgress(options, {
         step: "read",
@@ -1106,16 +1106,16 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
   }
 }
 
-function resolveSourceFileFieldName(config: AppConfig["knowledgeBase"]): string {
+function resolveSourceFileFieldName(config: KnowledgeBaseConfig): string {
   return config.storage.bitable.sourceFileField?.name ?? "源文件";
 }
 
-function resolveStatuteFieldName(config: AppConfig["knowledgeBase"]): string {
+function resolveStatuteFieldName(config: KnowledgeBaseConfig): string {
   return config.storage.bitable.statuteField?.name ?? "法条";
 }
 
 function buildSourceFileFieldValue(
-  config: AppConfig["knowledgeBase"],
+  config: KnowledgeBaseConfig,
   context: SourceFileTemplateContext,
 ): string | { text: string; link: string } {
   const fieldConfig = config.storage.bitable.sourceFileField;
@@ -1139,7 +1139,7 @@ function buildSourceFileFieldValue(
 }
 
 function buildStatuteFieldValue(
-  config: AppConfig["knowledgeBase"],
+  config: KnowledgeBaseConfig,
   context: StatuteTemplateContext,
 ): string | { text: string; link: string } | undefined {
   const fieldConfig = config.storage.bitable.statuteField;
@@ -1592,7 +1592,7 @@ async function delay(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function resolveKnowledgeBitableViewUrl(config: AppConfig["knowledgeBase"]): string | undefined {
+function resolveKnowledgeBitableViewUrl(config: KnowledgeBaseConfig): string | undefined {
   const candidates = [
     config.storage.bitable.sourceFileField?.urlTemplate,
     config.storage.bitable.statuteField?.urlTemplate,
@@ -1606,11 +1606,11 @@ function resolveKnowledgeBitableViewUrl(config: AppConfig["knowledgeBase"]): str
   return `https://feishu.cn/base/${config.storage.bitable.appToken}?table=${config.storage.bitable.tableId}`;
 }
 
-function resolveKnowledgeModel(config: AppConfig["knowledgeBase"], step: "webRead" | "extract" | "rerank"): OpenCodeModelRef | undefined {
+function resolveKnowledgeModel(config: KnowledgeBaseConfig, step: "webRead" | "extract" | "rerank"): OpenCodeModelRef | undefined {
   return toOpenCodeModelRef(config.models[step] ?? config.models.default);
 }
 
-function resolveKnowledgeModelKey(config: AppConfig["knowledgeBase"], step: "webRead" | "extract" | "rerank"): string {
+function resolveKnowledgeModelKey(config: KnowledgeBaseConfig, step: "webRead" | "extract" | "rerank"): string {
   return config.models[step] ?? config.models.default ?? "__opencode_default__";
 }
 

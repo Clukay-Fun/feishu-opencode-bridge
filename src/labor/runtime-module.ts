@@ -683,6 +683,11 @@ function toLaborProgressCardView(state: LaborProgressState): LaborAnalysisProgre
 function buildLaborCompletedView(result: {
   title: string;
   docUrl?: string | undefined;
+  ledgerUrl?: string | undefined;
+  keyEvidenceViewUrl?: string | undefined;
+  missingEvidenceViewUrl?: string | undefined;
+  syncedEvidenceCount: number;
+  syncedGapCount: number;
   extractedMaterials: LaborMaterialExtraction[];
   aggregate: { evidenceRows: Array<unknown>; issues: Array<unknown> };
 }, totalFiles: number): LaborAnalysisCompletedCardView {
@@ -698,5 +703,10 @@ function buildLaborCompletedView(result: {
     issueCount: result.aggregate.issues.length,
     tagCounts,
     docUrl: result.docUrl,
+    ledgerUrl: result.ledgerUrl,
+    keyEvidenceViewUrl: result.keyEvidenceViewUrl,
+    missingEvidenceViewUrl: result.missingEvidenceViewUrl,
+    syncedEvidenceCount: result.syncedEvidenceCount,
+    syncedGapCount: result.syncedGapCount,
   };
 }

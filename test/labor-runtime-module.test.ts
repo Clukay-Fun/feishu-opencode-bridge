@@ -94,6 +94,11 @@ async function createModule(existingTempDir?: string) {
     title: "劳动争议分析",
     markdown: "### 劳动争议分析",
     docUrl: "https://example.com/doc",
+    ledgerUrl: "https://example.com/base/app?table=tbl_labor",
+    keyEvidenceViewUrl: "https://example.com/base/app?table=tbl_labor&view=vew_key",
+    missingEvidenceViewUrl: "https://example.com/base/app?table=tbl_labor&view=vew_gap",
+    syncedEvidenceCount: 1,
+    syncedGapCount: 1,
     extractedMaterials: [createExtraction()],
     aggregate: createAggregate(),
     warnings: [],
@@ -233,6 +238,9 @@ describe("LaborRuntimeModule", () => {
       expect(completedSerialized).toContain("焦点 1");
       expect(completedSerialized).toContain("材料占比");
       expect(completedSerialized).toContain("打开分析文档");
+      expect(completedSerialized).toContain("打开总表");
+      expect(completedSerialized).toContain("关键证据视图");
+      expect(completedSerialized).toContain("缺口视图");
     } finally {
       await cleanupModule(module, tempDir);
     }

@@ -88,7 +88,7 @@ bridge 读写 Bitable 使用的是 `config.json` 中 `feishu.appId` / `feishu.ap
 @bot /kb-ingest-start
 ```
 
-随后连续上传 PDF / DOCX / TXT / MD 文件，或发送带 URL 和明确入库意图的自然语言，例如：
+随后连续上传 PDF / DOCX / TXT / MD / PNG / JPG / WEBP 文件，或发送带 URL 和明确入库意图的自然语言，例如：
 
 ```
 @bot 读取 https://example.com/law 这个网页并入库
@@ -107,7 +107,8 @@ URL 入库路径：bridge 创建一次 OpenCode 短生命周期 session，使用
   │
   ▼
 [1] 文档解析 / 网页读取
-    ├── PDF → pdf-parse 按页提取文本，保留页码
+    ├── PDF → MinerU / PaddleOCR-VL / PyMuPDF4LLM / Docling / pdf-parse 转 Markdown
+    ├── 图片/扫描件 → PaddleOCR-VL / MinerU / Tesseract 转 Markdown
     ├── Word → mammoth 提取原始文本，再按段落切分
     ├── TXT/MD → 按段落切分
     └── URL → OpenCode session (model: webRead) 读取网页 → Markdown
@@ -349,10 +350,14 @@ SQLite 表结构：
 
 | 格式         | 解析方式                       | 依赖        |
 | ------------ | ------------------------------ | ----------- |
-| PDF          | `pdf-parse` 按页提取文本       | pdf-parse   |
+| PDF          | MinerU / PaddleOCR-VL / PyMuPDF4LLM / Docling / pdf-parse 按配置降级 | Python 工具 / API / pdf-parse |
+| 图片/扫描件  | PaddleOCR-VL / MinerU / Tesseract 按配置降级 | API / tesseract |
 | Word (.docx) | `mammoth` 提取原始文本，再按段落切分 | mammoth     |
 | TXT/MD       | 直接读取（支持 GB18030 自动检测） | 无          |
 | URL 网页     | OpenCode session 读取并整理成 MD | OpenCode    |
+
+外部 OCR API 默认关闭。
+只有显式设置 `knowledgeBase.parser.externalApiEnabled=true` 并启用对应 provider 时，才会上传材料到 MinerU 或 PaddleOCR-VL。
 
 ### 分块策略
 

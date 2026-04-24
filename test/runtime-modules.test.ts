@@ -1,10 +1,24 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { createFeishuTransport } from "../src/runtime/feishu-transport.js";
 import { createRuntimeModules } from "../src/runtime/runtime-modules.js";
 import type { AppConfig } from "../src/config/schema.js";
 
+const tempDirs: string[] = [];
+
 describe("createRuntimeModules", () => {
+  afterEach(() => {
+    while (tempDirs.length > 0) {
+      const dir = tempDirs.pop();
+      if (dir) {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  });
+
   it("assembles modules with the complete outbound resource port", () => {
     expect(() => {
       createRuntimeModules({
@@ -19,6 +33,23 @@ describe("createRuntimeModules", () => {
         createAndBindSession: vi.fn(async () => ({ sessionId: "ses_1", label: "会话", createdAt: 1, lastUsedAt: 1 })),
       });
     }).not.toThrow();
+  });
+
+  it("creates the knowledge module through the knowledge service port when enabled", async () => {
+    const result = createRuntimeModules({
+      config: createConfig({ knowledgeEnabled: true, contractEnabled: false, laborEnabled: false }),
+      outbound: createOutbound(),
+      transport: createTransport(),
+      logger: { log: vi.fn() } as never,
+      opencode: createOpenCode(),
+      whitelist: { bind: vi.fn(async () => {}) },
+      getSessionWindow: () => ({ mode: "single", interactionMode: "default", activeSessionId: null, sessions: [] }),
+      saveSessionWindow: vi.fn(async () => {}),
+      createAndBindSession: vi.fn(async () => ({ sessionId: "ses_1", label: "会话", createdAt: 1, lastUsedAt: 1 })),
+    });
+
+    expect(result.moduleManager.list().map((module) => module.name)).toContain("knowledge");
+    await result.moduleManager.stop();
   });
 });
 
@@ -65,11 +96,13 @@ function createOpenCode() {
 }
 
 function createConfig(options: { knowledgeEnabled: boolean; contractEnabled: boolean; laborEnabled: boolean }): AppConfig {
+  const dataDir = mkdtempSync(join(tmpdir(), "runtime-modules-test-"));
+  tempDirs.push(dataDir);
   return {
     storage: {
-      dataDir: "/tmp/runtime-modules-test",
+      dataDir,
       mappingsFile: "mappings.json",
-      logsDir: "/tmp/runtime-modules-test/logs",
+      logsDir: join(dataDir, "logs"),
     },
     bridge: {
       queueLimit: 1,
@@ -109,18 +142,30 @@ function createConfig(options: { knowledgeEnabled: boolean; contractEnabled: boo
     },
     knowledgeBase: {
       enabled: options.knowledgeEnabled,
-      dataDir: "/tmp/runtime-modules-test/kb",
+      autoDetect: { enabled: true, minConfidence: 0.75 },
+      query: { topK: 5, finalTopN: 3, keywordFallbackLimit: 5 },
+      storage: {
+        sqlitePath: join(dataDir, "knowledge.db"),
+        bitable: {
+          appToken: "app",
+          tableId: "tbl",
+          documentTableId: "tbl_docs",
+        },
+      },
+      embeddingProvider: {
+        baseUrl: new URL("https://example.com/v1/"),
+        apiKey: "token",
+        model: "text-embedding",
+      },
+      models: {},
       ingest: {
         maxFileSizeMb: 20,
         pendingTtlMs: 60_000,
         allowedExtensions: [".txt"],
-      },
-      retrieval: {
-        topK: 5,
-      },
-      bitable: {
-        appToken: "app",
-        tableId: "tbl",
+        sessionIdleMs: 1_800_000,
+        concurrency: 3,
+        maxExtractChunks: 30,
+        maxExtractQas: 500,
       },
     },
     memory: {

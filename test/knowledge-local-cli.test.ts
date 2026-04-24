@@ -14,7 +14,9 @@ import type {
   KnowledgeQueryResult,
   KnowledgeStatsResult,
 } from "../src/knowledge/index.js";
+import { createKnowledgeCliRuntime as createKnowledgeCliRuntimeFromFactory } from "../src/knowledge/factory.js";
 import {
+  createKnowledgeCliRuntime,
   runKnowledgeCli,
   runKnowledgeIngestFileCli,
   runKnowledgeIngestUrlCli,
@@ -33,6 +35,10 @@ afterEach(() => {
 });
 
 describe("local knowledge CLI", () => {
+  it("reuses the knowledge module factory for the default CLI runtime", () => {
+    expect(createKnowledgeCliRuntime).toBe(createKnowledgeCliRuntimeFromFactory);
+  });
+
   it("routes knowledge queries through the unified dispatcher", async () => {
     const createRuntime = vi.fn(async () => createRuntimeStub({
       service: {
@@ -251,6 +257,7 @@ describe("local knowledge CLI", () => {
     }));
 
     const parseResult = await runKnowledgeCli(["parse", "pdf", "--path", "/tmp/demo.pdf"], { createRuntime });
+    const parseMaterialResult = await runKnowledgeCli(["parse", "material", "--path", "/tmp/demo.png"], { createRuntime });
     const extractResult = await runKnowledgeCli(["extract", "--path", "/tmp/demo.pdf", "--max-qas", "5"], { createRuntime });
     const listResult = await runKnowledgeCli(["doc", "list", "--limit", "10"], { createRuntime });
     const showResult = await runKnowledgeCli(["doc", "show", "--id", "1"], { createRuntime });
@@ -260,6 +267,10 @@ describe("local knowledge CLI", () => {
     expect(parseResult).toEqual(expect.objectContaining({
       ok: true,
       result: expect.objectContaining({ parserUsed: "pymupdf4llm" }),
+    }));
+    expect(parseMaterialResult).toEqual(expect.objectContaining({
+      ok: true,
+      result: expect.objectContaining({ sourceFile: "demo.png" }),
     }));
     expect(extractResult).toEqual(expect.objectContaining({
       ok: true,

@@ -9,6 +9,8 @@ import path from "node:path";
 
 import type { AppConfig } from "./schema.js";
 import { ConfigSchema } from "./schema.js";
+import type { ConfigLoadContext } from "./module-registry.js";
+import { moduleConfigRegistry } from "./modules.js";
 
 /** 从配置文件读取、校验并返回完整运行时配置。 */
 export async function loadConfig(configPath?: string): Promise<AppConfig> {
@@ -24,7 +26,13 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
   const resolvedEmbeddingThreshold = parsed.embeddings.similarityThreshold
     ?? parsed.memory.embeddingSimilarityThreshold
     ?? 0.75;
-  const resolvedKnowledgeEmbeddingProvider = parsed.knowledgeBase.embeddingProvider ?? resolvedEmbeddingProvider;
+  const configLoadContext: ConfigLoadContext = {
+    baseDir,
+    dataDir,
+    resolveRelative,
+    ...(resolvedEmbeddingProvider ? { resolvedEmbeddingProvider } : {}),
+  };
+  const moduleConfigs = moduleConfigRegistry.normalize<Pick<AppConfig, "knowledgeBase">>(parsed, configLoadContext);
 
   return {
     feishu: {
@@ -128,64 +136,7 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
         enableWikiLinks: parsed.memory.obsidian.enableWikiLinks,
       },
     },
-    knowledgeBase: {
-      enabled: parsed.knowledgeBase.enabled,
-      autoDetect: {
-        enabled: parsed.knowledgeBase.autoDetect.enabled,
-        minConfidence: parsed.knowledgeBase.autoDetect.minConfidence,
-      },
-      query: {
-        topK: parsed.knowledgeBase.query.topK,
-        finalTopN: parsed.knowledgeBase.query.finalTopN,
-        keywordFallbackLimit: parsed.knowledgeBase.query.keywordFallbackLimit,
-      },
-      storage: {
-        sqlitePath: resolveRelative(baseDir, parsed.knowledgeBase.storage.sqlitePath ?? path.join(dataDir, "knowledge-base.db")),
-        bitable: {
-          appToken: parsed.knowledgeBase.storage.bitable.appToken,
-          tableId: parsed.knowledgeBase.storage.bitable.tableId,
-          documentTableId: parsed.knowledgeBase.storage.bitable.documentTableId,
-          sourceFileField: parsed.knowledgeBase.storage.bitable.sourceFileField
-            ? {
-              name: parsed.knowledgeBase.storage.bitable.sourceFileField.name,
-              type: parsed.knowledgeBase.storage.bitable.sourceFileField.type,
-              urlTemplate: parsed.knowledgeBase.storage.bitable.sourceFileField.urlTemplate,
-              textTemplate: parsed.knowledgeBase.storage.bitable.sourceFileField.textTemplate,
-            }
-            : undefined,
-          statuteField: parsed.knowledgeBase.storage.bitable.statuteField
-            ? {
-              name: parsed.knowledgeBase.storage.bitable.statuteField.name,
-              type: parsed.knowledgeBase.storage.bitable.statuteField.type,
-              urlTemplate: parsed.knowledgeBase.storage.bitable.statuteField.urlTemplate,
-              textTemplate: parsed.knowledgeBase.storage.bitable.statuteField.textTemplate,
-            }
-            : undefined,
-        },
-      },
-      embeddingProvider: resolvedKnowledgeEmbeddingProvider
-        ? {
-          baseUrl: new URL(resolvedKnowledgeEmbeddingProvider.baseUrl),
-          apiKey: resolvedKnowledgeEmbeddingProvider.apiKey,
-          model: resolvedKnowledgeEmbeddingProvider.model,
-        }
-        : undefined,
-      models: {
-        default: parsed.knowledgeBase.models.default,
-        webRead: parsed.knowledgeBase.models.webRead,
-        extract: parsed.knowledgeBase.models.extract,
-        rerank: parsed.knowledgeBase.models.rerank,
-      },
-      ingest: {
-        allowedExtensions: parsed.knowledgeBase.ingest.allowedExtensions.map((value) => value.trim().toLowerCase()),
-        maxFileSizeMb: parsed.knowledgeBase.ingest.maxFileSizeMb,
-        pendingTtlMs: parsed.knowledgeBase.ingest.pendingTtlMs,
-        sessionIdleMs: parsed.knowledgeBase.ingest.sessionIdleMs,
-        concurrency: parsed.knowledgeBase.ingest.concurrency,
-        maxExtractChunks: parsed.knowledgeBase.ingest.maxExtractChunks,
-        maxExtractQas: parsed.knowledgeBase.ingest.maxExtractQas,
-      },
-    },
+    knowledgeBase: moduleConfigs.knowledgeBase,
     contractAssistant: {
       enabled: parsed.contractAssistant.enabled,
       storage: {
@@ -226,6 +177,16 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
         allowedExtensions: parsed.laborSkill.ingest.allowedExtensions.map((value) => value.trim().toLowerCase()),
         maxFileSizeMb: parsed.laborSkill.ingest.maxFileSizeMb,
         pendingTtlMs: parsed.laborSkill.ingest.pendingTtlMs,
+      },
+      storage: {
+        evidenceLedger: parsed.laborSkill.storage.evidenceLedger
+          ? {
+            appToken: parsed.laborSkill.storage.evidenceLedger.appToken,
+            tableId: parsed.laborSkill.storage.evidenceLedger.tableId,
+            keyEvidenceViewId: parsed.laborSkill.storage.evidenceLedger.keyEvidenceViewId,
+            missingEvidenceViewId: parsed.laborSkill.storage.evidenceLedger.missingEvidenceViewId,
+          }
+          : undefined,
       },
     },
   };

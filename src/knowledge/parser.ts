@@ -7,6 +7,7 @@
 import {
   parseDocument,
   type DocumentParseQuality,
+  type DocumentParserOptions,
   type DocumentParserUsed,
   type ParsedDocumentSection,
 } from "../document-pipeline/index.js";
@@ -43,8 +44,9 @@ export type ParsedKnowledgeChapter = {
 export async function parseKnowledgeFile(
   fileName: string,
   buffer: Buffer,
+  options?: DocumentParserOptions,
 ): Promise<ParsedKnowledgeDocument> {
-  const parsed = await parseDocument(fileName, buffer);
+  const parsed = await parseDocument(fileName, buffer, options);
   return {
     normalizedMarkdown: parsed.markdown,
     plainText: parsed.plainText,

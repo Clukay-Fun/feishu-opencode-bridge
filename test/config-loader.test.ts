@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -34,6 +34,18 @@ describe("loadConfig", () => {
     expect(config.whitelist.storePath).toBe(path.join(dir, "data", "whitelist.json"));
     expect(config.server.publicBaseUrl.toString()).toBe("http://127.0.0.1:3000/");
     expect(config.feishu.cardActions.path).toBe("/webhook/card");
+  });
+
+  it("keeps the legacy config normalized snapshot stable", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-legacy-"));
+    const configPath = path.join(dir, "legacy-config.json");
+    const fixtureText = await readFile(path.resolve("test/fixtures/legacy-config.json"), "utf8");
+    await writeFile(configPath, fixtureText, "utf8");
+    const expected = JSON.parse(await readFile(path.resolve("test/fixtures/legacy-config.snapshot.json"), "utf8")) as unknown;
+
+    const config = await loadConfig(configPath);
+
+    expect(toStableConfigSnapshot(config, dir)).toEqual(expected);
   });
 });
 
@@ -145,6 +157,25 @@ describe("loadConfig memory settings", () => {
     });
     expect(config.knowledgeBase.ingest.maxExtractChunks).toBe(30);
     expect(config.knowledgeBase.ingest.maxExtractQas).toBe(500);
+    expect(config.knowledgeBase.ingest.allowedExtensions).toEqual([".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp"]);
+    expect(config.knowledgeBase.parser).toEqual({
+      externalApiEnabled: false,
+      pdfProviderOrder: ["mineru-agent", "paddleocr-vl", "pymupdf4llm", "docling", "pdf-parse"],
+      imageProviderOrder: ["paddleocr-vl", "mineru-agent", "tesseract"],
+      ocrLang: "ch",
+      timeoutMs: 180000,
+      pollIntervalMs: 5000,
+      maxPollMs: 180000,
+      mineru: {
+        enabled: false,
+        endpoint: "https://mineru.net/api/v1/agent",
+      },
+      paddleocr: {
+        enabled: false,
+        apiKey: "",
+        secretKey: "",
+      },
+    });
   });
 
   it("loads knowledge base OpenCode model routing config", async () => {
@@ -299,6 +330,39 @@ describe("loadConfig memory settings", () => {
         maxFileSizeMb: 20,
         pendingTtlMs: 600000,
       },
+      storage: {
+        evidenceLedger: undefined,
+      },
+    });
+  });
+
+  it("loads optional labor evidence ledger settings", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({
+      ...baseConfig(),
+      laborSkill: {
+        enabled: true,
+        storage: {
+          evidenceLedger: {
+            appToken: "app_labor",
+            tableId: "tbl_evidence",
+            keyEvidenceViewId: "vew_key",
+            missingEvidenceViewId: "vew_gap",
+          },
+        },
+      },
+    }), "utf8");
+
+    const config = await loadConfig(configPath);
+
+    expect(config.laborSkill?.storage).toEqual({
+      evidenceLedger: {
+        appToken: "app_labor",
+        tableId: "tbl_evidence",
+        keyEvidenceViewId: "vew_key",
+        missingEvidenceViewId: "vew_gap",
+      },
     });
   });
 });
@@ -334,4 +398,25 @@ function baseConfig(): Record<string, unknown> {
 
 function dirPlaceholder(): string {
   return process.cwd();
+}
+
+function toStableConfigSnapshot(value: unknown, fixtureDir: string): unknown {
+  if (value instanceof URL) {
+    return value.toString();
+  }
+  if (value instanceof Set) {
+    return [...value].sort();
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => toStableConfigSnapshot(item, fixtureDir));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .map(([key, item]) => [key, toStableConfigSnapshot(item, fixtureDir)]));
+  }
+  if (typeof value === "string") {
+    return value.split(fixtureDir).join("<fixtureDir>");
+  }
+  return value;
 }

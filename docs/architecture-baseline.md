@@ -1,6 +1,6 @@
 # 架构基线
 
-> 最后更新：2026-04-18
+> 最后更新：2026-04-23
 >
 > 这份文档定义了 post-demo 阶段的架构基线。
 > 如果它与 demo 导向的说明冲突，以这份文档的代码组织规则为准。
@@ -87,6 +87,30 @@
 - dedicated stores
 
 新功能不应通过临时 hooks 继续膨胀 core。
+
+### 5. 业务实现类由业务模块自己构造
+
+Bridge 可以装配业务模块，但不应直接构造业务实现类。
+
+业务模块应在自己的命名空间内提供 factory。
+runtime / bridge 只依赖 factory、RuntimeModule seam 或业务 port 类型。
+
+当前强制试点：
+
+- `knowledge` 的 `KnowledgeBaseService` 只能在 `src/knowledge/` 内构造
+- `src/runtime/` 和 `src/bridge/` 只能 type-import `KnowledgeBasePort`
+- 本地知识库 CLI 与 Bridge runtime 复用同一套 knowledge factory
+
+后续收口对象：
+
+- `contract-assistant`
+- `labor`
+- `memory`
+
+这些模块本期保留现状。
+迁移时应沿用 knowledge 的 factory / port 模式，不扩大 core seam。
+本期 lint 仅强制 knowledge。
+在对应后续 issue 收口前，`runtime-modules.ts` 仍允许直接构造 labor、contract 和 memory 服务。
 
 ## 目标分层边界
 
@@ -205,6 +229,7 @@ Feishu Transport
 通用文件解析约定：
 
 - 常见文件先经 `document-pipeline` 统一转换为 Markdown / 纯文本 / sections
+- OCR / 文档解析外部 API 必须显式配置启用；默认不得无感上传用户材料
 - 业务模块消费统一解析结果，不直接分叉维护 PDF、DOCX、HTML 等专项入口
 - Python 侧新调用优先走 `scripts/python/convert_document.py`，旧专项脚本保留为兼容后端
 
@@ -212,7 +237,7 @@ Feishu Transport
 
 - `labor-skill` 是劳动争议领域总入口，负责劳动案件主线 workflow 编排
 - `contract-draft`、`contract-extract`、`invoice-recognize`、`case-manage` 等保持独立专项能力，可被 labor 调用，但不并入 labor 私有状态
-- `evidence-extract` 和 `document-pipeline` 属于 shared workflow，承载跨领域材料处理能力，不承担劳动案件策略判断
+- `evidence-extract`、`document-pipeline`、`timeline-build`、`workbench-generate` 和 `case-workflow` 属于 shared workflow，承载跨领域材料处理、时间线构建和工作台输出能力，不承担劳动案件策略判断
 - 详细边界见 [labor-skill-workflows.md](/Users/clukay/Program/feishu-opencode-bridge/docs/modules/labor-skill-workflows.md)
 
 不应负责：
@@ -253,17 +278,31 @@ Feishu Transport
 - 定义共享配置 schema 与跨字段校验
 - 将路径、URL、默认值和兼容性 fallback 解析为可直接给运行时使用的 config 对象
 - 作为 core、modules 与 scripts 的唯一配置入口
+- 通过内置静态 module config registry 组合模块子配置
 
 不应负责：
 
 - 运行时状态
 - feature interaction state
 - 每个 feature 各自维护的 ad-hoc config 加载路径
+- 模块之间的横向配置依赖
 
 规则：
 
 - 所有 feature 配置都必须经过共享 schema 和 loader
 - modules 只能消费注入进来的 config；不能直接读 `config.json`，也不能维护并行的 feature config 文件
+- 模块配置不互相读取；跨模块运行时依赖留在 runtime module assembly 中注入
+- 共享已解析值必须由中央 loader 在任何模块 normalize 前写入 `ConfigLoadContext`
+- 模块 normalize 之间没有顺序依赖；如果某个模块需要另一个模块的解析值，默认拒绝，除非先把该值升级为 `ConfigLoadContext` 字段并经过架构 review
+- `ConfigLoadContext` 字段集本期冻结为 `baseDir`、`dataDir`、`resolveRelative` 和 `resolvedEmbeddingProvider`
+- module config registry 只供内置模块静态注册；不是第三方 plugin 公共 API
+- config 层只能 import 业务模块的 `config.ts`，不得 import 业务实现、runtime module 或模块 index
+
+过渡期：
+
+- `knowledgeBase` 是首个下沉到模块 config registry 的试点
+- `labor`、`contract-assistant` 和 `memory` 本期仍保留在 `schema.ts` / `loader.ts`
+- 后续迁移步骤固定为：创建 `<module>/config.ts`，导出 module config definition，加入静态 registry，删除中央 schema / loader 旧块，补兼容快照与模块配置测试
 
 ### 7. Logging 与 Observability
 

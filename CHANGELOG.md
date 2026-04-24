@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.39 - 2026-04-24
+
+### Added
+- Added an internal module config registry and moved knowledge-base config normalization into the knowledge module boundary.
+- Added configurable document parser provider options for MinerU, PaddleOCR-VL, local PDF parsers, and image OCR.
+- Added shared case workflow helpers for evidence ledger sync, timeline Mermaid generation, and Feishu workbench output.
+- Added DOCX package/XML diagnostics and single-run replacement proof-of-concept coverage.
+
+### Changed
+- Reused the knowledge service factory across Bridge runtime modules and the local knowledge CLI.
+- Routed labor analysis evidence ledger and workbench generation through shared workflow helpers.
+
 ## 0.1.38 - 2026-04-23
 
 ### Added

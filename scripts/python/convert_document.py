@@ -15,11 +15,13 @@ import subprocess
 from common.io import read_json_stdin, write_error_stderr, write_json_stdout
 from doc_to_text import extract_text
 from pdf_to_markdown import convert as convert_pdf
+from ocr_provider import parse_with_mineru, parse_with_paddleocr
 
 
 TEXT_SUFFIXES = {".txt", ".md"}
 HTML_SUFFIXES = {".html", ".htm"}
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+EXTERNAL_PROVIDERS = {"mineru-agent", "paddleocr-vl"}
 
 
 def normalize_text(text: str) -> str:
@@ -102,7 +104,14 @@ def convert_html(input_path: Path) -> dict[str, object]:
     }
 
 
-def convert_pdf_document(input_path: Path) -> dict[str, object]:
+def with_warning(result: dict[str, object], warnings: list[str], attempted: list[str]) -> dict[str, object]:
+    chain = result.get("fallbackChain")
+    result["fallbackChain"] = [*attempted, *[item for item in (chain if isinstance(chain, list) else []) if item not in attempted]]
+    result["warnings"] = [*warnings, *[item for item in result.get("warnings", []) if isinstance(item, str)]]
+    return result
+
+
+def convert_local_pdf_document(input_path: Path) -> dict[str, object]:
     markdown, method = convert_pdf(str(input_path))
     markdown = normalize_text(markdown)
     return {
@@ -116,7 +125,7 @@ def convert_pdf_document(input_path: Path) -> dict[str, object]:
     }
 
 
-def convert_image_ocr(input_path: Path, lang: str) -> dict[str, object]:
+def convert_tesseract_image(input_path: Path, lang: str) -> dict[str, object]:
     tesseract = shutil.which("tesseract")
     if not tesseract:
         raise RuntimeError("image OCR requires tesseract CLI")
@@ -144,7 +153,82 @@ def convert_image_ocr(input_path: Path, lang: str) -> dict[str, object]:
     }
 
 
-def convert_document(input_path: Path, ocr_lang: str) -> dict[str, object]:
+def run_provider(input_path: Path, provider: str, options: dict[str, object], ocr_lang: str) -> dict[str, object]:
+    if provider == "mineru-agent":
+        return parse_with_mineru(input_path, options)
+    if provider == "paddleocr-vl":
+        return parse_with_paddleocr(input_path, options)
+    if provider in {"pymupdf4llm", "docling"}:
+        result = convert_local_pdf_document(input_path)
+        if result["tool"] != provider:
+            raise RuntimeError(f"{provider} did not produce acceptable markdown")
+        return result
+    if provider == "tesseract":
+        return convert_tesseract_image(input_path, ocr_lang)
+    raise RuntimeError(f"unsupported parser provider: {provider}")
+
+
+def configured_provider_order(payload: dict[str, object], key: str, fallback: list[str]) -> list[str]:
+    parser = payload.get("parser")
+    if isinstance(parser, dict) and isinstance(parser.get(key), list):
+        return [str(item) for item in parser[key] if str(item).strip()]
+    return fallback
+
+
+def provider_options(payload: dict[str, object], provider: str, ocr_lang: str) -> dict[str, object]:
+    parser = payload.get("parser")
+    parser_config = parser if isinstance(parser, dict) else {}
+    base: dict[str, object] = {
+        "ocrLang": parser_config.get("ocrLang") or ocr_lang,
+        "timeoutMs": parser_config.get("timeoutMs") or 180_000,
+        "pollIntervalMs": parser_config.get("pollIntervalMs") or 5_000,
+        "maxPollMs": parser_config.get("maxPollMs") or 180_000,
+    }
+    if provider == "mineru-agent":
+        mineru = parser_config.get("mineru") if isinstance(parser_config.get("mineru"), dict) else {}
+        base.update(mineru)
+    if provider == "paddleocr-vl":
+        paddle = parser_config.get("paddleocr") if isinstance(parser_config.get("paddleocr"), dict) else {}
+        base.update(paddle)
+    return base
+
+
+def provider_enabled(payload: dict[str, object], provider: str) -> tuple[bool, str | None]:
+    parser = payload.get("parser")
+    parser_config = parser if isinstance(parser, dict) else {}
+    external_enabled = bool(parser_config.get("externalApiEnabled"))
+    if provider in EXTERNAL_PROVIDERS and not external_enabled:
+        return False, "externalApiEnabled=false"
+    if provider == "mineru-agent":
+        mineru = parser_config.get("mineru") if isinstance(parser_config.get("mineru"), dict) else {}
+        if not bool(mineru.get("enabled")):
+            return False, "mineru.enabled=false"
+    if provider == "paddleocr-vl":
+        paddle = parser_config.get("paddleocr") if isinstance(parser_config.get("paddleocr"), dict) else {}
+        if not bool(paddle.get("enabled")):
+            return False, "paddleocr.enabled=false"
+        if not paddle.get("apiKey") or not paddle.get("secretKey"):
+            return False, "paddleocr.apiKey/secretKey missing"
+    return True, None
+
+
+def convert_with_provider_order(input_path: Path, payload: dict[str, object], order: list[str], ocr_lang: str) -> dict[str, object]:
+    warnings: list[str] = []
+    attempted: list[str] = []
+    for provider in order:
+        enabled, reason = provider_enabled(payload, provider)
+        if not enabled:
+            warnings.append(f"{provider} skipped: {reason}")
+            continue
+        attempted.append(provider)
+        try:
+            return with_warning(run_provider(input_path, provider, provider_options(payload, provider, ocr_lang), ocr_lang), warnings, attempted)
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(f"{provider} failed: {exc}")
+    raise RuntimeError("; ".join(warnings) or "no parser provider available")
+
+
+def convert_document(input_path: Path, ocr_lang: str, payload: dict[str, object]) -> dict[str, object]:
     suffix = input_path.suffix.lower()
     if suffix in TEXT_SUFFIXES:
         return convert_plain(input_path)
@@ -153,9 +237,19 @@ def convert_document(input_path: Path, ocr_lang: str) -> dict[str, object]:
     if suffix == ".docx":
         return convert_docx(input_path)
     if suffix == ".pdf":
-        return convert_pdf_document(input_path)
+        return convert_with_provider_order(
+            input_path,
+            payload,
+            configured_provider_order(payload, "pdfProviderOrder", ["mineru-agent", "paddleocr-vl", "pymupdf4llm", "docling"]),
+            ocr_lang,
+        )
     if suffix in IMAGE_SUFFIXES:
-        return convert_image_ocr(input_path, ocr_lang)
+        return convert_with_provider_order(
+            input_path,
+            payload,
+            configured_provider_order(payload, "imageProviderOrder", ["paddleocr-vl", "mineru-agent", "tesseract"]),
+            ocr_lang,
+        )
     raise ValueError(f"unsupported file type: {suffix}")
 
 
@@ -166,7 +260,7 @@ def main() -> int:
         if not input_path.exists():
             raise FileNotFoundError(f"input file not found: {input_path}")
         ocr_lang = str(payload.get("ocrLang") or "chi_sim+eng")
-        write_json_stdout(convert_document(input_path, ocr_lang))
+        write_json_stdout(convert_document(input_path, ocr_lang, payload))
         return 0
     except Exception as exc:  # noqa: BLE001
         write_error_stderr(str(exc))

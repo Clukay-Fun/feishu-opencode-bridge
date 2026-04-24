@@ -346,7 +346,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
           title: "已在知识入库模式",
           template: "blue",
           icon: "upload_outlined",
-          message: "请继续上传 PDF / DOCX / TXT 文件；发送 `/kb-ingest-end` 可退出。",
+          message: "请继续上传 PDF / DOCX / TXT / MD / 图片文件；发送 `/kb-ingest-end` 可退出。",
         });
         return true;
       }
@@ -647,7 +647,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     } else {
       const webIngest = detectKnowledgeWebIngest(message.plainText, { requireIngestIntent: false });
       if (!webIngest.matched || !webIngest.url || !this.deps.knowledge.ingestWebPage) {
-        await this.sendKnowledgeIngestMarkdown(pending, "请继续上传 PDF / DOCX / TXT / MD 文件，或直接发送网页 URL / 带 URL 的入库请求；发送 `/kb-ingest-end` 退出。");
+        await this.sendKnowledgeIngestMarkdown(pending, "请继续上传 PDF / DOCX / TXT / MD / 图片文件，或直接发送网页 URL / 带 URL 的入库请求；发送 `/kb-ingest-end` 退出。");
         return true;
       }
       sourceLabel = webIngest.url;

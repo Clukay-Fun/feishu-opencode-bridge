@@ -5,7 +5,6 @@
  * - 汇总多份材料形成完整的分析结果与风险判断。
  */
 import crypto from "node:crypto";
-import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -20,9 +19,13 @@ import {
   type EvidenceExtractResourcePort,
   type EvidenceFileRef,
 } from "../workflows/evidence-extract.js";
+import { syncEvidenceLedger, type EvidenceLedgerResourcePort } from "../workflows/evidence-ledger.js";
+import { generateCaseWorkflowWorkbench } from "../workflows/case-workflow.js";
+import { buildTimelineMermaid, escapeMermaidLabel } from "../workflows/timeline-build.js";
 import { buildLaborAggregatePrompt, buildLaborMaterialExtractPrompt } from "./prompts.js";
 
 type OpenCodePort = Pick<OpenCodeClient, "createSession" | "postMessageSync" | "deleteSession">;
+type LaborSkillResourcePort = EvidenceExtractResourcePort & EvidenceLedgerResourcePort;
 
 export type LaborMaterialExtraction = {
   materialType: string;
@@ -51,6 +54,11 @@ export type LaborAnalyzeResult = {
   title: string;
   markdown: string;
   docUrl?: string | undefined;
+  ledgerUrl?: string | undefined;
+  keyEvidenceViewUrl?: string | undefined;
+  missingEvidenceViewUrl?: string | undefined;
+  syncedEvidenceCount: number;
+  syncedGapCount: number;
   extractedMaterials: LaborMaterialExtraction[];
   aggregate: LaborAggregateResult;
   warnings: string[];
@@ -60,11 +68,6 @@ export type LaborMaterialExtractResult = {
   fileName: string;
   extraction: LaborMaterialExtraction;
   cached: boolean;
-};
-
-type LarkDocCreateResult = {
-  docUrl?: string | undefined;
-  boardTokens: string[];
 };
 
 type LaborSkillCacheFile = {
@@ -80,7 +83,7 @@ export class LaborSkillService {
   constructor(
     private readonly config: LaborSkillConfig,
     dataDir: string,
-    resources: EvidenceExtractResourcePort,
+    private readonly resources: LaborSkillResourcePort,
     private readonly opencode: OpenCodePort,
     private readonly logger: Logger,
     private readonly knowledge: KnowledgeBasePort | null,
@@ -217,28 +220,27 @@ export class LaborSkillService {
       normalizedAggregate.caseTitle = input.preferredTitle.trim();
     }
 
-    await onProgress?.("正在生成飞书工作台文档");
     const title = normalizedAggregate.caseTitle || "劳动争议案件分析工作台";
     const markdown = renderLaborWorkbenchMarkdown(normalizedAggregate, input.materialCount, input.warnings);
-    const docResult = await createLarkDoc(title, markdown).catch((error) => {
-      this.logger.log("labor-skill", "create lark doc failed", {
-        detail: error instanceof Error ? error.message : String(error),
-      }, "warn");
-      return undefined;
+    const workbench = await generateCaseWorkflowWorkbench({
+      title,
+      markdown,
+      diagrams: buildLaborWorkbenchDiagrams(normalizedAggregate),
+      logger: this.logger,
+      logScope: "labor-skill",
+      onProgress,
     });
-    if (docResult?.boardTokens?.length) {
-      await onProgress?.("正在生成时间线、关系图和思维导图");
-      await updateLaborBoards(docResult.boardTokens, normalizedAggregate).catch((error) => {
-        this.logger.log("labor-skill", "update labor boards failed", {
-          detail: error instanceof Error ? error.message : String(error),
-        }, "warn");
-      });
-    }
+    const ledger = await this.syncEvidenceLedger(title, normalizedAggregate, onProgress);
 
     return {
       title,
       markdown,
-      docUrl: docResult?.docUrl,
+      docUrl: workbench.docUrl,
+      ledgerUrl: ledger?.ledgerUrl,
+      keyEvidenceViewUrl: ledger?.keyEvidenceViewUrl,
+      missingEvidenceViewUrl: ledger?.missingEvidenceViewUrl,
+      syncedEvidenceCount: ledger?.syncedEvidenceCount ?? 0,
+      syncedGapCount: ledger?.syncedGapCount ?? 0,
       extractedMaterials: input.extractedMaterials,
       aggregate: normalizedAggregate,
       warnings: input.warnings,
@@ -277,6 +279,43 @@ export class LaborSkillService {
       }
     }
     return supports;
+  }
+
+  private async syncEvidenceLedger(
+    caseTitle: string,
+    aggregate: LaborAggregateResult,
+    onProgress?: ((step: string) => Promise<void> | void) | undefined,
+  ) {
+    const ledgerConfig = this.config.storage.evidenceLedger;
+    if (!ledgerConfig?.appToken || !ledgerConfig.tableId) {
+      return undefined;
+    }
+
+    await onProgress?.("正在同步证据台账与缺口视图");
+    return await syncEvidenceLedger(this.resources, ledgerConfig, [
+      ...aggregate.evidenceRows.map((row) => ({
+        kind: "evidence" as const,
+        caseTitle,
+        disputeStage: aggregate.disputeStage,
+        name: row.name,
+        evidenceType: row.type,
+        proves: row.proves,
+        support: row.support,
+        strength: row.strength,
+        risk: row.risk,
+        remarks: row.remarks,
+        status: "已识别",
+      })),
+      ...aggregate.missingEvidence.map((item) => ({
+        kind: "gap" as const,
+        caseTitle,
+        disputeStage: aggregate.disputeStage,
+        name: item,
+        proves: item,
+        remarks: "来源：AI 证据链分析缺口提示",
+        status: "待补充",
+      })),
+    ]);
   }
 
   /** 调用模型生成聚合分析 JSON。 */
@@ -738,105 +777,13 @@ function escapeCell(value: string): string {
   return value.replace(/\|/g, "\\|").replace(/\n/g, "<br>");
 }
 
-async function createLarkDoc(title: string, markdown: string): Promise<LarkDocCreateResult> {
-  const output = await runLarkCli(["docs", "+create", "--title", title, "--markdown", "-"], markdown);
-  const parsed = parseJsonObject(output);
-  const boardTokens = readStringArray(parsed, "board_tokens");
-  const data = readRecord(parsed, "data");
-  return {
-    docUrl: readString(parsed, "doc_url") ?? readString(data, "doc_url"),
-    boardTokens: boardTokens.length > 0 ? boardTokens : readStringArray(data, "board_tokens"),
-  };
-}
-
-async function runLarkCli(args: string[], stdinText?: string): Promise<string> {
-  return await new Promise((resolve, reject) => {
-    const child = spawn("lark-cli", args, {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => {
-      stdout += String(chunk);
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += String(chunk);
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) {
-        resolve(stdout);
-        return;
-      }
-      reject(new Error(stderr || stdout || `lark-cli exited with code ${code ?? -1}`));
-    });
-    if (stdinText) {
-      child.stdin.write(stdinText);
-    }
-    child.stdin.end();
-  });
-}
-
-function readRecord(value: Record<string, unknown> | null, key: string): Record<string, unknown> | null {
-  if (!value) return null;
-  const target = value[key];
-  return target && typeof target === "object" && !Array.isArray(target)
-    ? target as Record<string, unknown>
-    : null;
-}
-
-async function updateLaborBoards(boardTokens: string[], result: LaborAggregateResult): Promise<void> {
-  const diagrams = [
-    withWhiteboardDslInstruction(buildTimelineMermaid(result.timeline)),
-    withWhiteboardDslInstruction(buildEvidenceMapMermaid(result)),
-    withWhiteboardDslInstruction(buildClaimsMindmapMermaid(result)),
-    withWhiteboardDslInstruction(buildNextActionsFlowMermaid(result)),
+function buildLaborWorkbenchDiagrams(result: LaborAggregateResult) {
+  return [
+    { source: buildTimelineMermaid(result.timeline) },
+    { source: buildEvidenceMapMermaid(result) },
+    { source: buildClaimsMindmapMermaid(result) },
+    { source: buildNextActionsFlowMermaid(result) },
   ];
-  for (const [index, boardToken] of boardTokens.slice(0, diagrams.length).entries()) {
-    const source = diagrams[index] ?? "";
-    if (!source.trim()) {
-      continue;
-    }
-    await runLarkCli([
-      "whiteboard",
-      "+update",
-      "--whiteboard-token",
-      boardToken,
-      "--input_format",
-      "mermaid",
-      "--overwrite",
-      "--yes",
-      "--source",
-      "-",
-    ], source);
-  }
-}
-
-function withWhiteboardDslInstruction(source: string): string {
-  const trimmed = source.trim();
-  if (!trimmed) {
-    return trimmed;
-  }
-  return `%% 使用飞书白板内置DSL精确控制样式\n${trimmed}`;
-}
-
-function buildTimelineMermaid(rows: LaborAggregateResult["timeline"]): string {
-  const sorted = [...rows]
-    .filter((item) => item.event)
-    .sort((left, right) => (left.date ?? "").localeCompare(right.date ?? ""));
-  if (sorted.length === 0) {
-    return "flowchart TD\n    N1[\"暂无明确时间线\"]";
-  }
-  const lines = ["flowchart TD"];
-  sorted.slice(0, 8).forEach((row, index) => {
-    const nodeId = `N${index + 1}`;
-    const label = escapeMermaidLabel(`${row.date ?? "日期待补"}｜${row.event}`);
-    lines.push(`    ${nodeId}["${label}"]`);
-    if (index > 0) {
-      lines.push(`    N${index} --> ${nodeId}`);
-    }
-  });
-  return lines.join("\n");
 }
 
 function buildEvidenceMapMermaid(result: LaborAggregateResult): string {
@@ -892,10 +839,6 @@ function buildNextActionsFlowMermaid(result: LaborAggregateResult): string {
     }
   });
   return lines.join("\n");
-}
-
-function escapeMermaidLabel(value: string): string {
-  return value.replace(/"/g, "'").replace(/\n/g, " ").trim();
 }
 
 function omitUndefined<T extends Record<string, unknown>>(value: T): T {

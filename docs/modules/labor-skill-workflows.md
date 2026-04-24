@@ -50,12 +50,16 @@ Feishu Runtime
 
 shared skills 承载跨领域、可组合、低业务判断的底层能力。
 
-候选清单：
+当前已落地能力：
 
 - `evidence-extract`：附件下载、格式校验、临时文件保存、文本提取、模型结构化抽取。
 - `document-pipeline`：统一文档解析入口，收口 PDF、DOCX、图片、TXT/MD、HTML 的 Markdown / plain text / section 输出。
 - `timeline-build`：从事实片段归并时间线，处理日期归一、去重、证据引用。
 - `workbench-generate`：把结构化分析结果渲染为可复核的工作台文档。
+- `case-workflow`：串联案件工作台 Markdown、共享图表和飞书文档 / 白板输出。
+
+后续候选能力：
+
 - `knowledge-support`：根据争议焦点低成本查询知识库，并把命中结果作为“待复核规则线索”返回。
 
 shared skills 只提供通用能力，不决定劳动案件策略。比如 `timeline-build` 可以合并事件，但“哪些事件对违法解除最关键”仍属于 `labor-skill`。
@@ -97,16 +101,51 @@ skill 文件是 OpenCode 能力发现和业务提示词维护入口。
 
 ## 当前真实复用点
 
-`src/workflows/evidence-extract.ts` 已经是一个落地的 shared workflow。
+`src/workflows/evidence-extract.ts`、`src/workflows/timeline-build.ts`、`src/workflows/workbench-generate.ts` 和 `src/workflows/case-workflow.ts` 已经是落地的 shared workflow。
 
-它目前被两条真实链路复用：
+当前真实复用点：
 
 - `src/contract-assistant/index.ts` 用它做合同提取和发票识别前的附件准备与结构化抽取。
 - `src/labor/index.ts` 用它做劳动材料单文件提取前的附件准备、格式校验、文本提取和模型调用。
+- `src/labor/index.ts` 用 `timeline-build` 生成关键时间线图。
+- `src/labor/index.ts` 用 `case-workflow` 和 `workbench-generate` 生成飞书工作台文档并更新白板图。
 
-这说明 shared skill 的第一条边界已经存在：通用材料处理归 `workflows/evidence-extract`，劳动争议判断归 `labor-skill`，合同/发票/案件字段归 `contract-assistant` 专项能力。
+这说明 shared skill 的边界已经落地：通用材料处理、时间线构建和工作台输出归 `workflows/*`，劳动争议判断归 `labor-skill`，合同/发票/案件字段归 `contract-assistant` 专项能力。
 
 后续 `document-pipeline` 收敛完成后，应优先让 `evidence-extract` 消费统一文档解析结果，而不是让 labor 或 contract 各自直接选择 PDF/DOCX/OCR 解析路径。
+
+## 劳动案件工作台与证据台账联动
+
+当前 labor 输出默认支持：
+
+- 飞书文档：案件摘要、核心判断、下一步建议、证据链总表、时间线表。
+- 白板图：时间线、证据关系图、请求项结构图、补证流程图。
+- 多维表联动：当配置 `laborSkill.storage.evidenceLedger` 后，将证据项和缺口项同步到同一张证据台账表。
+
+当前默认台账字段：
+
+- `案件标题`
+- `当前阶段`
+- `条目类型`
+- `名称`
+- `证据类型`
+- `证明事实`
+- `支持方向`
+- `证明力`
+- `风险提示`
+- `备注`
+- `状态`
+
+推荐视图：
+
+- `关键证据视图`：筛选 `条目类型=证据`，按 `证明力`、`支持方向`、`风险提示` 排序。
+- `缺口视图`：筛选 `条目类型=缺口` 或 `状态=待补充`，用于补证追踪。
+
+运行时行为：
+
+- 正文和可视化默认只展示脱敏后的证据摘要。
+- 如果配置了 `keyEvidenceViewId` 和 `missingEvidenceViewId`，结果卡会附带总表、关键证据视图和缺口视图链接。
+- 如果未配置台账表，labor 仍会继续生成文档和图表，不因台账缺失而失败。
 
 ## 后续扩展规则
 

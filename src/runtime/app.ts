@@ -140,7 +140,7 @@ type OpenCodePort = Pick<OpenCodeClient,
 
 type OpenCodeEventStreamPort = Pick<OpenCodeEventStream, "start" | "stop" | "subscribe" | "getConnectionState">;
 
-const REGULAR_FILE_ALLOWED_EXTENSIONS = [".pdf", ".docx", ".txt", ".md"] as const;
+const REGULAR_FILE_ALLOWED_EXTENSIONS = [".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp"] as const;
 const PENDING_NEW_SESSION_TTL_MS = 10 * 60_000;
 
 type PendingNewSessionAnchor = {

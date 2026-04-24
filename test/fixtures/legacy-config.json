@@ -1,0 +1,181 @@
+{
+  "feishu": {
+    "appId": "cli_legacy",
+    "appSecret": "secret",
+    "botOpenId": "ou_bot",
+    "botOpenIds": ["ou_extra"],
+    "botMentionNames": ["opencode", "Open Code"],
+    "selfBotOpenIds": ["ou_self"],
+    "wsUrl": "wss://open.feishu.cn/open-apis/ws/v2",
+    "allowedOpenIds": ["ou_allowed"],
+    "behavior": {
+      "enableP2p": true,
+      "enableGroup": true,
+      "requireBotMentionInGroup": true,
+      "strictBotMention": true,
+      "ignoreNonUserSenders": true,
+      "replyInThread": true
+    },
+    "cardActions": {
+      "enabled": true,
+      "path": "webhook/card",
+      "verificationToken": "verify",
+      "encryptKey": "encrypt"
+    }
+  },
+  "opencode": {
+    "baseUrl": "http://127.0.0.1:4096/",
+    "directory": "./workspace"
+  },
+  "storage": {
+    "dataDir": "./data",
+    "mappingsFile": "mappings.json"
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 3000,
+    "publicBaseUrl": "https://bridge.example.com/"
+  },
+  "whitelist": {
+    "storePath": "whitelist.json"
+  },
+  "bridge": {
+    "queueLimit": 3,
+    "sessions": {
+      "p2pMode": "multi",
+      "groupMode": "single",
+      "topicGroupMode": "single",
+      "maxSessionsPerWindow": 20,
+      "listLimit": 10,
+      "injectSystemState": true
+    },
+    "timeouts": {
+      "firstEvent": 30000,
+      "eventInterval": 120000,
+      "totalTurn": 300000
+    }
+  },
+  "embeddings": {
+    "provider": {
+      "baseUrl": "https://api.openai.com/v1/",
+      "apiKey": "sk-test",
+      "model": "text-embedding-3-small"
+    },
+    "similarityThreshold": 0.77
+  },
+  "memory": {
+    "enabled": true,
+    "dbPath": "./data/memory.db",
+    "maxMemoriesPerUser": 500,
+    "searchLimit": 5,
+    "extractQueueLimit": 100,
+    "sourcePreviewLength": 50,
+    "shutdownDrainTimeoutMs": 5000,
+    "retriever": "embedding",
+    "obsidian": {
+      "enabled": true,
+      "vaultPath": "./vault",
+      "syncCron": "0 2 * * *",
+      "enableWikiLinks": true
+    }
+  },
+  "knowledgeBase": {
+    "enabled": true,
+    "autoDetect": {
+      "enabled": true,
+      "minConfidence": 0.75
+    },
+    "query": {
+      "topK": 10,
+      "finalTopN": 3,
+      "keywordFallbackLimit": 10
+    },
+    "storage": {
+      "sqlitePath": "./data/knowledge-base.db",
+      "bitable": {
+        "appToken": "bascn_knowledge",
+        "tableId": "tbl_entries",
+        "documentTableId": "tbl_docs",
+        "sourceFileField": {
+          "name": "资料链接",
+          "type": "hyperlink",
+          "urlTemplate": "https://example.com/files/{{messageId}}/{{fileKey}}",
+          "textTemplate": "{{fileName}}"
+        },
+        "statuteField": {
+          "name": "法条",
+          "type": "hyperlink",
+          "urlTemplate": "https://example.com/law?keyword={{statute}}",
+          "textTemplate": "{{statute}}"
+        }
+      }
+    },
+    "models": {
+      "default": "minimax-cn-coding-plan/MiniMax-M2.7",
+      "webRead": "minimax-cn-coding-plan/MiniMax-M2.7",
+      "extract": "minimax-cn-coding-plan/MiniMax-M2.7",
+      "rerank": "minimax-cn-coding-plan/MiniMax-M2.7"
+    },
+    "ingest": {
+      "allowedExtensions": [".PDF", ".Docx", ".txt", ".md"],
+      "maxFileSizeMb": 20,
+      "pendingTtlMs": 600000,
+      "sessionIdleMs": 1800000,
+      "concurrency": 3,
+      "maxExtractChunks": 30,
+      "maxExtractQas": 500
+    }
+  },
+  "contractAssistant": {
+    "enabled": false,
+    "storage": {
+      "baseToken": "bascn_contract",
+      "contractTableId": "tbl_contract",
+      "invoiceTableId": "tbl_invoice",
+      "caseTableId": "tbl_case"
+    },
+    "models": {
+      "default": "minimax-cn-coding-plan/MiniMax-M2.7",
+      "draft": "minimax-cn-coding-plan/MiniMax-M2.7",
+      "extract": "minimax-cn-coding-plan/MiniMax-M2.7",
+      "invoice": "minimax-cn-coding-plan/MiniMax-M2.7",
+      "caseManage": "minimax-cn-coding-plan/MiniMax-M2.7"
+    },
+    "ingest": {
+      "contractAllowedExtensions": [".PDF", ".docx", ".txt", ".md"],
+      "invoiceAllowedExtensions": [".PDF", ".png", ".jpg", ".jpeg", ".txt", ".md"],
+      "maxFileSizeMb": 20,
+      "pendingTtlMs": 600000
+    },
+    "reminder": {
+      "enabled": false,
+      "targetChatIds": [],
+      "hour": 9,
+      "minute": 0,
+      "lookaheadDays": 7
+    }
+  },
+  "laborSkill": {
+    "enabled": false,
+    "models": {
+      "default": "minimax-cn-coding-plan/MiniMax-M2.7",
+      "extract": "minimax-cn-coding-plan/MiniMax-M2.7",
+      "analyze": "minimax-cn-coding-plan/MiniMax-M2.7"
+    },
+    "ingest": {
+      "allowedExtensions": [".PDF", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp", ".xls", ".xlsx", ".csv"],
+      "maxFileSizeMb": 20,
+      "pendingTtlMs": 600000
+    }
+  },
+  "logging": {
+    "dir": "./logs",
+    "level": "info",
+    "enableTranscript": true,
+    "enableConsole": true,
+    "enableColor": true,
+    "rotateDaily": true,
+    "format": "pretty",
+    "messagePolicy": "preview"
+  }
+}

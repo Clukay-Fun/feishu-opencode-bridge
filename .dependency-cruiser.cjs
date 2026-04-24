@@ -13,6 +13,29 @@ module.exports = {
       },
     },
     {
+      name: "runtime-bridge-must-not-import-knowledge-implementation",
+      severity: "error",
+      comment: "KnowledgeBaseService 属于知识库业务实现；runtime/bridge 只能 type-import KnowledgeBasePort，或通过 knowledge/factory 与 RuntimeModule seam 接入。",
+      from: {
+        path: "^src/(runtime|bridge)/",
+      },
+      to: {
+        path: "^src/knowledge/index\\.ts$",
+        dependencyTypesNot: ["type-only"],
+      },
+    },
+    {
+      name: "config-layer-must-only-import-domain-config",
+      severity: "error",
+      comment: "中央配置层只允许导入业务模块的 config.ts；不得从配置入口拖入业务实现、runtime module 或模块 index。",
+      from: {
+        path: "^src/config/",
+      },
+      to: {
+        path: "^src/(contract-assistant|knowledge|labor|memory)/(?!config\\.ts$)",
+      },
+    },
+    {
       name: "feishu-sdk-only-at-transport-ingress-boundary",
       severity: "error",
       comment: "飞书 SDK 只允许在 Feishu API、WebSocket 入口、HTTP callback 和 FeishuTransport 边界使用。",

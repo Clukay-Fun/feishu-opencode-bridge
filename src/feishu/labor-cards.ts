@@ -30,6 +30,11 @@ export type LaborAnalysisCompletedCardView = {
   issueCount: number;
   tagCounts: Record<string, number>;
   docUrl?: string | undefined;
+  ledgerUrl?: string | undefined;
+  keyEvidenceViewUrl?: string | undefined;
+  missingEvidenceViewUrl?: string | undefined;
+  syncedEvidenceCount?: number | undefined;
+  syncedGapCount?: number | undefined;
 };
 
 export function buildLaborAnalysisProgressPayload(view: LaborAnalysisProgressCardView): FeishuPostPayload {

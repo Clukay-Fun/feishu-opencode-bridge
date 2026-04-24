@@ -53,3 +53,16 @@ These items were not blockers for framework freeze acceptance. They were reviewe
 - Current state: `BridgeApp` still knows which configured features require Feishu resource methods when adapting its outbound dependency for `createRuntimeModules()`.
 - Why not part of this closure: moving that requirement into module self-declaration would widen this cleanup into module metadata design.
 - Suggested trigger: before adding the next runtime module that needs Feishu resource download or Bitable access.
+
+### DOCX Edit Capability Spike
+
+- Current state: a Python PoC exists in `scripts/python/docx_edit.py` for DOCX package inspection, unpack, pack, single-run replacement, and candidate reachability analysis.
+- Boundary: existing `docxtpl` rendering remains the right path for template-owned placeholders; `docx_edit` is only valuable for existing DOCX files that were not prepared with placeholders.
+- Layering: `contract_edit.py` is still a contract-specific paragraph-level editor built on `python-docx`; `docx_edit.py` intentionally stays at the `zipfile` + `lxml` package/XML layer.
+- Real-template measurement: on `templates/contracts/委托代理合同-民事.docx`, 5 of 6 representative phrases are reachable inside a single `w:t` node, for an 83.33% single-run coverage rate.
+- Cross-run evidence: `聘请方（甲方）：` is visible at paragraph level but not single-run reachable, so a formal v1 should prioritize cross-run replacement before promising broad editing coverage.
+- Revision scan: the template contains revision markers in `word/document.xml`, several headers/footers, and `word/styles.xml`; replacement PoC preserves the before/after revision marker presence.
+- Validation: automated checks cover structure stability, small XML diff, text extraction readability, unsupported input failure, and missing `word/document.xml` failure.
+- Manual check: Microsoft Word is not installed in the current environment; only WPS was detected, so Word visual confirmation must be repeated before promoting this PoC to a supported CLI.
+- Tracked changes difficulty: low for simple `w:ins` / `w:del` element emission, medium when run properties and style inheritance must be preserved, high when Word-compatible revision view, rsid metadata, comments, headers/footers, and existing revisions must all remain coherent.
+- Recommendation: do not formalize a single-run-only `replace` as the user-facing v1. Open a follow-up only if it includes cross-run replacement, revision-preserving tests, and a real Word visual QA step.

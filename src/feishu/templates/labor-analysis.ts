@@ -24,6 +24,11 @@ const LaborAnalysisCompletedCardViewSchema = z.object({
   issueCount: z.number(),
   tagCounts: z.record(z.string(), z.number()),
   docUrl: z.string().optional(),
+  ledgerUrl: z.string().optional(),
+  keyEvidenceViewUrl: z.string().optional(),
+  missingEvidenceViewUrl: z.string().optional(),
+  syncedEvidenceCount: z.number().optional(),
+  syncedGapCount: z.number().optional(),
 });
 
 export const LABOR_ANALYSIS_PROGRESS_TEMPLATE_ID = "labor.analysis.progress";
@@ -60,6 +65,16 @@ export const laborAnalysisCompletedTemplate: BusinessCardTemplateDefinition<type
         { kind: "title", content: `案件：**${escapeText(input.title)}**` },
         { kind: "stats", labels: [`材料 ${input.materialCount}`, `证据 ${input.evidenceCount}`, `焦点 ${input.issueCount}`] },
         { kind: "tagChart", tagCounts: input.tagCounts, bitableUrl: input.docUrl, title: "材料占比", linkLabel: "打开分析文档" },
+        ...(input.ledgerUrl
+          ? [{ kind: "quote" as const, content: [
+            `证据台账：[打开总表](${input.ledgerUrl})`,
+            input.keyEvidenceViewUrl ? `[关键证据视图](${input.keyEvidenceViewUrl})` : "",
+            input.missingEvidenceViewUrl ? `[缺口视图](${input.missingEvidenceViewUrl})` : "",
+            typeof input.syncedEvidenceCount === "number" || typeof input.syncedGapCount === "number"
+              ? `已同步 ${input.syncedEvidenceCount ?? 0} 条证据、${input.syncedGapCount ?? 0} 条缺口`
+              : "",
+          ].filter(Boolean).join("｜") }]
+          : []),
       ],
     };
   },

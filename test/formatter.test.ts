@@ -569,6 +569,11 @@ describe("buildPostPayload", () => {
       issueCount: 3,
       tagCounts: { 仲裁: 4, 加班费: 2 },
       docUrl: "https://example.com/doc/123",
+      ledgerUrl: "https://example.com/base/app?table=tbl_labor",
+      keyEvidenceViewUrl: "https://example.com/base/app?table=tbl_labor&view=vew_key",
+      missingEvidenceViewUrl: "https://example.com/base/app?table=tbl_labor&view=vew_gap",
+      syncedEvidenceCount: 12,
+      syncedGapCount: 3,
     });
 
     const progressSerialized = JSON.stringify(JSON.parse(progressPayload.content));
@@ -585,6 +590,9 @@ describe("buildPostPayload", () => {
     expect(completedSerialized).toContain("证据 12");
     expect(completedSerialized).toContain("焦点 3");
     expect(completedSerialized).toContain("打开分析文档");
+    expect(completedSerialized).toContain("打开总表");
+    expect(completedSerialized).toContain("关键证据视图");
+    expect(completedSerialized).toContain("缺口视图");
   });
 
   it("renders a notice card without body icon when disabled", () => {

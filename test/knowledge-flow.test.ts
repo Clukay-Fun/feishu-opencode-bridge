@@ -276,7 +276,7 @@ describe("knowledge base bridge flow", () => {
     });
 
     const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
-    expect(JSON.stringify(replyPayloads)).toContain("仅支持 .pdf / .docx / .txt / .md 文件");
+    expect(JSON.stringify(replyPayloads)).toContain("仅支持 .pdf / .docx / .txt / .md / .png / .jpg / .jpeg / .webp 文件");
     expect(appAny.pendingInteractions.has("oc_p2p_1")).toBe(false);
     expect(outbound.downloadMessageResource).not.toHaveBeenCalled();
   });

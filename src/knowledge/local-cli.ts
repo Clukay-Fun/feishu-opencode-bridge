@@ -10,21 +10,19 @@ import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { AppConfig } from "../config/schema.js";
-import { loadConfig } from "../config/loader.js";
-import { FeishuApiClient } from "../feishu/api.js";
-import type { Logger } from "../logging/logger.js";
-import { OpenCodeClient } from "../opencode/client.js";
-import {
-  KnowledgeBaseService,
-  type KnowledgeDocumentDetail,
-  type KnowledgeDocumentSummary,
-  type KnowledgeExtractPreviewResult,
-  type KnowledgeIngestResult,
-  type KnowledgeParsedFileResult,
-  type KnowledgeQueryResult,
-  type KnowledgeStatsResult,
+import { DEFAULT_KNOWLEDGE_BASE_PARSER_CONFIG } from "./config.js";
+import { createKnowledgeCliRuntime, type KnowledgeCliRuntime } from "./factory.js";
+import type {
+  KnowledgeDocumentDetail,
+  KnowledgeDocumentSummary,
+  KnowledgeExtractPreviewResult,
+  KnowledgeIngestResult,
+  KnowledgeParsedFileResult,
+  KnowledgeQueryResult,
+  KnowledgeStatsResult,
 } from "./index.js";
+
+export { createKnowledgeCliRuntime } from "./factory.js";
 
 type CliArgs = Record<string, string | boolean>;
 
@@ -85,12 +83,8 @@ type LocalKnowledgeService = {
   close(): void;
 };
 
-type CliRuntime = {
-  config: AppConfig;
+type CliRuntime = Omit<KnowledgeCliRuntime, "service"> & {
   service: LocalKnowledgeService;
-  opencode: Pick<OpenCodeClient, "health">;
-  bitable: Pick<FeishuApiClient, "listBitableRecords">;
-  close(): void;
 };
 
 type CliRuntimeFactory = (configPath?: string) => Promise<CliRuntime>;
@@ -106,14 +100,13 @@ type RunCliOptions = {
   inspectDoctor?: DoctorInspector;
 };
 
-const SILENT_LOGGER: Logger = {
-  log() {},
-  logTranscript() {},
-};
-
 const PDF_TO_MD_SCRIPT_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../scripts/python/pdf_to_markdown.py",
+);
+const OCR_PROVIDER_SCRIPT_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../scripts/python/ocr_provider.py",
 );
 
 export async function runKnowledgeCli(
@@ -151,6 +144,11 @@ export async function runKnowledgeCli(
       if (path.extname(filePath).toLowerCase() !== ".pdf") {
         throw new Error("`kb parse pdf` 仅支持 .pdf 文件。");
       }
+      return await runtime.service.parseLocalFile(filePath);
+    }
+
+    if (command === "parse" && subcommand === "material") {
+      const filePath = readRequiredArg(input.args, "path");
       return await runtime.service.parseLocalFile(filePath);
     }
 
@@ -216,35 +214,6 @@ export async function runKnowledgeIngestUrlCli(
 
 export function printLocalCliResult(result: LocalCliResult<unknown>): void {
   process.stdout.write(`${JSON.stringify(result)}\n`);
-}
-
-export async function createKnowledgeCliRuntime(configPath?: string): Promise<CliRuntime> {
-  const config = await loadConfig(configPath);
-  ensureKnowledgeBaseEnabled(config);
-  const bitable = new FeishuApiClient(config.feishu.appId, config.feishu.appSecret);
-  const opencode = new OpenCodeClient(config.opencode.baseUrl);
-  const service = new KnowledgeBaseService(
-    config.knowledgeBase,
-    {
-      async downloadMessageResource() {
-        throw new Error("本地知识库命令不支持消息附件下载，请改用本地路径入库。");
-      },
-      createBitableRecord: bitable.createBitableRecord.bind(bitable),
-      listBitableRecords: bitable.listBitableRecords.bind(bitable),
-    },
-    opencode,
-    SILENT_LOGGER,
-  ) as LocalKnowledgeService;
-
-  return {
-    config,
-    service,
-    opencode,
-    bitable,
-    close() {
-      service.close();
-    },
-  };
 }
 
 async function runWithRuntime<T>(
@@ -325,6 +294,7 @@ async function runKnowledgeIngestDirectory(runtime: CliRuntime, args: CliArgs): 
 
 async function inspectKnowledgeDoctor(runtime: CliRuntime, options: { online: boolean }): Promise<KnowledgeDoctorResult> {
   const checks: KnowledgeDoctorCheck[] = [];
+  const parserConfig = runtime.config.knowledgeBase.parser ?? DEFAULT_KNOWLEDGE_BASE_PARSER_CONFIG;
   checks.push({
     name: "knowledgeBase.enabled",
     ok: runtime.config.knowledgeBase.enabled,
@@ -364,6 +334,18 @@ async function inspectKnowledgeDoctor(runtime: CliRuntime, options: { online: bo
     ok: await fileExists(PDF_TO_MD_SCRIPT_PATH),
     detail: `PDF 脚本：${PDF_TO_MD_SCRIPT_PATH}`,
   });
+  checks.push({
+    name: "ocr_provider.py",
+    ok: await fileExists(OCR_PROVIDER_SCRIPT_PATH),
+    detail: `OCR provider 脚本：${OCR_PROVIDER_SCRIPT_PATH}`,
+  });
+  checks.push({
+    name: "parser.externalApiEnabled",
+    ok: parserConfig.externalApiEnabled,
+    detail: parserConfig.externalApiEnabled
+      ? "已允许外部 OCR API 上传。"
+      : "外部 OCR API 上传默认关闭。",
+  });
 
   if (options.online) {
     checks.push(await wrapDoctorCheck("opencode.health", async () => {
@@ -387,6 +369,22 @@ async function inspectKnowledgeDoctor(runtime: CliRuntime, options: { online: bo
         return "可导入 docling。";
       }));
     }
+    checks.push({
+      name: "parser.mineru",
+      ok: parserConfig.externalApiEnabled && parserConfig.mineru.enabled,
+      detail: parserConfig.mineru.enabled
+        ? `MinerU endpoint=${parserConfig.mineru.endpoint}`
+        : "MinerU 未启用。",
+    });
+    checks.push({
+      name: "parser.paddleocr",
+      ok: parserConfig.externalApiEnabled
+        && parserConfig.paddleocr.enabled
+        && Boolean(parserConfig.paddleocr.apiKey && parserConfig.paddleocr.secretKey),
+      detail: parserConfig.paddleocr.enabled
+        ? "PaddleOCR-VL 已启用，凭据将仅在进程内用于获取 access token。"
+        : "PaddleOCR-VL 未启用。",
+    });
   }
 
   return {
@@ -408,12 +406,6 @@ async function wrapDoctorCheck(name: string, check: () => Promise<string>): Prom
       ok: false,
       detail: error instanceof Error ? error.message : String(error),
     };
-  }
-}
-
-function ensureKnowledgeBaseEnabled(config: AppConfig): void {
-  if (!config.knowledgeBase.enabled) {
-    throw new Error("knowledgeBase.enabled=false，无法执行本地知识库命令。");
   }
 }
 
