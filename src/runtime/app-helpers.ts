@@ -92,11 +92,12 @@ export function formatQuestionPrompt(questions: PendingQuestionInteraction["ques
 // Build the card view used by `/models` and optional provider filtering.
 export function buildModelCardView(
   providers: OpenCodeProvidersResponse,
+  currentModel: OpenCodeModelRef | undefined,
   requestedProvider?: string,
 ): ModelListCardView | null {
   const normalizedFilter = requestedProvider?.trim().toLowerCase();
   const providerViews = providers.providers
-    .map((provider) => toProviderCardView(provider, providers.default, !normalizedFilter))
+    .map((provider) => toProviderCardView(provider, providers.default, currentModel, !normalizedFilter))
     .filter((provider): provider is NonNullable<typeof provider> => provider !== null)
     .filter((provider) => !normalizedFilter
       || provider.id.toLowerCase() === normalizedFilter
@@ -107,10 +108,11 @@ export function buildModelCardView(
   }
 
   return {
+    currentModelLabel: currentModel ? `${currentModel.providerID}/${currentModel.modelID}` : "OpenCode 默认模型",
     providers: providerViews,
     footer: normalizedFilter
-      ? "发送 `/model use <provider/model>` 切换当前窗口模型\n发送 `/model reset` 恢复默认模型"
-      : "发送 `/models <provider>` 查看更多\n发送 `/model use <provider/model>` 切换当前窗口模型",
+      ? `OpenCode 默认模型：${formatProviderDefaults(providers.default)}\n发送 \`/model use <provider/model>\` 切换当前窗口模型\n发送 \`/model reset\` 恢复默认模型`
+      : `OpenCode 默认模型：${formatProviderDefaults(providers.default)}\n发送 \`/models <provider>\` 查看更多\n发送 \`/model use <provider/model>\` 切换当前窗口模型`,
   };
 }
 
@@ -118,8 +120,9 @@ export function buildModelCardView(
 export function toProviderCardView(
   provider: Record<string, unknown>,
   defaults: Record<string, string>,
+  currentModel: OpenCodeModelRef | undefined,
   compact: boolean,
-): { id: string; name: string; models: Array<{ id: string; current?: boolean; default?: boolean }> } | null {
+): { id: string; name: string; models: Array<{ id: string; current?: boolean }> } | null {
   const id = typeof provider.id === "string"
     ? provider.id
     : typeof provider.providerID === "string"
@@ -133,7 +136,7 @@ export function toProviderCardView(
   const rawModels = isRecord(provider.models) ? provider.models : {};
   const defaultModel = defaults[id];
   const allModels = Object.values(rawModels)
-    .map((value) => toProviderModelView(value, defaultModel))
+    .map((value) => toProviderModelView(value, defaultModel, currentModel?.providerID === id ? currentModel.modelID : undefined))
     .filter((value): value is NonNullable<typeof value> => value !== null)
     .sort((left, right) => {
       const leftScore = (left.current ? 100 : 0) + (left.default ? 50 : 0);
@@ -147,7 +150,6 @@ export function toProviderCardView(
   const models = (compact ? allModels.slice(0, 5) : allModels).map((model) => ({
     id: `${id}/${model.id}`,
     current: model.current,
-    default: model.default,
   }));
 
   return { id, name, models };
@@ -157,6 +159,7 @@ export function toProviderCardView(
 export function toProviderModelView(
   value: unknown,
   defaultModel: string | undefined,
+  currentModel: string | undefined,
 ): { id: string; current: boolean; default: boolean; releaseDate?: string } | null {
   if (!isRecord(value)) {
     return null;
@@ -169,12 +172,20 @@ export function toProviderModelView(
 
   return {
     id,
-    current: false,
+    current: currentModel === id,
     default: defaultModel === id,
     ...(typeof value.release_date === "string" ? { releaseDate: value.release_date } : {}),
   };
 }
 //#endregion
+
+function formatProviderDefaults(defaults: Record<string, string>): string {
+  const entries = Object.entries(defaults).filter(([provider, model]) => provider && model);
+  if (entries.length === 0) {
+    return "未上报";
+  }
+  return entries.map(([provider, model]) => `${provider}/${model}`).join("、");
+}
 
 //#region Bridge state prompts
 // Inject authoritative bridge session state into the system prompt for the model.

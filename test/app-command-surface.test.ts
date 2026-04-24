@@ -581,7 +581,9 @@ describe("BridgeApp command surface", () => {
     });
 
     const text = extractInteractiveText(getReplyPayloads(outbound)[0]);
-    expect(text).toContain("已隐藏会话");
+    expect(text).not.toContain("已隐藏会话");
+    expect(text).toContain("隐藏会话 #2");
+    expect(text).toContain("s_hidden");
     expect(text).toContain("已隐藏");
   });
 
@@ -610,8 +612,17 @@ describe("BridgeApp command surface", () => {
     }));
     const appAny = app as unknown as {
       opencode: { listProviders: typeof listProviders };
+      sessionMap: Record<string, SessionWindowRecord>;
     };
     appAny.opencode = { listProviders };
+    appAny.sessionMap["oc_p2p_1"] = {
+      mode: "multi",
+      activeSessionId: "ses_1",
+      modelOverride: { providerID: "openai", modelID: "gpt-5.4-mini" },
+      sessions: [
+        { sessionId: "ses_1", label: "当前会话", createdAt: 1, lastUsedAt: 1 },
+      ],
+    };
 
     await callHandleCommand(app, {
       kind: "command",
@@ -620,9 +631,12 @@ describe("BridgeApp command surface", () => {
 
     expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("可用模型");
     const text = extractInteractiveText(getReplyPayloads(outbound)[0]);
+    expect(text).toContain("当前窗口模型");
+    expect(text).toContain("openai/gpt-5.4-mini");
     expect(text).toContain("OpenAI");
     expect(text).toContain("gpt-5.4-mini");
-    expect(text).not.toContain("OpenCode");
+    expect(text).not.toContain("gpt-5.4-mini 默认");
+    expect(text).not.toContain("OpenCode 模型");
   });
 
   it("shows a retirement notice for the legacy /model listing alias", async () => {
@@ -654,6 +668,7 @@ describe("BridgeApp command surface", () => {
       modelID: "gpt-5.4-mini",
     });
     expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("已切换窗口模型");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("仅影响当前窗口");
 
     await callHandleCommand(app, {
       kind: "command",
@@ -662,6 +677,7 @@ describe("BridgeApp command surface", () => {
 
     expect(appAny.sessionMap["oc_p2p_1"]?.modelOverride).toBeUndefined();
     expect(extractInteractiveHeader(getReplyPayloads(outbound)[1])).toBe("已恢复默认模型");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[1])).toContain("已清除窗口级模型覆盖");
   });
 
   it("does not truncate /sessions all by sessionListLimit", async () => {
@@ -689,8 +705,11 @@ describe("BridgeApp command surface", () => {
     }));
     expect((pending as Extract<PendingInteraction, { kind: "session-select" }>).options).toHaveLength(12);
     expect(getReplyPayloads(outbound)).toHaveLength(1);
-    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("会话12");
-    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("会话1");
+    const text = extractInteractiveText(getReplyPayloads(outbound)[0]);
+    expect(text).not.toContain("会话12");
+    expect(text).not.toContain("会话1");
+    expect(text).toContain("隐藏会话 #1");
+    expect(text).toContain("隐藏会话 #12");
   });
 
   it("filters /sessions all by keyword and keeps filtered numbering stable", async () => {
@@ -715,7 +734,9 @@ describe("BridgeApp command surface", () => {
     const pending = appAny.pendingInteractions.get("oc_p2p_1") as Extract<PendingInteraction, { kind: "session-select" }>;
     expect(pending.options).toEqual([expect.objectContaining({ index: 1, sessionId: "ses_labor" })]);
     const text = extractInteractiveText(getReplyPayloads(outbound)[0]);
-    expect(text).toContain("劳动争议分析");
+    expect(text).not.toContain("劳动争议分析");
+    expect(text).toContain("隐藏会话 #1");
+    expect(text).toContain("es_labor");
     expect(text).not.toContain("发票识别");
     expect(text).toContain("关键词：劳动");
   });
@@ -741,9 +762,11 @@ describe("BridgeApp command surface", () => {
 
     expect((appAny.pendingInteractions.get("oc_p2p_1") as Extract<PendingInteraction, { kind: "session-select" }>).options).toHaveLength(25);
     expect(getReplyPayloads(outbound)).toHaveLength(2);
-    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("会话25");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("隐藏会话 #1");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).not.toContain("会话25");
     expect(extractInteractiveText(getReplyPayloads(outbound)[0])).not.toContain("会话5");
-    expect(extractInteractiveText(getReplyPayloads(outbound)[1])).toContain("会话5");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[1])).toContain("隐藏会话 #25");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[1])).not.toContain("会话5");
   });
 
   it("hard-deletes a confirmed session through OpenCode", async () => {
@@ -843,6 +866,7 @@ describe("BridgeApp command surface", () => {
       kind: "command",
       command: { kind: "delete", index: 2, confirm: false },
     });
+    expect(extractInteractiveText(getReplyPayloads(outbound)[1])).toContain("已隐藏会话");
     await callHandleCommand(app, {
       kind: "command",
       command: { kind: "delete", index: 2, confirm: true },

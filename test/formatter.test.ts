@@ -27,6 +27,7 @@ import {
   buildTurnStatusCardPayload,
   buildWhoCommandCardPayload,
 } from "../src/feishu/formatter.js";
+import { buildAssistantMarkdownPayload } from "../src/feishu/shared-primitives.js";
 
 describe("buildPostPayload", () => {
   it("renders a post message payload", () => {
@@ -46,6 +47,35 @@ describe("buildPostPayload", () => {
     const payload = buildPostMarkdownPayload(["```bash", "npm test", "```"].join("\n"));
     const content = JSON.parse(payload.content) as { zh_cn: { content: Array<Array<{ tag: string; text: string }>> } };
     expect(content.zh_cn.content[0]?.[0]?.text).toBe(["```", "npm test", "```"].join("\n"));
+  });
+
+  it("repairs multiline single-backtick pseudo code blocks without touching inline code", () => {
+    const payload = buildPostMarkdownPayload([
+      "操作如下：",
+      "`bash",
+      "npm install",
+      "npm run dev",
+      "`",
+      "",
+      "保留内联 `bash`、`/new` 和普通 bash 文字。",
+    ].join("\n"));
+    const content = JSON.parse(payload.content) as { zh_cn: { content: Array<Array<{ tag: string; text: string }>> } };
+    const text = content.zh_cn.content[0]?.[0]?.text ?? "";
+
+    expect(text).toContain(["```", "npm install", "npm run dev", "```"].join("\n"));
+    expect(text).toContain("内联 `bash`");
+    expect(text).toContain("`/new`");
+    expect(text).toContain("普通 bash 文字");
+  });
+
+  it("downgrades headings only for assistant markdown payloads", () => {
+    const commonPayload = buildPostMarkdownPayload(["# 一级标题", "正文"].join("\n"));
+    const assistantPayload = buildAssistantMarkdownPayload(["# 一级标题", "正文"].join("\n"));
+    const commonContent = JSON.parse(commonPayload.content) as { zh_cn: { content: Array<Array<{ tag: string; text: string }>> } };
+    const assistantContent = JSON.parse(assistantPayload.content) as { zh_cn: { content: Array<Array<{ tag: string; text: string }>> } };
+
+    expect(commonContent.zh_cn.content[0]?.[0]?.text).toContain("# 一级标题");
+    expect(assistantContent.zh_cn.content[0]?.[0]?.text).toContain("### 一级标题");
   });
 
   it("renders an interactive turn status card", () => {
@@ -105,6 +135,29 @@ describe("buildPostPayload", () => {
     expect(output).not.toContain("```text");
     expect(output).toContain("飞书事件 -> ws.ts handleEvent()");
     expect(output).not.toContain("-&gt;");
+  });
+
+  it("normalizes assistant headings in final turn output", () => {
+    const payload = buildTurnStatusCardPayload({
+      title: "已完成",
+      status: "已完成",
+      sessionId: "ses_1234567890",
+      durationText: "约 3s",
+      progressUpdates: ["最终回复已生成"],
+      toolUpdates: [],
+      output: {
+        text: ["# 安装步骤", "", "```bash", "npm test", "```"].join("\n"),
+        paths: [],
+        commands: [],
+      },
+    });
+    const content = JSON.parse(payload.content) as any;
+    const output = content.body.elements[0].columns[0].elements[0].content as string;
+
+    expect(output).toContain("### 安装步骤");
+    expect(output).toContain(["```", "npm test", "```"].join("\n"));
+    expect(output).not.toMatch(/^# 安装步骤/m);
+    expect(output).not.toContain("```bash");
   });
 
   it("neutralizes markdown tables in turn output so Feishu cards do not create table elements", () => {
@@ -194,7 +247,7 @@ describe("buildPostPayload", () => {
         { index: 2, title: "帮我写个单测", meta: "04-06 15:10" },
         { index: 3, title: "代码审查", archived: true, meta: "04-06 15:10" },
       ],
-      footer: "发送 `/switch <编号>` 切换 · 30s 内有效",
+      footer: "发送 `/switch <编号>` 切换 · 3 分钟内有效",
     });
     const content = JSON.parse(payload.content) as any;
     expect(content.header.title.content).toBe("会话列表");

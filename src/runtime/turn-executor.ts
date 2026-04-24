@@ -12,7 +12,7 @@ import { transitionTurn } from "../bridge/state-machine.js";
 import { TurnWatchdog } from "../bridge/watchdog.js";
 import type { BridgeTurn } from "../bridge/turn.js";
 import { buildPermissionRequestCardPayload } from "../feishu/runtime-cards.js";
-import { buildPostMarkdownPayload, type FeishuPostPayload } from "../feishu/shared-primitives.js";
+import { buildAssistantMarkdownPayload, buildPostMarkdownPayload, type FeishuPostPayload } from "../feishu/shared-primitives.js";
 import { createTextPreview, logEvent, runWithLogContext, type Logger, type TranscriptType } from "../logging/logger.js";
 import { type OpenCodeMessage, type OpenCodeSessionStatus } from "../opencode/client.js";
 import { getEventSessionId, type OpenCodeEvent } from "../opencode/events.js";
@@ -771,7 +771,7 @@ export class TurnExecutor {
 
   /** 在没有过程卡可用时，直接发出兜底 Markdown 回复。 */
   private async sendTurnFallbackMarkdown(chatId: string, markdown: string, replyToMessageId: string): Promise<void> {
-    await this.context.sendPayload(chatId, buildPostMarkdownPayload(markdown), {
+    await this.context.sendPayload(chatId, buildAssistantMarkdownPayload(markdown), {
       event: "fallback final message sent",
       transcriptType: "outbound-final",
       textPreview: createTextPreview(markdown),

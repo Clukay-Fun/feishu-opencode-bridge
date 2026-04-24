@@ -34,7 +34,7 @@ export type PendingPermissionInteraction = {
 export type PendingSessionSelectionInteraction = {
   // Awaiting a user choice from a rendered session list.
   kind: "session-select";
-  options: Array<{ index: number; sessionId: string; title: string; current?: boolean; inWindow?: boolean }>;
+  options: Array<{ index: number; sessionId: string; title: string; displayTitle?: string; current?: boolean; inWindow?: boolean }>;
   expiresAt: number;
 };
 

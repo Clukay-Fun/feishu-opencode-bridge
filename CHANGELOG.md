@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.43 - 2026-04-24
+
+### Fixed
+- Fixed Feishu assistant reply formatting for top-level headings and single-backtick pseudo code blocks.
+- Improved `/models` cards to show the current window model and OpenCode provider defaults separately.
+- Extended session selection validity and masked hidden session titles in `/sessions all` cards.
+
 ## 0.1.42 - 2026-04-24
 
 ### Added

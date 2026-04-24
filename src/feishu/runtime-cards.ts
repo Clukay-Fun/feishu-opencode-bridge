@@ -14,6 +14,7 @@ import {
   type OutputView,
   type ToolUpdateView,
 } from "./shared-primitives.js";
+import { normalizeAssistantMarkdown } from "./markdown.js";
 
 export type TurnStatusCardView = {
   title: string;
@@ -69,13 +70,13 @@ export type LeaveCommandCardView = {
 };
 
 export type ModelListCardView = {
+  currentModelLabel: string;
   providers: Array<{
     id: string;
     name: string;
     models: Array<{
       id: string;
       current?: boolean;
-      default?: boolean;
     }>;
   }>;
   footer: string;
@@ -239,6 +240,8 @@ export function buildModelListCardPayload(view: ModelListCardView): FeishuPostPa
     template: "indigo",
     iconToken: "ai-common_colorful",
     bodyElements: [
+      buildCurrentModelBlock(view.currentModelLabel),
+      buildDivider(),
       ...view.providers.flatMap((provider, index) => {
         const elements: Array<Record<string, unknown>> = [
           buildModelProviderBlock(provider),
@@ -368,6 +371,15 @@ function buildModelProviderBlock(provider: ModelListCardView["providers"][number
   };
 }
 
+function buildCurrentModelBlock(currentModelLabel: string): Record<string, unknown> {
+  return columnSet([
+    column([
+      markdown("**当前窗口模型**", { size: "notation", icon: { token: "setting_outlined", color: "blue" } }),
+      markdown(escapeText(currentModelLabel), { size: "normal" }),
+    ], { bg: "blue-50", weight: 1 }),
+  ]);
+}
+
 function buildModelChip(model: ModelListCardView["providers"][number]["models"][number]): Record<string, unknown> {
   const label = model.id.includes("/") ? (model.id.split("/").at(-1) ?? model.id) : model.id;
   const highlighted = model.current;
@@ -376,9 +388,7 @@ function buildModelChip(model: ModelListCardView["providers"][number]["models"][
       markdown(
         model.current
           ? `**${escapeText(label)}**`
-          : model.default
-            ? `${escapeText(label)} 默认`
-            : escapeText(label),
+          : escapeText(label),
         { size: "notation" },
       ),
     ], highlighted ? { bg: "purple-50" } : undefined),
@@ -624,7 +634,7 @@ function buildOutputElements(output: OutputView, state: CardState): Array<Record
 }
 
 function formatOutputText(text: string): string {
-  return splitMarkdownByCodeFence(text)
+  return splitMarkdownByCodeFence(normalizeAssistantMarkdown(text))
     .map((segment) => segment.kind === "code" ? segment.content : formatEscapedMarkdownSegment(segment.content))
     .join("");
 }

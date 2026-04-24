@@ -6,7 +6,7 @@
  */
 import type { QueueNotice } from "../bridge/turn.js";
 import { column, columnSet, markdown, standardIcon, type IconDef } from "./card-builder.js";
-import { normalizeFeishuMarkdown } from "./markdown.js";
+import { normalizeAssistantMarkdown, normalizeFeishuMarkdown } from "./markdown.js";
 
 export type FeishuPostPayload = {
   msg_type: "post" | "interactive";
@@ -44,12 +44,21 @@ export function buildQueueNoticePayload(notice: QueueNotice): FeishuPostPayload 
 
 /** 构建纯 Markdown 的飞书 post 消息。 */
 export function buildPostMarkdownPayload(markdownText: string): FeishuPostPayload {
+  return buildNormalizedPostMarkdownPayload(normalizeFeishuMarkdown(markdownText));
+}
+
+/** 构建 assistant 回复专用 Markdown post 消息。 */
+export function buildAssistantMarkdownPayload(markdownText: string): FeishuPostPayload {
+  return buildNormalizedPostMarkdownPayload(normalizeAssistantMarkdown(markdownText));
+}
+
+function buildNormalizedPostMarkdownPayload(markdownText: string): FeishuPostPayload {
   return {
     msg_type: "post",
     content: JSON.stringify({
       zh_cn: {
         title: "",
-        content: [[{ tag: "md", text: normalizeFeishuMarkdown(markdownText) }]],
+        content: [[{ tag: "md", text: markdownText }]],
       },
     }),
   };

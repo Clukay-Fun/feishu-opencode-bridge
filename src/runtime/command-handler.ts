@@ -40,7 +40,7 @@ import {
   updateSessionLabel,
 } from "./session-windows.js";
 
-const SESSION_SELECTION_TTL_MS = 30_000;
+const SESSION_SELECTION_TTL_MS = 180_000;
 const SESSION_DELETE_CONFIRM_TTL_MS = 30_000;
 const SESSIONS_ALL_PAGE_SIZE = 20;
 
@@ -261,7 +261,8 @@ export class CommandHandler {
 
     if (command.kind === "models") {
       const providers = await this.context.opencode.listProviders();
-      const modelCard = buildModelCardView(providers, command.provider);
+      const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
+      const modelCard = buildModelCardView(providers, window.modelOverride, command.provider);
       if (!modelCard) {
         await this.sendNotice(message, {
           title: "提醒",
@@ -301,7 +302,7 @@ export class CommandHandler {
         title: "已切换窗口模型",
         template: "green",
         icon: "switch_filled",
-        message: `当前窗口后续对话将使用 \`${modelOverride.providerID}/${modelOverride.modelID}\`。\n发送 \`/model reset\` 可恢复 OpenCode 默认模型。`,
+        message: `当前窗口模型：\`${modelOverride.providerID}/${modelOverride.modelID}\`。\n仅影响当前窗口后续对话。\n发送 \`/model reset\` 可恢复 OpenCode 默认模型。`,
       });
       return;
     }
@@ -316,7 +317,7 @@ export class CommandHandler {
         title: "已恢复默认模型",
         template: "green",
         icon: "refresh_filled",
-        message: "当前窗口后续对话将使用 OpenCode 默认模型。",
+        message: "已清除窗口级模型覆盖。\n当前窗口后续对话将使用 OpenCode 默认模型。",
       });
       return;
     }
@@ -343,7 +344,7 @@ export class CommandHandler {
       this.context.setPendingInteraction(message.conversationKey, { kind: "session-select", options, expiresAt: Date.now() + SESSION_SELECTION_TTL_MS });
       await this.context.sendPayload(message.chatId, buildSessionListCardPayload({
         items: options.map((option) => ({ index: option.index, title: option.title, current: option.current, meta: option.current ? "当前" : formatSessionTimestamp(findSessionMeta(window, option.sessionId)?.lastUsedAt) })),
-        footer: "发送 `/switch <编号>` 切换 · 30s 内有效",
+        footer: "发送 `/switch <编号>` 切换 · 3 分钟内有效",
       }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "会话列表", len: 4 }, { replyToMessageId: message.messageId });
       return;
     }
@@ -365,13 +366,23 @@ export class CommandHandler {
         }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "全部会话", len: 4 }, { replyToMessageId: message.messageId });
         return;
       }
-      const options = sessions.map((session, index) => ({ index: index + 1, sessionId: session.id, title: resolveDisplayLabel(session, session.title ?? session.slug ?? session.id, session.id), current: session.id === currentSession?.sessionId, inWindow: visibleIds.has(session.id) }));
+      const options = sessions.map((session, index) => {
+        const inWindow = visibleIds.has(session.id);
+        return {
+          index: index + 1,
+          sessionId: session.id,
+          title: resolveDisplayLabel(session, session.title ?? session.slug ?? session.id, session.id),
+          displayTitle: inWindow ? resolveDisplayLabel(session, session.title ?? session.slug ?? session.id, session.id) : formatHiddenSessionDisplayTitle(index + 1, session.id),
+          current: session.id === currentSession?.sessionId,
+          inWindow,
+        };
+      });
       this.context.setPendingInteraction(message.conversationKey, { kind: "session-select", options, expiresAt: Date.now() + SESSION_SELECTION_TTL_MS });
       const pages = chunkArray(options, SESSIONS_ALL_PAGE_SIZE);
       for (const [pageIndex, page] of pages.entries()) {
-        const footer = `${query ? `关键词：${command.query?.trim()} · ` : ""}第 ${pageIndex + 1}/${pages.length} 页 · 发送 \`/switch <编号>\` 恢复或切换 · \`/delete <编号>\` 或 \`/delete <sessionId>\` 彻底删除 · 30s 内有效`;
+        const footer = `${query ? `关键词：${command.query?.trim()} · ` : ""}第 ${pageIndex + 1}/${pages.length} 页 · 发送 \`/switch <编号>\` 恢复或切换 · \`/delete <编号>\` 或 \`/delete <sessionId>\` 彻底删除 · 3 分钟内有效`;
         await this.context.sendPayload(message.chatId, buildSessionListCardPayload({
-          items: page.map((option) => ({ index: option.index, title: option.title, current: option.current, archived: !option.inWindow, meta: option.current ? "当前" : option.inWindow ? "窗口中" : "已隐藏" })),
+          items: page.map((option) => ({ index: option.index, title: option.displayTitle ?? option.title, current: option.current, archived: !option.inWindow, meta: option.current ? "当前" : option.inWindow ? "窗口中" : "已隐藏" })),
           footer,
         }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "全部会话", len: 4 }, { replyToMessageId: message.messageId });
       }
@@ -782,7 +793,7 @@ export class CommandHandler {
           archived: !option.inWindow,
           meta: option.current ? "当前" : option.inWindow ? "窗口中" : "已隐藏",
         })),
-        footer: "匹配到多个会话 · 发送 `/switch <编号>` 切换 · 30s 内有效",
+        footer: "匹配到多个会话 · 发送 `/switch <编号>` 切换 · 3 分钟内有效",
       }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "匹配会话", len: 4 }, { replyToMessageId: message.messageId });
       return;
     }
@@ -927,4 +938,9 @@ function sessionMatchesQuery(session: OpenCodeSession, normalizedQuery: string):
 
 function normalizeSessionLookupText(value: string | undefined): string {
   return (value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function formatHiddenSessionDisplayTitle(index: number, sessionId: string): string {
+  const suffix = sessionId.length > 8 ? sessionId.slice(-8) : sessionId;
+  return `隐藏会话 #${index} · ${suffix}`;
 }
