@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.42 - 2026-04-24
+
+### Added
+- Added GitHub community health files for code of conduct, contributing guidance, security reporting, and issue templates.
+
 ## 0.1.41 - 2026-04-24
 
 ### Added

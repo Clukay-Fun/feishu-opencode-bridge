@@ -1,0 +1,49 @@
+name: Tech Debt / Refactor
+description: 记录架构债、边界收口或维护性改进
+title: "[Tech Debt] "
+labels: ["tech debt"]
+body:
+  - type: textarea
+    id: background
+    attributes:
+      label: 背景
+      description: 这项技术债来自什么历史实现、功能增长或边界变化？
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: 问题
+      description: 当前结构有什么维护风险、测试风险或扩展限制？
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: 影响
+      description: 如果不处理，会影响哪些模块、开发流程或后续功能？
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+      description: 倾向如何拆分、迁移、收敛或加保护？
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: 非目标
+      description: 这次不做哪些行为变化或重构范围？
+  - type: textarea
+    id: source
+    attributes:
+      label: 源码依据
+      description: 相关路径、函数或文档锚点。
+

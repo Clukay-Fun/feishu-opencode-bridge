@@ -1,0 +1,60 @@
+name: Feature / Enhancement
+description: 提议新能力或增强现有能力
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        新能力请尽量说明业务场景、边界、非目标和验收标准。涉及架构 seam 的变更，请同步参考 architecture baseline。
+  - type: textarea
+    id: background
+    attributes:
+      label: 背景
+      description: 为什么现在需要这个能力？
+    validations:
+      required: true
+  - type: textarea
+    id: requirement
+    attributes:
+      label: 问题 / 需求
+      description: 当前缺什么？希望新增或增强什么？
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: 影响
+      description: 对用户、开发者、运行时、兼容性或维护成本有什么影响？
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+      description: 完成后应该如何工作？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+      description: 如果已有实现思路，请说明模块边界、配置、命令或 UI 入口。
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: 非目标
+      description: 这次明确不解决什么？
+  - type: textarea
+    id: notes
+    attributes:
+      label: 备注
+      description: 相关 issue、PR、文档、截图或设计记录。
+

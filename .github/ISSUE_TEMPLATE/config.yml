@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/Clukay-Fun/feishu-opencode-bridge/security/advisories/new
+    about: 安全问题请优先私密报告，不要公开披露可利用细节。
+  - name: Architecture baseline
+    url: https://github.com/Clukay-Fun/feishu-opencode-bridge/blob/main/docs/architecture-baseline.md
+    about: 新功能或重构前，请先查看当前架构边界。

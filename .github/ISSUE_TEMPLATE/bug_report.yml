@@ -1,0 +1,62 @@
+name: Bug
+description: 报告可复现的问题或回归
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈问题。请尽量提供最小复现路径，避免贴真实 token、合同、聊天记录或客户数据。
+  - type: textarea
+    id: background
+    attributes:
+      label: 背景
+      description: 这个问题发生在什么功能、场景或工作流中？
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: 问题
+      description: 实际发生了什么？如果有报错，请贴脱敏后的关键日志。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 请写出从干净状态触发问题的步骤。
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+      description: 正常情况下应该发生什么？
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: 影响
+      description: 影响用户、运行时、数据一致性、兼容性还是开发体验？
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境
+      description: 版本、commit、Node/Python 版本、运行方式等。
+      placeholder: |
+        - commit:
+        - Node:
+        - Python:
+        - OS:
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+      description: 修复后如何判断问题已经解决？
+
