@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖跨业务共享工作流工具。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { describe, expect, it, vi } from "vitest";
 
 import { generateCaseWorkflowWorkbench } from "../src/workflows/case-workflow.js";

@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖知识库摄入、查询和存储协作流程。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";

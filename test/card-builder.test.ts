@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖飞书卡片基础元素构建工具。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { describe, expect, it } from "vitest";
 
 import { column, columnSet, divider, markdown, standardIcon } from "../src/feishu/card-builder.js";

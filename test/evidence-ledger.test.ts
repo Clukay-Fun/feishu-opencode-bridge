@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖证据台账同步和字段映射逻辑。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { describe, expect, it, vi } from "vitest";
 
 import { buildBitableViewUrl, syncEvidenceLedger } from "../src/workflows/evidence-ledger.js";

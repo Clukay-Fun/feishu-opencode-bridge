@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖回复清理和证据脱敏逻辑。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { describe, expect, it } from "vitest";
 
 import { cleanAssistantReply, redactEvidenceRecord, redactEvidenceText } from "../src/runtime/sanitize.js";

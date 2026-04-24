@@ -13,6 +13,8 @@
 
 ## 📢 项目动态
 
+- **2026-04-24** · 除权限按钮回调外的 open issue 已完成收口，项目进入框架维护与发布前整理阶段
+- **2026-04-23** · 业务扩展边界继续收紧：配置开始引入模块注册表，文件解析收敛到 `document-pipeline`，业务卡片开始向模板化运行时迁移
 - **2026-04-19** · 冻结后 backlog 全部清零，`TurnExecutor` settlement 控制器落地，进入日常维护节奏
 - **2026-04-10** · 框架冻结验收通过，[架构基线](docs/architecture-baseline.md) 与 [新功能自检清单](docs/guidelines/new-feature-checklist.md) 成为 PR 准入标准
 - **2026-03** · Runtime Module 抽象完成，知识 / 合同 / 劳动 / 记忆四大模块全部收敛到统一 seam
@@ -32,9 +34,9 @@
 
 - **会话窗口**：支持私聊、群聊、话题群的 session 绑定、切换、关闭、重命名
 - **过程卡片**：运行中的 OpenCode turn 通过飞书卡片持续更新状态、工具调用和最终回复
-- **权限确认**：OpenCode 权限请求可通过飞书按钮处理，也保留文本命令 fallback
+- **权限确认**：OpenCode 权限请求以 `/allow`、`/deny` 文本命令作为稳定路径，按钮回调链路保留为后续验证项
 - **群聊协作**：通过白名单绑定支持群内免重复 `@bot` 的协作流
-- **知识库**：支持法律知识查询、批量文件入库、URL 入库和本地 CLI 诊断
+- **知识库**：支持法律知识查询、批量文件入库、URL 入库、统一文档解析和本地 CLI 诊断
 - **合同助手**：支持合同起草、案件录入/更新、待办和提醒管理
 - **劳动分析**：支持劳动争议材料收集、整理和分析输出
 - **长期记忆**：可选的记忆提取、检索、SQLite / FTS5 存储和 Obsidian 同步
@@ -46,8 +48,9 @@
 
 - bridge 自己拥有 `/new`、`/sessions`、`/switch`、`/status` 等运行时控制面
 - OpenCode 原生命令继续通过 passthrough 工作
-- 业务能力放在 Runtime Module 内部，而不是继续把 `core` 写成巨型分支
-- 飞书发送、回复、更新、notice 收敛到 `FeishuTransport` 和卡片 family 入口
+- 业务能力通过 Runtime Module、CLI、skill 和共享 workflow 扩展，而不是继续把 `core` 写成巨型分支
+- 飞书发送、回复、更新、notice 收敛到 `FeishuTransport`、通用卡片原语和业务卡片模板入口
+- 常见文件先经 `document-pipeline` 转换为 Markdown / 纯文本 / sections，再供知识库、合同材料和证据抽取复用
 - 新功能必须在冻结后的 seam 内扩展，不能随意绕过核心边界
 
 ## 🏗️ 架构
@@ -67,13 +70,14 @@ flowchart LR
     app --> modules["RuntimeModuleManager<br/>src/runtime/runtime-modules.ts"]
 
     executor <--> opencode["OpenCode 服务 API + SSE<br/>src/opencode/*"]
-    modules --> services["领域服务<br/>knowledge / contract / labor / memory"]
+    modules --> services["领域服务 / CLI / Skill<br/>knowledge / contract / labor / memory"]
+    services --> pipeline["Document Pipeline<br/>Markdown / Text / Sections"]
     services --> stores["存储 / 数据库 / 本地工具<br/>JSON / SQLite / Bitable / Files"]
 
     command --> transport["FeishuTransport<br/>send / reply / update / notice"]
     executor --> transport
     modules --> transport
-    transport --> cards["飞书卡片 / 富文本<br/>src/feishu/*-cards.ts"]
+    transport --> cards["飞书卡片<br/>通用原语 / 业务模板"]
     cards --> user
 ```
 
@@ -81,13 +85,13 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-    config["配置<br/>src/config/schema.ts<br/>src/config/loader.ts"]
+    config["配置<br/>schema / loader / module registry"]
 
     subgraph feishu["飞书接入层"]
       ws["WebSocket 入口"]
       api["飞书 API 客户端"]
       transport["FeishuTransport"]
-      cardFamilies["卡片家族<br/>shared / runtime / knowledge / labor / contract"]
+      cardRuntime["卡片原语与模板<br/>shared / runtime / business templates"]
     end
 
     subgraph core["核心运行时"]
@@ -112,7 +116,8 @@ flowchart TB
       contract["ContractAssistantService"]
       labor["LaborSkillService"]
       memory["MemoryService"]
-      workflow["证据处理 / Python / 本地 CLI"]
+      documentPipeline["Document Pipeline"]
+      workflow["共享工作流 / Python / 本地 CLI"]
     end
 
     subgraph persistence["持久化 / 外部 API"]
@@ -138,12 +143,13 @@ flowchart TB
     executor --> transport
     modules --> transport
     transport --> api
-    transport --> cardFamilies
+    transport --> cardRuntime
 
     modules --> knowledge
     modules --> contract
     modules --> labor
     modules --> memory
+    services --> documentPipeline
     services --> json
     services --> sqlite
     services --> bitable
@@ -156,13 +162,13 @@ flowchart TB
 
 | 会话窗口 | 过程卡片 | 权限确认 | 知识入库 |
 | :-- | :-- | :-- | :-- |
-| 私聊 / 群聊 / 话题群各自独立绑定，切换不丢上下文 | 卡片原地滚动更新，工具调用逐步展开，最终回复就地落地 | 敏感操作先弹按钮，再保留 `/allow` `/deny` 文本 fallback | 拖文件进聊天、粘 URL 或批量入库，进度卡片全程可见 |
-| `/new` · `/switch` · `/sessions` | 实时工具调用 + 最终回复 | 按钮 / `/allow` / `/deny` | 文件 · URL · 批量 |
+| 私聊 / 群聊 / 话题群各自独立绑定，切换不丢上下文 | 卡片原地滚动更新，工具调用逐步展开，最终回复就地落地 | 敏感操作通过 `/allow` `/deny` 文本确认，按钮链路暂缓 | 拖文件进聊天、粘 URL 或批量入库，进度卡片全程可见 |
+| `/new` · `/switch` · `/sessions` | 实时工具调用 + 最终回复 | `/allow` · `/deny` | 文件 · URL · 批量 |
 
 | 合同助手 | 劳动分析 | 长期记忆 | 启动诊断 |
 | :-- | :-- | :-- | :-- |
-| 从合同起草到案件追踪，待办与提醒按日推送 | 收齐工资 / 考勤 / 协议，一键产出争议分析 | 按会话 / 主题检索，支持与 Obsidian 双向同步 | 启动前自检飞书 / OpenCode / 回调，缺什么报什么 |
-| 起草 · 案件 · 待办 · 提醒 | 材料收集 + 分析输出 | SQLite + FTS5 + Obsidian | `npm run doctor` |
+| 从合同起草到案件追踪，待办与提醒按日推送 | 收齐工资 / 考勤 / 协议，产出争议分析与工作台材料 | 按会话 / 主题检索，支持与 Obsidian 双向同步 | 启动前自检飞书 / OpenCode / 回调，缺什么报什么 |
+| 起草 · 案件 · 待办 · 提醒 | 材料收集 · 时间线 · 台账 | SQLite + FTS5 + Obsidian | `npm run doctor` |
 
 > 截图与 GIF 正在补充中。当前版本运行 `npm run dev` 并在飞书侧发送示例命令即可复现上述卡片体验。
 
@@ -275,7 +281,7 @@ npm run --silent kb -- doctor
 | `storage` | 会话映射、白名单、日志和业务状态目录 |
 | `bridge` | 队列、会话模式、超时和系统状态注入 |
 | `memory` | 长期记忆开关、存储和同步设置 |
-| `knowledgeBase` | 知识库开关、入库、检索、本地数据库和多维表格配置 |
+| `knowledgeBase` | 知识库开关、入库、检索、统一文档解析、本地数据库和多维表格配置 |
 | `contractAssistant` | 合同、案件、发票和提醒能力配置 |
 | `laborSkill` | 劳动分析材料收集和输出配置 |
 
@@ -297,19 +303,20 @@ npm run dev:once
 ```text
 src/
   bridge/              # 路由、队列、turn 状态、看门狗、模块接口
-  config/              # Zod schema 与配置加载
-  feishu/              # 飞书 API、WebSocket 入口、卡片家族
+  config/              # Zod schema、配置加载与模块配置注册表
+  document-pipeline/   # 常见文件到 Markdown / 纯文本 / sections 的统一解析入口
+  feishu/              # 飞书 API、WebSocket 入口、卡片原语与业务模板
   http/                # healthz 与卡片回调服务
-  runtime/             # BridgeApp、命令处理、turn 执行、传输、启动前检查
+  runtime/             # BridgeApp、命令处理、turn 执行、短期消息上下文、启动前检查
   knowledge/           # 法律知识库、解析器、本地 CLI、SQLite 镜像
   contract-assistant/  # 合同起草、案件更新、提醒
   labor/               # 劳动争议材料收集与分析
   memory/              # 长期记忆、检索器、embedding、Obsidian 同步
   opencode/            # OpenCode 客户端与事件流
   store/               # 会话映射、白名单、活跃入库等 JSON 存储
-  workflows/           # 工作流辅助模块
-scripts/               # 运行入口、仓库检查、知识库 CLI、wrapper 与 Python 辅助脚本
-docs/                  # 架构、部署、计划与归档演示文档
+  workflows/           # 证据提取、时间线、工作台、台账等共享工作流
+scripts/               # runtime、checks、kb、wrappers、python 分组脚本
+docs/                  # 架构、部署、模块、可观测性、归档文档
 test/                  # Vitest 单元测试与集成测试
 ```
 
@@ -319,6 +326,9 @@ test/                  # Vitest 单元测试与集成测试
 - [新功能自检清单](docs/guidelines/new-feature-checklist.md) — 新功能进入 PR 前必须核对的架构、测试、文档与部署检查项
 - [飞书 Markdown 输出规范](docs/feishu-markdown.md) — 面向飞书消息的 Markdown 输出规则和长文本排版约束
 - [部署说明](docs/deploy.md) — 本地与服务器部署、环境变量、Caddy、健康检查和验收步骤
+- [可观测性事件规范](docs/observability/event-schema.md) — runtime、transport、module 事件命名和字段约定
+- [法律知识库方案](docs/modules/knowledge-base.md) — 知识库入库、检索、Bitable 镜像和 CLI 使用说明
+- [Labor Skill 工作流分层](docs/modules/labor-skill-workflows.md) — 劳动案件 workflow、shared workflow 与专项能力边界
 - [Formatter 迁移记录](docs/archive/design-history/formatter-migration.md) — 卡片 formatter 拆分的迁移背景、边界和收尾记录
 - [框架冻结验收](docs/archive/qa-and-submission/freeze-acceptance.md) — 框架冻结时的验收范围、证据和后续准入要求
 
@@ -344,7 +354,9 @@ test/                  # Vitest 单元测试与集成测试
 
 - 新功能优先落在 Runtime Module / Service / Transport seam 内
 - 不要在 `src/runtime/app.ts`、`src/runtime/turn-executor.ts`、`src/bridge/router.ts` 里新增业务特定分支，除非同步更新架构基线
-- 新卡片走 `src/feishu/*-cards.ts` family entrypoint，不要继续扩张 `formatter.ts`
+- 新卡片优先走通用卡片原语与业务模板，不要继续扩张 `formatter.ts`
+- 业务规则、prompt 和可复用能力优先沉淀到 CLI / skill / shared workflow，不要默认写死进 bridge core
+- 新增重要代码文件应写中文文件头注释，沿用 `职责 / 关注点` 模板
 - 模块状态持久化复用共享基础设施，不复制 timer + JSON persist 逻辑
 - PR 描述里建议附上 [新功能自检清单](docs/guidelines/new-feature-checklist.md) 的自检结果
 

@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖HTTP callback 服务和健康检查接口。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import http from "node:http";
 
 import { afterEach, describe, expect, it, vi } from "vitest";

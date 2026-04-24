@@ -13,6 +13,8 @@
 
 ## 📢 News
 
+- **2026-04-24** · All open issues except the paused permission-button callback line have been closed, and the project moved into maintainer cleanup before the next release
+- **2026-04-23** · Extension boundaries were tightened: configuration started using a module registry, file parsing converged on `document-pipeline`, and business cards started moving toward template runtime
 - **2026-04-19** · Post-freeze backlog cleared, the `TurnExecutor` settlement controller landed, and the project moved into regular maintenance
 - **2026-04-10** · Framework freeze accepted; [architecture baseline](docs/architecture-baseline.md) and [new feature checklist](docs/guidelines/new-feature-checklist.md) became PR entry gates
 - **2026-03** · Runtime Module abstraction completed; knowledge, contract, labor, and memory modules converged on a shared seam
@@ -32,9 +34,9 @@
 
 - **Session windows**: bind, switch, close, delete, and rename sessions across private chats, group chats, and topic groups
 - **Process cards**: long-running OpenCode turns update Feishu cards with status, tool calls, and final replies
-- **Permission confirmation**: OpenCode permission requests can be handled through Feishu buttons, with text command fallback
+- **Permission confirmation**: OpenCode permission requests use `/allow` and `/deny` text commands as the stable path; button callbacks remain a paused follow-up line
 - **Group collaboration**: whitelist binding keeps group collaboration usable without repeated `@bot` mentions
-- **Knowledge base**: legal knowledge search, batch file ingestion, URL ingestion, and local CLI diagnostics
+- **Knowledge base**: legal knowledge search, batch file ingestion, URL ingestion, unified document parsing, and local CLI diagnostics
 - **Contract assistant**: contract drafting, case create/update flows, todos, and reminder management
 - **Labor analysis**: collect labor dispute materials and produce structured analysis output
 - **Long-term memory**: optional memory extraction, retrieval, SQLite / FTS5 storage, and Obsidian sync
@@ -46,8 +48,9 @@ A normal bot usually receives messages and returns LLM replies. This project emb
 
 - The bridge owns runtime commands such as `/new`, `/sessions`, `/switch`, and `/status`
 - OpenCode-native commands continue to work through passthrough
-- Business capabilities live inside Runtime Modules instead of growing the `core` runtime
-- Feishu send, reply, update, and notice calls converge on `FeishuTransport` and card family entrypoints
+- Business capabilities extend through Runtime Modules, CLI, skills, and shared workflows instead of growing the `core` runtime
+- Feishu send, reply, update, and notice calls converge on `FeishuTransport`, shared card primitives, and business card templates
+- Common files pass through `document-pipeline` into Markdown / plain text / sections before being reused by the knowledge base, contract materials, and evidence extraction
 - New features must expand inside the frozen seams and must not bypass core boundaries casually
 
 ## 🏗️ Architecture
@@ -67,13 +70,14 @@ flowchart LR
     app --> modules["RuntimeModuleManager<br/>src/runtime/runtime-modules.ts"]
 
     executor <--> opencode["OpenCode Server API + SSE<br/>src/opencode/*"]
-    modules --> services["Domain Services<br/>knowledge / contract / labor / memory"]
+    modules --> services["Domain Services / CLI / Skills<br/>knowledge / contract / labor / memory"]
+    services --> pipeline["Document Pipeline<br/>Markdown / Text / Sections"]
     services --> stores["Stores / DB / Local Tools<br/>JSON / SQLite / Bitable / Files"]
 
     command --> transport["FeishuTransport<br/>send / reply / update / notice"]
     executor --> transport
     modules --> transport
-    transport --> cards["Feishu Cards / Posts<br/>src/feishu/*-cards.ts"]
+    transport --> cards["Feishu Cards<br/>Primitives / Business Templates"]
     cards --> user
 ```
 
@@ -81,13 +85,13 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-    config["Configuration<br/>src/config/schema.ts<br/>src/config/loader.ts"]
+    config["Configuration<br/>schema / loader / module registry"]
 
     subgraph feishu["Feishu Layer"]
       ws["WebSocket Ingress"]
       api["Feishu API Client"]
       transport["FeishuTransport"]
-      cardFamilies["Card Families<br/>shared / runtime / knowledge / labor / contract"]
+      cardRuntime["Card Primitives And Templates<br/>shared / runtime / business templates"]
     end
 
     subgraph core["Core Runtime"]
@@ -112,7 +116,8 @@ flowchart TB
       contract["ContractAssistantService"]
       labor["LaborSkillService"]
       memory["MemoryService"]
-      workflow["Evidence / Python / Local CLI"]
+      documentPipeline["Document Pipeline"]
+      workflow["Shared Workflows / Python / Local CLI"]
     end
 
     subgraph persistence["Persistence / External APIs"]
@@ -138,12 +143,13 @@ flowchart TB
     executor --> transport
     modules --> transport
     transport --> api
-    transport --> cardFamilies
+    transport --> cardRuntime
 
     modules --> knowledge
     modules --> contract
     modules --> labor
     modules --> memory
+    services --> documentPipeline
     services --> json
     services --> sqlite
     services --> bitable
@@ -156,13 +162,13 @@ flowchart TB
 
 | Session Windows | Process Cards | Permission Confirmation | Knowledge Ingestion |
 | :-- | :-- | :-- | :-- |
-| Private chats, group chats, and topic groups bind independently, and switching does not lose context | Cards update in place, tool calls unfold progressively, and final replies land where the work happened | Sensitive actions ask through buttons first, while `/allow` and `/deny` remain available as text fallback | Drop files into chat, paste URLs, or batch ingest documents with visible progress cards |
-| `/new` · `/switch` · `/sessions` | Live tool calls + final reply | Buttons / `/allow` / `/deny` | Files · URLs · batch |
+| Private chats, group chats, and topic groups bind independently, and switching does not lose context | Cards update in place, tool calls unfold progressively, and final replies land where the work happened | Sensitive actions use `/allow` and `/deny` text confirmation while button callbacks remain paused | Drop files into chat, paste URLs, or batch ingest documents with visible progress cards |
+| `/new` · `/switch` · `/sessions` | Live tool calls + final reply | `/allow` · `/deny` | Files · URLs · batch |
 
 | Contract Assistant | Labor Analysis | Long-Term Memory | Startup Diagnostics |
 | :-- | :-- | :-- | :-- |
-| From contract drafting to case tracking, todos and reminders can be pushed by schedule | Collect salary, attendance, and agreement materials, then generate dispute analysis | Retrieve by conversation or topic, with optional Obsidian sync | Check Feishu, OpenCode, and callbacks before runtime starts, and fail loudly when something is missing |
-| Drafting · cases · todos · reminders | Material collection + analysis output | SQLite + FTS5 + Obsidian | `npm run doctor` |
+| From contract drafting to case tracking, todos and reminders can be pushed by schedule | Collect salary, attendance, and agreement materials, then produce analysis and workbench materials | Retrieve by conversation or topic, with optional Obsidian sync | Check Feishu, OpenCode, and callbacks before runtime starts, and fail loudly when something is missing |
+| Drafting · cases · todos · reminders | Materials · timeline · ledger | SQLite + FTS5 + Obsidian | `npm run doctor` |
 
 > Screenshots and GIFs are still being added. For now, run `npm run dev` and send the example commands in Feishu to reproduce the card experience.
 
@@ -275,7 +281,7 @@ Use [config.example.json](config.example.json) as the template. Main config sect
 | `storage` | Session mappings, whitelist, logs, and business state directories |
 | `bridge` | Queueing, session mode, timeout, and system state injection |
 | `memory` | Long-term memory switches, storage, and sync settings |
-| `knowledgeBase` | Knowledge base switches, ingestion, retrieval, local DB, and Bitable settings |
+| `knowledgeBase` | Knowledge base switches, ingestion, retrieval, unified document parsing, local DB, and Bitable settings |
 | `contractAssistant` | Contract, case, invoice, and reminder capabilities |
 | `laborSkill` | Labor analysis material collection and output settings |
 
@@ -297,19 +303,20 @@ Current full verification baseline: **52 test files · 371 tests passing**
 ```text
 src/
   bridge/              # router, queue, turn state, watchdog, module interface
-  config/              # zod schema and config loader
-  feishu/              # Feishu API, WebSocket ingress, card families
+  config/              # zod schema, config loader, and module config registry
+  document-pipeline/   # common files to Markdown / plain text / sections
+  feishu/              # Feishu API, WebSocket ingress, card primitives and templates
   http/                # healthz and card action callback server
-  runtime/             # BridgeApp, command handler, turn executor, transport, preflight
+  runtime/             # BridgeApp, command handler, turn executor, short-term message context, preflight
   knowledge/           # legal knowledge base, parser, local CLI, SQLite mirror
   contract-assistant/  # contract drafting, case updates, reminders
   labor/               # labor dispute material collection and analysis
   memory/              # long-term memory, retrievers, embeddings, Obsidian sync
   opencode/            # OpenCode client and event stream
   store/               # JSON stores for mappings, whitelist, active ingests
-  workflows/           # workflow helpers
-scripts/               # runtime entrypoints, repo checks, knowledge CLI, wrappers, Python helpers
-docs/                  # architecture, deployment, plans, archived demo docs
+  workflows/           # shared evidence, timeline, workbench, and ledger workflows
+scripts/               # grouped runtime, checks, kb, wrappers, and Python scripts
+docs/                  # architecture, deployment, modules, observability, and archive docs
 test/                  # Vitest unit and integration tests
 ```
 
@@ -319,6 +326,9 @@ test/                  # Vitest unit and integration tests
 - [New feature checklist](docs/guidelines/new-feature-checklist.md)
 - [Feishu Markdown rules](docs/feishu-markdown.md)
 - [Deployment](docs/deploy.md)
+- [Observability event schema](docs/observability/event-schema.md)
+- [Knowledge base design](docs/modules/knowledge-base.md)
+- [Labor Skill workflow layering](docs/modules/labor-skill-workflows.md)
 - [Formatter migration record](docs/archive/design-history/formatter-migration.md)
 - [Framework freeze acceptance](docs/archive/qa-and-submission/freeze-acceptance.md)
 
@@ -344,7 +354,9 @@ The framework has been frozen. Future feature work should follow these rules:
 
 - Prefer adding features inside Runtime Module / Service / Transport seams
 - Do not add business-specific branches to `src/runtime/app.ts`, `src/runtime/turn-executor.ts`, or `src/bridge/router.ts` unless the architecture baseline is updated first
-- Add new cards through `src/feishu/*-cards.ts` family entrypoints instead of growing `formatter.ts`
+- Prefer shared card primitives and business templates for new cards instead of growing `formatter.ts`
+- Prefer CLI / skill / shared workflow boundaries for business rules, prompts, and reusable capabilities instead of hard-coding them into bridge core
+- Add Chinese file header comments to important new code files using the existing `职责 / 关注点` template
 - Reuse shared state persistence infrastructure instead of copying timer + JSON persist logic
 - Include the [new-feature-checklist](docs/guidelines/new-feature-checklist.md) self-check in PR descriptions
 

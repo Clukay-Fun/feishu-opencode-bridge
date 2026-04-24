@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖知识库服务主流程。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

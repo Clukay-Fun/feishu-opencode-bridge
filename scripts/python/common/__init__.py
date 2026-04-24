@@ -1,1 +1,1 @@
-# Shared helpers for Python document tools.
+"""Shared helpers for Python document-processing scripts."""

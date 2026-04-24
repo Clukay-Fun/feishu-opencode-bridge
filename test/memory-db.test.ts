@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖记忆数据库读写行为。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";

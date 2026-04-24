@@ -1,3 +1,9 @@
+/**
+ * 职责: 注册并查询飞书业务卡片模板。
+ * 关注点:
+ * - 汇总模板定义并防止重复模板 id。
+ * - 为模板运行时提供按 id 查找和列表能力。
+ */
 import { laborAnalysisCompletedTemplate, laborAnalysisProgressTemplate } from "./labor-analysis.js";
 import type { AnyBusinessCardTemplateDefinition } from "./runtime.js";
 

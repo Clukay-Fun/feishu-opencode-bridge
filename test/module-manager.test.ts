@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖运行时模块管理器注册和生命周期行为。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { describe, expect, it } from "vitest";
 
 import { ModuleManager, type RuntimeModule } from "../src/bridge/module.js";

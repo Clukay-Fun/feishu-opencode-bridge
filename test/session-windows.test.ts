@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖会话窗口选择、切换和整理逻辑。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { describe, expect, it } from "vitest";
 
 import type { MappingRecord, SessionWindowRecord } from "../src/store/mappings.js";

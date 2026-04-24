@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖OpenCode 客户端 HTTP/SSE 行为。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OpenCodeClient } from "../src/opencode/client.js";

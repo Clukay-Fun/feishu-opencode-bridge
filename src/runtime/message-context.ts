@@ -1,3 +1,10 @@
+/**
+ * 职责: 保存短期飞书消息上下文，并为回复链路生成 Prompt 补充块。
+ * 关注点:
+ * - 记录用户入站消息和 Bridge 自身输出的摘要。
+ * - 根据 parent/root 消息关系找回上下文，帮助模型理解飞书回复场景。
+ * - 控制上下文数量和长度，避免把临时上下文扩散成长期记忆。
+ */
 import type { IncomingChatMessage } from "./app.js";
 
 export type BridgeMessageContextKind = "inbound" | "bridge-output";

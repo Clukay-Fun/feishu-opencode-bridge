@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖Python DOCX 编辑工具链路。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";

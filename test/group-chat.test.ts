@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖群聊消息接入和提及过滤行为。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@larksuiteoapi/node-sdk", () => {

@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖飞书回复消息上下文缓存和 Prompt 拼接逻辑。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { describe, expect, it } from "vitest";
 
 import { BridgeMessageContextStore, prependBridgeMessageContext } from "../src/runtime/message-context.js";

@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖onboard/start 脚本启动引导逻辑。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { PassThrough } from "node:stream";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";

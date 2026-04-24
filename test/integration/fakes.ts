@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖集成测试共享 fake 资源和辅助对象。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { vi } from "vitest";
 
 import type { FeishuPostPayload } from "../../src/feishu/shared-primitives.js";

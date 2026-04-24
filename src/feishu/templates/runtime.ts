@@ -1,3 +1,9 @@
+/**
+ * 职责: 提供业务卡片模板运行时，将模板输入渲染为飞书卡片 payload。
+ * 关注点:
+ * - 定义模板、区块和卡片规格的统一类型。
+ * - 执行模板输入校验，并把抽象区块转换为飞书低层元素。
+ */
 import type { ZodError, ZodTypeAny, infer as Infer } from "zod";
 
 import {

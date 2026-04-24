@@ -1,3 +1,9 @@
+/**
+ * 职责: 定义劳动分析业务卡片模板。
+ * 关注点:
+ * - 通过 Zod 校验进度和完成卡片的数据输入。
+ * - 将劳动分析视图模型渲染为通用业务卡片规格。
+ */
 import { z } from "zod";
 
 import { escapeText, resolveElapsedText } from "../shared-primitives.js";

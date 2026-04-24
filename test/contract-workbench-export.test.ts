@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖合同工作台导出 Word 文档流程。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";

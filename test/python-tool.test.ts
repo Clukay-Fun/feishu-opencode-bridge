@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖Python 工具进程封装和 JSON 通信。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";

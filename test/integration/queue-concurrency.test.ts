@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖队列并发和 turn 串行执行集成路径。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

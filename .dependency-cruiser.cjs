@@ -1,3 +1,9 @@
+/**
+ * 职责: 约束源码模块之间的依赖边界。
+ * 关注点:
+ * - 防止 runtime/bridge 直接依赖业务实现。
+ * - 固化飞书 SDK、formatter 兼容出口和业务卡片模板的使用边界。
+ */
 module.exports = {
   forbidden: [
     {

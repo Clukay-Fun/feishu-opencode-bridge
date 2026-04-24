@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖飞书 formatter 兼容导出面。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { describe, expect, it } from "vitest";
 
 import {

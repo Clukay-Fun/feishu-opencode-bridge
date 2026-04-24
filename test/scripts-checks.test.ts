@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖runtime checks 脚本诊断逻辑。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";

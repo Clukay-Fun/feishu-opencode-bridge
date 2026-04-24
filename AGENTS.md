@@ -56,6 +56,19 @@
 - Keep updating the same branch and PR while the related feature line is still open and unmerged.
 - Once a PR has been merged into `main`, do not reopen or reuse it for follow-up work; create a new branch and a new PR instead.
 
+## Maintainer Responsibilities
+
+- Treat pull request review, issue triage, release preparation, release notes, and related repository governance as `core maintainer responsibilities`.
+- When the user asks for repository maintenance work, this usually includes:
+  - pull request review and merge-readiness checks
+  - issue classification, priority sorting, and follow-up recommendations
+  - release-oriented changelog and version coordination
+  - post-release verification, regression follow-up, and maintenance documentation updates
+- Keep maintainer work distinct from feature implementation:
+  - feature work changes product behavior or architecture
+  - maintainer work keeps the repository healthy, reviewable, and releasable
+- When summarizing this category in Chinese, prefer the term `核心维护职责`.
+
 ## Issue Authoring Rules
 
 - Use issue titles with English type labels and Chinese content:
@@ -134,6 +147,38 @@
   - do not add business-specific branching to `src/runtime/app.ts`, `src/runtime/turn-executor.ts`, or `src/bridge/router.ts` unless the architecture baseline is updated first
   - new cards should use the card family entrypoints: `shared-primitives`, `runtime-cards`, `knowledge-cards`, `labor-cards`, `contract-cards`
   - if a feature changes a seam, update `docs/architecture-baseline.md` in the same PR before merge
+  - 代码注释默认使用中文，除非注释内容是外部 API 原文、协议字段、错误码或必须保持英文的术语
+  - 为新增的重要文件添加文件头注释，沿用项目现有的 `职责 / 关注点` 模板
+  - 为非显而易见的代码路径添加简洁注释，尤其是兼容逻辑、fallback 行为、并发/定时器处理、外部 API 特殊行为和跨模块契约
+  - 注释应解释代码为什么存在、保护什么不变量、或规避什么历史问题；不要添加逐行复述代码的低价值注释
+
+## File Header Comment Template
+
+- TypeScript / JavaScript / MJS 文件头注释使用：
+
+```ts
+/**
+ * 职责: 用一句话说明本文件负责的稳定职责。
+ * 关注点:
+ * - 说明本文件收口的第一类行为。
+ * - 说明本文件保护的边界或复用场景。
+ * - 如有必要，说明它不负责什么。
+ */
+```
+
+- Python 文件头注释使用模块 docstring：
+
+```py
+#!/usr/bin/env python3
+"""
+职责: 用一句话说明本脚本负责的稳定职责。
+关注点:
+- 说明本脚本收口的第一类行为。
+- 说明输入输出协议、fallback 或外部工具边界。
+"""
+```
+
+- 简单类型定义、纯 re-export、极短测试 fixture 可以不写文件头；一旦文件承载跨模块契约、外部 API 适配、业务 workflow、持久化、配置或脚本入口，就应补文件头。
 
 ## Documentation References
 

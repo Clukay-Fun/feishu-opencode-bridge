@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖脚本入口和包命令配置。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

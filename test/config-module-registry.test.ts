@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖配置模块注册表行为。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";

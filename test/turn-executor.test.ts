@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖turn 执行器事件处理和收尾逻辑。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TurnExecutor, type TurnExecutorContext } from "../src/runtime/turn-executor.js";

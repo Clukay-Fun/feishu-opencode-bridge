@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖turn 临时资源登记和清理逻辑。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";

@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖速率限制器窗口和配额行为。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { describe, expect, it } from "vitest";
 
 import { SlidingWindowRateLimiter } from "../src/runtime/rate-limiter.js";

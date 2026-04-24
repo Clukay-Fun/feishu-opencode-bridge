@@ -1,3 +1,9 @@
+/**
+ * 职责: 配置 TypeScript/Node 项目的 ESLint 规则。
+ * 关注点:
+ * - 启用基础 TypeScript 静态检查。
+ * - 约束 src 中的配置加载路径，避免绕过 config loader。
+ */
 module.exports = {
   root: true,
   env: {

@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.40 - 2026-04-24
+
+### Changed
+- Added maintainer responsibility and file-header comment guidance to the repository agent rules.
+- Refreshed README architecture notes to reflect module registries, document pipeline reuse, business card templates, and current maintenance status.
+- Added Chinese file-header comments across important source, test, and tooling files.
+
 ## 0.1.39 - 2026-04-24
 
 ### Added

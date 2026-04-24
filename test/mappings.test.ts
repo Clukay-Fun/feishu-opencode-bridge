@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖会话映射持久化和迁移逻辑。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";

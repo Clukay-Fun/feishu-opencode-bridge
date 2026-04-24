@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖飞书业务卡片模板注册和渲染流程。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { describe, expect, it } from "vitest";
 
 import { listBusinessCardTemplates } from "../src/feishu/templates/registry.js";

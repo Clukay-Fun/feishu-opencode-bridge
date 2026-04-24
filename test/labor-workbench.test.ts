@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖劳动分析工作台辅助流程。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { describe, expect, it } from "vitest";
 
 import { renderLaborWorkbenchMarkdown, type LaborAggregateResult } from "../src/labor/index.js";

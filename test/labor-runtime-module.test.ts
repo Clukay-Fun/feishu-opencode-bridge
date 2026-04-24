@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖劳动分析运行时模块接入流程。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";

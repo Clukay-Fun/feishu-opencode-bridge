@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖BridgeApp 辅助函数和 Prompt/卡片视图派生逻辑。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { describe, expect, it } from "vitest";
 
 import { buildBridgeSystemPrompt, buildPromptRequest, composeSystemPrompt, resolveDisplayLabel, upsertToolUpdate } from "../src/runtime/app-helpers.js";

@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖知识库本地 CLI 命令行为。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";

@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖合同助手 Prompt 覆盖模板加载逻辑。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";

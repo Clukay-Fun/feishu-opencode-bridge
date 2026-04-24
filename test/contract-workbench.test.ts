@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖合同工作台初始化、编辑和状态流转。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";

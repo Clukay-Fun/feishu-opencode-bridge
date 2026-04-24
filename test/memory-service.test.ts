@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖记忆服务抽取、存储和召回流程。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";

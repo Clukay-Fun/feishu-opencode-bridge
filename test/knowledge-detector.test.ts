@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖知识库意图检测逻辑。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { describe, expect, it } from "vitest";
 
 import { detectKnowledgeWebIngest, detectLegalQuestion } from "../src/knowledge/detector.js";

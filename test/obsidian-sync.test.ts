@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖Obsidian 同步文件写入逻辑。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";

@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖BridgeApp 权限卡片回调处理流程。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { describe, expect, it, vi } from "vitest";
 
 import { BridgeApp, type PermissionCardActionValue } from "../src/runtime/app.js";

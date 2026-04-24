@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖BridgeApp 命令入口和用户可见命令面。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { FeishuApiClient } from "../src/feishu/api.js";

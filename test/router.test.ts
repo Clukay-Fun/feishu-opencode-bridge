@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖桥接命令路由解析逻辑。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { describe, expect, it } from "vitest";
 
 import { routeIncomingText } from "../src/bridge/router.js";

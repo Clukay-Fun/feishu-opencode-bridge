@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖Python OCR provider 调用与错误处理。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";

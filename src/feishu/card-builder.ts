@@ -1,11 +1,10 @@
-import { normalizeFeishuMarkdown } from "./markdown.js";
-
 /**
  * 职责: 提供飞书卡片元素级别的构建基元。
  * 关注点:
  * - 封装 markdown、column、columnSet 等低层元素拼装。
  * - 统一图标和列布局相关的轻量类型定义。
  */
+import { normalizeFeishuMarkdown } from "./markdown.js";
 export type IconDef = {
   token: string;
   color?: string;

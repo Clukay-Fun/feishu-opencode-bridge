@@ -1,3 +1,7 @@
+/**
+ * 职责: 覆盖Bridge turn 状态机行为。
+ * 关注点: 验证核心路径、边界条件和回归场景。
+ */
 import { describe, expect, it } from "vitest";
 
 import type { BridgeTurn } from "../src/bridge/turn.js";

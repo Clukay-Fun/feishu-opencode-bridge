@@ -1,3 +1,9 @@
+/**
+ * 职责: 从本地 skill 目录加载合同助手 Prompt 覆盖模板。
+ * 关注点:
+ * - 支持同步和异步两种模板读取路径。
+ * - 用变量替换渲染模板，并在未配置覆盖时回落到内置 Prompt。
+ */
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
