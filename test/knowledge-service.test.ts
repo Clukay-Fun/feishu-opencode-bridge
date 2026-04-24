@@ -294,6 +294,90 @@ describe("KnowledgeBaseService", () => {
     service.close();
   });
 
+  it("keeps broad legal fixtures while filtering non-consulting noise", async () => {
+    stubEmbeddingFetchWideSequence();
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-"));
+    tempDirs.push(dir);
+    const requests: Array<{ parts: Array<{ text?: string }> }> = [];
+    const service = new KnowledgeBaseService(
+      {
+        enabled: true,
+        autoDetect: { enabled: true, minConfidence: 0.75 },
+        query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
+        storage: {
+          sqlitePath: join(dir, "knowledge.db"),
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+            documentTableId: "tbl_docs",
+          },
+        },
+        embeddingProvider: {
+          baseUrl: new URL("https://example.com/v1/"),
+          apiKey: "token",
+          model: "text-embedding",
+        },
+        models: {},
+        ingest: {
+          allowedExtensions: [".txt"],
+          maxFileSizeMb: 20,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+        },
+      },
+      {
+        async downloadMessageResource() {
+          return {
+            fileName: "通用法律知识.txt",
+            mimeType: "text/plain",
+            buffer: Buffer.from("通用法律知识固定回归样本。", "utf8"),
+          };
+        },
+        async createBitableRecord(_appToken, tableId) {
+          return `${tableId}_${Date.now()}`;
+        },
+        async listBitableRecords() {
+          return [];
+        },
+      },
+      createOpenCodeStub({
+        requests,
+        extract: [
+          ...createLaborLegalFixture(),
+          ...createGeneralLegalFixture(),
+          ...createNoiseLegalFixture(),
+        ],
+      }),
+      logger(),
+    );
+
+    const result = await service.ingestFile({
+      messageId: "om_general_legal",
+      fileKey: "file_general_legal",
+      fileName: "通用法律知识.txt",
+    });
+    const extractPrompt = requests.find((request) => request.parts[0]?.text?.includes("法律知识提取专家"))?.parts[0]?.text ?? "";
+
+    expect(result.rawExtractedCount).toBe(20);
+    expect(result.extractedCount).toBe(20);
+    expect(result.tagCounts).toEqual(expect.objectContaining({
+      劳动争议: 1,
+      公司治理: 2,
+      知识产权: 2,
+      行政合规: 1,
+      案由: 1,
+      审理程序: 1,
+      案例来源: 1,
+    }));
+    expect(result.tagCounts).not.toHaveProperty("免责声明");
+    expect(result.tagCounts).not.toHaveProperty("课程学习");
+    expect(extractPrompt).toContain("合同纠纷、公司治理、知识产权");
+    expect(extractPrompt).toContain("股东会决议程序存在瑕疵");
+    expect(extractPrompt).toContain("未经许可使用他人注册商标");
+    expect(extractPrompt).not.toContain("范围限定在劳动用工");
+    expect(extractPrompt).not.toContain("劳动合同期满，用人单位不续签");
+    service.close();
+  });
+
   it("writes source file as a hyperlink field when configured", async () => {
     stubEmbeddingFetch();
     const dir = mkdtempSync(join(tmpdir(), "knowledge-"));
@@ -1680,6 +1764,201 @@ function createOpenCodeStub(options?: {
   };
 }
 
+function createLaborLegalFixture(): Array<Record<string, unknown>> {
+  return [
+    {
+      question: "劳动合同试用期最长可以约定多久？",
+      answer: "试用期期限应当与劳动合同期限相匹配，最长不得超过六个月，同一用人单位与同一劳动者只能约定一次试用期。",
+      tags: ["劳动争议"],
+      statute: "《劳动合同法》第 19 条",
+    },
+    {
+      question: "公司违法解除劳动合同时员工可以主张什么责任？",
+      answer: "公司违法解除劳动合同的，劳动者可以要求继续履行；不能继续履行或劳动者不要求继续履行的，可以主张赔偿金。",
+      tags: ["劳动合同解除"],
+      statute: "《劳动合同法》第 48 条",
+    },
+    {
+      question: "用人单位未缴社保会产生哪些劳动用工风险？",
+      answer: "未依法缴纳社会保险可能引发补缴、行政处理和劳动争议风险，劳动者也可能据此主张解除劳动合同及经济补偿。",
+      tags: ["社保"],
+      statute: null,
+    },
+    {
+      question: "员工加班费争议通常需要准备哪些证据？",
+      answer: "加班费争议通常需要结合考勤记录、加班审批、工作系统记录、工资流水和聊天记录等证明加班事实与工资支付情况。",
+      tags: ["加班费"],
+      statute: null,
+    },
+    {
+      question: "不能胜任工作解除前公司需要履行哪些程序？",
+      answer: "公司通常需要证明劳动者不能胜任工作，并经过培训或调整岗位后仍不能胜任，解除时还应注意通知和补偿安排。",
+      tags: ["不能胜任工作"],
+      statute: "《劳动合同法》第 40 条",
+    },
+    {
+      question: "经济补偿金计算时月工资口径如何确定？",
+      answer: "经济补偿一般按照劳动者解除或终止前十二个月平均工资计算，工作每满一年支付一个月工资。",
+      tags: ["经济补偿"],
+      statute: "《劳动合同法》第 47 条",
+    },
+    {
+      question: "劳动仲裁时效通常从什么时候开始计算？",
+      answer: "劳动争议申请仲裁的时效通常为一年，从当事人知道或者应当知道其权利被侵害之日起计算。",
+      tags: ["劳动仲裁"],
+      statute: null,
+    },
+    {
+      question: "竞业限制补偿未支付会影响协议履行吗？",
+      answer: "用人单位未按约支付竞业限制经济补偿的，劳动者可结合约定和司法规则主张解除或不再履行竞业限制义务。",
+      tags: ["竞业限制"],
+      statute: null,
+    },
+    {
+      question: "规章制度能否作为解除劳动合同依据？",
+      answer: "规章制度作为解除依据通常要求内容合法、经过民主程序制定并向劳动者公示或告知，同时还要证明劳动者存在严重违纪事实。",
+      tags: ["规章制度"],
+      statute: null,
+    },
+    {
+      question: "工伤停工留薪期内工资应当如何支付？",
+      answer: "职工因工伤需要暂停工作接受治疗的，停工留薪期内原工资福利待遇通常不变，由所在单位按月支付。",
+      tags: ["工伤"],
+      statute: null,
+    },
+  ];
+}
+
+function createGeneralLegalFixture(): Array<Record<string, unknown>> {
+  return [
+    {
+      question: "合同一方迟延付款时守约方可以主张哪些违约责任？",
+      answer: "守约方可以结合合同约定和法律规定主张继续履行、违约金、损失赔偿；迟延导致合同目的不能实现时，还可评估解除权。",
+      tags: ["合同纠纷"],
+      statute: "《民法典》第 577 条",
+    },
+    {
+      question: "买卖合同标的物质量不合格时如何主张救济？",
+      answer: "买受人可以根据质量瑕疵程度和合同约定主张修理、更换、退货、减少价款或赔偿损失等救济。",
+      tags: ["买卖合同"],
+      statute: null,
+    },
+    {
+      question: "股东会决议程序存在瑕疵时效力如何判断？",
+      answer: "应结合召集程序、表决方式、表决比例和瑕疵是否影响表决结果判断，严重违反法律或章程的可能被撤销或认定无效。",
+      tags: ["公司治理"],
+      statute: null,
+    },
+    {
+      question: "董事违反忠实义务给公司造成损失时如何处理？",
+      answer: "董事违反忠实义务造成公司损失的，公司可以要求其承担赔偿责任，相关收益也可能依法归公司所有。",
+      tags: ["公司治理"],
+      statute: "《公司法》",
+    },
+    {
+      question: "未经许可使用他人注册商标会有哪些侵权风险？",
+      answer: "未经许可在相同或类似商品服务上使用相同或近似商标并容易导致混淆的，可能构成商标侵权并承担停止侵害和赔偿责任。",
+      tags: ["知识产权"],
+      statute: "《商标法》第 57 条",
+    },
+    {
+      question: "作品转载未获得授权是否可能构成著作权侵权？",
+      answer: "未经许可复制、传播他人作品，且不属于合理使用或法定许可情形的，可能构成著作权侵权并承担停止侵害、赔偿损失等责任。",
+      tags: ["知识产权"],
+      statute: "《著作权法》",
+    },
+    {
+      question: "行政处罚决定不服可以选择哪些救济路径？",
+      answer: "当事人不服行政处罚决定的，可以依法申请行政复议或提起行政诉讼，并注意法定申请期限和起诉期限。",
+      tags: ["行政合规"],
+      statute: "《行政处罚法》",
+    },
+    {
+      question: "平台收集个人信息应当重点关注哪些合规要求？",
+      answer: "平台收集个人信息应遵循合法、正当、必要和诚信原则，明示处理规则，取得相应同意，并落实安全保护义务。",
+      tags: ["数据合规"],
+      statute: "《个人信息保护法》",
+    },
+    {
+      question: "离婚案件中夫妻共同债务通常如何认定？",
+      answer: "夫妻共同债务通常结合共同意思表示、家庭日常生活需要、共同生产经营用途等因素判断，不能仅凭婚姻关系当然认定。",
+      tags: ["婚姻家事", "案由"],
+      statute: "《民法典》",
+    },
+    {
+      question: "民事二审审理程序中法院会重点审查哪些内容？",
+      answer: "二审通常围绕上诉请求及相关事实和法律适用进行审查，并结合一审程序是否合法、证据采信是否适当作出裁判。",
+      tags: ["诉讼仲裁", "审理程序", "案例来源"],
+      statute: null,
+    },
+  ];
+}
+
+function createNoiseLegalFixture(): Array<Record<string, unknown>> {
+  return [
+    {
+      question: "本课程目录包含哪些章节安排？",
+      answer: "第一章为课程介绍，第二章为案例阅读方法，第三章为课后练习安排。",
+      tags: ["课程学习"],
+      statute: null,
+    },
+    {
+      question: "这篇文章的免责声明是什么内容？",
+      answer: "本文仅供学习交流，不构成法律意见，读者应自行核验相关材料。",
+      tags: ["免责声明"],
+      statute: null,
+    },
+    {
+      question: "作者转载说明主要写了哪些事项？",
+      answer: "转载时应注明文章来源和作者信息，不得擅自修改标题或正文。",
+      tags: ["转载说明"],
+      statute: null,
+    },
+    {
+      question: "案例汇编引言介绍了哪些编辑背景？",
+      answer: "引言主要说明案例汇编的资料来源、编排方式和阅读建议。",
+      tags: ["资料来源"],
+      statute: null,
+    },
+    {
+      question: "全文检索关键词应当如何填写？",
+      answer: "可以使用合同、侵权、公司等关键词组合检索，也可以按年份筛选。",
+      tags: ["关键词"],
+      statute: null,
+    },
+    {
+      question: "培训讲义中的学习目标是什么？",
+      answer: "学习目标包括了解课程结构、掌握检索方法和完成章节练习。",
+      tags: ["课程学习"],
+      statute: null,
+    },
+    {
+      question: "文书类型统计图如何阅读？",
+      answer: "统计图展示判决书、裁定书、调解书的数量分布，用于课程资料概览。",
+      tags: ["文书类型"],
+      statute: null,
+    },
+    {
+      question: "地域分布表格展示了哪些地区？",
+      answer: "表格列出华东、华南、华北等地区的案例数量，不直接回答法律咨询。",
+      tags: ["地域分布"],
+      statute: null,
+    },
+    {
+      question: "胜诉率图表说明了什么统计口径？",
+      answer: "图表说明样本选择、统计年份和口径限制，仅用于课程展示。",
+      tags: ["胜诉率"],
+      statute: null,
+    },
+    {
+      question: "章节学习建议包含哪些阅读顺序？",
+      answer: "建议先阅读导论，再阅读案例摘要，最后完成课后自测题。",
+      tags: ["学习建议"],
+      statute: null,
+    },
+  ];
+}
+
 function assistantMessage(text: string) {
   return {
     info: {
@@ -1716,6 +1995,23 @@ function stubEmbeddingFetchSequence() {
   vi.stubGlobal("fetch", vi.fn(async () => {
     counter += 1;
     const dimension = 6;
+    const embedding = Array.from({ length: dimension }, (_, index) => (index === ((counter - 1) % dimension) ? 1 : 0));
+    return new Response(JSON.stringify({
+      data: [{
+        embedding,
+      }],
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch);
+}
+
+function stubEmbeddingFetchWideSequence() {
+  let counter = 0;
+  vi.stubGlobal("fetch", vi.fn(async () => {
+    counter += 1;
+    const dimension = 128;
     const embedding = Array.from({ length: dimension }, (_, index) => (index === ((counter - 1) % dimension) ? 1 : 0));
     return new Response(JSON.stringify({
       data: [{
