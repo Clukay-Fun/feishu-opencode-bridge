@@ -2,7 +2,7 @@
  * 职责: 覆盖知识库文档解析和分块逻辑。
  * 关注点: 验证核心路径、边界条件和回归场景。
  */
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("mammoth", () => ({
   extractRawText: vi.fn(async () => ({ value: "第一段内容\n\n第二段内容" })),
@@ -33,6 +33,10 @@ import { chunkKnowledgeSections, groupKnowledgeSectionsByChapter, parseKnowledge
 import { spawnPythonTool } from "../src/utils/python-tool.js";
 
 describe("parseKnowledgeFile", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("parses txt sections", async () => {
     const parsed = await parseKnowledgeFile("demo.txt", Buffer.from("第一段\n\n第二段", "utf8"));
     expect(parsed.normalizedMarkdown).toBe("第一段\n\n第二段");
@@ -72,6 +76,17 @@ describe("parseKnowledgeFile", () => {
       { location: "第 1 页", text: "第一页内容" },
       { location: "第 2 页", text: "第二页内容" },
     ]);
+  });
+
+  it("honors pdf-parse before later PDF providers", async () => {
+    const parsed = await parseKnowledgeFile("demo.pdf", Buffer.from("fake"), {
+      pdfProviderOrder: ["pdf-parse", "docling"],
+    });
+
+    expect(spawnPythonTool).not.toHaveBeenCalled();
+    expect(parsed.parserUsed).toBe("pdf-parse");
+    expect(parsed.fallbackChain).toEqual(["pdf-parse"]);
+    expect(parsed.normalizedMarkdown).toBe("第一页内容\n\n---\n\n第二页内容");
   });
 
   it("prefers python markdown output for pdf files when available", async () => {

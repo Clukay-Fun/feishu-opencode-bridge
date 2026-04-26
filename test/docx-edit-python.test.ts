@@ -3,7 +3,7 @@
  * 关注点: 验证核心路径、边界条件和回归场景。
  */
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -162,6 +162,30 @@ describe("docx_edit python PoC", () => {
       expect(packResult.data.hasDocumentXml).toBe(true);
       expect(packResult.data.partCount).toBeGreaterThan(0);
       expect(packResult.data.partCount).toBeLessThanOrEqual(unpackResult.data.partCount);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to unpack into an existing directory without deleting it", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "docx-edit-existing-output-"));
+    try {
+      const unpackDir = path.join(tempDir, "existing");
+      const sentinelPath = path.join(unpackDir, "keep.txt");
+      await mkdir(unpackDir);
+      await writeFile(sentinelPath, "keep me", "utf8");
+
+      const unpackResult = await spawnPythonTool("docx_edit", {
+        action: "unpack",
+        inputPath: TEMPLATE_PATH,
+        outputDir: unpackDir,
+      });
+
+      expect(unpackResult.ok).toBe(false);
+      if (!unpackResult.ok) {
+        expect(unpackResult.error).toContain("already exists");
+      }
+      await expect(readFile(sentinelPath, "utf8")).resolves.toBe("keep me");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

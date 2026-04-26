@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import difflib
 import json
-import shutil
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -130,7 +129,7 @@ def unpack_docx(payload: dict[str, Any]) -> dict[str, Any]:
     output_dir = resolve_path(payload.get("outputDir"), "outputDir")
     ensure_docx(input_path)
     if output_dir.exists():
-        shutil.rmtree(output_dir)
+        raise FileExistsError(f"outputDir already exists: {output_dir}")
     output_dir.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(input_path) as package:
         package.extractall(output_dir)

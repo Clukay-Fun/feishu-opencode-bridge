@@ -113,6 +113,10 @@ export async function parseDocument(fileName: string, buffer: Buffer, options?: 
   }
 
   if ([".pdf", ".docx", ".png", ".jpg", ".jpeg", ".webp"].includes(extension)) {
+    if (extension === ".pdf" && needsNodePdfProviderOrder(options)) {
+      return await parsePdfWithProviderOrder(fileName, buffer, options);
+    }
+
     const pythonParsed = await parseWithPython(fileName, buffer, options).catch((error) => {
       if (extension === ".pdf" || extension === ".docx") {
         return {
@@ -146,6 +150,50 @@ export async function parseDocument(fileName: string, buffer: Buffer, options?: 
   }
 
   throw new Error(`暂不支持的文件格式：${extension || "unknown"}`);
+}
+
+async function parsePdfWithProviderOrder(
+  fileName: string,
+  buffer: Buffer,
+  options: DocumentParserOptions | undefined,
+): Promise<ParsedDocument> {
+  const order = options?.pdfProviderOrder?.filter((provider) => provider.trim()) ?? [];
+  const warnings: string[] = [];
+  const attempted: string[] = [];
+
+  for (const provider of order) {
+    attempted.push(provider);
+    try {
+      const parsed = provider === "pdf-parse"
+        ? await parsePdfWithPdfParse(buffer)
+        : (await parseWithPython(fileName, buffer, {
+          ...options,
+          pdfProviderOrder: [provider],
+        })).parsed;
+      return {
+        ...parsed,
+        fallbackChain: mergeFallbackChain(attempted, parsed.fallbackChain),
+        warnings: [...warnings, ...parsed.warnings],
+      };
+    } catch (error) {
+      warnings.push(`${provider} failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  throw new Error(warnings.join("; ") || "no parser provider available");
+}
+
+function needsNodePdfProviderOrder(options?: DocumentParserOptions): boolean {
+  const order = options?.pdfProviderOrder?.filter((provider) => provider.trim()) ?? [];
+  const pdfParseIndex = order.indexOf("pdf-parse");
+  return pdfParseIndex >= 0 && (order.length === 1 || pdfParseIndex < order.length - 1);
+}
+
+function mergeFallbackChain(attempted: string[], fallbackChain: string[]): string[] {
+  return [
+    ...attempted,
+    ...fallbackChain.filter((provider) => !attempted.includes(provider)),
+  ];
 }
 
 async function parseWithPython(fileName: string, buffer: Buffer, options?: DocumentParserOptions): Promise<{ parsed: ParsedDocument }> {

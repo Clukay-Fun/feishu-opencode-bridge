@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.44 - 2026-04-26
+
+### Fixed
+- Honored `pdf-parse` precedence when it appears before later PDF providers in the document parser order.
+- Prevented the DOCX edit unpack action from deleting an existing output directory.
+
 ## 0.1.43 - 2026-04-24
 
 ### Fixed
