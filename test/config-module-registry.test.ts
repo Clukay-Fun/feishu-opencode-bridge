@@ -12,9 +12,18 @@ import {
   type ConfigLoadContext,
   type ModuleConfigDefinition,
 } from "../src/config/module-registry.js";
+import { moduleConfigRegistry } from "../src/config/modules.js";
 import { knowledgeBaseConfigDefinition } from "../src/knowledge/config.js";
 
 describe("module config registry", () => {
+  it("derives module config definitions from extension meta", () => {
+    expect(moduleConfigRegistry.definitions.map((definition) => definition.key)).toEqual([
+      "knowledgeBase",
+      "contractAssistant",
+      "laborSkill",
+    ]);
+  });
+
   it("rejects duplicate config keys", () => {
     const definition = createDefinition("demo");
 

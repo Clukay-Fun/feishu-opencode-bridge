@@ -111,6 +111,7 @@
 - Framework is frozen at the seams; new features must expand inside existing seams instead of widening the core casually.
 - Framework capability should solve problems any business may need; business extensions should solve domain-specific problems.
   - Framework examples: knowledge-base infrastructure, file recognition, OCR, document parsing, short-term context, permissions, Feishu transport, card primitives, runtime modules, and workflow orchestration.
+  - Shared service module examples: knowledge and memory provide ports, factories, retrieval, context, or persistence consumed by multiple runtime modules; they may have extension meta but are not ordinary business extensions in dependency-boundary rules.
   - Business extension examples: legal judgment, labor-dispute strategy, contract review policy, invoice-specific field interpretation, domain prompts, business schemas, and business card templates.
   - If a capability contains domain semantics such as "legal", "labor", "contract", "invoice", or "finance", default to implementing it as a business extension on top of framework seams rather than in bridge core.
 - Keep the core small:
@@ -131,9 +132,10 @@
   - module-scoped pending interaction persistence should reuse the shared persisted interaction infrastructure
 - Configuration boundary:
   - all feature configuration goes through `src/config/schema.ts`, `src/config/loader.ts`, and the internal module config registry
-  - module-owned subconfig should live in `<module>/config.ts` when migrated; modules may consume injected config only and must not read `config.json` directly or maintain parallel feature config files
+  - module-owned subconfig should live in `<module>/config.ts` and be exposed through `<module>/extension.meta.ts`; modules may consume injected config only and must not read `config.json` directly or maintain parallel feature config files
 - Builtin extension boundary:
-  - built-in business capabilities should declare `id`, `configKey`, commands, RuntimeModule creation, and business card templates through internal extension manifests under `src/extensions/*` plus module-local `extension.ts`
+  - built-in business capabilities should split data-only `extension.meta.ts` from runtime `extension.ts`; meta declares `id`, `configKey`, commands, configDefinition, business card templates, and workflows, while runtime extension owns `createModule`
+  - new built-in extensions must be registered in both `src/extensions/builtin-meta.ts` and `src/extensions/builtin.ts`; this is intentional startup-time sync, not dynamic plugin loading
   - extension commands are declarations for docs, conflict checks, and future help surfaces; they must not be treated as a generic router dispatcher unless the architecture baseline changes first
   - this is not a third-party plugin API and does not imply runtime hot reload
 - Logging and observability boundary:
@@ -192,6 +194,7 @@
 
 - The active architecture contract lives in `docs/architecture-baseline.md`.
 - Post-freeze feature PRs should follow `docs/guidelines/new-feature-checklist.md`.
+- Built-in business extension development should follow `docs/guidelines/business-extension-development.md`.
 - Active documentation index lives in `docs/README.md`.
 - Observability event naming and fields live in `docs/observability/event-schema.md`.
 - Current docs layout:

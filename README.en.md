@@ -3,7 +3,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6)](https://www.typescriptlang.org/)
 [![Feishu](https://img.shields.io/badge/Feishu-Bridge-0F6FFF)](https://open.feishu.cn/)
-[![Tests](https://img.shields.io/badge/tests-429%20passing-success)](#%EF%B8%8F-development-commands)
+[![Tests](https://img.shields.io/badge/tests-441%20passing-success)](#%EF%B8%8F-development-commands)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 [中文](README.md) | **English**
@@ -13,7 +13,7 @@
 
 ## 📢 News
 
-- **2026-04-27** · Built-in business extensions started moving to internal manifests: module config, command declarations, RuntimeModule creation, and business card templates now converge on an internal extension seam
+- **2026-04-27** · Built-in business extensions split into data-only meta and runtime extensions, tightening the boundaries for config, command declarations, business card templates, and RuntimeModule creation
 - **2026-04-24** · All open issues except the paused permission-button callback line have been closed, and the project moved into maintainer cleanup before the next release
 - **2026-04-23** · Extension boundaries were tightened: configuration started using a module registry, file parsing converged on `document-pipeline`, and business cards started moving toward template runtime
 - **2026-04-19** · Post-freeze backlog cleared, the `TurnExecutor` settlement controller landed, and the project moved into regular maintenance
@@ -49,7 +49,7 @@ A normal bot usually receives messages and returns LLM replies. This project emb
 
 - The bridge owns runtime commands such as `/new`, `/sessions`, `/switch`, and `/status`
 - OpenCode-native commands continue to work through passthrough
-- Business capabilities extend through internal extension manifests, Runtime Modules, CLI, skills, and shared workflows instead of growing the `core` runtime
+- Business capabilities extend through data-only extension meta, runtime extensions, Runtime Modules, CLI, skills, and shared workflows instead of growing the `core` runtime
 - Feishu send, reply, update, and notice calls converge on `FeishuTransport`, shared card primitives, and business card templates
 - Common files pass through `document-pipeline` into Markdown / plain text / sections before being reused by the knowledge base, contract materials, and evidence extraction
 - New features must expand inside the frozen seams and must not bypass core boundaries casually
@@ -68,7 +68,7 @@ flowchart LR
 
     app --> command["CommandHandler<br/>sessions / models / whitelist / permission commands"]
     app --> executor["TurnExecutor<br/>OpenCode turn execution"]
-    app --> extensions["Builtin Extension Registry<br/>src/extensions/*"]
+    app --> extensions["Builtin Extension Registry<br/>meta + runtime"]
     extensions --> modules["RuntimeModuleManager<br/>RuntimeModule seam"]
 
     executor <--> opencode["OpenCode Server API + SSE<br/>src/opencode/*"]
@@ -88,7 +88,7 @@ flowchart LR
 ```mermaid
 flowchart TB
     config["Configuration<br/>schema / loader / module registry"]
-    extensions["Builtin Extension Manifests<br/>id / configKey / commands / createModule"]
+    extensions["Builtin Extensions<br/>data-only meta + runtime extension"]
 
     subgraph feishu["Feishu Layer"]
       ws["WebSocket Ingress"]
@@ -290,7 +290,8 @@ Use [config.example.json](config.example.json) as the template. Main config sect
 | `laborSkill` | Labor analysis material collection and output settings |
 
 `knowledgeBase`, `contractAssistant`, and `laborSkill` are now connected through the module config registry. `memory` still lives in the central schema/loader for now and can migrate with the same pattern later.
-Builtin extension `id` values map explicitly to config blocks through each manifest's `configKey`, for example `contract-assistant -> contractAssistant`; the runtime does not guess config keys from strings.
+Builtin extension `id` values map explicitly to config blocks through data-only meta `configKey`, for example `contract-assistant -> contractAssistant`; the runtime does not guess config keys from strings.
+`extension.meta.ts` only carries static declarations such as config, commands, and card templates; `extension.ts` owns runtime module creation.
 
 ## 🛠️ Development Commands
 
@@ -303,7 +304,7 @@ npm run dev
 npm run dev:once
 ```
 
-Current full verification baseline: **61 test files · 429 tests passing**
+Current full verification baseline: **62 test files · 441 tests passing**
 
 ## 📂 Project Layout
 
@@ -312,7 +313,7 @@ src/
   bridge/              # router, queue, turn state, watchdog, module interface
   config/              # zod schema, config loader, and module config registry
   document-pipeline/   # common files to Markdown / plain text / sections
-  extensions/          # builtin extension manifests, command declarations, template aggregation, and startup registry
+  extensions/          # builtin extension data-only meta, runtime registry, command declarations, and template aggregation
   feishu/              # Feishu API, WebSocket ingress, card primitives and templates
   http/                # healthz and card action callback server
   runtime/             # BridgeApp, command handler, turn executor, short-term message context, preflight
@@ -361,7 +362,7 @@ Health check `GET /healthz` · default card callback path `/webhook/card`
 The framework has been frozen. Future feature work should follow these rules:
 
 - Prefer adding features inside Runtime Module / Service / Transport seams
-- Built-in business capabilities should declare `id`, `configKey`, commands, module creation, and business templates through `src/extensions/*` manifests. This is not a third-party plugin API and does not support runtime hot reload.
+- Built-in business capabilities should split `extension.meta.ts` from `extension.ts`: meta declares `id`, `configKey`, commands, config, and business templates, while runtime extensions only create modules. This is not a third-party plugin API and does not support runtime hot reload.
 - Do not add business-specific branches to `src/runtime/app.ts`, `src/runtime/turn-executor.ts`, or `src/bridge/router.ts` unless the architecture baseline is updated first
 - Prefer shared card primitives and business templates for new cards instead of growing `formatter.ts`
 - Prefer CLI / skill / shared workflow boundaries for business rules, prompts, and reusable capabilities instead of hard-coding them into bridge core

@@ -9,12 +9,20 @@ import type { AnyBusinessCardTemplateDefinition } from "./definition.js";
 
 const businessCardTemplates = builtinExtensionCardTemplates satisfies ReadonlyArray<AnyBusinessCardTemplateDefinition>;
 
-const businessCardTemplateRegistry = new Map<string, AnyBusinessCardTemplateDefinition>();
-for (const template of businessCardTemplates) {
-  if (businessCardTemplateRegistry.has(template.id)) {
-    throw new Error(`Duplicate business card template id: ${template.id}`);
+const businessCardTemplateRegistry = createBusinessCardTemplateRegistry(businessCardTemplates);
+
+export function createBusinessCardTemplateRegistry(
+  templates: ReadonlyArray<AnyBusinessCardTemplateDefinition>,
+): Map<string, AnyBusinessCardTemplateDefinition> {
+  const registry = new Map<string, AnyBusinessCardTemplateDefinition>();
+  for (const template of templates) {
+    if (registry.has(template.id)) {
+      // 模板 id 是全局卡片调用入口，启动期必须尽早暴露重复注册。
+      throw new Error(`Duplicate business card template id: ${template.id}`);
+    }
+    registry.set(template.id, template);
   }
-  businessCardTemplateRegistry.set(template.id, template);
+  return registry;
 }
 
 export function getBusinessCardTemplate(templateId: string): AnyBusinessCardTemplateDefinition | undefined {

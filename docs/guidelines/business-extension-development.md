@@ -1,0 +1,253 @@
+# 内置业务扩展开发规范
+
+本文约束仓库内置业务扩展的开发方式。目标是让新增业务能力挂在现有 framework seam 上，而不是继续把领域逻辑并回 bridge core。
+
+本规范只覆盖仓库内置扩展，不定义第三方插件 API，不支持运行时热拔插，也不承诺外部 npm 包、目录扫描或动态 manifest 加载。
+
+## 当前分离状态
+
+当前项目已经进入“启动期可配置的内部扩展包”阶段。
+
+- `src/extensions/*` 负责聚合内置 extension manifest、命令声明和业务卡片模板。
+- `src/<module>/extension.meta.ts` 负责声明模块 id、configKey、commands、configDefinition、cardTemplates 和 workflows。
+- `src/<module>/extension.ts` 只负责 runtime `createModule()`，可以加载 service 和 RuntimeModule。
+- `src/<module>/config.ts` 负责模块自己的配置 schema、校验和 normalize。
+- `src/runtime/runtime-modules.ts` 通过内置 extension 列表装配 RuntimeModule，不再逐个手写 contract/labor 业务分支。
+
+但这还不是完全外部化插件系统。
+
+- 扩展仍然随仓库代码一起编译和发布。
+- 新增内置扩展仍需要在 `src/extensions/builtin-meta.ts` 和 `src/extensions/builtin.ts` 各登记一行。
+- 本期采用稳妥同步装配，不为了“一处登记”引入 async loader 或 BridgeApp 初始化改造。
+- 不支持进程运行中新增、卸载、reload 扩展。
+- 不支持第三方扩展包稳定 API。
+
+## 分层判断
+
+框架能力解决“任何业务都可能需要的问题”。
+
+典型框架能力：
+
+- 飞书 ingress / egress
+- 会话窗口、队列、turn 生命周期
+- 权限确认、问题确认、process card、final reply
+- 文件下载、文件识别、OCR、文档解析
+- 知识库基础设施与检索管线
+- 短期消息上下文
+- 通用卡片原语
+- RuntimeModule seam
+- shared workflow 编排能力
+
+共享服务模块提供可被多个业务复用的 port、factory、检索、上下文或持久化能力。
+
+当前共享服务模块：
+
+- `knowledge`：提供 KnowledgeBasePort、知识库 factory、检索和文档处理复用点。
+- `memory`：提供共享记忆上下文和运行时记忆服务。
+
+共享服务模块可以有 `extension.meta.ts` 和 `extension.ts`，但在 dep-cruiser 的业务目录反选里不按普通业务扩展处理。
+普通业务扩展需要这些能力时，应通过 port 或 runtime assembly 注入，不要直接读取共享服务内部状态。
+
+业务扩展解决“某个领域才需要的问题”。
+
+典型业务扩展：
+
+- 法律判断
+- 劳动争议策略
+- 合同审查口径
+- 发票字段解释
+- 领域 prompt
+- 业务 schema
+- 业务卡片模板
+- 业务专属外部系统映射
+
+如果一个能力包含 legal、labor、contract、invoice、finance 等领域语义，默认应作为业务扩展实现。
+
+## 新增内置扩展流程
+
+新增业务能力时，优先创建一个模块目录。
+
+推荐结构：
+
+```text
+src/<module>/
+  config.ts
+  extension.meta.ts
+  extension.ts
+  runtime-module.ts
+  index.ts
+  prompts.ts
+  card-templates.ts
+```
+
+必要步骤：
+
+1. 在 `src/<module>/config.ts` 定义模块配置。
+2. 在 `src/<module>/extension.meta.ts` 声明 data-only meta，并挂上 `configDefinition`。
+3. 在 `src/extensions/builtin-meta.ts` 注册 meta。
+4. 在 `src/<module>/extension.ts` 定义 runtime extension，并复用 meta 的 `id`、`configKey` 和 `commands`。
+5. 在 `src/extensions/builtin.ts` 注册 runtime extension。
+6. 如果有业务卡片模板，在模块目录内定义模板，并通过 `extension.meta.ts` 的 `cardTemplates` 注册。
+7. 如果有模块设计背景，在 `docs/modules/` 增加或更新模块说明。
+8. 如果新增或改变 seam，在同一 PR 更新 `docs/architecture-baseline.md`。
+
+## Extension Meta 与 Runtime Extension 规则
+
+每个内置扩展必须有稳定 id。
+
+```ts
+export const exampleExtensionMeta: BuiltinExtensionMetaDefinition = {
+  id: "example-domain",
+  configKey: "exampleDomain",
+  commands: [],
+  configDefinition: exampleDomainConfigDefinition,
+};
+
+export const exampleExtension: BuiltinExtensionDefinition = {
+  id: exampleExtensionMeta.id,
+  configKey: exampleExtensionMeta.configKey,
+  commands: exampleExtensionMeta.commands,
+  createModule: (context) => new ExampleRuntimeModule(...),
+};
+```
+
+规则：
+
+- `id` 使用 kebab-case，创建后不要随意改名。
+- `configKey` 必须显式声明，不允许从 id 猜配置块名称。
+- `extension.meta.ts` 必须保持 data-only，不得 import `runtime-module.ts`、模块 `index.ts`、service 实现或 `src/runtime/**`。
+- `extension.ts` 负责 runtime 装配，可以 import service 和 RuntimeModule，但不应声明业务卡片模板。
+- `src/config/modules.ts` 只从 `src/extensions/builtin-meta.ts` 派生配置 registry，不直接 import 业务模块。
+- `src/feishu/templates/registry.ts` 只通过 meta 聚合业务卡片模板，不加载 runtime extension。
+- `commands` 只用于文档、冲突检测和未来 help 展示。
+- `commands` 不是通用命令分发器。
+- `createModule()` 应只做模块装配，不承载业务流程主体。
+- 未启用业务服务时，RuntimeModule 可以仍被注册，但必须给出清晰的“未启用”提示。
+- 模块需要其他模块能力时，通过 runtime assembly 注入 port，不允许配置层互相读取。
+
+## 命令归属
+
+core router 只处理 bridge / framework 命令。
+
+可以留在 core router 的命令：
+
+- `/new`
+- `/sessions`
+- `/switch`
+- `/status`
+- `/models`
+- `/model use`
+- `/model reset`
+- `/allow`
+- `/deny`
+- `/kb-query`
+- `/kb-ingest-start`
+- `/kb-ingest-end`
+
+应归业务扩展处理的命令：
+
+- `/法律咨询`
+- `/法律咨询开始`
+- `/法律咨询结束`
+- `/劳动分析`
+- `/合同录入`
+- `/识别发票`
+- `/合同起草开始`
+- `/案件录入`
+
+新增业务命令不得直接写入 `src/bridge/router.ts`，除非它是 framework 级入口，并且架构基线同步说明原因。
+
+## 配置规则
+
+模块配置必须靠近模块维护。
+
+要求：
+
+- schema、默认值、校验和 normalize 放在 `src/<module>/config.ts`。
+- `src/<module>/extension.meta.ts` 引用自己的 configDefinition。
+- `src/config/modules.ts` 只 import `src/extensions/builtin-meta.ts`。
+- `src/config/schema.ts` 和 `src/config/loader.ts` 只组合模块配置结果。
+- 模块代码只能消费注入后的 `AppConfig`，不能直接读取 `config.json`。
+- 不新增平行配置文件，除非它是明确的业务模板、prompt 或用户数据，并在模块文档里说明。
+
+## RuntimeModule 规则
+
+业务运行时必须通过 `RuntimeModule` 接入。
+
+允许使用的入口：
+
+- `handleMessage()`
+- `claimFileInstruction()`
+- `beforeTurn()`
+- `afterTurn()`
+- `start()`
+- `stop()`
+
+要求：
+
+- 业务模块不能接管 bridge session creation、switch、rename、delete 语义。
+- pending interaction 应使用共享持久化基础设施，不要复制 timer + JSON store 模式。
+- 模块持有 timer、worker、临时文件、外部连接时，必须在 `stop()` 清理。
+- 模块日志应使用稳定 scope 和 observability event schema，不要发散出临时事件名。
+
+## 文件与知识库规则
+
+文件解析属于 framework 能力，业务模块应复用统一管线。
+
+要求：
+
+- PDF、DOCX、TXT/MD、HTML、图片和 OCR 解析优先走 `src/document-pipeline/`。
+- 知识库摄入、检索和远端同步优先走 knowledge port / service。
+- 业务模块可以定义领域 prompt、抽取 schema 和结果解释，但不应私自维护另一套文件解析管线。
+- 劳动、合同、发票等业务可以调用知识库，但不能直接读取 knowledge 内部数据库或配置。
+
+## 卡片模板规则
+
+通用卡片能力属于 framework，业务展示属于扩展。
+
+要求：
+
+- 通用组件放在 `shared-primitives`、`runtime-cards` 或 card builder 层。
+- 业务卡片模板放在业务模块目录，例如 `src/labor/card-templates.ts`。
+- 业务卡片模板通过 `extension.meta.ts` 的 `cardTemplates` 声明。
+- 模板 id 必须全局唯一，重复 id 应在启动期报错。
+- 业务模块不要直接拼低层飞书 JSON，优先使用业务模板和共享原语。
+- runtime core 不应知道某个业务卡片的字段细节。
+
+## 禁止事项
+
+新增业务扩展时禁止：
+
+- 在 `src/runtime/app.ts` 增加业务专属 `if` 分支。
+- 在 `src/runtime/turn-executor.ts` 增加领域 prompt 或业务策略。
+- 在 `src/bridge/router.ts` 增加非 framework 级业务命令。
+- 在 `src/config/schema.ts` 继续堆新业务配置细节。
+- 在业务模块里直接调用飞书 SDK 裸方法。
+- 在业务模块里直接读取或写入其他模块的内部状态文件。
+- 把领域 prompt 写进 framework 文档解析、transport 或 core session 逻辑。
+
+## 验收清单
+
+开发者提交业务扩展前，应确认：
+
+- 新能力可以在关闭配置时不影响 bridge 启动。
+- 新能力不要求修改 core runtime 主链路。
+- 命令已在 extension manifest 中声明。
+- meta 已在 `src/extensions/builtin-meta.ts` 登记，runtime extension 已在 `src/extensions/builtin.ts` 登记。
+- 配置已放入模块自己的 `config.ts`，并通过 `extension.meta.ts` 的 `configDefinition` 接入。
+- 文件解析复用了 document pipeline。
+- 卡片展示复用了业务模板或共享原语。
+- 模块 stop 能清理自身资源。
+- 文档已说明该扩展的入口、配置和非目标。
+
+建议验证：
+
+```bash
+npm run typecheck
+npm run lint -- --max-warnings=0
+npm run lint:deps
+npm run check:formatter-exports
+npm run check:docs-diff
+```
+
+如果涉及真实飞书交互，还应补充飞书真机验收样例。

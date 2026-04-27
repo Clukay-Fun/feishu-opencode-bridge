@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.48 - 2026-04-27
+
+### Changed
+- Split builtin extension declarations into data-only `extension.meta.ts` files and runtime `extension.ts` files.
+- Added dependency-boundary guardrails for data-only extension meta, reverse-selected business directories, and cross-business imports.
+- Refreshed README and extension development docs for the meta/runtime extension split.
+
 ## 0.1.47 - 2026-04-27
 
 ### Changed

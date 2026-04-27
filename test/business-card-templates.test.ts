@@ -3,9 +3,11 @@
  * 关注点: 验证核心路径、边界条件和回归场景。
  */
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
-import { listBusinessCardTemplates } from "../src/feishu/templates/registry.js";
+import { createBusinessCardTemplateRegistry, listBusinessCardTemplates } from "../src/feishu/templates/registry.js";
 import { BusinessCardTemplateValidationError, renderBusinessCard } from "../src/feishu/templates/runtime.js";
+import type { AnyBusinessCardTemplateDefinition } from "../src/feishu/templates/definition.js";
 
 describe("business card templates", () => {
   it("registers labor analysis templates", () => {
@@ -40,4 +42,25 @@ describe("business card templates", () => {
       elapsedMs: 1_000,
     })).toThrow(BusinessCardTemplateValidationError);
   });
+
+  it("rejects duplicate template ids during registry creation", () => {
+    const template = createTemplate("demo.card");
+
+    expect(() => createBusinessCardTemplateRegistry([template, template])).toThrow(
+      "Duplicate business card template id: demo.card",
+    );
+  });
 });
+
+function createTemplate(id: string): AnyBusinessCardTemplateDefinition {
+  return {
+    id,
+    schema: z.object({}),
+    render: () => ({
+      title: "Demo",
+      template: "blue",
+      iconToken: "chat_outlined",
+      blocks: [],
+    }),
+  };
+}

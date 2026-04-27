@@ -10,7 +10,7 @@
 
 ## 当前入口
 
-- [架构基线](architecture-baseline.md)：freeze 之后的运行时边界、内置 extension manifest、扩展 seam 和 reviewer 规则。
+- [架构基线](architecture-baseline.md)：freeze 之后的运行时边界、data-only extension meta / runtime extension seam 和 reviewer 规则。
 - [部署说明](deploy.md)：本地与服务器部署、环境变量、Caddy、健康检查和验收步骤。
 - [飞书 Markdown 输出规范](feishu-markdown.md)：面向飞书输出的 Markdown 规则与长文本排版约束。
 - [可观测性事件规范](observability/event-schema.md)：运行时可观测性的稳定事件名与日志字段。
@@ -18,6 +18,7 @@
 ## 规范
 
 - [新功能自检清单](guidelines/new-feature-checklist.md)：framework freeze 之后功能 PR 的自检清单。
+- [内置业务扩展开发规范](guidelines/business-extension-development.md)：新增内置业务扩展时的目录、manifest、命令、配置和禁止事项。
 
 ## 模块
 
@@ -26,9 +27,12 @@
 
 ## 扩展与配置
 
-- 内置业务扩展通过 `src/extensions/*` 的 manifest 做启动期静态注册，不是第三方 plugin API，也不支持运行时热拔插。
+- 内置业务扩展通过 `extension.meta.ts` 和 `extension.ts` 双入口做启动期静态注册，不是第三方 plugin API，也不支持运行时热拔插。
+- `src/extensions/builtin-meta.ts` 聚合 data-only meta，供配置、命令声明和业务卡片模板使用。
+- `src/extensions/builtin.ts` 聚合 runtime extension，只供 runtime module assembly 创建模块。
+- `knowledge` 与 `memory` 当前按 shared service module 处理；它们可以有 extension meta，但依赖边界上不等同于普通业务扩展。
 - `commands` 目前只用于文档、冲突检测和未来 help 展示；实际命令解析仍由 core router 和各 RuntimeModule 负责。
-- 模块配置优先落在 `<module>/config.ts` 并接入 `src/config/modules.ts`；当前已覆盖 `knowledgeBase`、`contractAssistant`、`laborSkill`。
+- 模块配置优先落在 `<module>/config.ts`，由 `<module>/extension.meta.ts` 的 `configDefinition` 接入 `src/config/modules.ts`；当前已覆盖 `knowledgeBase`、`contractAssistant`、`laborSkill`。
 
 ## 待办
 

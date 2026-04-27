@@ -1,10 +1,11 @@
 /**
  * 职责: 定义内置业务扩展 manifest 的内部契约。
  * 关注点:
- * - 收口启动期模块创建、命令声明和卡片模板声明。
+ * - 区分 data-only meta 与 runtime module 创建入口。
  * - 明确该契约不作为第三方 plugin API，也不承担运行时热拔插。
  */
 import type { RuntimeModule } from "../bridge/module.js";
+import type { ModuleConfigDefinition } from "../config/module-registry.js";
 import type { AppConfig } from "../config/schema.js";
 import type { AnyBusinessCardTemplateDefinition } from "../feishu/templates/definition.js";
 import type { KnowledgeBasePort } from "../knowledge/index.js";
@@ -52,14 +53,22 @@ export type RuntimeExtensionContext = {
   createAndBindSession(source: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey">): Promise<SessionBindingRecord>;
 };
 
-/** @internal 内置扩展 manifest，不作为第三方 plugin API。 */
+/** @internal 内置扩展 data-only meta，不作为第三方 plugin API。 */
+export type BuiltinExtensionMetaDefinition = {
+  id: string;
+  configKey?: keyof AppConfig;
+  commands?: readonly ExtensionCommandDefinition[];
+  configDefinition?: ModuleConfigDefinition<unknown, unknown>;
+  cardTemplates?: readonly AnyBusinessCardTemplateDefinition[];
+  workflows?: readonly string[];
+};
+
+/** @internal 内置扩展 runtime 创建入口，不作为第三方 plugin API。 */
 export type BuiltinExtensionDefinition = {
   id: string;
   configKey?: keyof AppConfig;
   commands?: readonly ExtensionCommandDefinition[];
   createModule(context: RuntimeExtensionContext): RuntimeModule | null | Promise<RuntimeModule | null>;
-  cardTemplates?: readonly AnyBusinessCardTemplateDefinition[];
-  workflows?: readonly string[];
 };
 
 export type ExtensionCommandDefinition = {

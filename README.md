@@ -3,7 +3,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6)](https://www.typescriptlang.org/)
 [![Feishu](https://img.shields.io/badge/Feishu-Bridge-0F6FFF)](https://open.feishu.cn/)
-[![测试](https://img.shields.io/badge/tests-429%20passing-success)](#%EF%B8%8F-开发命令)
+[![测试](https://img.shields.io/badge/tests-441%20passing-success)](#%EF%B8%8F-开发命令)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **中文** | [英文版](README.en.md)
@@ -13,7 +13,7 @@
 
 ## 📢 项目动态
 
-- **2026-04-27** · 内置业务扩展开始 manifest 化：模块配置、命令声明、RuntimeModule 创建和业务卡片模板通过 internal extension seam 收口
+- **2026-04-27** · 内置业务扩展拆分为 data-only meta 与 runtime extension，配置、命令声明、业务卡片模板和 RuntimeModule 创建边界进一步收紧
 - **2026-04-24** · 除权限按钮回调外的 open issue 已完成收口，项目进入框架维护与发布前整理阶段
 - **2026-04-23** · 业务扩展边界继续收紧：配置引入模块注册表，文件解析收敛到 `document-pipeline`，业务卡片开始向模板化运行时迁移
 - **2026-04-19** · 冻结后 backlog 全部清零，`TurnExecutor` settlement 控制器落地，进入日常维护节奏
@@ -49,7 +49,7 @@
 
 - bridge 自己拥有 `/new`、`/sessions`、`/switch`、`/status` 等运行时控制面
 - OpenCode 原生命令继续通过 passthrough 工作
-- 业务能力通过 internal extension manifest、Runtime Module、CLI、skill 和共享 workflow 扩展，而不是继续把 `core` 写成巨型分支
+- 业务能力通过 data-only extension meta、runtime extension、Runtime Module、CLI、skill 和共享 workflow 扩展，而不是继续把 `core` 写成巨型分支
 - 飞书发送、回复、更新、notice 收敛到 `FeishuTransport`、通用卡片原语和业务卡片模板入口
 - 常见文件先经 `document-pipeline` 转换为 Markdown / 纯文本 / sections，再供知识库、合同材料和证据抽取复用
 - 新功能必须在冻结后的 seam 内扩展，不能随意绕过核心边界
@@ -68,7 +68,7 @@ flowchart LR
 
     app --> command["CommandHandler<br/>会话 / 模型 / 白名单 / 权限命令"]
     app --> executor["TurnExecutor<br/>OpenCode turn 执行链"]
-    app --> extensions["内置扩展注册表<br/>src/extensions/*"]
+    app --> extensions["内置扩展注册表<br/>meta + runtime"]
     extensions --> modules["RuntimeModuleManager<br/>RuntimeModule seam"]
 
     executor <--> opencode["OpenCode 服务 API + SSE<br/>src/opencode/*"]
@@ -88,7 +88,7 @@ flowchart LR
 ```mermaid
 flowchart TB
     config["配置<br/>schema / loader / module registry"]
-    extensions["内置扩展 manifest<br/>id / configKey / commands / createModule"]
+    extensions["内置扩展<br/>data-only meta + runtime extension"]
 
     subgraph feishu["飞书接入层"]
       ws["WebSocket 入口"]
@@ -290,7 +290,8 @@ npm run --silent kb -- doctor
 | `laborSkill` | 劳动分析材料收集和输出配置 |
 
 `knowledgeBase`、`contractAssistant`、`laborSkill` 已通过模块配置注册表接入；`memory` 暂仍在中央 schema/loader 中，后续可按同样模式下沉。
-内置扩展的 `id` 与配置块通过 manifest 的 `configKey` 显式映射，例如 `contract-assistant -> contractAssistant`，不依赖字符串猜测。
+内置扩展的 `id` 与配置块通过 data-only meta 的 `configKey` 显式映射，例如 `contract-assistant -> contractAssistant`，不依赖字符串猜测。
+`extension.meta.ts` 只承载配置、命令、卡片模板等静态声明；`extension.ts` 只负责 runtime module 创建。
 
 ## 🛠️ 开发命令
 
@@ -303,7 +304,7 @@ npm run dev
 npm run dev:once
 ```
 
-当前完整验证基线：**61 test files · 429 tests passing**
+当前完整验证基线：**62 test files · 441 tests passing**
 
 ## 📂 项目目录
 
@@ -312,7 +313,7 @@ src/
   bridge/              # 路由、队列、turn 状态、看门狗、模块接口
   config/              # Zod schema、配置加载与模块配置注册表
   document-pipeline/   # 常见文件到 Markdown / 纯文本 / sections 的统一解析入口
-  extensions/          # 内置扩展 manifest、命令声明、模板聚合和启动期 registry
+  extensions/          # 内置扩展 data-only meta、runtime registry、命令声明和模板聚合
   feishu/              # 飞书 API、WebSocket 入口、卡片原语与业务模板
   http/                # healthz 与卡片回调服务
   runtime/             # BridgeApp、命令处理、turn 执行、短期消息上下文、启动前检查
@@ -361,7 +362,7 @@ test/                  # Vitest 单元测试与集成测试
 本项目已经完成框架冻结。后续功能开发请遵守：
 
 - 新功能优先落在 Runtime Module / Service / Transport seam 内
-- 内置业务能力应通过 `src/extensions/*` manifest 声明 `id`、`configKey`、commands、module 创建和业务模板；这不是第三方插件 API，也不支持运行时热拔插
+- 内置业务能力应拆分 `extension.meta.ts` 与 `extension.ts`：meta 声明 `id`、`configKey`、commands、配置和业务模板，runtime extension 只负责 module 创建；这不是第三方插件 API，也不支持运行时热拔插
 - 不要在 `src/runtime/app.ts`、`src/runtime/turn-executor.ts`、`src/bridge/router.ts` 里新增业务特定分支，除非同步更新架构基线
 - 新卡片优先走通用卡片原语与业务模板，不要继续扩张 `formatter.ts`
 - 业务规则、prompt 和可复用能力优先沉淀到 CLI / skill / shared workflow，不要默认写死进 bridge core
