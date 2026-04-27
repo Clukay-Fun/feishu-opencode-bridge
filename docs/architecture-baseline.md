@@ -39,6 +39,12 @@
 - 由 bridge 自己管理的命令面与过程控制面
 - knowledge、contract assistant、labor、memory 等业务模块的宿主
 
+判定标准：
+
+- 框架能力解决“任何业务都可能需要的问题”，例如知识库基础设施、文件识别、OCR、文档解析、短期上下文、权限、Feishu transport、卡片原语、runtime module 和 workflow 编排。
+- 业务扩展解决“某个领域才需要的问题”，例如法律判断、劳动争议策略、合同审查口径、发票字段解释、领域 prompt、业务 schema 和业务卡片模板。
+- 如果一个能力已经包含 legal、labor、contract、invoice、finance 等领域语义，默认应作为业务扩展挂在框架 seam 上，而不是继续写进 bridge core。
+
 ## 基线原则
 
 ### 1. 保持 Core 足够小

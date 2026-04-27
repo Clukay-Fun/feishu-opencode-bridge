@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.45 - 2026-04-27
+
+### Changed
+- Clarified the architecture boundary between framework capabilities and business extensions.
+
 ## 0.1.44 - 2026-04-26
 
 ### Fixed

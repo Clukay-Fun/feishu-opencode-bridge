@@ -109,6 +109,10 @@
 ## Architecture Guardrails
 
 - Framework is frozen at the seams; new features must expand inside existing seams instead of widening the core casually.
+- Framework capability should solve problems any business may need; business extensions should solve domain-specific problems.
+  - Framework examples: knowledge-base infrastructure, file recognition, OCR, document parsing, short-term context, permissions, Feishu transport, card primitives, runtime modules, and workflow orchestration.
+  - Business extension examples: legal judgment, labor-dispute strategy, contract review policy, invoice-specific field interpretation, domain prompts, business schemas, and business card templates.
+  - If a capability contains domain semantics such as "legal", "labor", "contract", "invoice", or "finance", default to implementing it as a business extension on top of framework seams rather than in bridge core.
 - Keep the core small:
   - `core` may own ingress/egress, session windows, queueing, turn lifecycle, process cards, permission/question interactions, and bridge-owned commands
   - `core` must not keep growing business-specific branches
