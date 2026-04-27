@@ -99,18 +99,6 @@ export function routeIncomingText(text: string): RoutedText {
     return { kind: "command", command: { kind: "knowledge-ingest-end" } };
   }
 
-  if (rawCommand === "法律咨询开始" && args.length === 0) {
-    return { kind: "command", command: { kind: "knowledge-mode-start" } };
-  }
-
-  if (rawCommand === "法律咨询结束" && args.length === 0) {
-    return { kind: "command", command: { kind: "knowledge-mode-end" } };
-  }
-
-  if (rawCommand === "法律咨询" && args.length > 0) {
-    return { kind: "command", command: { kind: "knowledge-query", question: args.join(" ").trim() } };
-  }
-
   if (rawCommand === "kb-query" && args.length > 0) {
     return { kind: "command", command: { kind: "knowledge-query", question: args.join(" ").trim(), explicit: true } };
   }

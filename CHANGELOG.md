@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.46 - 2026-04-27
+
+### Changed
+- Moved contract assistant and labor skill configuration into module-owned config definitions.
+- Added internal builtin extension manifests for runtime module assembly, command ownership metadata, and business card template ownership.
+- Kept legacy legal consultation aliases out of the core router by letting the knowledge runtime module claim them through passthrough handling.
+
 ## 0.1.45 - 2026-04-27
 
 ### Changed

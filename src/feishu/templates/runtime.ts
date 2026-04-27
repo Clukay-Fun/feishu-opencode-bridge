@@ -4,7 +4,7 @@
  * - 定义模板、区块和卡片规格的统一类型。
  * - 执行模板输入校验，并把抽象区块转换为飞书低层元素。
  */
-import type { ZodError, ZodTypeAny, infer as Infer } from "zod";
+import type { ZodError } from "zod";
 
 import {
   buildDivider,
@@ -16,35 +16,10 @@ import {
   buildTagChartSection,
   buildTitleLine,
   type FeishuPostPayload,
-  type ToolUpdateView,
 } from "../shared-primitives.js";
 import { getBusinessCardTemplate } from "./registry.js";
-
-type CardTemplate = "blue" | "green" | "red" | "wathet" | "grey" | "orange" | "yellow" | "purple" | "indigo";
-
-export type BusinessCardBlock =
-  | { kind: "title"; content: string }
-  | { kind: "steps"; steps: ReadonlyArray<ToolUpdateView> }
-  | { kind: "quote"; content: string }
-  | { kind: "stats"; labels: string[] }
-  | { kind: "tagChart"; tagCounts: Record<string, number>; bitableUrl?: string | undefined; title?: string; linkLabel?: string }
-  | { kind: "elapsed"; content: string }
-  | { kind: "divider" };
-
-export type BusinessCardSpec = {
-  title: string;
-  template: CardTemplate;
-  iconToken: string;
-  blocks: readonly BusinessCardBlock[];
-};
-
-export type BusinessCardTemplateDefinition<TSchema extends ZodTypeAny = ZodTypeAny> = {
-  id: string;
-  schema: TSchema;
-  render: (input: Infer<TSchema>) => BusinessCardSpec;
-};
-
-export type AnyBusinessCardTemplateDefinition = BusinessCardTemplateDefinition<ZodTypeAny>;
+import type { BusinessCardBlock, BusinessCardSpec } from "./definition.js";
+export type { AnyBusinessCardTemplateDefinition, BusinessCardTemplateDefinition } from "./definition.js";
 
 export class BusinessCardTemplateValidationError extends Error {
   readonly templateId: string;

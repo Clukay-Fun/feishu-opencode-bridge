@@ -6,8 +6,8 @@
  */
 import { z } from "zod";
 
-import { escapeText, resolveElapsedText } from "../shared-primitives.js";
-import type { BusinessCardTemplateDefinition } from "./runtime.js";
+import { escapeText, resolveElapsedText } from "../feishu/shared-primitives.js";
+import type { BusinessCardTemplateDefinition } from "../feishu/templates/definition.js";
 
 const ToolUpdateViewSchema = z.object({
   label: z.string(),

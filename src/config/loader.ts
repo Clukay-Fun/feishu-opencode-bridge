@@ -11,6 +11,9 @@ import type { AppConfig } from "./schema.js";
 import { ConfigSchema } from "./schema.js";
 import type { ConfigLoadContext } from "./module-registry.js";
 import { moduleConfigRegistry } from "./modules.js";
+import type { ContractAssistantConfig } from "../contract-assistant/config.js";
+import type { KnowledgeBaseConfig } from "../knowledge/config.js";
+import type { LaborSkillConfig } from "../labor/config.js";
 
 /** 从配置文件读取、校验并返回完整运行时配置。 */
 export async function loadConfig(configPath?: string): Promise<AppConfig> {
@@ -32,7 +35,14 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
     resolveRelative,
     ...(resolvedEmbeddingProvider ? { resolvedEmbeddingProvider } : {}),
   };
-  const moduleConfigs = moduleConfigRegistry.normalize<Pick<AppConfig, "knowledgeBase">>(parsed, configLoadContext);
+  const moduleConfigs = moduleConfigRegistry.normalize<{
+    knowledgeBase: KnowledgeBaseConfig;
+    contractAssistant: ContractAssistantConfig;
+    laborSkill: LaborSkillConfig;
+  }>(
+    parsed,
+    configLoadContext,
+  );
 
   return {
     feishu: {
@@ -137,58 +147,8 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
       },
     },
     knowledgeBase: moduleConfigs.knowledgeBase,
-    contractAssistant: {
-      enabled: parsed.contractAssistant.enabled,
-      storage: {
-        baseToken: parsed.contractAssistant.storage.baseToken,
-        contractTableId: parsed.contractAssistant.storage.contractTableId,
-        invoiceTableId: parsed.contractAssistant.storage.invoiceTableId,
-        caseTableId: parsed.contractAssistant.storage.caseTableId,
-      },
-      models: {
-        default: parsed.contractAssistant.models.default,
-        draft: parsed.contractAssistant.models.draft,
-        extract: parsed.contractAssistant.models.extract,
-        invoice: parsed.contractAssistant.models.invoice,
-        caseManage: parsed.contractAssistant.models.caseManage,
-      },
-      ingest: {
-        contractAllowedExtensions: parsed.contractAssistant.ingest.contractAllowedExtensions.map((value) => value.trim().toLowerCase()),
-        invoiceAllowedExtensions: parsed.contractAssistant.ingest.invoiceAllowedExtensions.map((value) => value.trim().toLowerCase()),
-        maxFileSizeMb: parsed.contractAssistant.ingest.maxFileSizeMb,
-        pendingTtlMs: parsed.contractAssistant.ingest.pendingTtlMs,
-      },
-      reminder: {
-        enabled: parsed.contractAssistant.reminder.enabled,
-        targetChatIds: parsed.contractAssistant.reminder.targetChatIds,
-        hour: parsed.contractAssistant.reminder.hour,
-        minute: parsed.contractAssistant.reminder.minute,
-        lookaheadDays: parsed.contractAssistant.reminder.lookaheadDays,
-      },
-    },
-    laborSkill: {
-      enabled: parsed.laborSkill.enabled,
-      models: {
-        default: parsed.laborSkill.models.default,
-        extract: parsed.laborSkill.models.extract,
-        analyze: parsed.laborSkill.models.analyze,
-      },
-      ingest: {
-        allowedExtensions: parsed.laborSkill.ingest.allowedExtensions.map((value) => value.trim().toLowerCase()),
-        maxFileSizeMb: parsed.laborSkill.ingest.maxFileSizeMb,
-        pendingTtlMs: parsed.laborSkill.ingest.pendingTtlMs,
-      },
-      storage: {
-        evidenceLedger: parsed.laborSkill.storage.evidenceLedger
-          ? {
-            appToken: parsed.laborSkill.storage.evidenceLedger.appToken,
-            tableId: parsed.laborSkill.storage.evidenceLedger.tableId,
-            keyEvidenceViewId: parsed.laborSkill.storage.evidenceLedger.keyEvidenceViewId,
-            missingEvidenceViewId: parsed.laborSkill.storage.evidenceLedger.missingEvidenceViewId,
-          }
-          : undefined,
-      },
-    },
+    contractAssistant: moduleConfigs.contractAssistant,
+    laborSkill: moduleConfigs.laborSkill,
   };
 }
 

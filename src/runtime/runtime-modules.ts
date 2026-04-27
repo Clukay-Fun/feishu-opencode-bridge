@@ -6,41 +6,19 @@
  */
 import type { ModuleManager } from "../bridge/module.js";
 import { ModuleManager as RuntimeModuleManager } from "../bridge/module.js";
-import { DEFAULT_CONTRACT_ASSISTANT_CONFIG, DEFAULT_LABOR_SKILL_CONFIG, type AppConfig } from "../config/schema.js";
-import { ContractAssistantService } from "../contract-assistant/index.js";
-import { ContractAssistantRuntimeModule } from "../contract-assistant/runtime-module.js";
+import type { AppConfig } from "../config/schema.js";
+import { builtinExtensions } from "../extensions/builtin.js";
+import type { RuntimeModuleOutboundPort } from "../extensions/definition.js";
 import { createKnowledgeService } from "../knowledge/factory.js";
 import type { KnowledgeBasePort } from "../knowledge/index.js";
-import { KnowledgeRuntimeModule } from "../knowledge/runtime-module.js";
-import { LaborSkillService } from "../labor/index.js";
-import { LaborRuntimeModule } from "../labor/runtime-module.js";
+import type { KnowledgeRuntimeModule } from "../knowledge/runtime-module.js";
 import type { Logger } from "../logging/logger.js";
 import { MemoryService } from "../memory/index.js";
-import { MemoryRuntimeModule } from "../memory/runtime-module.js";
 import type { OpenCodeClient } from "../opencode/client.js";
 import type { SessionBindingRecord, SessionWindowRecord } from "../store/mappings.js";
 import type { WhitelistStore } from "../store/whitelist.js";
 import type { IncomingChatMessage } from "./app.js";
 import type { FeishuTransport } from "./feishu-transport.js";
-
-type OutboundPort = {
-  sendMessage(chatId: string, payload: { msg_type: "post" | "interactive"; content: string }): Promise<{ messageId: string }>;
-  replyMessage(messageId: string, payload: { msg_type: "post" | "interactive"; content: string }, options?: { replyInThread?: boolean }): Promise<{ messageId: string }>;
-  updateMessage(messageId: string, payload: { msg_type: "post" | "interactive"; content: string }): Promise<{ messageId: string }>;
-};
-
-type KnowledgeResourcePort = {
-  downloadMessageResource(messageId: string, fileKey: string, type: "file"): Promise<{
-    fileName: string;
-    mimeType: string;
-    buffer: Buffer;
-  }>;
-  createBitableRecord(appToken: string, tableId: string, fields: Record<string, unknown>): Promise<string>;
-  listBitableRecords(appToken: string, tableId: string): Promise<Array<{ recordId: string; fields: Record<string, unknown> }>>;
-  updateBitableRecord(appToken: string, tableId: string, recordId: string, fields: Record<string, unknown>): Promise<void>;
-};
-
-type RuntimeModuleOutboundPort = OutboundPort & KnowledgeResourcePort;
 
 export type RuntimeModuleAssemblyResult = {
   moduleManager: ModuleManager;
@@ -77,37 +55,39 @@ export function createRuntimeModules(options: {
     opencode: options.opencode as OpenCodeClient,
     logger: options.logger,
   });
-  const contractAssistant = createContractAssistantService(options.config, options.outbound, options.opencode as OpenCodeClient, options.logger);
-  const laborSkill = createLaborSkillService(options.config, options.outbound, options.opencode as OpenCodeClient, options.logger, knowledge);
 
   const moduleManager = new RuntimeModuleManager(options.logger);
-  const knowledgeModule = new KnowledgeRuntimeModule({
-    config: options.config,
-    logger: options.logger,
-    knowledge,
-    transport: options.transport,
-    getSessionWindow: options.getSessionWindow,
-    saveSessionWindow: options.saveSessionWindow,
-    createAndBindSession: options.createAndBindSession,
-    whitelistBind: async (chatId, openId) => await options.whitelist.bind(chatId, openId),
-  });
+  let knowledgeModule: KnowledgeRuntimeModule | null = null;
 
-  moduleManager.register(knowledgeModule);
-  moduleManager.register(new ContractAssistantRuntimeModule({
-    config: options.config,
-    logger: options.logger,
-    service: contractAssistant,
-    transport: options.transport,
-  }));
-  moduleManager.register(new LaborRuntimeModule({
-    config: options.config,
-    logger: options.logger,
-    knowledge,
-    service: laborSkill,
-    transport: options.transport,
-  }));
-  if (memory) {
-    moduleManager.register(new MemoryRuntimeModule(memory));
+  for (const extension of builtinExtensions) {
+    const module = extension.createModule({
+      config: options.config,
+      outbound: options.outbound,
+      transport: options.transport,
+      logger: options.logger,
+      opencode: options.opencode,
+      memory,
+      knowledge,
+      whitelist: options.whitelist,
+      getSessionWindow: options.getSessionWindow,
+      saveSessionWindow: options.saveSessionWindow,
+      createAndBindSession: options.createAndBindSession,
+    });
+    if (!module) {
+      continue;
+    }
+    const resolvedModule = module instanceof Promise ? null : module;
+    if (!resolvedModule) {
+      throw new Error(`Runtime extension ${extension.id} returned an async module; createRuntimeModules only supports sync builtins`);
+    }
+    moduleManager.register(resolvedModule);
+    if (resolvedModule.name === "knowledge") {
+      knowledgeModule = resolvedModule as KnowledgeRuntimeModule;
+    }
+  }
+
+  if (!knowledgeModule) {
+    throw new Error("Knowledge runtime module was not registered");
   }
 
   return {
@@ -130,47 +110,5 @@ function createMemoryService(
     config.embeddings ?? { provider: undefined, similarityThreshold: 0.75 },
     opencode,
     logger,
-  );
-}
-
-/** 在启用合同助手功能时创建合同助手服务。 */
-function createContractAssistantService(
-  config: AppConfig,
-  outbound: RuntimeModuleOutboundPort,
-  opencode: OpenCodeClient,
-  logger: Logger,
-): ContractAssistantService | null {
-  const contractAssistantConfig = config.contractAssistant ?? DEFAULT_CONTRACT_ASSISTANT_CONFIG;
-  if (!contractAssistantConfig.enabled) {
-    return null;
-  }
-  return new ContractAssistantService(
-    contractAssistantConfig,
-    config.storage.dataDir,
-    outbound,
-    opencode,
-    logger,
-  );
-}
-
-/** 在启用劳动分析功能时创建劳动分析服务。 */
-function createLaborSkillService(
-  config: AppConfig,
-  outbound: RuntimeModuleOutboundPort,
-  opencode: OpenCodeClient,
-  logger: Logger,
-  knowledge: KnowledgeBasePort | null,
-): LaborSkillService | null {
-  const laborSkillConfig = config.laborSkill ?? DEFAULT_LABOR_SKILL_CONFIG;
-  if (!laborSkillConfig.enabled) {
-    return null;
-  }
-  return new LaborSkillService(
-    laborSkillConfig,
-    config.storage.dataDir,
-    outbound,
-    opencode,
-    logger,
-    knowledge,
   );
 }

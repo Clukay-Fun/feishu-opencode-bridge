@@ -13,7 +13,7 @@ import { renderBusinessCard } from "./templates/runtime.js";
 import {
   LABOR_ANALYSIS_COMPLETED_TEMPLATE_ID,
   LABOR_ANALYSIS_PROGRESS_TEMPLATE_ID,
-} from "./templates/labor-analysis.js";
+} from "../labor/card-templates.js";
 
 export type LaborAnalysisProgressCardView = {
   sourceLabel: string;

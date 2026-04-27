@@ -8,6 +8,10 @@ import { z } from "zod";
 
 import { moduleConfigSchemas } from "./modules.js";
 import type { KnowledgeBaseConfig } from "../knowledge/config.js";
+import type { ContractAssistantConfig } from "../contract-assistant/config.js";
+import type { LaborSkillConfig } from "../labor/config.js";
+export { DEFAULT_CONTRACT_ASSISTANT_CONFIG, type ContractAssistantConfig } from "../contract-assistant/config.js";
+export { DEFAULT_LABOR_SKILL_CONFIG, type LaborSkillConfig } from "../labor/config.js";
 
 const SessionModeSchema = z.enum(["single", "multi"]);
 const MemoryRetrieverSchema = z.enum(["recent", "embedding"]);
@@ -20,97 +24,6 @@ const EmbeddingsConfigSchema = z.object({
   provider: EmbeddingProviderSchema.optional(),
   similarityThreshold: z.number().positive().max(1).optional(),
 }).default({});
-const ContractAssistantModelRefSchema = z.string()
-  .trim()
-  .regex(/^[^/\s]+\/[^/\s].+$/, "contractAssistant.models.* 必须使用 <provider>/<model> 格式");
-const LaborSkillModelRefSchema = z.string()
-  .trim()
-  .regex(/^[^/\s]+\/[^/\s].+$/, "laborSkill.models.* 必须使用 <provider>/<model> 格式");
-const ContractAssistantConfigSchema = z.object({
-  enabled: z.boolean().default(false),
-  storage: z.object({
-    baseToken: z.string().default(""),
-    contractTableId: z.string().default(""),
-    invoiceTableId: z.string().default(""),
-    caseTableId: z.string().default(""),
-  }).default({}),
-  models: z.object({
-    default: ContractAssistantModelRefSchema.optional(),
-    draft: ContractAssistantModelRefSchema.optional(),
-    extract: ContractAssistantModelRefSchema.optional(),
-    invoice: ContractAssistantModelRefSchema.optional(),
-    caseManage: ContractAssistantModelRefSchema.optional(),
-  }).default({}),
-  ingest: z.object({
-    contractAllowedExtensions: z.array(z.string().min(1)).default([".pdf", ".docx", ".txt", ".md"]),
-    invoiceAllowedExtensions: z.array(z.string().min(1)).default([".pdf", ".png", ".jpg", ".jpeg", ".txt", ".md"]),
-    maxFileSizeMb: z.number().positive().default(20),
-    pendingTtlMs: z.number().int().positive().default(600_000),
-  }).default({}),
-  reminder: z.object({
-    enabled: z.boolean().default(false),
-    targetChatIds: z.array(z.string().min(1)).default([]),
-    hour: z.number().int().min(0).max(23).default(9),
-    minute: z.number().int().min(0).max(59).default(0),
-    lookaheadDays: z.number().int().positive().default(7),
-  }).default({}),
-}).default({});
-export type ContractAssistantConfig = z.infer<typeof ContractAssistantConfigSchema>;
-export const DEFAULT_CONTRACT_ASSISTANT_CONFIG: ContractAssistantConfig = {
-  enabled: false,
-  storage: {
-    baseToken: "",
-    contractTableId: "",
-    invoiceTableId: "",
-    caseTableId: "",
-  },
-  models: {},
-  ingest: {
-    contractAllowedExtensions: [".pdf", ".docx", ".txt", ".md"],
-    invoiceAllowedExtensions: [".pdf", ".png", ".jpg", ".jpeg", ".txt", ".md"],
-    maxFileSizeMb: 20,
-    pendingTtlMs: 600_000,
-  },
-  reminder: {
-    enabled: false,
-    targetChatIds: [],
-    hour: 9,
-    minute: 0,
-    lookaheadDays: 7,
-  },
-};
-const LaborSkillConfigSchema = z.object({
-  enabled: z.boolean().default(false),
-  models: z.object({
-    default: LaborSkillModelRefSchema.optional(),
-    extract: LaborSkillModelRefSchema.optional(),
-    analyze: LaborSkillModelRefSchema.optional(),
-  }).default({}),
-  ingest: z.object({
-    allowedExtensions: z.array(z.string().min(1)).default([".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp", ".xls", ".xlsx", ".csv"]),
-    maxFileSizeMb: z.number().positive().default(20),
-    pendingTtlMs: z.number().int().positive().default(600_000),
-  }).default({}),
-  storage: z.object({
-    evidenceLedger: z.object({
-      appToken: z.string().default(""),
-      tableId: z.string().default(""),
-      keyEvidenceViewId: z.string().min(1).optional(),
-      missingEvidenceViewId: z.string().min(1).optional(),
-    }).optional(),
-  }).default({}),
-}).default({});
-export type LaborSkillConfig = z.infer<typeof LaborSkillConfigSchema>;
-export const DEFAULT_LABOR_SKILL_CONFIG: LaborSkillConfig = {
-  enabled: false,
-  models: {},
-  ingest: {
-    allowedExtensions: [".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp", ".xls", ".xlsx", ".csv"],
-    maxFileSizeMb: 20,
-    pendingTtlMs: 600_000,
-  },
-  storage: {},
-};
 const ObsidianConfigSchema = z.object({
   enabled: z.boolean().default(false),
   vaultPath: z.string().min(1).optional(),
@@ -218,8 +131,8 @@ export const ConfigSchema = z.object({
   }).default({}),
   memory: MemoryConfigSchema.default({}),
   knowledgeBase: moduleConfigSchemas.knowledgeBase,
-  contractAssistant: ContractAssistantConfigSchema,
-  laborSkill: LaborSkillConfigSchema,
+  contractAssistant: moduleConfigSchemas.contractAssistant,
+  laborSkill: moduleConfigSchemas.laborSkill,
 }).superRefine((value, context) => {
   if (value.memory.retriever === "embedding" && !value.embeddings.provider && !value.memory.embeddingProvider) {
     context.addIssue({
@@ -237,34 +150,6 @@ export const ConfigSchema = z.object({
     });
   }
 
-  if (value.contractAssistant.enabled && !value.contractAssistant.storage.baseToken) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["contractAssistant", "storage", "baseToken"],
-      message: "contractAssistant.enabled=true 时必须提供 contractAssistant.storage.baseToken",
-    });
-  }
-  if (value.contractAssistant.enabled && !value.contractAssistant.storage.contractTableId) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["contractAssistant", "storage", "contractTableId"],
-      message: "contractAssistant.enabled=true 时必须提供 contractAssistant.storage.contractTableId",
-    });
-  }
-  if (value.contractAssistant.enabled && !value.contractAssistant.storage.invoiceTableId) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["contractAssistant", "storage", "invoiceTableId"],
-      message: "contractAssistant.enabled=true 时必须提供 contractAssistant.storage.invoiceTableId",
-    });
-  }
-  if (value.contractAssistant.enabled && !value.contractAssistant.storage.caseTableId) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["contractAssistant", "storage", "caseTableId"],
-      message: "contractAssistant.enabled=true 时必须提供 contractAssistant.storage.caseTableId",
-    });
-  }
 });
 
 export type AppConfig = {
@@ -364,54 +249,6 @@ export type AppConfig = {
     };
   };
   knowledgeBase: KnowledgeBaseConfig;
-  contractAssistant?: {
-    enabled: boolean;
-    storage: {
-      baseToken: string;
-      contractTableId: string;
-      invoiceTableId: string;
-      caseTableId: string;
-    };
-    models: {
-      default?: string | undefined;
-      draft?: string | undefined;
-      extract?: string | undefined;
-      invoice?: string | undefined;
-      caseManage?: string | undefined;
-    };
-    ingest: {
-      contractAllowedExtensions: string[];
-      invoiceAllowedExtensions: string[];
-      maxFileSizeMb: number;
-      pendingTtlMs: number;
-    };
-    reminder: {
-      enabled: boolean;
-      targetChatIds: string[];
-      hour: number;
-      minute: number;
-      lookaheadDays: number;
-    };
-  };
-  laborSkill?: {
-    enabled: boolean;
-    models: {
-      default?: string | undefined;
-      extract?: string | undefined;
-      analyze?: string | undefined;
-    };
-    ingest: {
-      allowedExtensions: string[];
-      maxFileSizeMb: number;
-      pendingTtlMs: number;
-    };
-    storage: {
-      evidenceLedger?: {
-        appToken: string;
-        tableId: string;
-        keyEvidenceViewId?: string | undefined;
-        missingEvidenceViewId?: string | undefined;
-      } | undefined;
-    };
-  };
+  contractAssistant?: ContractAssistantConfig;
+  laborSkill?: LaborSkillConfig;
 };

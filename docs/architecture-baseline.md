@@ -94,29 +94,40 @@
 
 新功能不应通过临时 hooks 继续膨胀 core。
 
-### 5. 业务实现类由业务模块自己构造
+### 5. 内置业务扩展由 manifest 装配
 
-Bridge 可以装配业务模块，但不应直接构造业务实现类。
+Bridge 可以装配业务模块，但不应直接在 core 文件里手写业务模块分支。
 
-业务模块应在自己的命名空间内提供 factory。
-runtime / bridge 只依赖 factory、RuntimeModule seam 或业务 port 类型。
+内置业务扩展通过 internal extension manifest 声明启动期装配信息：
+
+- `id`
+- `configKey`
+- `commands`
+- `createModule`
+- `cardTemplates`
+- `workflows`
+
+这个 manifest 只服务仓库内置扩展。
+它不是第三方 plugin API，也不支持运行时 unregister、reload 或目录扫描。
+
+`id` 与 `configKey` 必须显式声明映射，不能靠命名约定猜：
+
+- `knowledge-base` -> `knowledgeBase`
+- `contract-assistant` -> `contractAssistant`
+- `labor-skill` -> `laborSkill`
+
+`commands` 本期只用于文档、冲突检测和未来 help 展示。
+它不参与通用 router 分发。
+core router 只处理 bridge / framework 命令；业务命令继续由 RuntimeModule 基于 passthrough 或既有 routed command 认领。
+
+业务实现类应在自己的模块命名空间内构造。
+runtime / bridge 只依赖 extension manifest、factory、RuntimeModule seam 或业务 port 类型。
 
 当前强制试点：
 
 - `knowledge` 的 `KnowledgeBaseService` 只能在 `src/knowledge/` 内构造
 - `src/runtime/` 和 `src/bridge/` 只能 type-import `KnowledgeBasePort`
 - 本地知识库 CLI 与 Bridge runtime 复用同一套 knowledge factory
-
-后续收口对象：
-
-- `contract-assistant`
-- `labor`
-- `memory`
-
-这些模块本期保留现状。
-迁移时应沿用 knowledge 的 factory / port 模式，不扩大 core seam。
-本期 lint 仅强制 knowledge。
-在对应后续 issue 收口前，`runtime-modules.ts` 仍允许直接构造 labor、contract 和 memory 服务。
 
 ## 目标分层边界
 
@@ -304,10 +315,10 @@ Feishu Transport
 - module config registry 只供内置模块静态注册；不是第三方 plugin 公共 API
 - config 层只能 import 业务模块的 `config.ts`，不得 import 业务实现、runtime module 或模块 index
 
-过渡期：
+当前状态：
 
-- `knowledgeBase` 是首个下沉到模块 config registry 的试点
-- `labor`、`contract-assistant` 和 `memory` 本期仍保留在 `schema.ts` / `loader.ts`
+- `knowledgeBase`、`contractAssistant` 和 `laborSkill` 已下沉到模块 config registry
+- `memory` 仍保留在中央 `schema.ts` / `loader.ts`，后续可按同模式迁移
 - 后续迁移步骤固定为：创建 `<module>/config.ts`，导出 module config definition，加入静态 registry，删除中央 schema / loader 旧块，补兼容快照与模块配置测试
 
 ### 7. Logging 与 Observability
@@ -498,6 +509,13 @@ contract assistant 和 labor 目前都维护了相似模式：
 - labor cards
 - business template runtime
 - business template adapters
+
+业务卡片模板归属：
+
+- 模板定义应由业务扩展声明
+- 模板 runtime 只负责 schema 校验与 spec 渲染
+- registry 可聚合内置扩展声明的模板，但不得加载业务 runtime module 形成循环依赖
+- 重复 template id 必须启动时报错
 - shared post / notice primitives
 
 ### P2. Turn Execution 过于密集

@@ -222,6 +222,18 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
   ): Promise<boolean> {
     if (command.kind === "passthrough") {
       const legacyAlias = command.name.trim().toLowerCase();
+      if (legacyAlias === "法律咨询开始") {
+        return await this.handleKnowledgeCommand(message, { kind: "knowledge-mode-start" });
+      }
+      if (legacyAlias === "法律咨询结束") {
+        return await this.handleKnowledgeCommand(message, { kind: "knowledge-mode-end" });
+      }
+      if (legacyAlias === "法律咨询" && command.arguments.length > 0) {
+        return await this.handleKnowledgeCommand(message, {
+          kind: "knowledge-query",
+          question: command.arguments.join(" ").trim(),
+        });
+      }
       if (legacyAlias === "legal-query-start") {
         await this.sendNotice(message, {
           title: "命令已更新",
