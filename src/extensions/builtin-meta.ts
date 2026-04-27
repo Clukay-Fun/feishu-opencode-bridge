@@ -17,9 +17,7 @@ const builtinExtensionMetaDefinitions = [
   memoryExtensionMeta,
 ] as const;
 
-export const builtinExtensionMetaRegistry = createBuiltinExtensionMetaRegistry(builtinExtensionMetaDefinitions, {
-  configKeys: ["knowledgeBase", "contractAssistant", "laborSkill", "memory"],
-});
+export const builtinExtensionMetaRegistry = createBuiltinExtensionMetaRegistry(builtinExtensionMetaDefinitions);
 
 export const builtinExtensionMetas = builtinExtensionMetaRegistry.metas;
 export const builtinExtensionCommands = builtinExtensionMetaRegistry.listCommands();

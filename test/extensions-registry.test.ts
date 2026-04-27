@@ -39,13 +39,7 @@ describe("builtin extension registry", () => {
     expect(() => createBuiltinExtensionMetaRegistry([
       createMeta("one", { name: "demo", aliases: ["shared"] }),
       createMeta("two", { name: "shared" }),
-    ], { configKeys: [] })).toThrow("Duplicate extension command: shared");
-  });
-
-  it("rejects extension config keys not registered in AppConfig", () => {
-    expect(() => createBuiltinExtensionMetaRegistry([
-      createMeta("broken", { name: "demo" }, "missing" as never),
-    ], { configKeys: ["knowledgeBase"] })).toThrow("Extension broken declares unknown configKey: missing");
+    ])).toThrow("Duplicate extension command: shared");
   });
 
   it("rejects mismatched extension configKey and configDefinition key", () => {
@@ -58,7 +52,7 @@ describe("builtin extension registry", () => {
           normalize: () => ({}),
         },
       },
-    ], { configKeys: ["knowledgeBase", "contractAssistant"] })).toThrow(
+    ])).toThrow(
       "Extension broken configKey knowledgeBase does not match configDefinition.key contractAssistant",
     );
   });

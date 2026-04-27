@@ -4,7 +4,6 @@
  * - 分别校验 data-only meta 与 runtime extension 的启动期注册。
  * - 仅提供启动期静态聚合，不做运行时热拔插或通用命令分发。
  */
-import type { AppConfig } from "../config/schema.js";
 import type { AnyBusinessCardTemplateDefinition } from "../feishu/templates/definition.js";
 import type {
   BuiltinExtensionDefinition,
@@ -25,10 +24,8 @@ export type BuiltinExtensionMetaRegistry = {
 
 export function createBuiltinExtensionMetaRegistry(
   metas: readonly BuiltinExtensionMetaDefinition[],
-  options: { configKeys: readonly (keyof AppConfig)[] },
 ): BuiltinExtensionMetaRegistry {
   const extensionIds = new Set<string>();
-  const configKeys = new Set<keyof AppConfig>(options.configKeys);
   const commandNames = new Map<string, string>();
   const commands: (ExtensionCommandDefinition & { extensionId: string })[] = [];
   const configDefinitions: NonNullable<BuiltinExtensionMetaDefinition["configDefinition"]>[] = [];
@@ -39,10 +36,6 @@ export function createBuiltinExtensionMetaRegistry(
       throw new Error(`Duplicate builtin extension id: ${meta.id}`);
     }
     extensionIds.add(meta.id);
-
-    if (meta.configKey && !configKeys.has(meta.configKey)) {
-      throw new Error(`Extension ${meta.id} declares unknown configKey: ${String(meta.configKey)}`);
-    }
 
     if (meta.configKey && meta.configDefinition && meta.configKey !== meta.configDefinition.key) {
       throw new Error(

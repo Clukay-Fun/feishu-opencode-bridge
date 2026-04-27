@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.49 - 2026-04-27
+
+### Changed
+- Removed the extension meta registry's direct runtime dependency on the AppConfig key list while preserving config definition key consistency checks.
+
 ## 0.1.48 - 2026-04-27
 
 ### Changed
