@@ -11,7 +11,9 @@
 - URL 网页内容入库（通过 OpenCode 辅助读取网页并整理成 Markdown）
 - 通过 `/法律咨询开始` 进入知识库模式，后续直接提问，无需每条消息都输入命令
 
-实现为 bridge 内建知识库子系统（`src/knowledge/`），由 bridge 接管 `/kb-ingest-start`、`/kb-ingest-end`、`/kb-query`、`/法律咨询开始`、`/法律咨询结束` 这组命令。
+实现为 bridge 内建知识库子系统（`src/knowledge/`）。
+`/kb-ingest-start`、`/kb-ingest-end`、`/kb-query` 是 framework 级入口，仍由 core router 解析。
+`/法律咨询开始`、`/法律咨询结束`、`/法律咨询 <问题>` 属于知识库扩展命令，由 knowledge RuntimeModule 基于 passthrough 认领。
 
 ## 模型与供应商分工
 
@@ -462,7 +464,7 @@ SQLite 表结构：
 ```
 bridge = 控制面 + 查询面
   - 飞书消息接入、模式切换
-  - 命令入口（/kb-ingest-start, /法律咨询开始, /kb-query 等）
+  - 命令入口（/kb-ingest-start, /kb-query 等由 core router 解析；/法律咨询* 由 knowledge module 认领）
   - 本地 SQLite 检索
   - 查询结果卡片、入库进度卡片
 

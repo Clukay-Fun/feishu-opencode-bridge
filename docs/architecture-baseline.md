@@ -455,14 +455,15 @@ freeze 之后仍然活跃的后续债务集中在 [post-freeze-backlog.md](/User
 
 这些是 major feature growth 之前最值得先处理的债务。
 
-### P1. Core 仍然知道太多具体模块细节
+### P1. Core 仍然保留少量模块资源适配
 
-`BridgeApp` 仍然直接构造和组装具体模块。
-这在当前阶段还能接受，但依赖面不应继续扩大。
+具体业务模块已经通过 internal extension manifest 装配。
+剩余耦合主要是 BridgeApp 仍要为资源型模块适配完整 outbound resource port，以及 `memory` 配置尚未下沉到 module config registry。
 
 近期规则：
 
-- 任何新功能都不应迫使 `BridgeApp` 在 module registration 与 stable deps 之外继续长出更多 feature 专属行为
+- 任何新功能都不应迫使 `BridgeApp` 在 stable deps 之外继续长出更多 feature 专属资源适配
+- 新业务模块应通过 extension manifest 接入，而不是让 `runtime-modules.ts` 手写模块分支
 
 ### P1. 普通文件处理仍然泄漏临时文件
 
@@ -497,7 +498,7 @@ contract assistant 和 labor 目前都维护了相似模式：
 - `shared-primitives.ts` 只保留 Feishu payload 拼装与通用卡片块 helper
 - `runtime-cards.ts` 保留 bridge 自有运行时 / 会话 / 权限卡片
 - 业务展示卡默认通过 `business template runtime + family adapter` 接入
-- `src/feishu/templates/*` 只承载业务模板注册、schema 校验与薄 spec 渲染，不直接暴露给 runtime 或业务模块
+- `src/feishu/templates/*` 只承载模板运行时、注册表和纯类型契约；具体业务模板定义应留在业务模块侧
 - `BusinessCardBlock.kind` 统一使用小写驼峰命名，例如 `tagChart`、`stepList`、`elapsed`；不要在不同 PR 中混用短横线、下划线或同义别名
 
 建议方向：

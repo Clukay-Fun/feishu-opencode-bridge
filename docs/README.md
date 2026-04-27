@@ -10,7 +10,7 @@
 
 ## 当前入口
 
-- [架构基线](architecture-baseline.md)：freeze 之后的运行时边界、扩展 seam 和 reviewer 规则。
+- [架构基线](architecture-baseline.md)：freeze 之后的运行时边界、内置 extension manifest、扩展 seam 和 reviewer 规则。
 - [部署说明](deploy.md)：本地与服务器部署、环境变量、Caddy、健康检查和验收步骤。
 - [飞书 Markdown 输出规范](feishu-markdown.md)：面向飞书输出的 Markdown 规则与长文本排版约束。
 - [可观测性事件规范](observability/event-schema.md)：运行时可观测性的稳定事件名与日志字段。
@@ -23,6 +23,12 @@
 
 - [法律知识库方案](modules/knowledge-base.md)：知识库模块的设计说明与工作流说明。
 - [劳动 Skill 工作流分层](modules/labor-skill-workflows.md)：劳动领域总入口、专项能力和 shared skills 的边界说明。
+
+## 扩展与配置
+
+- 内置业务扩展通过 `src/extensions/*` 的 manifest 做启动期静态注册，不是第三方 plugin API，也不支持运行时热拔插。
+- `commands` 目前只用于文档、冲突检测和未来 help 展示；实际命令解析仍由 core router 和各 RuntimeModule 负责。
+- 模块配置优先落在 `<module>/config.ts` 并接入 `src/config/modules.ts`；当前已覆盖 `knowledgeBase`、`contractAssistant`、`laborSkill`。
 
 ## 待办
 

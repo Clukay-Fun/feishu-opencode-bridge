@@ -16,12 +16,14 @@
 
 - `module` 边界：虽然会被 core、transport 和 formatter 规则间接覆盖，但 reviewer 仍应确认新能力是通过 `RuntimeModule` 装配 seam 接入的。
 - `state` 边界：在共享 persisted interaction 模式拥有专门 lint 规则之前，这一项仍主要依赖 reviewer 判断。
-- `command` 边界：在命令定义被统一收拢到 manifest 之前，这一项仍主要依赖 reviewer 判断。
+- `extension` 边界：internal extension manifest 已能声明 `id`、`configKey`、commands、module 创建和业务模板；但 commands 只做声明和冲突检测，不是通用分发器。
+- `command` 边界：业务命令声明应进入 extension manifest；实际解析仍由 core router 和对应 RuntimeModule 负责，reviewer 仍需确认没有把业务分发塞回 core。
 
 ## 清单
 
 - `core` 边界：功能实现不应把业务分支逻辑重新塞回 `src/runtime/app.ts`、`src/runtime/turn-executor.ts` 或 `src/bridge/router.ts`
 - `module` 边界：功能应落在已有 `RuntimeModule` 内部，或通过 runtime module assembly seam 引入新模块
+- `extension` 边界：新增内置业务能力应提供 extension manifest；需要读取配置时必须显式声明 `configKey`，不要靠 extension id 推断配置块
 - `transport` 边界：飞书消息回复、更新和通知都应经过 `FeishuTransport`；不要新增临时的 send/update 包装层
 - `state` 边界：模块级 pending interaction 持久化应复用共享 persisted interaction 基础设施；不要复制 timer + JSON 持久化逻辑
 - `command` 边界：每个动作保留一个主命令，最多再保留一个兼容别名

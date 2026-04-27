@@ -130,8 +130,12 @@
   - no feature may directly persist or mutate another feature's internal state file or in-memory interaction state
   - module-scoped pending interaction persistence should reuse the shared persisted interaction infrastructure
 - Configuration boundary:
-  - all feature configuration goes through `src/config/schema.ts` and `src/config/loader.ts`
-  - modules may consume injected config only; they must not read `config.json` directly or maintain parallel feature config files
+  - all feature configuration goes through `src/config/schema.ts`, `src/config/loader.ts`, and the internal module config registry
+  - module-owned subconfig should live in `<module>/config.ts` when migrated; modules may consume injected config only and must not read `config.json` directly or maintain parallel feature config files
+- Builtin extension boundary:
+  - built-in business capabilities should declare `id`, `configKey`, commands, RuntimeModule creation, and business card templates through internal extension manifests under `src/extensions/*` plus module-local `extension.ts`
+  - extension commands are declarations for docs, conflict checks, and future help surfaces; they must not be treated as a generic router dispatcher unless the architecture baseline changes first
+  - this is not a third-party plugin API and does not imply runtime hot reload
 - Logging and observability boundary:
   - shared logging and transcript behavior goes through `src/logging/logger.ts`
   - runtime and transport events should follow the observability event schema instead of inventing ad-hoc event names

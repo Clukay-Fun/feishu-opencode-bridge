@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.47 - 2026-04-27
+
+### Changed
+- Refreshed README project news, architecture diagrams, configuration notes, and verification baseline for the internal extension manifest architecture.
+- Documented the builtin extension boundary in AGENTS, docs index, architecture baseline, feature checklist, and knowledge-base module notes.
+
 ## 0.1.46 - 2026-04-27
 
 ### Changed
