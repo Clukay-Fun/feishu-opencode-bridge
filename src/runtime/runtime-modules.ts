@@ -90,13 +90,23 @@ export function createRuntimeModules(options: {
   }
 
   for (const extension of options.externalExtensions ?? []) {
-    const module = createExternalRuntimeModule(extension, {
-      config: options.config.extensions ?? {},
-      outbound: options.outbound,
-      logger: options.logger,
-      opencode: options.opencode,
-      knowledge,
-    });
+    let module;
+    try {
+      module = createExternalRuntimeModule(extension, {
+        config: options.config.extensions ?? {},
+        outbound: options.outbound,
+        logger: options.logger,
+        opencode: options.opencode,
+        knowledge,
+      });
+    } catch (error) {
+      options.logger.log("runtime/modules", "external extension skipped", {
+        extensionId: extension.id,
+        errorKind: error instanceof Error ? error.name : "unknown",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+      continue;
+    }
     if (module) {
       moduleManager.register(module);
     }

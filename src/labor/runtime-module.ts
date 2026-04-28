@@ -124,6 +124,16 @@ export class LaborRuntimeModule implements RuntimeModule {
         return { claimed: true };
       }
 
+      if (routed?.kind === "command" && isLaborStartCommand(routed.command)) {
+        await this.sendNotice(message, {
+          title: "已有劳动分析正在收集",
+          template: "yellow",
+          icon: "maybe_outlined",
+          message: "请继续上传材料，或发送 `/劳动分析结束` 后再开始新的劳动分析。",
+        }, this.getDelivery(pending));
+        return { claimed: true };
+      }
+
       await this.collectInput(message, pending);
       return { claimed: true };
     }
@@ -582,6 +592,11 @@ export class LaborRuntimeModule implements RuntimeModule {
 function isLaborEndCommand(command: LaborCommand): boolean {
   return command.kind === "passthrough"
     && command.name.trim().toLowerCase() === "劳动分析结束";
+}
+
+function isLaborStartCommand(command: LaborCommand): boolean {
+  return command.kind === "passthrough"
+    && command.name.trim().toLowerCase() === "劳动分析";
 }
 
 function renderProcessingMessage(state: LaborProgressState): string {

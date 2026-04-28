@@ -164,6 +164,38 @@ describe("createRuntimeModules", () => {
     expect(result.moduleManager.list().map((module) => module.name)).toContain("external-demo");
     expect(blocks).toContain("external block");
   });
+
+  it("skips an external extension when createModule throws", () => {
+    const logger = { log: vi.fn() };
+    const result = createRuntimeModules({
+      config: {
+        ...createConfig({ knowledgeEnabled: false, contractEnabled: false, laborEnabled: false }),
+        extensions: {
+          broken: { enabled: true },
+        },
+      },
+      outbound: createOutbound(),
+      transport: createTransport(),
+      logger: logger as never,
+      opencode: createOpenCode(),
+      whitelist: { bind: vi.fn(async () => {}) },
+      getSessionWindow: () => ({ mode: "single", interactionMode: "default", activeSessionId: null, sessions: [] }),
+      saveSessionWindow: vi.fn(async () => {}),
+      createAndBindSession: vi.fn(async () => ({ sessionId: "ses_1", label: "会话", createdAt: 1, lastUsedAt: 1 })),
+      externalExtensions: [{
+        id: "broken",
+        createModule() {
+          throw new Error("init failed");
+        },
+      }],
+    });
+
+    expect(result.moduleManager.list().map((module) => module.name)).not.toContain("broken");
+    expect(logger.log).toHaveBeenCalledWith("runtime/modules", "external extension skipped", expect.objectContaining({
+      extensionId: "broken",
+      detail: "init failed",
+    }));
+  });
 });
 
 function createOutbound() {

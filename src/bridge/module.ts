@@ -90,7 +90,7 @@ export class ModuleManager {
         result = await module.handleMessage?.(context);
       } catch (error) {
         this.logModuleFailed(module, "handleMessage", error);
-        throw error;
+        continue;
       }
       if (result?.claimed) {
         this.logModuleInvoked(module, "handleMessage", "claimed", startedAt);
@@ -115,7 +115,7 @@ export class ModuleManager {
         claimed = await module.claimFileInstruction(pending, message);
       } catch (error) {
         this.logModuleFailed(module, "claimFileInstruction", error);
-        throw error;
+        continue;
       }
       if (claimed) {
         this.logModuleInvoked(module, "claimFileInstruction", "claimed", startedAt);
@@ -135,7 +135,7 @@ export class ModuleManager {
         result = await module.beforeTurn?.(context);
       } catch (error) {
         this.logModuleFailed(module, "beforeTurn", error);
-        throw error;
+        continue;
       }
       if (module.beforeTurn) {
         this.logModuleInvoked(module, "beforeTurn", "completed", startedAt);
@@ -164,7 +164,7 @@ export class ModuleManager {
         await module.afterTurn(context);
       } catch (error) {
         this.logModuleFailed(module, "afterTurn", error);
-        throw error;
+        continue;
       }
       this.logModuleInvoked(module, "afterTurn", "completed", startedAt);
     }

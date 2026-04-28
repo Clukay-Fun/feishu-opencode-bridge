@@ -199,8 +199,16 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
 
   /** 查询知识库，并返回重排后的候选结果。 */
   async query(question: string): Promise<KnowledgeQueryResult> {
-    const queryEmbedding = await this.embeddingClient.embed(question);
-    const embeddingMatches = this.db.searchByEmbedding(queryEmbedding, this.embeddingClient.model, this.config.query.topK);
+    let embeddingMatches: KnowledgeEntryCandidate[] = [];
+    try {
+      const queryEmbedding = await this.embeddingClient.embed(question);
+      embeddingMatches = this.db.searchByEmbedding(queryEmbedding, this.embeddingClient.model, this.config.query.topK);
+    } catch (error) {
+      this.logger.log("knowledge", "embedding query failed, falling back to keyword search", {
+        errorKind: error instanceof Error ? error.name : "unknown",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
     const keywordMatches = this.db.searchByKeyword(question, this.config.query.keywordFallbackLimit);
     const merged = dedupeCandidates([...embeddingMatches, ...keywordMatches]);
     const reranked = await this.rerank(question, merged);

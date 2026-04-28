@@ -2,7 +2,7 @@
  * 职责: 覆盖运行时模块管理器注册和生命周期行为。
  * 关注点: 验证核心路径、边界条件和回归场景。
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ModuleManager, type RuntimeModule } from "../src/bridge/module.js";
 
@@ -163,5 +163,52 @@ describe("module manager", () => {
 
     expect(claimed).toBe(true);
     expect(calls).toEqual(["contract"]);
+  });
+
+  it("continues message dispatch when one module handler throws", async () => {
+    const calls: string[] = [];
+    const logger = { log: vi.fn(), event: vi.fn() };
+    const manager = new ModuleManager(logger as never);
+
+    manager.register({
+      name: "broken",
+      priority: 10,
+      async handleMessage() {
+        calls.push("broken");
+        throw new Error("boom");
+      },
+    } satisfies RuntimeModule);
+    manager.register({
+      name: "healthy",
+      priority: 20,
+      async handleMessage() {
+        calls.push("healthy");
+        return { claimed: true };
+      },
+    } satisfies RuntimeModule);
+
+    const result = await manager.handleMessage({
+      message: {
+        chatId: "oc_p2p_1",
+        chatType: "p2p",
+        senderOpenId: "ou_123",
+        messageId: "om_1",
+        rawContent: "hello",
+        plainText: "hello",
+        threadKey: "om_1",
+        conversationKey: "oc_p2p_1",
+        messageType: "text",
+      },
+      routed: { kind: "message", text: "hello" },
+      pendingInteraction: null,
+    });
+
+    expect(result).toEqual({ claimed: true });
+    expect(calls).toEqual(["broken", "healthy"]);
+    expect(logger.event).toHaveBeenCalledWith("runtime/modules", "module.failed", expect.objectContaining({
+      moduleId: "broken",
+      hook: "handleMessage",
+      detail: "boom",
+    }), "warn");
   });
 });

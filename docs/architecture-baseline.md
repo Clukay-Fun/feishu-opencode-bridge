@@ -279,6 +279,12 @@ Feishu Transport
 - 只持久化自己的状态
 - 如果持有 timer、worker、handle 或临时运行时资源，就实现 `stop()`
 
+容错契约：
+
+- 单个模块的 `handleMessage()`、`claimFileInstruction()`、`beforeTurn()` 或 `afterTurn()` 抛错时，ModuleManager 记录 `module.failed` 事件并继续后续模块
+- 外部扩展 `createModule()` 抛错时，runtime assembly 跳过该扩展并记录 warning，不阻断 bridge 核心启动
+- 模块失败隔离只保护模块链路；模块内部仍应自己处理可恢复的业务错误，并向用户返回清晰 notice
+
 不应负责：
 
 - 直接操纵其他模块的状态

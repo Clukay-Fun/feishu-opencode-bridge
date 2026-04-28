@@ -982,6 +982,9 @@ export class BridgeApp {
     if (typeof sizeBytes !== "number") {
       return;
     }
+    if (sizeBytes <= 0) {
+      throw new Error("文件为空，请重新上传包含内容的文件");
+    }
     const maxSizeBytes = this.config.knowledgeBase.ingest.maxFileSizeMb * 1024 * 1024;
     if (sizeBytes > maxSizeBytes) {
       throw new Error(`文件过大，请控制在 ${this.config.knowledgeBase.ingest.maxFileSizeMb}MB 以内`);

@@ -312,6 +312,70 @@ describe("knowledge base bridge flow", () => {
     expect(outbound.downloadMessageResource).not.toHaveBeenCalled();
   });
 
+  it("rejects zero-byte files before entering the normal file flow", async () => {
+    const outbound = {
+      ...createOutbound(),
+      downloadMessageResource: vi.fn(),
+    };
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
+      knowledge: null,
+      memory: null,
+    });
+    const appAny = app as unknown as { pendingInteractions: Map<string, unknown> };
+
+    await app.handleIncomingMessage({
+      ...createTextMessage("空文件.txt", "om_file_empty"),
+      messageType: "file",
+      file: {
+        fileKey: "file_empty",
+        fileName: "空文件.txt",
+        size: 0,
+      },
+    });
+
+    const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+    expect(JSON.stringify(replyPayloads)).toContain("文件为空，请重新上传包含内容的文件");
+    expect(appAny.pendingInteractions.has("oc_p2p_1")).toBe(false);
+    expect(outbound.downloadMessageResource).not.toHaveBeenCalled();
+  });
+
+  it("rejects files that become zero-byte after download", async () => {
+    const outbound = {
+      ...createOutbound(),
+      downloadMessageResource: vi.fn(async () => ({
+        fileName: "空文件.txt",
+        mimeType: "text/plain",
+        buffer: Buffer.alloc(0),
+      })),
+    };
+    const eventStream = new FakeOpenCodeEventStream();
+    const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "unused" });
+    const promptAsync = vi.spyOn(opencode, "promptAsync");
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
+      knowledge: null,
+      opencode,
+      eventStream,
+      memory: null,
+    });
+
+    await app.handleIncomingMessage({
+      ...createTextMessage("空文件.txt", "om_file_empty"),
+      messageType: "file",
+      file: {
+        fileKey: "file_empty",
+        fileName: "空文件.txt",
+        size: 1,
+      },
+    });
+    await app.handleIncomingMessage(createTextMessage("总结这个文件", "om_instruction"));
+
+    expect(outbound.downloadMessageResource).toHaveBeenCalledWith("om_file_empty", "file_empty", "file");
+    expect(promptAsync).not.toHaveBeenCalled();
+    const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+    expect(JSON.stringify(replyPayloads)).toContain("文件读取失败");
+    expect(JSON.stringify(replyPayloads)).toContain("文件为空，请重新上传包含内容的文件");
+  });
+
   it("retires /legal-query* aliases in private chat and keeps later messages on the normal OpenCode path", async () => {
     const outbound = createOutbound();
     const eventStream = new FakeOpenCodeEventStream();

@@ -250,6 +250,72 @@ describe("LaborRuntimeModule", () => {
     }
   });
 
+  it("exits gracefully when /劳动分析结束 is sent without files or notes", async () => {
+    const { module, tempDir, sendPayload, extractMaterial, finalizeAnalysis } = await createModule();
+    try {
+      const start = createTextMessage("/劳动分析 劳动争议演示");
+      await module.handleMessage({
+        message: start,
+        routed: routeIncomingText(start.plainText),
+      });
+
+      const end = createTextMessage("/劳动分析结束");
+      const result = await module.handleMessage({
+        message: end,
+        routed: routeIncomingText(end.plainText),
+      });
+
+      expect(result).toEqual({ claimed: true });
+      expect(extractMaterial).not.toHaveBeenCalled();
+      expect(finalizeAnalysis).not.toHaveBeenCalled();
+      const payloadCalls = sendPayload.mock.calls as unknown as Array<[string, unknown]>;
+      expect(JSON.stringify(payloadCalls.at(-1)?.[1] ?? {})).toContain("当前没有可分析内容");
+      expect(JSON.stringify(payloadCalls.at(-1)?.[1] ?? {})).toContain("已退出劳动分析模式");
+      const interactions = (module as unknown as {
+        interactions: { get(key: string): unknown };
+      }).interactions;
+      expect(interactions.get(start.conversationKey)).toBeUndefined();
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("keeps an unfinished collection when the same requester sends /劳动分析 again", async () => {
+    const { module, tempDir, sendPayload, extractMaterial } = await createModule();
+    try {
+      const firstStart = createTextMessage("/劳动分析 第一次");
+      await module.handleMessage({
+        message: firstStart,
+        routed: routeIncomingText(firstStart.plainText),
+      });
+      await module.handleMessage({
+        message: createFileMessage("旧材料.pdf"),
+        routed: null,
+      });
+
+      const secondStart = createTextMessage("/劳动分析 第二次");
+      const secondResult = await module.handleMessage({
+        message: secondStart,
+        routed: routeIncomingText(secondStart.plainText),
+      });
+
+      expect(secondResult).toEqual({ claimed: true });
+      expect(sendPayload).toHaveBeenCalledTimes(2);
+      const interactions = (module as unknown as {
+        interactions: { get(key: string): { files: unknown[]; title?: string } | undefined };
+      }).interactions;
+      expect(interactions.get(firstStart.conversationKey)).toEqual(expect.objectContaining({
+        title: "第一次",
+        files: [expect.objectContaining({ fileName: "旧材料.pdf" })],
+      }));
+      const payloadCalls = sendPayload.mock.calls as unknown as Array<[string, unknown]>;
+      expect(JSON.stringify(payloadCalls.at(-1)?.[1] ?? {})).toContain("已有劳动分析正在收集");
+      expect(extractMaterial).not.toHaveBeenCalled();
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
   it("restores an unfinished interaction after restart", async () => {
     const { module, tempDir } = await createModule();
     try {

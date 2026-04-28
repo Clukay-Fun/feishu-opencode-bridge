@@ -159,6 +159,47 @@ describe("BridgeApp command surface", () => {
     expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("知识库入库与法律检索");
   });
 
+  it("shows a disambiguation card when /switch name matches multiple sessions", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const listSessions = vi.fn(async () => ([
+      { id: "ses_1", title: "劳动争议分析", time: { created: 1, updated: 3 } },
+      { id: "ses_2", title: "劳动合同审查", time: { created: 1, updated: 2 } },
+      { id: "ses_3", title: "发票识别", time: { created: 1, updated: 1 } },
+    ]));
+    const appAny = app as unknown as {
+      opencode: { listSessions: typeof listSessions };
+      sessionMap: Record<string, SessionWindowRecord>;
+      pendingInteractions: Map<string, PendingInteraction>;
+    };
+    appAny.opencode = { listSessions };
+    appAny.sessionMap["oc_p2p_1"] = {
+      mode: "multi",
+      activeSessionId: "ses_1",
+      sessions: [
+        { sessionId: "ses_1", label: "劳动争议分析", createdAt: 1, lastUsedAt: 3 },
+      ],
+    };
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "sessions-select", query: "劳动" },
+    });
+
+    expect(appAny.sessionMap["oc_p2p_1"]?.activeSessionId).toBe("ses_1");
+    const pending = appAny.pendingInteractions.get("oc_p2p_1");
+    expect(pending).toEqual(expect.objectContaining({
+      kind: "session-select",
+      options: [
+        expect.objectContaining({ index: 1, sessionId: "ses_1", title: "劳动争议分析" }),
+        expect.objectContaining({ index: 2, sessionId: "ses_2", title: "劳动合同审查" }),
+      ],
+    }));
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("匹配到多个会话");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("劳动争议分析");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("劳动合同审查");
+  });
+
   it("migrates legacy p2p main-window sessions from the flat key to the :main key", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());

@@ -87,6 +87,137 @@ describe("KnowledgeBaseService", () => {
     service.close();
   });
 
+  it("falls back to keyword search when query embedding fails", async () => {
+    stubEmbeddingFetch();
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-"));
+    tempDirs.push(dir);
+    const serviceLogger = { log: vi.fn(), logTranscript: vi.fn() };
+    const service = new KnowledgeBaseService(
+      {
+        enabled: true,
+        autoDetect: { enabled: true, minConfidence: 0.75 },
+        query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
+        storage: {
+          sqlitePath: join(dir, "knowledge.db"),
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+            documentTableId: "tbl_docs",
+          },
+        },
+        embeddingProvider: {
+          baseUrl: new URL("https://example.com/v1/"),
+          apiKey: "token",
+          model: "text-embedding",
+        },
+        models: {},
+        ingest: {
+          allowedExtensions: [".txt"],
+          maxFileSizeMb: 20,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+        },
+      },
+      {
+        async downloadMessageResource() {
+          return {
+            fileName: "劳动合同.txt",
+            mimeType: "text/plain",
+            buffer: Buffer.from("试用期最长不超过六个月。劳动合同期限不满三个月的，不得约定试用期。", "utf8"),
+          };
+        },
+        async createBitableRecord(_appToken, tableId) {
+          return `${tableId}_rec`;
+        },
+        async listBitableRecords() {
+          return [];
+        },
+      },
+      createOpenCodeStub(),
+      serviceLogger,
+    );
+
+    await service.ingestFile({
+      messageId: "om_file_1",
+      fileKey: "file_1",
+      fileName: "劳动合同.txt",
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("provider down", { status: 503 })) as typeof fetch);
+
+    const query = await service.query("员工试用期最长多久？");
+
+    expect(query.results[0]?.answer).toContain("试用期最长不超过六个月");
+    expect(serviceLogger.log).toHaveBeenCalledWith("knowledge", "embedding query failed, falling back to keyword search", expect.objectContaining({
+      detail: expect.stringContaining("embedding request failed"),
+    }));
+    service.close();
+  });
+
+  it("reports write failure when Bitable rejects knowledge entries", async () => {
+    stubEmbeddingFetch();
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-"));
+    tempDirs.push(dir);
+    const progress: string[] = [];
+    const service = new KnowledgeBaseService(
+      {
+        enabled: true,
+        autoDetect: { enabled: true, minConfidence: 0.75 },
+        query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
+        storage: {
+          sqlitePath: join(dir, "knowledge.db"),
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+            documentTableId: "tbl_docs",
+          },
+        },
+        embeddingProvider: {
+          baseUrl: new URL("https://example.com/v1/"),
+          apiKey: "token",
+          model: "text-embedding",
+        },
+        models: {},
+        ingest: {
+          allowedExtensions: [".txt"],
+          maxFileSizeMb: 20,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+        },
+      },
+      {
+        async downloadMessageResource() {
+          return {
+            fileName: "劳动合同.txt",
+            mimeType: "text/plain",
+            buffer: Buffer.from("试用期最长不超过六个月。", "utf8"),
+          };
+        },
+        async createBitableRecord(_appToken, tableId) {
+          if (tableId === "tbl_docs") {
+            return "doc_rec";
+          }
+          throw new Error("Bitable 429 rate limited");
+        },
+        async listBitableRecords() {
+          return [];
+        },
+      },
+      createOpenCodeStub(),
+      logger(),
+    );
+
+    await expect(service.ingestFile({
+      messageId: "om_file_1",
+      fileKey: "file_1",
+      fileName: "劳动合同.txt",
+    }, {
+      onProgress: async (event) => {
+        progress.push(`${event.step}:${event.status}:${event.detail}`);
+      },
+    })).rejects.toThrow("Bitable 429 rate limited");
+
+    expect(progress).toContain("write:error:成功写入 0 条，失败 1 条");
+    service.close();
+  });
+
   it("reports ingest progress by stage", async () => {
     stubEmbeddingFetch();
     const dir = mkdtempSync(join(tmpdir(), "knowledge-"));
