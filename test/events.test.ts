@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getEventSessionId, OpenCodeEventStream } from "../src/opencode/events.js";
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -65,6 +66,34 @@ describe("events", () => {
     await vi.waitFor(() => expect(seen).toContain("/global/event:session.idle:ses_2"));
     await stream.stop();
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("reconnects after the event stream closes", async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(createSseBody([
+        'data: {"type":"session.idle","properties":{"sessionID":"ses_1"}}',
+      ]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(createSseBody([
+        'data: {"type":"session.idle","properties":{"sessionID":"ses_2"}}',
+      ]), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+
+    const seen: string[] = [];
+    const logger = { log: vi.fn() };
+    const stream = new OpenCodeEventStream(new URL("http://127.0.0.1:4096/"), logger);
+    stream.subscribe(async (event) => {
+      seen.push(event.sessionId ?? "-");
+    });
+
+    await stream.start();
+    await vi.waitFor(() => expect(seen).toContain("ses_1"));
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => expect(seen).toContain("ses_2"));
+    await stream.stop();
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(logger.log).toHaveBeenCalledWith("opencode/events", "event stream disconnected", expect.objectContaining({ endpoint: "/event" }), "warn");
   });
 
   it("skips malformed JSON in SSE block without crashing", async () => {

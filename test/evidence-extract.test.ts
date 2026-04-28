@@ -98,6 +98,43 @@ describe("EvidenceExtractService", () => {
     })).rejects.toThrow("仅支持 .txt 文件");
   });
 
+  it("rejects spoofed pdf files that contain html payloads", async () => {
+    const service = new EvidenceExtractService(
+      {
+        async downloadMessageResource() {
+          return {
+            fileName: "evidence.pdf",
+            mimeType: "text/html",
+            buffer: Buffer.from("<!doctype html><html><body>login required</body></html>", "utf8"),
+          };
+        },
+      },
+      {
+        async createSession() {
+          return { id: "ses_extract" };
+        },
+        async postMessageSync() {
+          throw new Error("should not be called");
+        },
+        async deleteSession() {
+          return true;
+        },
+      },
+      { log() {} } as never,
+    );
+
+    await expect(service.extractJson({
+      file: {
+        messageId: "om_pdf",
+        fileKey: "file_pdf",
+        fileName: "evidence.pdf",
+      },
+      allowedExtensions: [".pdf"],
+      maxFileSizeMb: 1,
+      buildPrompt: () => "noop",
+    })).rejects.toThrow("文件内容不像有效 PDF");
+  });
+
   it("parses spreadsheet evidence into table-like text", async () => {
     const workbook = XLSX.utils.book_new();
     const sheet = XLSX.utils.aoa_to_sheet([

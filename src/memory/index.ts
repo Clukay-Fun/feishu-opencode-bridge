@@ -100,6 +100,13 @@ export class MemoryService {
     return formatRecallBlock(facts);
   }
 
+  /** 清除指定用户的全部长期记忆。 */
+  clearUserMemories(userId: string): { deleted: number } {
+    const deleted = this.db.deleteUser(userId);
+    this.logger.log("memory/privacy", "user memories cleared", { userId, deleted });
+    return { deleted };
+  }
+
   /** 把本轮对话加入异步学习队列。 */
   enqueueLearn(userId: string, userMessage: string, assistantMessage: string): void {
     if (!this.accepting) {

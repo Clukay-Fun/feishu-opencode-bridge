@@ -186,6 +186,31 @@ describe("ContractAssistantRuntimeModule contract workbench", () => {
     }
   });
 
+  it("keeps the current workbench when /合同起草开始 is sent again", async () => {
+    const { module, sendPayload, initializeWorkbenchFromPrompt, tempDir } = await createModule();
+    try {
+      const start = createTextMessage("/合同起草开始 帮我起草一份劳动仲裁委托代理合同");
+      await module.handleMessage({
+        message: start,
+        routed: routeIncomingText(start.plainText),
+      });
+
+      const restart = createTextMessage("/合同起草开始 重新来一份");
+      const result = await module.handleMessage({
+        message: restart,
+        routed: routeIncomingText(restart.plainText),
+      });
+
+      expect(result).toEqual({ claimed: true });
+      expect(initializeWorkbenchFromPrompt).toHaveBeenCalledTimes(1);
+      const serialized = JSON.stringify((sendPayload.mock.calls.at(-1) ?? [])[1] ?? {});
+      expect(serialized).toContain("已有合同起草会话");
+      expect(serialized).toContain("请继续编辑当前合同");
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
   it("initializes state from freeform text inside workbench session", async () => {
     const { module, initializeWorkbenchFromPrompt, updatePayload, tempDir } = await createModule();
     try {

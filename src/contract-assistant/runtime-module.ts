@@ -171,15 +171,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     const { message, routed } = context;
     const pending = this.interactions.get(message.conversationKey) ?? null;
     const workbench = pending?.kind === "contract-workbench" ? pending : null;
-    if (routed?.kind === "command") {
-      const claimed = await this.handleCommand(message, routed.command, workbench);
-      return { claimed };
-    }
-
-    if (!pending) {
-      return { claimed: false };
-    }
-    if (message.senderOpenId !== pending.requesterOpenId) {
+    if (pending && message.senderOpenId !== pending.requesterOpenId) {
       await this.sendNotice(message, {
         title: "当前任务仅限发起人继续",
         template: "yellow",
@@ -191,6 +183,27 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
           : "请由当前发起人继续上传文件，或等待任务处理结束。",
       });
       return { claimed: true };
+    }
+
+    if (pending && routed?.kind === "command" && isContractReentryCommand(routed.command, pending.kind)) {
+      await this.sendNotice(message, {
+        title: pending.kind === "contract-workbench" ? "已有合同起草会话" : "已有合同起草引导",
+        template: "yellow",
+        icon: "maybe_outlined",
+        message: pending.kind === "contract-workbench"
+          ? "请继续编辑当前合同，或发送 `/合同起草结束` 后再开始新的合同起草会话。"
+          : "请继续填写当前引导，或等待引导超时后重新发送 `/起草合同 引导`。",
+      });
+      return { claimed: true };
+    }
+
+    if (routed?.kind === "command") {
+      const claimed = await this.handleCommand(message, routed.command, workbench);
+      return { claimed };
+    }
+
+    if (!pending) {
+      return { claimed: false };
     }
 
     if (pending.kind === "contract-draft-onboard") {
@@ -2044,4 +2057,20 @@ function detectPendingUploadKind(text: string): PendingUploadKind | null {
     return "invoice-recognize";
   }
   return null;
+}
+
+function isContractReentryCommand(command: ContractAssistantCommand, pendingKind: PendingInteraction["kind"]): boolean {
+  if (command.kind !== "passthrough") {
+    return false;
+  }
+  const normalized = command.name.trim().toLowerCase();
+  if (pendingKind === "contract-draft-onboard") {
+    const request = command.arguments.join(" ").trim();
+    return (normalized === "contract-draft" || normalized === "起草合同")
+      && (request === "引导" || request.toLowerCase() === "onboard");
+  }
+  if (pendingKind === "contract-workbench") {
+    return normalized === "合同起草开始" || normalized === "contract-workbench";
+  }
+  return false;
 }

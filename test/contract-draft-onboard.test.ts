@@ -274,6 +274,31 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     }
   });
 
+  it("keeps the current onboarding when /起草合同 引导 is sent again", async () => {
+    const { module, sendPayload, listDraftTemplates, draftContract, tempDir } = await createModule();
+    try {
+      const start = createTextMessage("/起草合同 引导");
+      await module.handleMessage({
+        message: start,
+        routed: routeIncomingText(start.plainText),
+      });
+
+      const restart = createTextMessage("/起草合同 引导");
+      const result = await module.handleMessage({
+        message: restart,
+        routed: routeIncomingText(restart.plainText),
+      });
+
+      expect(result).toEqual({ claimed: true });
+      expect(listDraftTemplates).toHaveBeenCalledTimes(1);
+      expect(draftContract).not.toHaveBeenCalled();
+      expect(JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {})).toContain("已有合同起草引导");
+      expect(JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {})).toContain("请继续填写当前引导");
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
   it("restores an unfinished onboarding interaction after restart", async () => {
     const { module, tempDir } = createModule();
     try {

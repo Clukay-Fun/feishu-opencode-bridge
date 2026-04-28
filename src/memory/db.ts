@@ -189,6 +189,15 @@ export class MemoryDb {
     `).run(...ids);
   }
 
+  /** 删除指定用户的全部记忆，返回删除条数。 */
+  deleteUser(userId: string): number {
+    const result = this.db.prepare(`
+      DELETE FROM memories
+      WHERE user_id = @userId
+    `).run({ userId });
+    return result.changes;
+  }
+
   /** 列出当前有记忆数据的所有用户。 */
   listUsers(): string[] {
     const rows = this.db.prepare(`

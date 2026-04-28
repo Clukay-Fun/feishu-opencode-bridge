@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.53 - 2026-04-28
+
+### Added
+- Added long-term memory user clearing support for privacy cleanup workflows.
+
+### Fixed
+- Prevented contract draft/workbench re-entry commands from resetting active contract interactions.
+- Rejected spoofed HTML payloads uploaded as PDFs during evidence extraction.
+- Added regression coverage for Feishu retries, SSE reconnects, file download failures, and labor failure card fallbacks.
+
 ## 0.1.52 - 2026-04-28
 
 ### Added

@@ -14,6 +14,7 @@ import { LaborRuntimeModule } from "../src/labor/runtime-module.js";
 import type { LaborAggregateResult, LaborMaterialExtraction } from "../src/labor/index.js";
 import type { IncomingChatMessage } from "../src/runtime/app.js";
 import { createFeishuTransport } from "../src/runtime/feishu-transport.js";
+import { buildLaborAnalysisProgressPayload } from "../src/feishu/labor-cards.js";
 
 function createTextMessage(text: string, overrides: Partial<IncomingChatMessage> = {}): IncomingChatMessage {
   return {
@@ -314,6 +315,96 @@ describe("LaborRuntimeModule", () => {
     } finally {
       await cleanupModule(module, tempDir);
     }
+  });
+
+  it("rejects a different requester from re-entering the same labor thread", async () => {
+    const { module, tempDir, sendPayload } = await createModule();
+    try {
+      const start = createTextMessage("/劳动分析 第一次");
+      await module.handleMessage({
+        message: start,
+        routed: routeIncomingText(start.plainText),
+      });
+
+      const secondStart = createTextMessage("/劳动分析 第二次", { senderOpenId: "ou_other" });
+      const result = await module.handleMessage({
+        message: secondStart,
+        routed: routeIncomingText(secondStart.plainText),
+      });
+
+      expect(result).toEqual({ claimed: true });
+      const payloadCalls = sendPayload.mock.calls as unknown as Array<[string, unknown]>;
+      expect(JSON.stringify(payloadCalls.at(-1)?.[1] ?? {})).toContain("当前劳动分析任务仅限发起人继续");
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("updates the progress card with a failure when all material extraction fails", async () => {
+    const { module, tempDir, updatePayload, extractMaterial, finalizeAnalysis } = await createModule();
+    extractMaterial.mockRejectedValueOnce(new Error("OpenCode crashed"));
+    try {
+      const start = createTextMessage("/劳动分析 劳动争议演示");
+      await module.handleMessage({
+        message: start,
+        routed: routeIncomingText(start.plainText),
+      });
+      await module.handleMessage({
+        message: createFileMessage("证据1.pdf"),
+        routed: null,
+      });
+      const end = createTextMessage("/劳动分析结束");
+      await module.handleMessage({
+        message: end,
+        routed: routeIncomingText(end.plainText),
+      });
+
+      expect(finalizeAnalysis).not.toHaveBeenCalled();
+      const updatedPayloads = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
+      const failedSerialized = JSON.stringify(updatedPayloads.at(-1)?.[2] ?? {});
+      expect(failedSerialized).toContain("劳动分析失败");
+      expect(failedSerialized).toContain("OpenCode crashed");
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("updates the progress card when final labor analysis fails", async () => {
+    const { module, tempDir, updatePayload, finalizeAnalysis } = await createModule();
+    finalizeAnalysis.mockRejectedValueOnce(new Error("analysis timeout"));
+    try {
+      const start = createTextMessage("/劳动分析 劳动争议演示");
+      await module.handleMessage({
+        message: start,
+        routed: routeIncomingText(start.plainText),
+      });
+      await module.handleMessage({
+        message: createFileMessage("证据1.pdf"),
+        routed: null,
+      });
+      const end = createTextMessage("/劳动分析结束");
+      await module.handleMessage({
+        message: end,
+        routed: routeIncomingText(end.plainText),
+      });
+
+      const updatedPayloads = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
+      const failedSerialized = JSON.stringify(updatedPayloads.at(-1)?.[2] ?? {});
+      expect(failedSerialized).toContain("劳动分析失败");
+      expect(failedSerialized).toContain("analysis timeout");
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("falls back to an error notice when labor progress card input violates the template schema", () => {
+    const payload = buildLaborAnalysisProgressPayload({
+      sourceLabel: "证据1.pdf",
+      steps: [{ label: "读取内容", status: "invalid-status" }],
+      elapsedMs: 1_000,
+    } as never);
+
+    expect(JSON.stringify(JSON.parse(payload.content))).toContain("劳动分析卡片渲染失败");
   });
 
   it("restores an unfinished interaction after restart", async () => {

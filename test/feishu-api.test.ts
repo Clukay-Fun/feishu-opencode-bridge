@@ -109,6 +109,26 @@ describe("FeishuApiClient", () => {
     expect(retryBody.fields.标签).toBe("劳动");
   });
 
+  it("retries createBitableRecord after a 429 response", async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ code: 0, tenant_access_token: "token_1" }))
+      .mockResolvedValueOnce(jsonResponse({ code: 99991663, msg: "rate limited" }, 429))
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { record: { record_id: "rec_ok" } } }));
+    vi.stubGlobal("fetch", fetch);
+    const client = new FeishuApiClient("app", "secret");
+
+    const promise = client.createBitableRecord("app_token", "tbl_1", {
+      问题: "Q",
+      答案: "A",
+    });
+
+    await vi.runAllTimersAsync();
+
+    await expect(promise).resolves.toBe("rec_ok");
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
   it("keeps 标签 as an array when the bitable field accepts multi-select values", async () => {
     vi.useFakeTimers();
     const fetch = vi.fn()

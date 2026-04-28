@@ -376,6 +376,41 @@ describe("knowledge base bridge flow", () => {
     expect(JSON.stringify(replyPayloads)).toContain("文件为空，请重新上传包含内容的文件");
   });
 
+  it("reports Feishu download failures before starting a file-backed turn", async () => {
+    const outbound = {
+      ...createOutbound(),
+      downloadMessageResource: vi.fn(async () => {
+        throw new Error("Feishu downloadMessageResource failed: 404 Not Found");
+      }),
+    };
+    const eventStream = new FakeOpenCodeEventStream();
+    const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "unused" });
+    const promptAsync = vi.spyOn(opencode, "promptAsync");
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
+      knowledge: null,
+      opencode,
+      eventStream,
+      memory: null,
+    });
+
+    await app.handleIncomingMessage({
+      ...createTextMessage("说明.txt", "om_file_missing"),
+      messageType: "file",
+      file: {
+        fileKey: "file_missing",
+        fileName: "说明.txt",
+        size: 1,
+      },
+    });
+    await app.handleIncomingMessage(createTextMessage("总结这个文件", "om_instruction"));
+
+    expect(outbound.downloadMessageResource).toHaveBeenCalledWith("om_file_missing", "file_missing", "file");
+    expect(promptAsync).not.toHaveBeenCalled();
+    const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+    expect(JSON.stringify(replyPayloads)).toContain("文件读取失败");
+    expect(JSON.stringify(replyPayloads)).toContain("404 Not Found");
+  });
+
   it("retires /legal-query* aliases in private chat and keeps later messages on the normal OpenCode path", async () => {
     const outbound = createOutbound();
     const eventStream = new FakeOpenCodeEventStream();

@@ -191,6 +191,9 @@ export function validateEvidenceFile(fileName: string, buffer: Buffer, allowedEx
   if (!allowedExtensions.includes(extension)) {
     throw new Error(`仅支持 ${allowedExtensions.join(" / ")} 文件`);
   }
+  if (extension === ".pdf" && looksLikeHtmlPayload(buffer)) {
+    throw new Error("文件内容不像有效 PDF，请确认文件类型后重新上传");
+  }
   if (buffer.byteLength > maxFileSizeMb * 1024 * 1024) {
     throw new Error(`文件过大，请控制在 ${maxFileSizeMb}MB 以内`);
   }
@@ -209,6 +212,14 @@ function isSpreadsheetExtension(extension: string): boolean {
 
 function isImageExtension(extension: string): boolean {
   return [".png", ".jpg", ".jpeg", ".webp"].includes(extension);
+}
+
+function looksLikeHtmlPayload(buffer: Buffer): boolean {
+  const prefix = buffer.subarray(0, 512).toString("utf8").trimStart().toLowerCase();
+  return prefix.startsWith("<!doctype html")
+    || prefix.startsWith("<html")
+    || prefix.includes("<title>")
+    || prefix.includes("<body");
 }
 
 function isImageMimeType(mimeType: string | undefined): boolean {

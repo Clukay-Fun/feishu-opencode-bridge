@@ -6,7 +6,7 @@ import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { MemoryService, appendSystemBlock, formatRecallBlock } from "../src/memory/index.js";
 import type { MemoryExtractor } from "../src/memory/extractor.js";
@@ -191,6 +191,64 @@ describe("MemoryService", () => {
       expect.objectContaining({ fact: "唯一事实", embedding: [0, 1] }),
     ]));
 
+    await service.stop();
+  });
+
+  it("clears all memories for a user without affecting other users", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-memory-service-"));
+    const service = new MemoryService(
+      makeConfig(path.join(dir, "memory.db")),
+      makeEmbeddingsConfig(),
+      new OpenCodeClient(new URL("http://127.0.0.1:4096/")),
+      logger as any,
+      {
+        async extract(userMessage) {
+          return [`用户记录 ${userMessage}`];
+        },
+      },
+    );
+
+    service.enqueueLearn("u1", "隐私偏好", "reply");
+    service.enqueueLearn("u2", "工作偏好", "reply");
+    await service.drain(1_000);
+
+    expect(service.clearUserMemories("u1")).toEqual({ deleted: 1 });
+
+    await expect(service.buildRecallBlock("u1", "隐私偏好")).resolves.toBe("");
+    await expect(service.buildRecallBlock("u2", "工作偏好")).resolves.toContain("用户记录 工作偏好");
+    await service.stop();
+  });
+
+  it("logs SQLite write failures and keeps the learn worker alive", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-memory-service-"));
+    const serviceLogger = { log: vi.fn(), logTranscript: vi.fn() };
+    const service = new MemoryService(
+      makeConfig(path.join(dir, "memory.db")),
+      makeEmbeddingsConfig(),
+      new OpenCodeClient(new URL("http://127.0.0.1:4096/")),
+      serviceLogger as any,
+      {
+        async extract(userMessage) {
+          return [`用户记录 ${userMessage}`];
+        },
+      },
+    );
+    const db = (service as any).db as MemoryDb;
+    const saveFacts = vi.spyOn(db, "saveFacts")
+      .mockImplementationOnce(() => {
+        throw new Error("SQLITE_BUSY: database is locked");
+      });
+
+    service.enqueueLearn("u1", "first", "reply");
+    service.enqueueLearn("u1", "second", "reply");
+    await service.drain(1_000);
+
+    expect(serviceLogger.log).toHaveBeenCalledWith("memory/learn", "failed", expect.objectContaining({
+      userId: "u1",
+      detail: "SQLITE_BUSY: database is locked",
+    }), "warn");
+    expect(saveFacts).toHaveBeenCalledTimes(2);
+    await expect(service.buildRecallBlock("u1", "second")).resolves.toContain("用户记录 second");
     await service.stop();
   });
 });
