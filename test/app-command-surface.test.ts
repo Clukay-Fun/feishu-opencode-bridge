@@ -597,6 +597,29 @@ describe("BridgeApp command surface", () => {
     expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("/delete confirm");
   });
 
+  it("shows short session ids in /sessions", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const appAny = app as unknown as { sessionMap: Record<string, SessionWindowRecord> };
+    appAny.sessionMap["oc_p2p_1"] = {
+      mode: "multi",
+      activeSessionId: "ses_2988a201effeCaZpLXXjarY0pM",
+      sessions: [
+        { sessionId: "ses_2988a201effeCaZpLXXjarY0pM", label: "当前会话", createdAt: 2, lastUsedAt: 2 },
+        { sessionId: "ses_1234567890abcdef", label: "旧会话", createdAt: 1, lastUsedAt: 1 },
+      ],
+    };
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "sessions" },
+    });
+
+    const text = extractInteractiveText(getReplyPayloads(outbound)[0]);
+    expect(text).toContain("ses_2988a20");
+    expect(text).toContain("ses_12345678");
+  });
+
   it("lists hidden sessions through /sessions all", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
@@ -625,6 +648,7 @@ describe("BridgeApp command surface", () => {
     const text = extractInteractiveText(getReplyPayloads(outbound)[0]);
     expect(text).not.toContain("已隐藏会话");
     expect(text).toContain("隐藏会话 #2");
+    expect(text).toContain("ses_2");
     expect(text).toContain("s_hidden");
     expect(text).toContain("已隐藏");
   });

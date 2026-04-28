@@ -43,6 +43,7 @@ import {
 const SESSION_SELECTION_TTL_MS = 180_000;
 const SESSION_DELETE_CONFIRM_TTL_MS = 30_000;
 const SESSIONS_ALL_PAGE_SIZE = 20;
+const SESSION_SHORT_ID_LENGTH = 12;
 
 type CommandMessage = Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "threadKey" | "senderOpenId" | "rootId" | "parentId">;
 type CommandRouted = Extract<RoutedText, { kind: "command" }>;
@@ -389,7 +390,7 @@ export class CommandHandler {
       const currentSession = getActiveSession(window);
       if (window.mode === "single") {
         await this.context.sendPayload(message.chatId, buildSessionListCardPayload({
-          items: currentSession ? [{ index: 1, title: currentSession.label, current: true, meta: "当前" }] : [],
+          items: currentSession ? [{ index: 1, title: currentSession.label, current: true, meta: "当前", shortId: shortSessionId(currentSession.sessionId) }] : [],
           footer: currentSession ? "当前窗口为单会话模式，不支持切换" : "发送 `/new` 创建第一个会话",
           emptyText: "暂无会话",
         }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "会话列表", len: 4 }, { replyToMessageId: message.messageId });
@@ -405,8 +406,8 @@ export class CommandHandler {
       const options = visibleSessions.map((session, index) => ({ index: index + 1, sessionId: session.sessionId, title: session.label, current: session.sessionId === currentSession?.sessionId }));
       this.context.setPendingInteraction(message.conversationKey, { kind: "session-select", options, expiresAt: Date.now() + SESSION_SELECTION_TTL_MS });
       await this.context.sendPayload(message.chatId, buildSessionListCardPayload({
-        items: options.map((option) => ({ index: option.index, title: option.title, current: option.current, meta: option.current ? "当前" : formatSessionTimestamp(findSessionMeta(window, option.sessionId)?.lastUsedAt) })),
-        footer: "发送 `/switch <编号>` 切换 · 3 分钟内有效",
+        items: options.map((option) => ({ index: option.index, title: option.title, current: option.current, meta: option.current ? "当前" : formatSessionTimestamp(findSessionMeta(window, option.sessionId)?.lastUsedAt), shortId: shortSessionId(option.sessionId) })),
+        footer: "发送 `/switch <编号或短ID>` 切换 · 3 分钟内有效",
       }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "会话列表", len: 4 }, { replyToMessageId: message.messageId });
       return;
     }
@@ -444,7 +445,7 @@ export class CommandHandler {
       for (const [pageIndex, page] of pages.entries()) {
         const footer = `${query ? `关键词：${command.query?.trim()} · ` : ""}第 ${pageIndex + 1}/${pages.length} 页 · 发送 \`/switch <编号>\` 恢复或切换 · \`/delete <编号>\` 或 \`/delete <sessionId>\` 彻底删除 · 3 分钟内有效`;
         await this.context.sendPayload(message.chatId, buildSessionListCardPayload({
-          items: page.map((option) => ({ index: option.index, title: option.displayTitle ?? option.title, current: option.current, archived: !option.inWindow, meta: option.current ? "当前" : option.inWindow ? "窗口中" : "已隐藏" })),
+          items: page.map((option) => ({ index: option.index, title: option.displayTitle ?? option.title, current: option.current, archived: !option.inWindow, meta: option.current ? "当前" : option.inWindow ? "窗口中" : "已隐藏", shortId: shortSessionId(option.sessionId) })),
           footer,
         }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "全部会话", len: 4 }, { replyToMessageId: message.messageId });
       }
@@ -828,7 +829,6 @@ export class CommandHandler {
     }
 
     // 只在窗口可见 sessions 中匹配
-    const SHORT_ID_LENGTH = 12;
     const candidates: SessionSelectionOption[] = window.sessions.map((session, index) => ({
       index: index + 1,
       sessionId: session.sessionId,
@@ -847,7 +847,7 @@ export class CommandHandler {
     const prefixMatches = exactMatches.length > 0
       ? exactMatches
       : candidates.filter((candidate) => {
-        const shortId = candidate.sessionId.slice(0, SHORT_ID_LENGTH).toLowerCase();
+        const shortId = shortSessionId(candidate.sessionId).toLowerCase();
         return shortId.startsWith(query) || normalizeSessionLookupText(candidate.title).includes(query);
       });
 
@@ -867,7 +867,7 @@ export class CommandHandler {
           title: option.title,
           current: Boolean(option.current),
           meta: option.current ? "当前" : "窗口中",
-          shortId: option.sessionId.slice(0, SHORT_ID_LENGTH),
+          shortId: shortSessionId(option.sessionId),
         })),
         footer: "匹配到多个会话 · 发送 `/switch <编号>` 切换 · 3 分钟内有效",
       }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "匹配会话", len: 4 }, { replyToMessageId: message.messageId });
@@ -1019,4 +1019,8 @@ function normalizeSessionLookupText(value: string | undefined): string {
 function formatHiddenSessionDisplayTitle(index: number, sessionId: string): string {
   const suffix = sessionId.length > 8 ? sessionId.slice(-8) : sessionId;
   return `隐藏会话 #${index} · ${suffix}`;
+}
+
+function shortSessionId(sessionId: string): string {
+  return sessionId.length <= SESSION_SHORT_ID_LENGTH ? sessionId : sessionId.slice(0, SESSION_SHORT_ID_LENGTH);
 }
