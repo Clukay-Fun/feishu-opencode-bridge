@@ -169,6 +169,7 @@ adapter 会把内部消息、pending、turn、window 映射成 public view。
 ```text
 extensions/<extension-id>/
   manifest.json
+  package.json
   src/
     meta.ts
     runtime.ts
@@ -191,8 +192,16 @@ manifest 示例：
 }
 ```
 
+扩展间依赖建议：
+
+- 扩展间启动顺序依赖推荐写在 manifest 的 `dependencies`。
+- `meta.dependencies` 和 `extension.dependencies` 仍会被 loader 兼容读取，但只作为过渡兜底。
+- 三处依赖声明如果不一致，loader 会合并去重；为了便于排错，新扩展不要把依赖分散写在多处。
+
 加载规则：
 
+- 每个外部扩展都必须是一个 npm package，扩展目录必须包含 `package.json`。
+- `package.json.name` / `package.json.version` 与 manifest `id` / `version` 不一致时会产生启动 warning。
 - 默认加载 `meta` 和 `runtime`，也就是扩展自己的构建产物。
 - 设置 `BRIDGE_EXTENSIONS_DEV=1` 时优先加载 `devMeta` 和 `devRuntime`。
 - `NODE_ENV=production` 时会忽略单独的 `BRIDGE_EXTENSIONS_DEV=1`，并回落到 `dist/`。
@@ -217,6 +226,16 @@ manifest 示例：
 - 扩展自己的 `package.json` 建议声明 `"type": "module"`，确保 ESM import 行为稳定。
 - 外部扩展不得假设 bridge 主仓库已经安装了它需要的 npm 包。
 - 如果扩展依赖 `yaml`、`js-yaml`、SDK 等第三方包，应把它们声明在扩展自己的 dependencies 中。
+- loader 会校验 `dependencies` 中的包是否解析到扩展目录内；如果解析到 bridge 根目录或其它祖先目录的 `node_modules`，该扩展会被拒载并给出依赖泄漏 warning。
+- 本期不做共享依赖优化，也不做 hoist；多个扩展依赖同一个包时，各自安装一份。
+
+本地工具：
+
+- `npm run ext:install -- <path-or-tarball>`：安装本地扩展目录或 `.tgz`，并在目标扩展目录执行 `npm install --omit=dev`。
+- `npm run ext:list`：列出 `${BRIDGE_EXTENSIONS_DIR}` 或 `${BRIDGE_HOME:-.}/extensions` 下已安装扩展。
+- `npm run ext:remove -- <id>`：删除整个已安装扩展目录。
+- `npm run ext:pack -- <src-dir>`：对扩展源码目录执行 `npm pack`，输出本地 `.tgz`。
+- 工具不支持 `npm run ext:install -- <package-name>`，不会连接 npm registry。
 
 ## 命令归属
 

@@ -10,6 +10,9 @@
   - 例如文档 diff 检查、formatter 导出面检查
 - `kb/`
   - 知识库本地 CLI 入口与便捷包装脚本
+- `ext/`
+  - 外部扩展包的本地安装、列出、删除和打包入口
+  - 例如 `npm run ext:install -- ./my-extension`、`npm run ext:pack -- ./my-extension`
 - `wrappers/`
   - 兼容型外层入口，负责把调用转发到真正实现
 - `python/`

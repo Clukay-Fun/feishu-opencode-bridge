@@ -5,7 +5,8 @@
  * - 只做启动期发现与校验，不做热拔插、卸载、reload 或沙箱隔离。
  * - 将加载失败记录为 warning，避免单个外部扩展阻塞 bridge 核心启动。
  */
-import { access, readdir, readFile } from "node:fs/promises";
+import { access, readdir, readFile, realpath } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -23,7 +24,16 @@ const ExtensionManifestSchema = z.object({
   dependencies: z.array(z.string().min(1)).default([]),
 });
 
+const ExtensionPackageJsonSchema = z.object({
+  name: z.string().min(1),
+  version: z.string().min(1),
+  type: z.string().optional(),
+  dependencies: z.record(z.string()).default({}),
+  optionalDependencies: z.record(z.string()).default({}),
+});
+
 export type ExtensionManifest = z.infer<typeof ExtensionManifestSchema>;
+export type ExtensionPackageJson = z.infer<typeof ExtensionPackageJsonSchema>;
 
 export type LoadedExternalExtensions = {
   metas: ExtensionMetaDefinition[];
@@ -54,6 +64,9 @@ export async function loadExternalExtensions(options: {
     const extensionDir = path.join(rootDir, entry.name);
     try {
       const manifest = await readManifest(extensionDir);
+      const packageJson = await readPackageJson(extensionDir);
+      warnings.push(...validatePackageAgainstManifest(entry.name, manifest, packageJson));
+      await assertDependenciesIsolated(extensionDir, packageJson);
       const entries = resolveManifestEntries(manifest, sourcePreference.preferSource);
       const [meta, extension] = await Promise.all([
         importDefault<ExtensionMetaDefinition>(path.join(extensionDir, entries.meta)),
@@ -90,6 +103,12 @@ async function readManifest(extensionDir: string): Promise<ExtensionManifest> {
   const manifestPath = path.join(extensionDir, "manifest.json");
   const raw = JSON.parse(await readFile(manifestPath, "utf8")) as unknown;
   return ExtensionManifestSchema.parse(raw);
+}
+
+async function readPackageJson(extensionDir: string): Promise<ExtensionPackageJson> {
+  const packageJsonPath = path.join(extensionDir, "package.json");
+  const raw = JSON.parse(await readFile(packageJsonPath, "utf8")) as unknown;
+  return ExtensionPackageJsonSchema.parse(raw);
 }
 
 async function importDefault<T>(filePath: string): Promise<T> {
@@ -188,4 +207,60 @@ function resolveSourcePreference(
 
 function allowsDevEntriesInProduction(env: NodeJS.ProcessEnv): boolean {
   return env.BRIDGE_ALLOW_DEV_IN_PROD === "1" || env.BRIDGE_ALLOW_DEV_IN_PROD === "true";
+}
+
+function validatePackageAgainstManifest(
+  directoryName: string,
+  manifest: ExtensionManifest,
+  packageJson: ExtensionPackageJson,
+): string[] {
+  const warnings: string[] = [];
+  if (packageJson.name !== manifest.id) {
+    warnings.push(`外部扩展 ${directoryName}: package.json name (${packageJson.name}) 与 manifest id (${manifest.id}) 不一致`);
+  }
+  if (manifest.version && packageJson.version !== manifest.version) {
+    warnings.push(`外部扩展 ${directoryName}: package.json version (${packageJson.version}) 与 manifest version (${manifest.version}) 不一致`);
+  }
+  if (packageJson.type !== "module") {
+    warnings.push(`外部扩展 ${directoryName}: package.json 建议声明 "type": "module"，以稳定 ESM 加载行为`);
+  }
+  return warnings;
+}
+
+async function assertDependenciesIsolated(
+  extensionDir: string,
+  packageJson: ExtensionPackageJson,
+): Promise<void> {
+  const dependencies = Object.keys(packageJson.dependencies);
+  if (dependencies.length === 0) {
+    return;
+  }
+
+  const requireFromExtension = createRequire(path.join(extensionDir, "package.json"));
+  const resolvedExtensionDir = await realpath(extensionDir);
+  const leaked: string[] = [];
+  const missing: string[] = [];
+
+  for (const dependency of dependencies) {
+    try {
+      const resolved = await realpath(requireFromExtension.resolve(dependency));
+      if (!isPathInside(resolvedExtensionDir, resolved)) {
+        leaked.push(`${dependency} -> ${resolved}`);
+      }
+    } catch {
+      missing.push(dependency);
+    }
+  }
+
+  if (missing.length > 0) {
+    throw new Error(`package.json dependencies 未安装在扩展目录: ${missing.join(", ")}`);
+  }
+  if (leaked.length > 0) {
+    throw new Error(`package.json dependencies 解析到扩展目录外，疑似依赖泄漏: ${leaked.join("; ")}`);
+  }
+}
+
+function isPathInside(parentDir: string, childPath: string): boolean {
+  const relative = path.relative(parentDir, path.resolve(childPath));
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
 }

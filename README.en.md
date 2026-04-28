@@ -3,7 +3,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6)](https://www.typescriptlang.org/)
 [![Feishu](https://img.shields.io/badge/Feishu-Bridge-0F6FFF)](https://open.feishu.cn/)
-[![Tests](https://img.shields.io/badge/tests-457%20passing-success)](#%EF%B8%8F-development-commands)
+[![Tests](https://img.shields.io/badge/tests-470%20passing-success)](#%EF%B8%8F-development-commands)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 [中文](README.md) | **English**
@@ -307,7 +307,7 @@ npm run dev
 npm run dev:once
 ```
 
-Current full verification baseline: **64 test files · 457 tests passing**
+Current full verification baseline: **65 test files · 470 tests passing**
 
 ## 📂 Project Layout
 

@@ -41,6 +41,87 @@ describe("loadExternalExtensions", () => {
     ]);
   });
 
+  it("rejects extension directories without package.json", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "bridge-extensions-"));
+    await writeExtension(root, "legacy", {
+      writePackageJson: false,
+      meta: "export default { id: 'legacy' };",
+      runtime: "export default { id: 'legacy', createModule: () => ({ name: 'legacy', priority: 90 }) };",
+    });
+
+    const loaded = await loadExternalExtensions({ rootDir: root });
+
+    expect(loaded.extensions).toEqual([]);
+    expect(loaded.warnings[0]).toContain("跳过外部扩展 legacy");
+    expect(loaded.warnings[0]).toContain("package.json");
+  });
+
+  it("warns when package.json metadata differs from manifest", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "bridge-extensions-"));
+    await writeExtension(root, "demo", {
+      manifestId: "demo",
+      manifestVersion: "1.0.0",
+      packageName: "@demo/different",
+      packageVersion: "2.0.0",
+      meta: "export default { id: 'demo' };",
+      runtime: "export default { id: 'demo', createModule: () => ({ name: 'demo', priority: 90 }) };",
+    });
+
+    const loaded = await loadExternalExtensions({ rootDir: root });
+
+    expect(loaded.extensions.map((extension) => extension.id)).toEqual(["demo"]);
+    expect(loaded.warnings).toEqual([
+      expect.stringContaining("package.json name (@demo/different) 与 manifest id (demo) 不一致"),
+      expect.stringContaining("package.json version (2.0.0) 与 manifest version (1.0.0) 不一致"),
+    ]);
+  });
+
+  it("requires declared dependencies to resolve inside the extension directory", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "bridge-extensions-"));
+    await writeExtension(root, "demo", {
+      packageDependencies: { "local-only": "1.0.0" },
+      localDependencies: ["local-only"],
+      meta: "export default { id: 'demo' };",
+      runtime: "export default { id: 'demo', createModule: () => ({ name: 'demo', priority: 90 }) };",
+    });
+
+    const loaded = await loadExternalExtensions({ rootDir: root });
+
+    expect(loaded.warnings).toEqual([]);
+    expect(loaded.extensions.map((extension) => extension.id)).toEqual(["demo"]);
+  });
+
+  it("rejects declared dependencies that leak from an ancestor node_modules", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "bridge-extensions-"));
+    await writeFakePackage(path.join(root, "node_modules", "leaky"));
+    await writeExtension(root, "demo", {
+      packageDependencies: { leaky: "1.0.0" },
+      meta: "export default { id: 'demo' };",
+      runtime: "export default { id: 'demo', createModule: () => ({ name: 'demo', priority: 90 }) };",
+    });
+
+    const loaded = await loadExternalExtensions({ rootDir: root });
+
+    expect(loaded.extensions).toEqual([]);
+    expect(loaded.warnings[0]).toContain("疑似依赖泄漏");
+    expect(loaded.warnings[0]).toContain("leaky");
+  });
+
+  it("rejects declared dependencies that are not installed", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "bridge-extensions-"));
+    await writeExtension(root, "demo", {
+      packageDependencies: { missing: "1.0.0" },
+      meta: "export default { id: 'demo' };",
+      runtime: "export default { id: 'demo', createModule: () => ({ name: 'demo', priority: 90 }) };",
+    });
+
+    const loaded = await loadExternalExtensions({ rootDir: root });
+
+    expect(loaded.extensions).toEqual([]);
+    expect(loaded.warnings[0]).toContain("dependencies 未安装在扩展目录");
+    expect(loaded.warnings[0]).toContain("missing");
+  });
+
   it("uses dev source entries when explicitly requested", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "bridge-extensions-"));
     await writeExtension(root, "demo", {
@@ -184,8 +265,14 @@ async function writeExtension(
   name: string,
   options: {
     manifestId?: string | undefined;
+    manifestVersion?: string | undefined;
     dependencies?: string[] | undefined;
     manifestExtra?: Record<string, unknown> | undefined;
+    writePackageJson?: boolean | undefined;
+    packageName?: string | undefined;
+    packageVersion?: string | undefined;
+    packageDependencies?: Record<string, string> | undefined;
+    localDependencies?: string[] | undefined;
     meta: string;
     runtime: string;
     sourceMeta?: string | undefined;
@@ -201,9 +288,21 @@ async function writeExtension(
   }
   await writeFile(path.join(extensionDir, "manifest.json"), JSON.stringify({
     id: options.manifestId ?? name,
+    ...(options.manifestVersion ? { version: options.manifestVersion } : {}),
     dependencies: options.dependencies ?? [],
     ...options.manifestExtra,
   }), "utf8");
+  if (options.writePackageJson !== false) {
+    await writeFile(path.join(extensionDir, "package.json"), JSON.stringify({
+      name: options.packageName ?? (options.manifestId ?? name),
+      version: options.packageVersion ?? options.manifestVersion ?? "0.0.0",
+      type: "module",
+      dependencies: options.packageDependencies ?? {},
+    }), "utf8");
+  }
+  for (const dependency of options.localDependencies ?? []) {
+    await writeFakePackage(path.join(extensionDir, "node_modules", dependency));
+  }
   await writeFile(path.join(distDir, "meta.js"), options.meta, "utf8");
   await writeFile(path.join(distDir, "runtime.js"), options.runtime, "utf8");
   if (options.sourceMeta) {
@@ -212,4 +311,15 @@ async function writeExtension(
   if (options.sourceRuntime) {
     await writeFile(path.join(sourceDir, "runtime.js"), options.sourceRuntime, "utf8");
   }
+}
+
+async function writeFakePackage(packageDir: string): Promise<void> {
+  await mkdir(packageDir, { recursive: true });
+  await writeFile(path.join(packageDir, "package.json"), JSON.stringify({
+    name: path.basename(packageDir),
+    version: "1.0.0",
+    type: "module",
+    main: "index.js",
+  }), "utf8");
+  await writeFile(path.join(packageDir, "index.js"), "export default 'ok';\n", "utf8");
 }

@@ -15,6 +15,10 @@ const depCruiserConfig = require("../.dependency-cruiser.cjs") as {
     from?: { path?: string; pathNot?: string };
     to?: { path?: string; pathNot?: string; dependencyTypesNot?: readonly string[] };
   }>;
+  options: {
+    doNotFollow?: { path?: string };
+    exclude?: { path?: string };
+  };
 };
 
 describe("dependency-cruiser rules", () => {
@@ -113,6 +117,11 @@ describe("dependency-cruiser rules", () => {
         dependencyTypes: ["import"],
       })).toBe(true);
     }
+  });
+
+  it("does not cruise nested external extension node_modules", () => {
+    expect(depCruiserConfig.options.doNotFollow?.path).toContain("(^|/)node_modules/");
+    expect(depCruiserConfig.options.exclude?.path).toContain("(^|/)node_modules/");
   });
 });
 

@@ -146,10 +146,10 @@ module.exports = {
   ],
   options: {
     doNotFollow: {
-      path: "node_modules",
+      path: "(^|/)node_modules/",
     },
     exclude: {
-      path: "^(dist|node_modules)/",
+      path: "^dist/|(^|/)node_modules/",
     },
     tsPreCompilationDeps: true,
     tsConfig: {

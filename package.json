@@ -1,8 +1,11 @@
 {
   "name": "feishu-opencode-bridge",
-  "version": "0.1.50",
+  "version": "0.1.51",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
@@ -14,6 +17,10 @@
     "test:watch": "vitest",
     "onboard": "node scripts/runtime/onboard.mjs",
     "doctor": "node scripts/runtime/doctor.mjs",
+    "ext:install": "node scripts/ext/ext.mjs install",
+    "ext:list": "node scripts/ext/ext.mjs list",
+    "ext:remove": "node scripts/ext/ext.mjs remove",
+    "ext:pack": "node scripts/ext/ext.mjs pack",
     "kb": "tsx scripts/kb/kb.ts",
     "dev": "tsx watch src/index.ts",
     "dev:once": "tsx src/index.ts",

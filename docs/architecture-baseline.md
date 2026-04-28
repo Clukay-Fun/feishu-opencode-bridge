@@ -185,6 +185,8 @@ Phase 3 起，外部扩展 manifest 可声明 `devMeta` 和 `devRuntime`。
 TypeScript 源码入口只适用于 `tsx` 启动的开发模式；正式部署仍要求扩展自己构建到 `dist/`。
 外部扩展可以带自己的 `package.json` 和 `node_modules`。
 带依赖的外部扩展必须自行构建和安装依赖，不能假设 bridge 主仓库会提供这些包。
+扩展目录缺少 `package.json` 时会被拒载。
+`dependencies` 中声明的运行时依赖必须解析到扩展目录内，不能向上泄漏到 bridge 根目录或其它祖先目录的 `node_modules`。
 
 当前强制试点：
 
