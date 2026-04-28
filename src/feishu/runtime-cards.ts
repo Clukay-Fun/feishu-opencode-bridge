@@ -44,6 +44,8 @@ export type SessionListCardView = {
     current?: boolean;
     archived?: boolean;
     meta?: string;
+    /** 短会话 ID（前 12 位），用于显示和匹配。 */
+    shortId?: string;
   }>;
   footer: string;
   emptyText?: string;
@@ -555,13 +557,14 @@ function buildSessionListItemBlock(item: SessionListCardView["items"][number]): 
 
 function formatSessionListTitle(item: SessionListCardView["items"][number]): string {
   const title = escapeText(item.title);
+  const shortIdSuffix = item.shortId ? ` \`${escapeText(item.shortId)}\`` : "";
   if (item.archived) {
-    return `~~${title}~~`;
+    return `~~${title}~~${shortIdSuffix}`;
   }
   if (item.current) {
-    return `**${title}**`;
+    return `**${title}**${shortIdSuffix}`;
   }
-  return title;
+  return `${title}${shortIdSuffix}`;
 }
 
 function buildEmptyStateBlock(text: string): Record<string, unknown> {

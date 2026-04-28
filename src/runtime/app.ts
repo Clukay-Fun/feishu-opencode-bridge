@@ -88,12 +88,14 @@ export type IncomingTextMessage = IncomingChatMessageBase & {
 };
 
 export type IncomingFileMessage = IncomingChatMessageBase & {
-  messageType: "file";
+  messageType: "file" | "image";
   file: {
     fileKey: string;
     fileName: string;
     size?: number | undefined;
   };
+  /** 区分普通文件与图片资源，下载时传给飞书 API。缺失时默认 "file"。 */
+  resourceType?: "file" | "image" | undefined;
 };
 
 export type IncomingChatMessage = IncomingTextMessage | IncomingFileMessage;
@@ -105,7 +107,7 @@ type OutboundPort = {
 };
 
 type KnowledgeResourcePort = {
-  downloadMessageResource(messageId: string, fileKey: string, type: "file"): Promise<{
+  downloadMessageResource(messageId: string, fileKey: string, type: "file" | "image"): Promise<{
     fileName: string;
     mimeType: string;
     buffer: Buffer;
@@ -226,7 +228,7 @@ export class BridgeApp {
         return await this.sendPayload(chatId, payload, options, delivery);
       },
       toCardContent: (payload) => this.toCardContent(payload),
-    });
+    }, this.config.permissions?.defaultPolicy ?? "ask");
     const transport = createFeishuTransport({
       sendPayload: async (chatId, payload, options, delivery) => await this.sendPayload(chatId, payload, options, delivery),
       updatePayload: async (chatId, messageId, payload, options) => await this.updatePayload(chatId, messageId, payload, options),
@@ -363,7 +365,7 @@ export class BridgeApp {
     }, message.plainText);
     this.messageContextStore.rememberInbound(message);
 
-    const routed = message.messageType === "file"
+    const routed = message.messageType === "file" || message.messageType === "image"
       ? null
       : routeIncomingText(message.plainText);
     if (routed?.kind === "command") {
@@ -401,7 +403,7 @@ export class BridgeApp {
       }
     }
 
-    if (message.messageType === "file") {
+    if (message.messageType === "file" || message.messageType === "image") {
       try {
         this.validateRegularFileInput(message.file.fileName, message.file.size);
       } catch (error) {
@@ -422,6 +424,7 @@ export class BridgeApp {
         }, { replyToMessageId: message.messageId });
         return;
       }
+      const resourceType = message.resourceType ?? (message.messageType === "image" ? "image" : "file");
       this.setPendingInteraction(message.conversationKey, {
         kind: "file-await-instruction",
         chatId: message.chatId,
@@ -434,6 +437,7 @@ export class BridgeApp {
           fileName: message.file.fileName,
           size: message.file.size,
         },
+        resourceType,
       });
       await this.sendPayload(message.chatId, buildNoticeCardPayload({
         title: "已收到文件",
@@ -442,8 +446,7 @@ export class BridgeApp {
         message: [
           `文件：${message.file.fileName}`,
           "",
-          "如果只处理这个文件，可直接回复例如：`总结这个文件` 或 `把这个文件入库`。",
-          "如果要连续批量入库，请发送 `/kb-ingest-start` 后重新上传文件。",
+          "发送指令处理，或 `/help-file` 查看示例",
         ].join("\n"),
         messageIconToken: "file-link-docx_outlined",
         messageIconColor: "blue",
@@ -634,7 +637,7 @@ export class BridgeApp {
    */
   private async handlePendingInteraction(message: IncomingChatMessage, pending: PendingInteraction): Promise<boolean> {
     if (pending.kind === "question") {
-      if (message.messageType === "file") {
+      if (message.messageType === "file" || message.messageType === "image") {
         await this.sendMarkdown(message.chatId, "当前正在等待文本回答，请直接发送文字内容。", message.messageId);
         return true;
       }
@@ -690,7 +693,7 @@ export class BridgeApp {
       await this.sendMarkdown(message.chatId, "当前文件处理仅允许文件发送者继续说明需求。", message.messageId);
       return true;
     }
-    if (message.messageType === "file") {
+    if (message.messageType === "file" || message.messageType === "image") {
       await this.sendMarkdown(message.chatId, "已收到上一个文件，请先发送文字说明你希望我如何处理；如需入库，请发送 `/kb-ingest-start`。", message.messageId);
       return true;
     }
@@ -939,7 +942,7 @@ export class BridgeApp {
     if (!resources.downloadMessageResource) {
       throw new Error("当前运行环境不支持下载飞书文件。");
     }
-    const downloaded = await resources.downloadMessageResource(pending.file.messageId, pending.file.fileKey, "file");
+    const downloaded = await resources.downloadMessageResource(pending.file.messageId, pending.file.fileKey, pending.resourceType ?? "file");
     this.validateRegularFileInput(downloaded.fileName, downloaded.buffer.byteLength);
     const localPath = await this.saveUploadedFileForTurn(turnId, downloaded.fileName, downloaded.buffer);
     return {

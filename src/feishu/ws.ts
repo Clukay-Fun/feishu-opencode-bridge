@@ -76,6 +76,8 @@ type TextParseResult = {
     fileName: string;
     size?: number | undefined;
   } | undefined;
+  /** 区分普通文件与图片资源，下载时传给飞书 API。 */
+  resourceType?: "file" | "image" | undefined;
 };
 
 type IncomingMessageInspection =
@@ -100,7 +102,7 @@ type IncomingMessageInspection =
     fields?: Record<string, unknown>;
   };
 
-const SUPPORTED_MESSAGE_TYPES = new Set(["text", "post", "file"]);
+const SUPPORTED_MESSAGE_TYPES = new Set(["text", "post", "file", "image"]);
 const RECENT_MESSAGE_TTL_MS = 24 * 60 * 60 * 1000;
 
 type FeishuIngressOptions = {
@@ -225,10 +227,12 @@ export class FeishuWsClient {
       messageId: incoming.messageId,
       senderId: incoming.senderOpenId,
       messageType: incoming.messageType,
+      resourceType: "resourceType" in incoming ? incoming.resourceType : undefined,
+      hasFilePayload: "file" in incoming && Boolean(incoming.file),
       textPreview: incoming.plainText,
       len: incoming.plainText.length,
       ...(inspection.fields ?? {}),
-    });
+    }, "debug");
 
     if (
       incoming.chatType !== "p2p"
@@ -499,10 +503,17 @@ function parseIncomingMessage(payload: FeishuReceiveEvent, options: FeishuIngres
 
   return {
     accepted: true,
-    incoming: parsed.file ? { ...common, messageType: "file", file: parsed.file } : {
-      ...common,
-      messageType: messageType as "text" | "post",
-    },
+    incoming: parsed.file
+      ? {
+        ...common,
+        messageType: parsed.resourceType === "image" ? "image" : "file",
+        file: parsed.file,
+        ...(parsed.resourceType ? { resourceType: parsed.resourceType } : {}),
+      }
+      : {
+        ...common,
+        messageType: messageType as "text" | "post",
+      },
     hasAnyMention: parsed.hasAnyMention,
     hasExactBotMention: parsed.hasExactBotMention,
     fields: {
@@ -575,6 +586,10 @@ function parseMessageContent(
 
   if (messageType === "file") {
     return parseFileMessage(rawContent);
+  }
+
+  if (messageType === "image") {
+    return parseImageMessage(rawContent);
   }
 
   return null;
@@ -684,6 +699,26 @@ function parseFileMessage(rawContent: string): TextParseResult {
       hasAnyMention: false,
       hasExactBotMention: false,
     };
+  }
+}
+
+/** 解析 image 消息，提取 image_key 并复用 file-like payload。 */
+function parseImageMessage(rawContent: string): TextParseResult {
+  try {
+    const parsed = JSON.parse(rawContent) as Record<string, unknown>;
+    const imageKey = nonEmptyStringFromKeys(parsed, ["image_key", "imageKey", "key"]);
+    if (!imageKey) {
+      return { plainText: "", hasAnyMention: false, hasExactBotMention: false };
+    }
+    return {
+      plainText: "[图片]",
+      hasAnyMention: false,
+      hasExactBotMention: false,
+      file: { fileKey: imageKey, fileName: `${imageKey}.png` },
+      resourceType: "image",
+    };
+  } catch {
+    return { plainText: "", hasAnyMention: false, hasExactBotMention: false };
   }
 }
 

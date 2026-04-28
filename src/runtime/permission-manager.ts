@@ -45,13 +45,38 @@ export class PermissionManager {
     private readonly opencode: OpenCodePermissionPort,
     private readonly logger: Logger,
     private readonly callbacks: PermissionManagerCallbacks,
+    private readonly defaultPolicy: "ask" | "allow" | "deny" = "ask",
   ) {}
 
   // #region 对外入口
 
-  /** 注册一条新的权限请求。 */
-  registerInteraction(interaction: PendingPermissionInteraction): void {
+  /** 注册一条新的权限请求。若 defaultPolicy 自动决策成功则返回 true。 */
+  async registerInteraction(interaction: PendingPermissionInteraction): Promise<boolean> {
+    // 如果 defaultPolicy 不是 ask，尝试自动决策
+    if (this.defaultPolicy !== "ask" && this.isReadOnlyPermission(interaction.permissionName)) {
+      const resolution = this.defaultPolicy === "allow" ? "once" : "deny";
+      this.logger.log("bridge/permission", "auto decision by defaultPolicy", {
+        permissionId: interaction.permissionId,
+        permissionName: interaction.permissionName,
+        defaultPolicy: this.defaultPolicy,
+        resolution,
+      }, "warn");
+      try {
+        await this.resolveInteraction(interaction, resolution);
+        return true;
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        this.logger.log("bridge/permission", "auto decision failed, falling back to manual approval", {
+          permissionId: interaction.permissionId,
+          detail,
+        }, "warn");
+        // 自动决策失败，注册 pending 让人工审批卡兜底
+        this.interactions.set(interaction.permissionVersion, interaction);
+        return false;
+      }
+    }
     this.interactions.set(interaction.permissionVersion, interaction);
+    return false;
   }
 
   /** 处理来自飞书卡片的权限审批动作。 */
@@ -260,6 +285,19 @@ export class PermissionManager {
       messageIconToken: iconToken,
       messageIconColor: template,
     });
+  }
+
+  /** 判断权限是否为只读类（可被 defaultPolicy=allow 自动放行）。 */
+  private isReadOnlyPermission(permissionName: string): boolean {
+    // 明确拒绝的危险权限
+    const deniedPermissions = ["bash", "edit", "write", "delete", "remove", "execute", "run", "install", "uninstall"];
+    const normalizedName = permissionName.toLowerCase().trim();
+    if (deniedPermissions.some((p) => normalizedName === p || normalizedName.endsWith(`.${p}`))) {
+      return false;
+    }
+    // 明确允许的只读权限（包括 OpenCode 常见权限）
+    const allowedPermissions = ["external_directory", "read", "list", "get", "search", "query", "find", "view", "show", "export"];
+    return allowedPermissions.some((p) => normalizedName === p || normalizedName.startsWith(`${p}.`) || normalizedName.startsWith(`${p}_`) || normalizedName.includes(`.${p}`));
   }
 
   // #endregion

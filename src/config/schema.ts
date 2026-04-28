@@ -110,6 +110,10 @@ export const ConfigSchema = z.object({
       totalTurn: z.number().int().positive().default(300_000),
     }).default({}),
   }),
+  permissions: z.object({
+    /** ask: 每次都询问; allow: 只读权限自动放行; deny: 只读权限自动拒绝 */
+    defaultPolicy: z.enum(["ask", "allow", "deny"]).default("ask"),
+  }).default({}),
   embeddings: EmbeddingsConfigSchema,
   logging: z.object({
     dir: z.string().min(1).default("./logs"),
@@ -209,6 +213,9 @@ export type AppConfig = {
     eventGapTimeoutMs: number;
     totalTimeoutMs: number;
   };
+  permissions?: {
+    defaultPolicy: "ask" | "allow" | "deny";
+  } | undefined;
   embeddings?: {
     provider?: {
       baseUrl: URL;

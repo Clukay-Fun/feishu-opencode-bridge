@@ -178,6 +178,7 @@ describe("BridgeApp command surface", () => {
       activeSessionId: "ses_1",
       sessions: [
         { sessionId: "ses_1", label: "劳动争议分析", createdAt: 1, lastUsedAt: 3 },
+        { sessionId: "ses_2", label: "劳动合同审查", createdAt: 1, lastUsedAt: 2 },
       ],
     };
 

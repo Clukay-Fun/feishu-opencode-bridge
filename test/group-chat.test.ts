@@ -20,6 +20,7 @@ vi.mock("@larksuiteoapi/node-sdk", () => {
 });
 
 import { FeishuWsClient, buildConversationKey, computeThreadKey, createFeishuIngressOptions, normalizeIncomingMessage } from "../src/feishu/ws.js";
+import type { IncomingChatMessage } from "../src/runtime/app.js";
 import { toOpencodePromptText } from "../src/runtime/app-helpers.js";
 import type { ChatWhitelist } from "../src/store/whitelist.js";
 
@@ -877,5 +878,44 @@ describe("group chat support", () => {
       senderOpenId: "ou_123",
     }));
     expect(lastCall?.[3]).toBe("warn");
+  });
+
+  it("accepts image messages and parses image_key as file payload", async () => {
+    const handler = vi.fn(async (message: IncomingChatMessage) => {
+      void message;
+    });
+    const logger = { log: vi.fn() };
+    const client = new FeishuWsClient(
+      "app",
+      "secret",
+      makeOptions({ enableP2p: true }),
+      createWhitelist(),
+      handler,
+      logger,
+    );
+
+    await (client as unknown as { handleEvent(payload: unknown): Promise<void> }).handleEvent({
+      message: {
+        chat_id: "oc_p2p_img_1",
+        chat_type: "p2p",
+        message_id: "om_img_1",
+        message_type: "image",
+        content: JSON.stringify({ image_key: "img_v3_abc123" }),
+      },
+      sender: { sender_id: { open_id: "ou_123" } },
+    });
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    const passedMessage = handler.mock.calls[0]?.[0] as IncomingChatMessage;
+    expect(passedMessage.messageType).toBe("image");
+    if (passedMessage.messageType !== "image") {
+      throw new Error("expected image message");
+    }
+    expect(passedMessage.file).toEqual(expect.objectContaining({
+      fileKey: "img_v3_abc123",
+      fileName: "img_v3_abc123.png",
+    }));
+    expect(passedMessage.resourceType).toBe("image");
+    expect(passedMessage.plainText).toBe("[图片]");
   });
 });

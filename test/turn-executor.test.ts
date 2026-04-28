@@ -281,7 +281,7 @@ function createContext(): TurnExecutorContext {
       cleanup() {},
     },
     permissionManager: {
-      registerInteraction() {},
+      async registerInteraction() { return false; },
       buildActionButtons() { return []; },
     },
     moduleManager: {
