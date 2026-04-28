@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.54 - 2026-04-28
+
+### Added
+- Added an invoice-recognize skill template with a runtime prompt for fuller invoice field extraction and contract matching hints.
+- Added MinerU API key configuration and passed shared document parser options into contract and labor evidence extraction flows.
+
+### Changed
+- Changed the default parser order to prefer local PDF text/Markdown extraction before external OCR providers.
+- Treated empty `pdf-parse` output as low quality so scanned PDFs can fall through to the configured OCR provider chain.
+
 ## 0.1.53 - 2026-04-28
 
 ### Added

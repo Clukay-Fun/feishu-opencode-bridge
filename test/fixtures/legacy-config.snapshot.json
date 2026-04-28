@@ -155,15 +155,14 @@
     "parser": {
       "externalApiEnabled": false,
       "pdfProviderOrder": [
-        "mineru-agent",
-        "paddleocr-vl",
+        "pdf-parse",
         "pymupdf4llm",
         "docling",
-        "pdf-parse"
+        "mineru-agent"
       ],
       "imageProviderOrder": [
-        "paddleocr-vl",
         "mineru-agent",
+        "paddleocr-vl",
         "tesseract"
       ],
       "ocrLang": "chi_sim+eng",
@@ -172,7 +171,8 @@
       "maxPollMs": 180000,
       "mineru": {
         "enabled": false,
-        "endpoint": "https://mineru.net/api/v1/agent"
+        "endpoint": "https://mineru.net/api/v1/agent",
+        "apiKey": ""
       },
       "paddleocr": {
         "enabled": false,

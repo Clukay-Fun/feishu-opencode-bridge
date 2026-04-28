@@ -75,6 +75,7 @@ export type DocumentParserOptions = {
   mineru?: {
     enabled?: boolean | undefined;
     endpoint?: string | undefined;
+    apiKey?: string | undefined;
   } | undefined;
   paddleocr?: {
     enabled?: boolean | undefined;
@@ -170,6 +171,9 @@ async function parsePdfWithProviderOrder(
           ...options,
           pdfProviderOrder: [provider],
         })).parsed;
+      if (provider === "pdf-parse" && !parsed.plainText.trim() && !parsed.markdown.trim()) {
+        throw new Error("pdf-parse produced empty text");
+      }
       return {
         ...parsed,
         fallbackChain: mergeFallbackChain(attempted, parsed.fallbackChain),

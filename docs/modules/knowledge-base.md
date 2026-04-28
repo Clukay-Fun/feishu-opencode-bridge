@@ -364,14 +364,16 @@ SQLite 表结构：
 
 | 格式         | 解析方式                       | 依赖        |
 | ------------ | ------------------------------ | ----------- |
-| PDF          | MinerU / PaddleOCR-VL / PyMuPDF4LLM / Docling / pdf-parse 按配置降级 | Python 工具 / API / pdf-parse |
-| 图片/扫描件  | PaddleOCR-VL / MinerU / Tesseract 按配置降级 | API / tesseract |
+| PDF          | pdf-parse / PyMuPDF4LLM / Docling / MinerU 按配置降级 | pdf-parse / Python 工具 / API |
+| 图片/扫描件  | MinerU / PaddleOCR-VL / Tesseract 按配置降级 | API / tesseract |
 | Word (.docx) | `mammoth` 提取原始文本，再按段落切分 | mammoth     |
 | TXT/MD       | 直接读取（支持 GB18030 自动检测） | 无          |
 | URL 网页     | OpenCode session 读取并整理成 MD | OpenCode    |
 
 外部 OCR API 默认关闭。
 只有显式设置 `knowledgeBase.parser.externalApiEnabled=true` 并启用对应 provider 时，才会上传材料到 MinerU 或 PaddleOCR-VL。
+
+默认策略优先本地提取：电子 PDF 先读文字层，复杂版式 PDF 再走本地 Markdown 解析，扫描版 PDF 前面抽不到内容时才进入 MinerU；图片材料直接进入 OCR provider 顺序。
 
 ### 分块策略
 

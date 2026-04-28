@@ -62,8 +62,8 @@ const DocumentParserProviderSchema = z.enum(["mineru-agent", "paddleocr-vl", "py
 
 const KnowledgeBaseParserSchema = z.object({
   externalApiEnabled: z.boolean().default(false),
-  pdfProviderOrder: z.array(DocumentParserProviderSchema).default(["mineru-agent", "paddleocr-vl", "pymupdf4llm", "docling", "pdf-parse"]),
-  imageProviderOrder: z.array(DocumentParserProviderSchema).default(["paddleocr-vl", "mineru-agent", "tesseract"]),
+  pdfProviderOrder: z.array(DocumentParserProviderSchema).default(["pdf-parse", "pymupdf4llm", "docling", "mineru-agent"]),
+  imageProviderOrder: z.array(DocumentParserProviderSchema).default(["mineru-agent", "paddleocr-vl", "tesseract"]),
   ocrLang: z.string().min(1).default("chi_sim+eng"),
   timeoutMs: z.number().int().positive().default(180_000),
   pollIntervalMs: z.number().int().positive().default(5_000),
@@ -71,6 +71,7 @@ const KnowledgeBaseParserSchema = z.object({
   mineru: z.object({
     enabled: z.boolean().default(false),
     endpoint: z.string().url().default("https://mineru.net/api/v1/agent"),
+    apiKey: z.string().default(""),
   }).default({}),
   paddleocr: z.object({
     enabled: z.boolean().default(false),
@@ -81,8 +82,8 @@ const KnowledgeBaseParserSchema = z.object({
 
 export const DEFAULT_KNOWLEDGE_BASE_PARSER_CONFIG = {
   externalApiEnabled: false,
-  pdfProviderOrder: ["mineru-agent", "paddleocr-vl", "pymupdf4llm", "docling", "pdf-parse"],
-  imageProviderOrder: ["paddleocr-vl", "mineru-agent", "tesseract"],
+  pdfProviderOrder: ["pdf-parse", "pymupdf4llm", "docling", "mineru-agent"],
+  imageProviderOrder: ["mineru-agent", "paddleocr-vl", "tesseract"],
   ocrLang: "chi_sim+eng",
   timeoutMs: 180_000,
   pollIntervalMs: 5_000,
@@ -90,6 +91,7 @@ export const DEFAULT_KNOWLEDGE_BASE_PARSER_CONFIG = {
   mineru: {
     enabled: false,
     endpoint: "https://mineru.net/api/v1/agent",
+    apiKey: "",
   },
   paddleocr: {
     enabled: false,
@@ -184,6 +186,7 @@ export type KnowledgeBaseConfig = {
     mineru: {
       enabled: boolean;
       endpoint: string;
+      apiKey: string;
     };
     paddleocr: {
       enabled: boolean;
@@ -320,6 +323,7 @@ function normalizeKnowledgeBaseConfig(
       mineru: {
         enabled: parsed.parser.mineru.enabled,
         endpoint: parsed.parser.mineru.endpoint,
+        apiKey: parsed.parser.mineru.apiKey,
       },
       paddleocr: {
         enabled: parsed.parser.paddleocr.enabled,

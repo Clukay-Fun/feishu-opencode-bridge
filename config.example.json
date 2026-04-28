@@ -125,6 +125,25 @@
         "concurrency": 3,
         "maxExtractChunks": 30,
         "maxExtractQas": 500
+      },
+      "parser": {
+        "externalApiEnabled": false,
+        "pdfProviderOrder": ["pdf-parse", "pymupdf4llm", "docling", "mineru-agent"],
+        "imageProviderOrder": ["mineru-agent", "paddleocr-vl", "tesseract"],
+        "ocrLang": "chi_sim+eng",
+        "timeoutMs": 180000,
+        "pollIntervalMs": 5000,
+        "maxPollMs": 180000,
+        "mineru": {
+          "enabled": false,
+          "endpoint": "https://mineru.net/api/v1/agent",
+          "apiKey": ""
+        },
+        "paddleocr": {
+          "enabled": false,
+          "apiKey": "",
+          "secretKey": ""
+        }
       }
     },
     "contract-assistant": {

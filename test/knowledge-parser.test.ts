@@ -14,7 +14,22 @@ vi.mock("../src/utils/python-tool.js", () => ({
 
 vi.mock("pdf-parse", () => ({
   PDFParse: class {
+    private readonly data: Buffer | undefined;
+
+    constructor(options?: { data?: Buffer }) {
+      this.data = options?.data;
+    }
+
     async getText() {
+      if (this.data?.toString("utf8") === "scan") {
+        return {
+          pages: [
+            { num: 1, text: "" },
+          ],
+          text: "",
+          total: 1,
+        };
+      }
       return {
         pages: [
           { num: 1, text: "第一页内容" },
@@ -87,6 +102,32 @@ describe("parseKnowledgeFile", () => {
     expect(parsed.parserUsed).toBe("pdf-parse");
     expect(parsed.fallbackChain).toEqual(["pdf-parse"]);
     expect(parsed.normalizedMarkdown).toBe("第一页内容\n\n---\n\n第二页内容");
+  });
+
+  it("falls back after pdf-parse returns low-quality text", async () => {
+    vi.mocked(spawnPythonTool).mockResolvedValueOnce({
+      ok: true,
+      data: {
+        markdown: "# OCR\n\n扫描版发票内容",
+        plainText: "OCR\n\n扫描版发票内容",
+        sourceFormat: "pdf",
+        tool: "mineru-agent",
+        quality: "high",
+        fallbackChain: ["mineru-agent"],
+        warnings: [],
+      },
+    });
+
+    const parsed = await parseKnowledgeFile("scan.pdf", Buffer.from("scan"), {
+      externalApiEnabled: true,
+      pdfProviderOrder: ["pdf-parse", "mineru-agent"],
+      mineru: { enabled: true, apiKey: "mineru-token" },
+    });
+
+    expect(parsed.parserUsed).toBe("mineru-agent");
+    expect(parsed.fallbackChain).toEqual(["pdf-parse", "mineru-agent"]);
+    expect(parsed.warnings[0]).toContain("pdf-parse failed");
+    expect(parsed.normalizedMarkdown).toContain("扫描版发票内容");
   });
 
   it("prefers python markdown output for pdf files when available", async () => {

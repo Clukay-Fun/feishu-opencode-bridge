@@ -233,6 +233,8 @@ def provider_enabled(payload: dict[str, object], provider: str) -> tuple[bool, s
         mineru = parser_config.get("mineru") if isinstance(parser_config.get("mineru"), dict) else {}
         if not bool(mineru.get("enabled")):
             return False, "mineru.enabled=false"
+        if not mineru.get("apiKey"):
+            return False, "mineru.apiKey missing"
     if provider == "paddleocr-vl":
         paddle = parser_config.get("paddleocr") if isinstance(parser_config.get("paddleocr"), dict) else {}
         if not bool(paddle.get("enabled")):
@@ -270,14 +272,14 @@ def convert_document(input_path: Path, ocr_lang: str, payload: dict[str, object]
         return convert_with_provider_order(
             input_path,
             payload,
-            configured_provider_order(payload, "pdfProviderOrder", ["mineru-agent", "paddleocr-vl", "pymupdf4llm", "docling"]),
+            configured_provider_order(payload, "pdfProviderOrder", ["pdf-parse", "pymupdf4llm", "docling", "mineru-agent"]),
             ocr_lang,
         )
     if suffix in IMAGE_SUFFIXES:
         return convert_with_provider_order(
             input_path,
             payload,
-            configured_provider_order(payload, "imageProviderOrder", ["paddleocr-vl", "mineru-agent", "tesseract"]),
+            configured_provider_order(payload, "imageProviderOrder", ["mineru-agent", "paddleocr-vl", "tesseract"]),
             ocr_lang,
         )
     raise ValueError(f"unsupported file type: {suffix}")

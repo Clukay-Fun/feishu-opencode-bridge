@@ -423,8 +423,8 @@ describe("loadConfig memory settings", () => {
     expect(config.knowledgeBase.ingest.allowedExtensions).toEqual([".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp"]);
     expect(config.knowledgeBase.parser).toEqual({
       externalApiEnabled: false,
-      pdfProviderOrder: ["mineru-agent", "paddleocr-vl", "pymupdf4llm", "docling", "pdf-parse"],
-      imageProviderOrder: ["paddleocr-vl", "mineru-agent", "tesseract"],
+      pdfProviderOrder: ["pdf-parse", "pymupdf4llm", "docling", "mineru-agent"],
+      imageProviderOrder: ["mineru-agent", "paddleocr-vl", "tesseract"],
       ocrLang: "chi_sim+eng",
       timeoutMs: 180000,
       pollIntervalMs: 5000,
@@ -432,6 +432,7 @@ describe("loadConfig memory settings", () => {
       mineru: {
         enabled: false,
         endpoint: "https://mineru.net/api/v1/agent",
+        apiKey: "",
       },
       paddleocr: {
         enabled: false,

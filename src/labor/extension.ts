@@ -25,6 +25,7 @@ export const laborSkillExtension: BuiltinExtensionDefinition = {
         context.opencode as OpenCodeClient,
         context.logger,
         context.knowledge,
+        context.config.knowledgeBase?.parser,
       )
       : null;
     return new LaborRuntimeModule({

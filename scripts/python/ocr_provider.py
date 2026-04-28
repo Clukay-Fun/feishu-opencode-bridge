@@ -37,11 +37,14 @@ def http_request(
         raise RuntimeError(f"HTTP {exc.code}: {detail or exc.reason}") from exc
 
 
-def post_json(url: str, payload: dict[str, Any], timeout: float) -> dict[str, Any]:
+def post_json(url: str, payload: dict[str, Any], timeout: float, headers: dict[str, str] | None = None) -> dict[str, Any]:
+    request_headers = {"Content-Type": "application/json"}
+    if headers:
+        request_headers.update(headers)
     status, body = http_request(
         "POST",
         url,
-        headers={"Content-Type": "application/json"},
+        headers=request_headers,
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         timeout=timeout,
     )
@@ -70,6 +73,13 @@ def post_form(url: str, payload: dict[str, Any], timeout: float) -> dict[str, An
 
 def download_text(url: str, timeout: float) -> str:
     status, body = http_request("GET", url, timeout=timeout)
+    if status < 200 or status >= 300:
+        raise RuntimeError(f"HTTP {status}")
+    return body.decode("utf-8")
+
+
+def download_text_with_headers(url: str, timeout: float, headers: dict[str, str] | None = None) -> str:
+    status, body = http_request("GET", url, headers=headers, timeout=timeout)
     if status < 200 or status >= 300:
         raise RuntimeError(f"HTTP {status}")
     return body.decode("utf-8")
@@ -120,10 +130,12 @@ def extract_error(value: dict[str, Any]) -> str | None:
 
 def parse_with_mineru(input_path: Path, options: dict[str, Any]) -> dict[str, Any]:
     endpoint = str(options.get("endpoint") or "https://mineru.net/api/v1/agent").rstrip("/")
+    api_key = str(options.get("apiKey") or "")
     timeout_ms = int(options.get("timeoutMs") or 180_000)
     poll_interval_ms = int(options.get("pollIntervalMs") or 5_000)
     max_poll_ms = int(options.get("maxPollMs") or 180_000)
     language = str(options.get("ocrLang") or "ch")
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
     submit = post_json(f"{endpoint}/parse/file", {
         "file_name": input_path.name,
@@ -131,7 +143,7 @@ def parse_with_mineru(input_path: Path, options: dict[str, Any]) -> dict[str, An
         "enable_table": True,
         "is_ocr": True,
         "enable_formula": True,
-    }, timeout_ms / 1000)
+    }, timeout_ms / 1000, headers)
     data = submit.get("data") if isinstance(submit.get("data"), dict) else {}
     task_id = str(data.get("task_id") or "")
     file_url = str(data.get("file_url") or "")
@@ -143,7 +155,7 @@ def parse_with_mineru(input_path: Path, options: dict[str, Any]) -> dict[str, An
         raise RuntimeError(f"MinerU upload failed: HTTP {status}")
 
     result = poll_until(
-        poll=lambda: json.loads(download_text(f"{endpoint}/parse/{task_id}", timeout_ms / 1000)),
+        poll=lambda: json.loads(download_text_with_headers(f"{endpoint}/parse/{task_id}", timeout_ms / 1000, headers)),
         is_done=lambda item: isinstance(item.get("data"), dict) and item["data"].get("state") == "done",
         is_failed=lambda item: isinstance(item.get("data"), dict) and item["data"].get("state") == "failed",
         interval_ms=poll_interval_ms,

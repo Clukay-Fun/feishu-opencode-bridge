@@ -9,6 +9,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { LaborSkillConfig } from "../config/schema.js";
+import type { DocumentParserOptions } from "../document-pipeline/index.js";
 import type { KnowledgeBasePort } from "../knowledge/index.js";
 import type { Logger } from "../logging/logger.js";
 import type { OpenCodeClient, OpenCodeModelRef, OpenCodePromptRequest } from "../opencode/client.js";
@@ -87,8 +88,9 @@ export class LaborSkillService {
     private readonly opencode: OpenCodePort,
     private readonly logger: Logger,
     private readonly knowledge: KnowledgeBasePort | null,
+    parserOptions?: DocumentParserOptions | undefined,
   ) {
-    this.evidenceExtractor = new EvidenceExtractService(resources, opencode, logger);
+    this.evidenceExtractor = new EvidenceExtractService(resources, opencode, logger, parserOptions);
     this.cacheFilePath = path.join(dataDir, "labor-skill-cache.json");
   }
 
