@@ -31,6 +31,7 @@ export type DocumentParserUsed =
   | "pdf-parse"
   | "mineru-agent"
   | "paddleocr-vl"
+  | "paddleocr-vl-aistudio"
   | "tesseract";
 
 export type DocumentParseQuality = "high" | "medium" | "low";
@@ -50,7 +51,7 @@ type PythonDocumentParseResult = {
   markdown?: string;
   plainText?: string;
   sourceFormat?: string;
-  tool?: "doc-to-text" | "pymupdf4llm" | "docling" | "mineru-agent" | "paddleocr-vl" | "tesseract";
+  tool?: "doc-to-text" | "pymupdf4llm" | "docling" | "mineru-agent" | "paddleocr-vl" | "paddleocr-vl-aistudio" | "tesseract";
   quality?: DocumentParseQuality;
   fallbackChain?: string[];
   warnings?: string[];
@@ -59,6 +60,7 @@ type PythonDocumentParseResult = {
 export type DocumentParserProvider =
   | "mineru-agent"
   | "paddleocr-vl"
+  | "paddleocr-vl-aistudio"
   | "pymupdf4llm"
   | "docling"
   | "pdf-parse"
@@ -81,6 +83,14 @@ export type DocumentParserOptions = {
     enabled?: boolean | undefined;
     apiKey?: string | undefined;
     secretKey?: string | undefined;
+  } | undefined;
+  paddleocrAiStudio?: {
+    enabled?: boolean | undefined;
+    endpoint?: string | undefined;
+    token?: string | undefined;
+    useDocOrientationClassify?: boolean | undefined;
+    useDocUnwarping?: boolean | undefined;
+    useChartRecognition?: boolean | undefined;
   } | undefined;
 };
 

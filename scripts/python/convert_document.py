@@ -16,13 +16,13 @@ from common.io import read_json_stdin, write_error_stderr, write_json_stdout
 from doc_to_text import extract_text
 from pdf_to_markdown import convert as convert_pdf
 from pdf_to_markdown import convert_with_docling, convert_with_pymupdf4llm, quality_ok
-from ocr_provider import parse_with_mineru, parse_with_paddleocr
+from ocr_provider import parse_with_mineru, parse_with_paddleocr, parse_with_paddleocr_aistudio
 
 
 TEXT_SUFFIXES = {".txt", ".md"}
 HTML_SUFFIXES = {".html", ".htm"}
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
-EXTERNAL_PROVIDERS = {"mineru-agent", "paddleocr-vl"}
+EXTERNAL_PROVIDERS = {"mineru-agent", "paddleocr-vl", "paddleocr-vl-aistudio"}
 
 
 def normalize_text(text: str) -> str:
@@ -189,6 +189,8 @@ def run_provider(input_path: Path, provider: str, options: dict[str, object], oc
         return parse_with_mineru(input_path, options)
     if provider == "paddleocr-vl":
         return parse_with_paddleocr(input_path, options)
+    if provider == "paddleocr-vl-aistudio":
+        return parse_with_paddleocr_aistudio(input_path, options)
     if provider == "pymupdf4llm":
         return convert_pymupdf_pdf_document(input_path)
     if provider == "docling":
@@ -220,6 +222,9 @@ def provider_options(payload: dict[str, object], provider: str, ocr_lang: str) -
     if provider == "paddleocr-vl":
         paddle = parser_config.get("paddleocr") if isinstance(parser_config.get("paddleocr"), dict) else {}
         base.update(paddle)
+    if provider == "paddleocr-vl-aistudio":
+        paddle = parser_config.get("paddleocrAiStudio") if isinstance(parser_config.get("paddleocrAiStudio"), dict) else {}
+        base.update(paddle)
     return base
 
 
@@ -241,6 +246,12 @@ def provider_enabled(payload: dict[str, object], provider: str) -> tuple[bool, s
             return False, "paddleocr.enabled=false"
         if not paddle.get("apiKey") or not paddle.get("secretKey"):
             return False, "paddleocr.apiKey/secretKey missing"
+    if provider == "paddleocr-vl-aistudio":
+        paddle = parser_config.get("paddleocrAiStudio") if isinstance(parser_config.get("paddleocrAiStudio"), dict) else {}
+        if not bool(paddle.get("enabled")):
+            return False, "paddleocrAiStudio.enabled=false"
+        if not paddle.get("token"):
+            return False, "paddleocrAiStudio.token missing"
     return True, None
 
 
@@ -272,14 +283,14 @@ def convert_document(input_path: Path, ocr_lang: str, payload: dict[str, object]
         return convert_with_provider_order(
             input_path,
             payload,
-            configured_provider_order(payload, "pdfProviderOrder", ["pdf-parse", "pymupdf4llm", "docling", "mineru-agent"]),
+            configured_provider_order(payload, "pdfProviderOrder", ["pdf-parse", "pymupdf4llm", "docling", "paddleocr-vl-aistudio", "mineru-agent"]),
             ocr_lang,
         )
     if suffix in IMAGE_SUFFIXES:
         return convert_with_provider_order(
             input_path,
             payload,
-            configured_provider_order(payload, "imageProviderOrder", ["mineru-agent", "paddleocr-vl", "tesseract"]),
+            configured_provider_order(payload, "imageProviderOrder", ["paddleocr-vl-aistudio", "mineru-agent", "tesseract"]),
             ocr_lang,
         )
     raise ValueError(f"unsupported file type: {suffix}")

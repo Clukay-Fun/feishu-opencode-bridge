@@ -95,17 +95,60 @@ describe("ocr_provider python tool", () => {
       }
     });
   });
+
+  it("runs the PaddleOCR-VL AIStudio layout parsing flow and returns markdown", async () => {
+    await withMockServer(async ({ baseUrl, requests }) => {
+      const tempDir = await mkdtemp(path.join(os.tmpdir(), "ocr-paddle-aistudio-"));
+      try {
+        const inputPath = path.join(tempDir, "scan.png");
+        await writeFile(inputPath, "fake-png");
+
+        const result = await spawnPythonTool<{
+          markdown: string;
+          tool: string;
+          fallbackChain: string[];
+        }>("ocr_provider", {
+          provider: "paddleocr-vl-aistudio",
+          inputPath,
+          options: {
+            endpoint: `${baseUrl}/aistudio/layout-parsing`,
+            token: "layout-token",
+          },
+        });
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) {
+          return;
+        }
+        expect(result.data.markdown).toBe("# AIStudio\n\n版面文本");
+        expect(result.data.tool).toBe("paddleocr-vl-aistudio");
+        expect(result.data.fallbackChain).toEqual(["paddleocr-vl-aistudio"]);
+        expect(requests.map((item) => item.methodPath)).toEqual([
+          "POST /aistudio/layout-parsing",
+        ]);
+        expect(requests[0]?.authorization).toBe("token layout-token");
+        expect(JSON.parse(requests[0]?.body ?? "{}")).toMatchObject({
+          fileType: 1,
+          useDocOrientationClassify: false,
+          useDocUnwarping: false,
+          useChartRecognition: false,
+        });
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    });
+  });
 });
 
 async function withMockServer(
-  run: (context: { baseUrl: string; requests: Array<{ methodPath: string; body: string }> }) => Promise<void>,
+  run: (context: { baseUrl: string; requests: Array<{ methodPath: string; body: string; authorization?: string | undefined }> }) => Promise<void>,
 ): Promise<void> {
-  const requests: Array<{ methodPath: string; body: string }> = [];
+  const requests: Array<{ methodPath: string; body: string; authorization?: string | undefined }> = [];
   const server = createServer(async (request, response) => {
     const body = await readRequestBody(request);
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const methodPath = `${request.method ?? "GET"} ${url.pathname}`;
-    requests.push({ methodPath, body });
+    requests.push({ methodPath, body, authorization: request.headers.authorization });
     routeMockRequest(methodPath, response, `http://127.0.0.1:${(server.address() as { port: number }).port}`);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -181,6 +224,22 @@ function routeMockRequest(methodPath: string, response: ServerResponse, baseUrl:
   if (methodPath === "GET /paddle/full.md") {
     response.writeHead(200, { "Content-Type": "text/markdown; charset=utf-8" });
     response.end("# Paddle\n\n图片文本");
+    return;
+  }
+  if (methodPath === "POST /aistudio/layout-parsing") {
+    writeJson(response, {
+      result: {
+        layoutParsingResults: [
+          {
+            markdown: {
+              text: "# AIStudio\n\n版面文本",
+              images: {},
+            },
+            outputImages: {},
+          },
+        ],
+      },
+    });
     return;
   }
   response.writeHead(404);

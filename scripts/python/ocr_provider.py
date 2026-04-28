@@ -5,6 +5,7 @@
 - 沿用 JSON stdin/stdout 协议，供 convert_document.py 编排。
 - MinerU Agent 使用 signed upload + polling + markdown download。
 - 百度 PaddleOCR-VL 使用 access_token + task polling + markdown_url/JSON fallback。
+- AIStudio PaddleOCR-VL 1.5 使用 layout-parsing 同步接口直接返回 Markdown。
 """
 from __future__ import annotations
 
@@ -237,6 +238,49 @@ def parse_with_paddleocr(input_path: Path, options: dict[str, Any]) -> dict[str,
     }
 
 
+def parse_with_paddleocr_aistudio(input_path: Path, options: dict[str, Any]) -> dict[str, Any]:
+    endpoint = str(options.get("endpoint") or "https://r630f5rbv7l5a5j7.aistudio-app.com/layout-parsing")
+    token = str(options.get("token") or "")
+    if not token:
+        raise RuntimeError("PaddleOCR-VL AIStudio requires token")
+    timeout_ms = int(options.get("timeoutMs") or 180_000)
+    suffix = input_path.suffix.lower()
+    file_type = 0 if suffix == ".pdf" else 1
+    response = post_json(endpoint, {
+        "file": base64.b64encode(input_path.read_bytes()).decode("ascii"),
+        "fileType": file_type,
+        "useDocOrientationClassify": bool(options.get("useDocOrientationClassify")),
+        "useDocUnwarping": bool(options.get("useDocUnwarping")),
+        "useChartRecognition": bool(options.get("useChartRecognition")),
+    }, timeout_ms / 1000, {
+        "Authorization": f"token {token}",
+    })
+    result = response.get("result") if isinstance(response.get("result"), dict) else {}
+    pages = result.get("layoutParsingResults") if isinstance(result.get("layoutParsingResults"), list) else []
+    chunks: list[str] = []
+    for index, page in enumerate(pages):
+        if not isinstance(page, dict):
+            continue
+        markdown = page.get("markdown") if isinstance(page.get("markdown"), dict) else {}
+        text = normalize_markdown(str(markdown.get("text") or ""))
+        if text:
+            if len(pages) > 1:
+                chunks.append(f"## 第 {index + 1} 页")
+            chunks.append(text)
+    markdown_text = normalize_markdown("\n\n".join(chunks))
+    if not markdown_text:
+        raise RuntimeError(f"PaddleOCR-VL AIStudio returned empty markdown: {response}")
+    return {
+        "markdown": markdown_text,
+        "plainText": markdown_to_plain_text(markdown_text),
+        "sourceFormat": input_path.suffix.lower().lstrip("."),
+        "tool": "paddleocr-vl-aistudio",
+        "quality": "high",
+        "fallbackChain": ["paddleocr-vl-aistudio"],
+        "warnings": [],
+    }
+
+
 def build_markdown_from_paddle_json(value: dict[str, Any]) -> str:
     pages = value.get("pages") if isinstance(value.get("pages"), list) else []
     chunks: list[str] = []
@@ -272,6 +316,8 @@ def main() -> int:
             write_json_stdout(parse_with_mineru(input_path, options))
         elif provider == "paddleocr-vl":
             write_json_stdout(parse_with_paddleocr(input_path, options))
+        elif provider == "paddleocr-vl-aistudio":
+            write_json_stdout(parse_with_paddleocr_aistudio(input_path, options))
         else:
             raise ValueError(f"unsupported OCR provider: {provider or 'unknown'}")
         return 0

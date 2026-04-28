@@ -423,8 +423,8 @@ describe("loadConfig memory settings", () => {
     expect(config.knowledgeBase.ingest.allowedExtensions).toEqual([".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp"]);
     expect(config.knowledgeBase.parser).toEqual({
       externalApiEnabled: false,
-      pdfProviderOrder: ["pdf-parse", "pymupdf4llm", "docling", "mineru-agent"],
-      imageProviderOrder: ["mineru-agent", "paddleocr-vl", "tesseract"],
+      pdfProviderOrder: ["pdf-parse", "pymupdf4llm", "docling", "paddleocr-vl-aistudio", "mineru-agent"],
+      imageProviderOrder: ["paddleocr-vl-aistudio", "mineru-agent", "tesseract"],
       ocrLang: "chi_sim+eng",
       timeoutMs: 180000,
       pollIntervalMs: 5000,
@@ -438,6 +438,14 @@ describe("loadConfig memory settings", () => {
         enabled: false,
         apiKey: "",
         secretKey: "",
+      },
+      paddleocrAiStudio: {
+        enabled: false,
+        endpoint: "https://r630f5rbv7l5a5j7.aistudio-app.com/layout-parsing",
+        token: "",
+        useDocOrientationClassify: false,
+        useDocUnwarping: false,
+        useChartRecognition: false,
       },
     });
   });

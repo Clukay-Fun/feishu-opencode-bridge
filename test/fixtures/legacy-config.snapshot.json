@@ -158,11 +158,12 @@
         "pdf-parse",
         "pymupdf4llm",
         "docling",
+        "paddleocr-vl-aistudio",
         "mineru-agent"
       ],
       "imageProviderOrder": [
+        "paddleocr-vl-aistudio",
         "mineru-agent",
-        "paddleocr-vl",
         "tesseract"
       ],
       "ocrLang": "chi_sim+eng",
@@ -178,6 +179,14 @@
         "enabled": false,
         "apiKey": "",
         "secretKey": ""
+      },
+      "paddleocrAiStudio": {
+        "enabled": false,
+        "endpoint": "https://r630f5rbv7l5a5j7.aistudio-app.com/layout-parsing",
+        "token": "",
+        "useDocOrientationClassify": false,
+        "useDocUnwarping": false,
+        "useChartRecognition": false
       }
     },
     "ingest": {

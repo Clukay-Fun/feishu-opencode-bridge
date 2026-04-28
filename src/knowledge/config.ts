@@ -58,12 +58,12 @@ const KnowledgeBaseIngestSchema = z.object({
   maxExtractQas: z.number().int().positive().default(500),
 }).default({});
 
-const DocumentParserProviderSchema = z.enum(["mineru-agent", "paddleocr-vl", "pymupdf4llm", "docling", "pdf-parse", "tesseract"]);
+const DocumentParserProviderSchema = z.enum(["mineru-agent", "paddleocr-vl", "paddleocr-vl-aistudio", "pymupdf4llm", "docling", "pdf-parse", "tesseract"]);
 
 const KnowledgeBaseParserSchema = z.object({
   externalApiEnabled: z.boolean().default(false),
-  pdfProviderOrder: z.array(DocumentParserProviderSchema).default(["pdf-parse", "pymupdf4llm", "docling", "mineru-agent"]),
-  imageProviderOrder: z.array(DocumentParserProviderSchema).default(["mineru-agent", "paddleocr-vl", "tesseract"]),
+  pdfProviderOrder: z.array(DocumentParserProviderSchema).default(["pdf-parse", "pymupdf4llm", "docling", "paddleocr-vl-aistudio", "mineru-agent"]),
+  imageProviderOrder: z.array(DocumentParserProviderSchema).default(["paddleocr-vl-aistudio", "mineru-agent", "tesseract"]),
   ocrLang: z.string().min(1).default("chi_sim+eng"),
   timeoutMs: z.number().int().positive().default(180_000),
   pollIntervalMs: z.number().int().positive().default(5_000),
@@ -78,12 +78,20 @@ const KnowledgeBaseParserSchema = z.object({
     apiKey: z.string().default(""),
     secretKey: z.string().default(""),
   }).default({}),
+  paddleocrAiStudio: z.object({
+    enabled: z.boolean().default(false),
+    endpoint: z.string().url().default("https://r630f5rbv7l5a5j7.aistudio-app.com/layout-parsing"),
+    token: z.string().default(""),
+    useDocOrientationClassify: z.boolean().default(false),
+    useDocUnwarping: z.boolean().default(false),
+    useChartRecognition: z.boolean().default(false),
+  }).default({}),
 }).default({});
 
 export const DEFAULT_KNOWLEDGE_BASE_PARSER_CONFIG = {
   externalApiEnabled: false,
-  pdfProviderOrder: ["pdf-parse", "pymupdf4llm", "docling", "mineru-agent"],
-  imageProviderOrder: ["mineru-agent", "paddleocr-vl", "tesseract"],
+  pdfProviderOrder: ["pdf-parse", "pymupdf4llm", "docling", "paddleocr-vl-aistudio", "mineru-agent"],
+  imageProviderOrder: ["paddleocr-vl-aistudio", "mineru-agent", "tesseract"],
   ocrLang: "chi_sim+eng",
   timeoutMs: 180_000,
   pollIntervalMs: 5_000,
@@ -97,6 +105,14 @@ export const DEFAULT_KNOWLEDGE_BASE_PARSER_CONFIG = {
     enabled: false,
     apiKey: "",
     secretKey: "",
+  },
+  paddleocrAiStudio: {
+    enabled: false,
+    endpoint: "https://r630f5rbv7l5a5j7.aistudio-app.com/layout-parsing",
+    token: "",
+    useDocOrientationClassify: false,
+    useDocUnwarping: false,
+    useChartRecognition: false,
   },
 } as const;
 
@@ -177,8 +193,8 @@ export type KnowledgeBaseConfig = {
   };
   parser?: {
     externalApiEnabled: boolean;
-    pdfProviderOrder: Array<"mineru-agent" | "paddleocr-vl" | "pymupdf4llm" | "docling" | "pdf-parse" | "tesseract">;
-    imageProviderOrder: Array<"mineru-agent" | "paddleocr-vl" | "pymupdf4llm" | "docling" | "pdf-parse" | "tesseract">;
+    pdfProviderOrder: Array<"mineru-agent" | "paddleocr-vl" | "paddleocr-vl-aistudio" | "pymupdf4llm" | "docling" | "pdf-parse" | "tesseract">;
+    imageProviderOrder: Array<"mineru-agent" | "paddleocr-vl" | "paddleocr-vl-aistudio" | "pymupdf4llm" | "docling" | "pdf-parse" | "tesseract">;
     ocrLang: string;
     timeoutMs: number;
     pollIntervalMs: number;
@@ -192,6 +208,14 @@ export type KnowledgeBaseConfig = {
       enabled: boolean;
       apiKey: string;
       secretKey: string;
+    };
+    paddleocrAiStudio: {
+      enabled: boolean;
+      endpoint: string;
+      token: string;
+      useDocOrientationClassify: boolean;
+      useDocUnwarping: boolean;
+      useChartRecognition: boolean;
     };
   } | undefined;
 };
@@ -329,6 +353,14 @@ function normalizeKnowledgeBaseConfig(
         enabled: parsed.parser.paddleocr.enabled,
         apiKey: parsed.parser.paddleocr.apiKey,
         secretKey: parsed.parser.paddleocr.secretKey,
+      },
+      paddleocrAiStudio: {
+        enabled: parsed.parser.paddleocrAiStudio.enabled,
+        endpoint: parsed.parser.paddleocrAiStudio.endpoint,
+        token: parsed.parser.paddleocrAiStudio.token,
+        useDocOrientationClassify: parsed.parser.paddleocrAiStudio.useDocOrientationClassify,
+        useDocUnwarping: parsed.parser.paddleocrAiStudio.useDocUnwarping,
+        useChartRecognition: parsed.parser.paddleocrAiStudio.useChartRecognition,
       },
     },
   };
