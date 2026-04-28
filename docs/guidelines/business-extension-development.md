@@ -152,7 +152,7 @@ export const exampleExtension: BuiltinExtensionDefinition = {
 扩展仍是受信代码，配置变更和扩展版本变更仍需要重启。
 
 Phase 2 起，外部扩展可以通过 `ExtensionMetaDefinition.configDefinition` 声明自己的配置块。
-配置数据位于 `config.json` 的 `extensions` 对象下，例如 `extensions.demoExtension`。
+配置数据位于 `config.json` 的 `extensions` 对象下，例如 `extensions["demo-extension"]`。
 `ModuleConfigDefinition` 和 `ConfigLoadContext` 已纳入公共 API；`ConfigLoadContext` 字段集冻结，新增字段需要架构 review。
 
 外部 runtime module 由 adapter 接入内部 `RuntimeModule` seam。
@@ -272,6 +272,18 @@ core router 只处理 bridge / framework 命令。
 ## 配置规则
 
 模块配置必须靠近模块维护。
+
+推荐用户配置入口是 `extensions["extension-id"]`。
+legacy 顶层字段仍永久兼容，运行时输出形状也保持不变。
+
+| 用户配置入口 | 运行时输出字段 |
+| :-- | :-- |
+| `extensions["knowledge-base"]` | `config.knowledgeBase` |
+| `extensions["contract-assistant"]` | `config.contractAssistant` |
+| `extensions["labor-skill"]` | `config.laborSkill` |
+
+当 namespace 与 legacy 顶层字段同时出现时，namespace 配置胜出，loader 会返回 `extension-config-overrides-legacy` warning。
+未知 namespace id 会保留在 `config.extensions`，供外部扩展使用。
 
 要求：
 

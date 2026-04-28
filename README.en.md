@@ -3,7 +3,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6)](https://www.typescriptlang.org/)
 [![Feishu](https://img.shields.io/badge/Feishu-Bridge-0F6FFF)](https://open.feishu.cn/)
-[![Tests](https://img.shields.io/badge/tests-470%20passing-success)](#%EF%B8%8F-development-commands)
+[![Tests](https://img.shields.io/badge/tests-486%20passing-success)](#%EF%B8%8F-development-commands)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 [中文](README.md) | **English**
@@ -286,12 +286,15 @@ Use [config.example.json](config.example.json) as the template. Main config sect
 | `storage` | Session mappings, whitelist, logs, and business state directories |
 | `bridge` | Queueing, session mode, timeout, and system state injection |
 | `memory` | Long-term memory switches, storage, and sync settings |
-| `knowledgeBase` | Knowledge base switches, ingestion, retrieval, unified document parsing, local DB, and Bitable settings |
-| `contractAssistant` | Contract, case, invoice, and reminder capabilities |
-| `laborSkill` | Labor analysis material collection and output settings |
-| `extensions` | External extension-owned config blocks stored under `extensions.<key>` and normalized by configDefinition declarations from extension meta |
+| `extensions["knowledge-base"]` | Knowledge base switches, ingestion, retrieval, unified document parsing, local DB, and Bitable settings |
+| `extensions["contract-assistant"]` | Contract, case, invoice, and reminder capabilities |
+| `extensions["labor-skill"]` | Labor analysis material collection and output settings |
+| `extensions["<external-extension>"]` | External extension-owned config blocks normalized by configDefinition declarations from extension meta |
 
-`knowledgeBase`, `contractAssistant`, and `laborSkill` are now connected through the module config registry. `memory` still lives in the central schema/loader for now and can migrate with the same pattern later.
+Use `extensions["extension-id"]` as the recommended user-facing config namespace. Legacy top-level `knowledgeBase`, `contractAssistant`, and `laborSkill` fields remain permanently compatible.
+Runtime output is unchanged and still normalizes into `config.knowledgeBase`, `config.contractAssistant`, and `config.laborSkill`.
+When namespace and legacy fields both exist, namespace wins and the loader emits a warning. Unknown namespace ids remain under `config.extensions`.
+`memory` still lives in the central schema/loader for now and can migrate with the same pattern later.
 Builtin extension `id` values map explicitly to config blocks through data-only meta `configKey`, for example `contract-assistant -> contractAssistant`; the runtime does not guess config keys from strings.
 `extension.meta.ts` only carries static declarations such as config, commands, and card templates; `extension.ts` owns runtime module creation.
 External extensions may only import public contracts from `src/extension-api/`. At startup, the bridge scans `BRIDGE_EXTENSIONS_DIR` or `${BRIDGE_HOME:-.}/extensions`; failed extensions are downgraded to warnings.
@@ -307,7 +310,7 @@ npm run dev
 npm run dev:once
 ```
 
-Current full verification baseline: **65 test files · 470 tests passing**
+Current full verification baseline: **65 test files · 486 tests passing**
 
 ## 📂 Project Layout
 

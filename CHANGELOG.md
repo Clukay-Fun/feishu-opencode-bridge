@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.52 - 2026-04-28
+
+### Added
+- Added namespace-based builtin extension configuration under `extensions["extension-id"]` while keeping legacy top-level config fields compatible.
+- Added regression coverage for runtime module failure isolation, empty file rejection, knowledge keyword fallback, and labor collection edge cases.
+
+### Changed
+- Updated README and extension docs to describe the namespace config model.
+
 ## 0.1.51 - 2026-04-28
 
 ### Added

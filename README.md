@@ -3,7 +3,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6)](https://www.typescriptlang.org/)
 [![Feishu](https://img.shields.io/badge/Feishu-Bridge-0F6FFF)](https://open.feishu.cn/)
-[![测试](https://img.shields.io/badge/tests-470%20passing-success)](#%EF%B8%8F-开发命令)
+[![测试](https://img.shields.io/badge/tests-486%20passing-success)](#%EF%B8%8F-开发命令)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **中文** | [英文版](README.en.md)
@@ -356,12 +356,15 @@ npm run ext:pack -- ./my-extension
 | `storage`           | 会话映射、白名单、日志和业务状态目录                                                         |
 | `bridge`            | 队列、会话模式、超时和系统状态注入                                                           |
 | `memory`            | 长期记忆开关、存储和同步设置                                                                 |
-| `knowledgeBase`     | 知识库开关、入库、检索、统一文档解析、本地数据库和多维表格配置                               |
-| `contractAssistant` | 合同、案件、发票和提醒能力配置                                                               |
-| `laborSkill`        | 劳动分析材料收集和输出配置                                                                   |
-| `extensions`        | 外部扩展自有配置块，按 `extensions.<key>` 存放并由扩展 meta 声明的 configDefinition 归一化 |
+| `extensions["knowledge-base"]`       | 知识库开关、入库、检索、统一文档解析、本地数据库和多维表格配置                               |
+| `extensions["contract-assistant"]`   | 合同、案件、发票和提醒能力配置                                                               |
+| `extensions["labor-skill"]`          | 劳动分析材料收集和输出配置                                                                   |
+| `extensions["<external-extension>"]` | 外部扩展自有配置块，由扩展 meta 声明的 configDefinition 归一化                              |
 
-`knowledgeBase`、`contractAssistant`、`laborSkill` 已通过模块配置注册表接入；`memory` 暂仍在中央 schema/loader 中，后续可按同样模式下沉。
+推荐使用 `extensions["extension-id"]` 作为用户侧配置入口；legacy 顶层字段 `knowledgeBase`、`contractAssistant`、`laborSkill` 仍永久兼容。
+运行时输出形状不变，仍然归一化到 `config.knowledgeBase`、`config.contractAssistant`、`config.laborSkill`。
+namespace 与 legacy 同时出现时，namespace 胜出并记录 warning；未知 namespace id 会保留在 `config.extensions`。
+`memory` 暂仍在中央 schema/loader 中，后续可按同样模式下沉。
 内置扩展的 `id` 与配置块通过 data-only meta 的 `configKey` 显式映射，例如 `contract-assistant -> contractAssistant`，不依赖字符串猜测。
 `extension.meta.ts` 只承载配置、命令、卡片模板等静态声明；`extension.ts` 只负责 runtime module 创建。
 外部扩展只能从 `src/extension-api/` 依赖公共契约，启动时从 `BRIDGE_EXTENSIONS_DIR` 或 `${BRIDGE_HOME:-.}/extensions` 扫描，加载失败会降级为 warning。
@@ -377,7 +380,7 @@ npm run dev
 npm run dev:once
 ```
 
-当前完整验证基线：**65 test files · 470 tests passing**
+当前完整验证基线：**65 test files · 486 tests passing**
 
 ## 📂 项目目录
 

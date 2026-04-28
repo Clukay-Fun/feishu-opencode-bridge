@@ -32,6 +32,7 @@
 - 外部扩展 manifest 默认加载 `dist/meta.js` 和 `dist/runtime.js`；开发模式可设置 `BRIDGE_EXTENSIONS_DEV=1` 优先加载 `devMeta` / `devRuntime`，生产环境还需 `BRIDGE_ALLOW_DEV_IN_PROD=1` 才允许这样做。
 - 外部扩展目录必须包含自己的 `package.json`；运行时依赖应安装在扩展自己的 `node_modules`，loader 会拒绝向上泄漏到 bridge 根目录依赖的扩展。
 - 外部扩展本地管理命令为 `npm run ext:install/list/remove/pack`，仅支持本地目录或 `.tgz`，不连接 npm registry。
+- 推荐把内置扩展配置写在 `extensions["knowledge-base"]`、`extensions["contract-assistant"]`、`extensions["labor-skill"]`；运行时输出仍归一化为 `config.knowledgeBase`、`config.contractAssistant`、`config.laborSkill`，legacy 顶层字段继续兼容。
 - 内置业务扩展通过 `extension.meta.ts` 和 `extension.ts` 双入口做启动期静态注册，不是第三方 plugin API，也不支持运行时热拔插。
 - `src/extensions/builtin-meta.ts` 聚合 data-only meta，供配置、命令声明和业务卡片模板使用。
 - `src/extensions/builtin.ts` 聚合 runtime extension，只供 runtime module assembly 创建模块。
