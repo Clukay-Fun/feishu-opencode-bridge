@@ -11,6 +11,7 @@
 - `formatter` 边界：`npm run lint:deps` 会阻止新的 runtime 代码直接依赖 `src/feishu/formatter.ts`；`npm run check:formatter-exports` 会把兼容导出面固定在 `docs/archive/design-history/formatter-export-snapshot.json`。
 - `config` 边界：`npm run lint` 会拦截 `src` 下除 `src/config/loader.ts` 之外的常见 `config.json` 直接读取方式；`npm run lint:deps` 会阻止 config 层直接加载业务 runtime/service。
 - `extension` 边界：`npm run lint:deps` 会阻止 `extension.meta.ts` 加载 RuntimeModule、service、模块 index 或 runtime 层，并用 framework 白名单反选新增业务目录。
+- `extension-api` 边界：`npm run lint:deps` 会把外部扩展目录限制到只能 import `src/extension-api/**`，不得直接 import bridge/runtime/feishu/store 或业务实现。
 - `docs` 边界：`npm run check:docs-diff` 会在 seam 文件变化但未同步修改 `docs/architecture-baseline.md` 时给出 CI 警告。
 
 以下检查项仍然需要 reviewer 判断：
@@ -26,6 +27,7 @@
 - `module` 边界：功能应落在已有 `RuntimeModule` 内部，或通过 runtime module assembly seam 引入新模块
 - `extension` 边界：新增内置业务能力应同时提供 `extension.meta.ts` 和 `extension.ts`；需要读取配置时必须显式声明 `configKey`，不要靠 extension id 推断配置块
 - `extension registry` 边界：新增内置扩展需要在 `src/extensions/builtin-meta.ts` 和 `src/extensions/builtin.ts` 各登记一行；本期不是动态 plugin，也不是运行时热拔插
+- `extension-api` 边界：面向外部扩展的新类型、helper 或 port 必须从 `src/extension-api/` 暴露；不要要求扩展 import 内部目录
 - `transport` 边界：飞书消息回复、更新和通知都应经过 `FeishuTransport`；不要新增临时的 send/update 包装层
 - `state` 边界：模块级 pending interaction 持久化应复用共享 persisted interaction 基础设施；不要复制 timer + JSON 持久化逻辑
 - `command` 边界：每个动作保留一个主命令，最多再保留一个兼容别名

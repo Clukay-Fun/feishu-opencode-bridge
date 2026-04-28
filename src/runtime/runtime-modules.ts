@@ -7,6 +7,7 @@
 import type { ModuleManager } from "../bridge/module.js";
 import { ModuleManager as RuntimeModuleManager } from "../bridge/module.js";
 import type { AppConfig } from "../config/schema.js";
+import type { ExtensionDefinition } from "../extension-api/index.js";
 import { builtinExtensions } from "../extensions/builtin.js";
 import type { RuntimeModuleOutboundPort } from "../extensions/definition.js";
 import { createKnowledgeService } from "../knowledge/factory.js";
@@ -18,6 +19,7 @@ import type { OpenCodeClient } from "../opencode/client.js";
 import type { SessionBindingRecord, SessionWindowRecord } from "../store/mappings.js";
 import type { WhitelistStore } from "../store/whitelist.js";
 import type { IncomingChatMessage } from "./app.js";
+import { createExternalRuntimeModule } from "./external-extension-adapter.js";
 import type { FeishuTransport } from "./feishu-transport.js";
 
 export type RuntimeModuleAssemblyResult = {
@@ -43,6 +45,7 @@ export function createRuntimeModules(options: {
   >;
   memory?: MemoryService | null;
   knowledge?: KnowledgeBasePort | null;
+  externalExtensions?: readonly ExtensionDefinition[] | undefined;
   whitelist: Pick<WhitelistStore, "bind">;
   getSessionWindow(conversationKey: string, chatType?: string): SessionWindowRecord;
   saveSessionWindow(conversationKey: string, window: SessionWindowRecord): Promise<void>;
@@ -83,6 +86,19 @@ export function createRuntimeModules(options: {
     moduleManager.register(resolvedModule);
     if (resolvedModule.name === "knowledge") {
       knowledgeModule = resolvedModule as KnowledgeRuntimeModule;
+    }
+  }
+
+  for (const extension of options.externalExtensions ?? []) {
+    const module = createExternalRuntimeModule(extension, {
+      config: options.config.extensions ?? {},
+      outbound: options.outbound,
+      logger: options.logger,
+      opencode: options.opencode,
+      knowledge,
+    });
+    if (module) {
+      moduleManager.register(module);
     }
   }
 

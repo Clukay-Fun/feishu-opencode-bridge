@@ -55,6 +55,115 @@ describe("createRuntimeModules", () => {
     expect(result.moduleManager.list().map((module) => module.name)).toContain("knowledge");
     await result.moduleManager.stop();
   });
+
+  it("adapts external extension modules through the public runtime context", async () => {
+    const result = createRuntimeModules({
+      config: {
+        ...createConfig({ knowledgeEnabled: false, contractEnabled: false, laborEnabled: false }),
+        extensions: {
+          demo: { enabled: true },
+        },
+      },
+      outbound: createOutbound(),
+      transport: createTransport(),
+      logger: { log: vi.fn() } as never,
+      opencode: createOpenCode(),
+      whitelist: { bind: vi.fn(async () => {}) },
+      getSessionWindow: () => ({ mode: "single", interactionMode: "default", activeSessionId: null, sessions: [] }),
+      saveSessionWindow: vi.fn(async () => {}),
+      createAndBindSession: vi.fn(async () => ({ sessionId: "ses_1", label: "会话", createdAt: 1, lastUsedAt: 1 })),
+      externalExtensions: [{
+        id: "demo",
+        createModule(context) {
+          expect(context.config.demo).toEqual({ enabled: true });
+          expect("transport" in context).toBe(false);
+          return {
+            name: "external-demo",
+            priority: 120,
+            async handleMessage(messageContext) {
+              expect(messageContext.window.activeSessionId).toBe("ses_1");
+              expect(messageContext.pendingInteraction).toEqual({ kind: "session-select" });
+              return { claimed: false };
+            },
+            async claimFileInstruction(pending) {
+              expect(pending).toEqual({
+                kind: "file-await-instruction",
+                file: {
+                  fileKey: "file_1",
+                  fileName: "contract.pdf",
+                  size: 123,
+                },
+              });
+              return false;
+            },
+            async beforeTurn(turnContext) {
+              expect(turnContext.window.activeSessionId).toBe("ses_1");
+              return { systemBlocks: ["external block"] };
+            },
+          };
+        },
+      }],
+    });
+
+    const message = {
+      chatId: "oc_chat",
+      chatType: "p2p" as const,
+      senderOpenId: "ou_1",
+      messageId: "om_1",
+      rawContent: "hi",
+      plainText: "hi",
+      threadKey: "thread",
+      conversationKey: "conv",
+      messageType: "text" as const,
+    };
+    const window = {
+      mode: "single" as const,
+      activeSessionId: "ses_1",
+      sessions: [{ sessionId: "ses_1", label: "会话", createdAt: 1, lastUsedAt: 1 }],
+    };
+
+    await result.moduleManager.handleMessage({
+      message,
+      routed: { kind: "message", text: "hi" },
+      window,
+      pendingInteraction: {
+        kind: "session-select",
+        options: [{ index: 1, sessionId: "ses_1", title: "真实标题" }],
+        expiresAt: Date.now() + 60_000,
+      },
+    });
+    await result.moduleManager.claimFileInstruction({
+      kind: "file-await-instruction",
+      chatId: "oc_chat",
+      conversationKey: "conv",
+      requesterOpenId: "ou_1",
+      replyToMessageId: "om_file",
+      file: {
+        messageId: "om_file",
+        fileKey: "file_1",
+        fileName: "contract.pdf",
+        size: 123,
+      },
+    }, message);
+
+    const blocks = await result.moduleManager.collectBeforeTurnBlocks({
+      turn: {
+        turnId: "turn_1",
+        chatId: "oc_chat",
+        conversationKey: "conv",
+        threadKey: "thread",
+        senderOpenId: "ou_1",
+        inboundMessageId: "om_1",
+        plainText: "hi",
+        text: "hi",
+        sessionId: "ses_1",
+      },
+      window,
+    });
+
+    expect(result.moduleManager.list().map((module) => module.name)).toContain("external-demo");
+    expect(blocks).toContain("external block");
+  });
 });
 
 function createOutbound() {
@@ -179,6 +288,7 @@ function createConfig(options: { knowledgeEnabled: boolean; contractEnabled: boo
       syncToObsidian: false,
       appendTranscript: false,
     },
+    extensions: {},
     contractAssistant: {
       enabled: options.contractEnabled,
       storage: {

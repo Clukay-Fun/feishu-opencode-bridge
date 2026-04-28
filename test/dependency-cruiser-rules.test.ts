@@ -90,6 +90,30 @@ describe("dependency-cruiser rules", () => {
       dependencyTypes: ["import"],
     })).toBe(true);
   });
+
+  it("allows external extensions to import extension-api only", () => {
+    expect(matchesRule("external-extensions-must-only-import-extension-api", {
+      from: "extensions/demo/dist/runtime.js",
+      to: "src/extension-api/index.ts",
+      dependencyTypes: ["import"],
+    })).toBe(false);
+  });
+
+  it("blocks external extensions from importing bridge internals", () => {
+    for (const target of [
+      "src/runtime/app.ts",
+      "src/bridge/module.ts",
+      "src/feishu/templates/runtime.ts",
+      "src/store/mappings.ts",
+      "src/contract-assistant/index.ts",
+    ]) {
+      expect(matchesRule("external-extensions-must-only-import-extension-api", {
+        from: "extensions/demo/dist/runtime.js",
+        to: target,
+        dependencyTypes: ["import"],
+      })).toBe(true);
+    }
+  });
 });
 
 function matchesRule(

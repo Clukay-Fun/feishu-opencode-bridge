@@ -12,12 +12,16 @@ import { ConfigSchema } from "./schema.js";
 import type { ConfigLoadContext } from "./module-registry.js";
 import { moduleConfigRegistry } from "./modules.js";
 import type { ContractAssistantConfig } from "../contract-assistant/config.js";
+import type { ExtensionMetaDefinition } from "../extension-api/index.js";
 import type { KnowledgeBaseConfig } from "../knowledge/config.js";
 import type { LaborSkillConfig } from "../labor/config.js";
 
 /** 从配置文件读取、校验并返回完整运行时配置。 */
-export async function loadConfig(configPath?: string): Promise<AppConfig> {
-  const resolvedConfigPath = configPath ? path.resolve(configPath) : path.resolve("config.json");
+export async function loadConfig(
+  input?: string | { configPath?: string | undefined; extensionMetas?: readonly ExtensionMetaDefinition[] | undefined },
+): Promise<AppConfig> {
+  const options = typeof input === "string" ? { configPath: input } : input;
+  const resolvedConfigPath = options?.configPath ? path.resolve(options.configPath) : path.resolve("config.json");
   const raw = JSON.parse(await readFile(resolvedConfigPath, "utf8")) as unknown;
   const parsed = ConfigSchema.parse(raw);
   const baseDir = path.dirname(resolvedConfigPath);
@@ -41,6 +45,11 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
     laborSkill: LaborSkillConfig;
   }>(
     parsed,
+    configLoadContext,
+  );
+  const extensionConfigs = normalizeExternalExtensionConfigs(
+    parsed.extensions,
+    options?.extensionMetas ?? [],
     configLoadContext,
   );
 
@@ -146,10 +155,32 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
         enableWikiLinks: parsed.memory.obsidian.enableWikiLinks,
       },
     },
+    ...(Object.keys(extensionConfigs).length > 0 ? { extensions: extensionConfigs } : {}),
     knowledgeBase: moduleConfigs.knowledgeBase,
     contractAssistant: moduleConfigs.contractAssistant,
     laborSkill: moduleConfigs.laborSkill,
   };
+}
+
+function normalizeExternalExtensionConfigs(
+  rawExtensions: Record<string, unknown>,
+  extensionMetas: readonly ExtensionMetaDefinition[],
+  context: ConfigLoadContext,
+): Record<string, unknown> {
+  const normalized: Record<string, unknown> = { ...rawExtensions };
+  for (const meta of extensionMetas) {
+    const definition = meta.configDefinition;
+    if (!definition) {
+      continue;
+    }
+    const schema = definition.validate
+      ? definition.schema.superRefine((value, refinementContext) => definition.validate?.(value, refinementContext))
+      : definition.schema;
+    const raw = rawExtensions[definition.key];
+    const parsed = schema.parse(raw);
+    normalized[definition.key] = definition.normalize(parsed, context);
+  }
+  return normalized;
 }
 
 function resolveRelative(baseDir: string, value: string): string {

@@ -12,7 +12,7 @@ export type EmbeddingProviderConfig = {
   model: string;
 };
 
-/** @internal 字段集本期冻结；新增字段视为 breaking change。 */
+/** 字段集自外部扩展加载 Phase 2 起冻结；新增字段视为 breaking change。 */
 export type ConfigLoadContext = {
   baseDir: string;
   dataDir: string;
@@ -20,7 +20,7 @@ export type ConfigLoadContext = {
   resolvedEmbeddingProvider?: EmbeddingProviderConfig;
 };
 
-/** @internal 仅供 bridge 内置模块配置注册使用，不作为插件公共 API。 */
+/** 扩展配置注册契约；供内置模块与启动期外部扩展共同使用。 */
 export type ModuleConfigDefinition<Parsed, Normalized> = {
   key: string;
   schema: z.ZodType<Parsed, z.ZodTypeDef, unknown>;

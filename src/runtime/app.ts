@@ -25,6 +25,7 @@ import { createTextPreview, getLogContext, logEvent, type LogContext, type Logge
 import {
   type KnowledgeBasePort,
 } from "../knowledge/index.js";
+import type { ExtensionDefinition } from "../extension-api/index.js";
 import type { KnowledgeRuntimeModule } from "../knowledge/runtime-module.js";
 import type { MemoryService } from "../memory/index.js";
 import {
@@ -119,6 +120,7 @@ type BridgeAppDeps = {
   eventStream?: OpenCodeEventStreamPort;
   memory?: MemoryService | null;
   knowledge?: KnowledgeBasePort | null;
+  externalExtensions?: readonly ExtensionDefinition[] | undefined;
 };
 
 type OpenCodePort = Pick<OpenCodeClient,
@@ -241,6 +243,7 @@ export class BridgeApp {
       createAndBindSession: async (source) => await this.createAndBindSession(source),
       ...(deps && "memory" in deps ? { memory: deps.memory ?? null } : {}),
       ...(deps && "knowledge" in deps ? { knowledge: deps.knowledge ?? null } : {}),
+      ...(deps?.externalExtensions ? { externalExtensions: deps.externalExtensions } : {}),
     });
     this.moduleManager = moduleAssembly.moduleManager;
     this.knowledgeModule = moduleAssembly.knowledgeModule;
@@ -376,7 +379,12 @@ export class BridgeApp {
       }
     }
 
-    const moduleResult = await this.moduleManager.handleMessage({ message, routed, pendingInteraction: pending ?? null });
+    const moduleResult = await this.moduleManager.handleMessage({
+      message,
+      routed,
+      window: this.getSessionWindow(message.conversationKey, message.chatType),
+      pendingInteraction: pending ?? null,
+    });
     if (moduleResult.claimed) {
       return;
     }
@@ -573,7 +581,11 @@ export class BridgeApp {
     routed: Extract<RoutedText, { kind: "command" }>,
   ): Promise<void> {
     if (routed.command.kind === "passthrough") {
-      const moduleResult = await this.moduleManager.handleMessage({ message: message as IncomingChatMessage, routed });
+      const moduleResult = await this.moduleManager.handleMessage({
+        message: message as IncomingChatMessage,
+        routed,
+        window: this.getSessionWindow(message.conversationKey, message.chatType),
+      });
       if (moduleResult.claimed) {
         return;
       }
@@ -610,7 +622,11 @@ export class BridgeApp {
       }).handleCommand(message, routed);
     }
 
-    await this.moduleManager.handleMessage({ message: message as IncomingChatMessage, routed });
+    await this.moduleManager.handleMessage({
+      message: message as IncomingChatMessage,
+      routed,
+      window: this.getSessionWindow(message.conversationKey, message.chatType),
+    });
   }
 
   /**

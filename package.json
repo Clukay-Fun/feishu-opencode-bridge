@@ -1,13 +1,13 @@
 {
   "name": "feishu-opencode-bridge",
-  "version": "0.1.49",
+  "version": "0.1.50",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint src test scripts --ext .ts",
-    "lint:deps": "depcruise --config .dependency-cruiser.cjs src",
+    "lint:deps": "depcruise --config .dependency-cruiser.cjs src examples/extensions",
     "check:formatter-exports": "tsx scripts/checks/check-formatter-exports.ts",
     "check:docs-diff": "tsx scripts/checks/check-docs-diff.ts",
     "test": "vitest run",

@@ -13,16 +13,23 @@ import { WhitelistStore } from "./store/whitelist.js";
 import { runStartupPreflight } from "./runtime/preflight.js";
 import { startBridgeHttpServer } from "./http/server.js";
 import { APP_VERSION } from "./version.js";
+import { loadExternalExtensions } from "./runtime/load-extensions.js";
 
 /** 组装并启动整个 bridge 运行时。 */
 async function main(): Promise<void> {
-  const config = await loadConfig();
+  const externalExtensions = await loadExternalExtensions();
+  const config = await loadConfig({ extensionMetas: externalExtensions.metas });
   const outbound = new FeishuApiClient(config.feishu.appId, config.feishu.appSecret);
   await runStartupPreflight(config, outbound);
   const logger = await createLogger(config.logging.dir, config.logging);
+  for (const warning of externalExtensions.warnings) {
+    logger.log("runtime/extensions", warning, {}, "warn");
+  }
   const whitelist = new WhitelistStore(config.whitelist.storePath, logger);
   await whitelist.load();
-  const app = new BridgeApp(config, outbound, logger, whitelist);
+  const app = new BridgeApp(config, outbound, logger, whitelist, {
+    externalExtensions: externalExtensions.extensions,
+  });
   await app.start();
   const httpServer = await startBridgeHttpServer(config, app, logger);
   const ws = new FeishuWsClient(
@@ -38,6 +45,7 @@ async function main(): Promise<void> {
   let shuttingDown = false;
   logger.log("bridge/index", "runtime initialized", {
     bridgeVersion: APP_VERSION,
+    externalExtensionCount: externalExtensions.extensions.length,
   });
   const shutdown = async (): Promise<void> => {
     if (shuttingDown) {

@@ -1,13 +1,17 @@
 /**
  * 职责: 定义内置业务扩展 manifest 的内部契约。
  * 关注点:
- * - 区分 data-only meta 与 runtime module 创建入口。
+ * - 复用 extension-api 的公共声明形状，避免维护两套扩展 contract。
  * - 明确该契约不作为第三方 plugin API，也不承担运行时热拔插。
  */
 import type { RuntimeModule } from "../bridge/module.js";
-import type { ModuleConfigDefinition } from "../config/module-registry.js";
 import type { AppConfig } from "../config/schema.js";
-import type { AnyBusinessCardTemplateDefinition } from "../feishu/templates/definition.js";
+import type {
+  ExtensionCommandDefinition,
+  ExtensionDefinition,
+  ExtensionMetaDefinition,
+  ExtensionOutboundPort,
+} from "../extension-api/index.js";
 import type { KnowledgeBasePort } from "../knowledge/index.js";
 import type { Logger } from "../logging/logger.js";
 import type { OpenCodeClient } from "../opencode/client.js";
@@ -16,19 +20,7 @@ import type { FeishuTransport } from "../runtime/feishu-transport.js";
 import type { SessionBindingRecord, SessionWindowRecord } from "../store/mappings.js";
 import type { WhitelistStore } from "../store/whitelist.js";
 
-export type RuntimeModuleOutboundPort = {
-  sendMessage(chatId: string, payload: { msg_type: "post" | "interactive"; content: string }): Promise<{ messageId: string }>;
-  replyMessage(messageId: string, payload: { msg_type: "post" | "interactive"; content: string }, options?: { replyInThread?: boolean }): Promise<{ messageId: string }>;
-  updateMessage(messageId: string, payload: { msg_type: "post" | "interactive"; content: string }): Promise<{ messageId: string }>;
-  downloadMessageResource(messageId: string, fileKey: string, type: "file"): Promise<{
-    fileName: string;
-    mimeType: string;
-    buffer: Buffer;
-  }>;
-  createBitableRecord(appToken: string, tableId: string, fields: Record<string, unknown>): Promise<string>;
-  listBitableRecords(appToken: string, tableId: string): Promise<Array<{ recordId: string; fields: Record<string, unknown> }>>;
-  updateBitableRecord(appToken: string, tableId: string, recordId: string, fields: Record<string, unknown>): Promise<void>;
-};
+export type RuntimeModuleOutboundPort = ExtensionOutboundPort;
 
 export type RuntimeExtensionContext = {
   config: AppConfig;
@@ -54,26 +46,8 @@ export type RuntimeExtensionContext = {
 };
 
 /** @internal 内置扩展 data-only meta，不作为第三方 plugin API。 */
-export type BuiltinExtensionMetaDefinition = {
-  id: string;
-  configKey?: keyof AppConfig;
-  commands?: readonly ExtensionCommandDefinition[];
-  configDefinition?: ModuleConfigDefinition<unknown, unknown>;
-  cardTemplates?: readonly AnyBusinessCardTemplateDefinition[];
-  workflows?: readonly string[];
-};
+export type BuiltinExtensionMetaDefinition = ExtensionMetaDefinition<keyof AppConfig>;
 
 /** @internal 内置扩展 runtime 创建入口，不作为第三方 plugin API。 */
-export type BuiltinExtensionDefinition = {
-  id: string;
-  configKey?: keyof AppConfig;
-  commands?: readonly ExtensionCommandDefinition[];
-  createModule(context: RuntimeExtensionContext): RuntimeModule | null | Promise<RuntimeModule | null>;
-};
-
-export type ExtensionCommandDefinition = {
-  name: string;
-  aliases?: readonly string[];
-  owner: "framework" | "business";
-  description: string;
-};
+export type BuiltinExtensionDefinition = ExtensionDefinition<keyof AppConfig, RuntimeExtensionContext, RuntimeModule>;
+export type { ExtensionCommandDefinition };

@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.50 - 2026-04-28
+
+### Added
+- Added the public `extension-api` contract, startup-time external extension loading, and an adapter that maps external modules into the RuntimeModule seam without exposing deep bridge internals.
+- Added external extension config normalization, dependency-boundary checks, a minimal hello-world external extension example, and regression coverage for the new loading path.
+
+### Changed
+- Documented the constrained external extension model across README, AGENTS, architecture baseline, and business extension development guidance.
+
 ## 0.1.49 - 2026-04-27
 
 ### Changed

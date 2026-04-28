@@ -27,6 +27,9 @@
 
 ## 扩展与配置
 
+- `src/extension-api/` 是未来外部扩展唯一允许依赖的公共契约面；它是 L2 动态加载前置，不是热拔插或沙箱。
+- 启动期外部扩展加载器扫描 `${BRIDGE_EXTENSIONS_DIR}` 或 `${BRIDGE_HOME:-.}/extensions`；扩展配置放在 `config.json.extensions` 下。
+- 外部扩展 manifest 默认加载 `dist/meta.js` 和 `dist/runtime.js`；开发模式可设置 `BRIDGE_EXTENSIONS_DEV=1` 优先加载 `devMeta` / `devRuntime`，生产环境还需 `BRIDGE_ALLOW_DEV_IN_PROD=1` 才允许这样做。
 - 内置业务扩展通过 `extension.meta.ts` 和 `extension.ts` 双入口做启动期静态注册，不是第三方 plugin API，也不支持运行时热拔插。
 - `src/extensions/builtin-meta.ts` 聚合 data-only meta，供配置、命令声明和业务卡片模板使用。
 - `src/extensions/builtin.ts` 聚合 runtime extension，只供 runtime module assembly 创建模块。

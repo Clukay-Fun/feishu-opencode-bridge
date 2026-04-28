@@ -136,6 +136,7 @@
 - Builtin extension boundary:
   - built-in business capabilities should split data-only `extension.meta.ts` from runtime `extension.ts`; meta declares `id`, `configKey`, commands, configDefinition, business card templates, and workflows, while runtime extension owns `createModule`
   - new built-in extensions must be registered in both `src/extensions/builtin-meta.ts` and `src/extensions/builtin.ts`; this is intentional startup-time sync, not dynamic plugin loading
+  - external extensions must import framework contracts only from `src/extension-api/`; do not make them depend on `src/runtime/**`, `src/bridge/**`, `src/feishu/**`, `src/store/**`, or business implementation files
   - extension commands are declarations for docs, conflict checks, and future help surfaces; they must not be treated as a generic router dispatcher unless the architecture baseline changes first
   - this is not a third-party plugin API and does not imply runtime hot reload
 - Logging and observability boundary:

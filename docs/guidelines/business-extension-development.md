@@ -2,11 +2,12 @@
 
 本文约束仓库内置业务扩展的开发方式。目标是让新增业务能力挂在现有 framework seam 上，而不是继续把领域逻辑并回 bridge core。
 
-本规范只覆盖仓库内置扩展，不定义第三方插件 API，不支持运行时热拔插，也不承诺外部 npm 包、目录扫描或动态 manifest 加载。
+本规范以仓库内置扩展为主，同时记录 L2 启动期外部扩展的前置契约。
+这仍然不是 L3 第三方插件平台，不支持运行时热拔插或沙箱隔离。
 
 ## 当前分离状态
 
-当前项目已经进入“启动期可配置的内部扩展包”阶段。
+当前项目已经进入“启动期可配置的内部扩展包 + 受限外部扩展加载前置”阶段。
 
 - `src/extensions/*` 负责聚合内置 extension manifest、命令声明和业务卡片模板。
 - `src/<module>/extension.meta.ts` 负责声明模块 id、configKey、commands、configDefinition、cardTemplates 和 workflows。
@@ -18,9 +19,9 @@
 
 - 扩展仍然随仓库代码一起编译和发布。
 - 新增内置扩展仍需要在 `src/extensions/builtin-meta.ts` 和 `src/extensions/builtin.ts` 各登记一行。
-- 本期采用稳妥同步装配，不为了“一处登记”引入 async loader 或 BridgeApp 初始化改造。
+- 内置扩展仍采用稳妥同步装配，不为了“一处登记”引入异步注册链。
 - 不支持进程运行中新增、卸载、reload 扩展。
-- 不支持第三方扩展包稳定 API。
+- 外部扩展只冻结 `src/extension-api/` 这一层受限契约；还不承诺完整第三方插件生态。
 
 ## 分层判断
 
@@ -124,6 +125,98 @@ export const exampleExtension: BuiltinExtensionDefinition = {
 - `createModule()` 应只做模块装配，不承载业务流程主体。
 - 未启用业务服务时，RuntimeModule 可以仍被注册，但必须给出清晰的“未启用”提示。
 - 模块需要其他模块能力时，通过 runtime assembly 注入 port，不允许配置层互相读取。
+
+## Public Extension API 规则
+
+`src/extension-api/` 是 L2 动态加载前置的公共契约面。
+未来外部扩展只能从这里 import 类型与 helper。
+
+允许使用：
+
+- `defineExtension()` / `defineCardTemplate()`
+- `ExtensionDefinition` / `ExtensionMetaDefinition`
+- `ExtensionRuntimeModule` / `ExtensionRuntimeContext`
+- outbound、opencode、knowledge、logger 等公共 port
+- 只读 message / session window view
+- 业务卡片模板纯类型
+
+禁止外部扩展直接 import：
+
+- `src/runtime/**`
+- `src/bridge/**`
+- `src/feishu/**`
+- `src/store/**`
+- 业务模块实现文件
+
+`extension-api` 不代表热拔插或沙箱。
+扩展仍是受信代码，配置变更和扩展版本变更仍需要重启。
+
+Phase 2 起，外部扩展可以通过 `ExtensionMetaDefinition.configDefinition` 声明自己的配置块。
+配置数据位于 `config.json` 的 `extensions` 对象下，例如 `extensions.demoExtension`。
+`ModuleConfigDefinition` 和 `ConfigLoadContext` 已纳入公共 API；`ConfigLoadContext` 字段集冻结，新增字段需要架构 review。
+
+外部 runtime module 由 adapter 接入内部 `RuntimeModule` seam。
+adapter 会把内部消息、pending、turn、window 映射成 public view。
+外部模块不会拿到 `transport`、`whitelist`、`saveSessionWindow()` 或 `createAndBindSession()`。
+
+## 外部扩展开发模式
+
+外部扩展属于 L2 启动期动态加载。
+它们可以免 bridge rebuild 挂载，但仍需要重启 bridge 才会生效。
+
+目录约定：
+
+```text
+extensions/<extension-id>/
+  manifest.json
+  src/
+    meta.ts
+    runtime.ts
+  dist/
+    meta.js
+    runtime.js
+```
+
+manifest 示例：
+
+```json
+{
+  "id": "hello-world",
+  "version": "0.0.0",
+  "meta": "dist/meta.js",
+  "runtime": "dist/runtime.js",
+  "devMeta": "src/meta.ts",
+  "devRuntime": "src/runtime.ts",
+  "dependencies": []
+}
+```
+
+加载规则：
+
+- 默认加载 `meta` 和 `runtime`，也就是扩展自己的构建产物。
+- 设置 `BRIDGE_EXTENSIONS_DEV=1` 时优先加载 `devMeta` 和 `devRuntime`。
+- `NODE_ENV=production` 时会忽略单独的 `BRIDGE_EXTENSIONS_DEV=1`，并回落到 `dist/`。
+- 如需生产临时排障加载 dev source，必须同时设置 `BRIDGE_ALLOW_DEV_IN_PROD=1`。
+- TypeScript 源码入口只适用于 `npm run dev:once` / `npm run dev` 这类 tsx 启动模式。
+- `npm start` 使用 Node 运行构建产物，外部扩展也应先自己 build 到 `dist/`。
+- `createModule()` 必须同步返回；数据库连接、HTTP 探活等异步初始化放到 module `start()`。
+
+扩展发现路径：
+
+- 优先使用 `BRIDGE_EXTENSIONS_DIR` 指向的目录。
+- 否则使用 `${BRIDGE_HOME:-.}/extensions`。
+- 单个扩展加载失败只会记录 warning，不阻止 bridge 核心启动。
+
+仓库内的最小示例位于 `examples/extensions/hello-world/`。
+这个示例同时提供 `dist/*.js` 和 `src/*.ts`，用于验证生产加载与 dev source 加载两条路径。
+
+依赖规则：
+
+- 外部扩展允许带自己的 `package.json` 和 `node_modules`。
+- 带依赖的扩展应在扩展目录内安装依赖并把运行产物构建到 `dist/`。
+- 扩展自己的 `package.json` 建议声明 `"type": "module"`，确保 ESM import 行为稳定。
+- 外部扩展不得假设 bridge 主仓库已经安装了它需要的 npm 包。
+- 如果扩展依赖 `yaml`、`js-yaml`、SDK 等第三方包，应把它们声明在扩展自己的 dependencies 中。
 
 ## 命令归属
 

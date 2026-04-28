@@ -1,0 +1,9 @@
+{
+  "id": "hello-world",
+  "version": "0.0.0",
+  "meta": "dist/meta.js",
+  "runtime": "dist/runtime.js",
+  "devMeta": "src/meta.ts",
+  "devRuntime": "src/runtime.ts",
+  "dependencies": []
+}

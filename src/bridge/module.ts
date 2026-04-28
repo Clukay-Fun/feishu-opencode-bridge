@@ -19,6 +19,7 @@ export type RuntimeModuleHandleResult =
 export type RuntimeModuleMessageContext = {
   message: IncomingChatMessage;
   routed: RoutedText | null;
+  window?: SessionWindowRecord | undefined;
   pendingInteraction?: PendingInteraction | null;
 };
 

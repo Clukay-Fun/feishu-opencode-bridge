@@ -1,6 +1,6 @@
 # 架构基线
 
-> 最后更新：2026-04-27
+> 最后更新：2026-04-28
 >
 > 这份文档定义了 post-demo 阶段的架构基线。
 > 如果它与 demo 导向的说明冲突，以这份文档的代码组织规则为准。
@@ -120,8 +120,9 @@ data-only meta 可声明启动期聚合信息：
 runtime extension 只负责 `createModule()`。
 它复用 meta 的 `id`、`configKey` 和 `commands`，避免字符串漂移。
 
-这些契约只服务仓库内置扩展。
-它们不支持 runtime unregister、reload、目录扫描、外部 npm 包或第三方稳定 API。
+这些内置扩展契约只服务仓库内模块。
+它们不支持 runtime unregister、reload 或第三方稳定 API。
+启动期目录扫描和外部依赖只允许走下一节定义的 `extension-api` 受限外部扩展路径。
 
 `id` 与 `configKey` 必须显式声明映射，不能靠命名约定猜：
 
@@ -142,6 +143,48 @@ core router 只处理 bridge / framework 命令；业务命令继续由 RuntimeM
 runtime / bridge 只依赖 runtime extension、factory、RuntimeModule seam 或业务 port 类型。
 配置层只依赖 `extensions/builtin-meta.ts` 和模块 `config.ts` 的类型/定义，不得通过配置入口加载业务 runtime/service。
 业务卡片模板通过 meta 聚合，模板 registry 不加载 runtime extension。
+
+### 6. 外部扩展只能依赖 extension-api
+
+L2 动态加载的前置契约是 `src/extension-api/`。
+这是未来外部扩展唯一允许 import 的框架入口。
+
+`extension-api` 暴露：
+
+- extension / meta 声明 helper
+- RuntimeModule 的公共接口
+- outbound、opencode、knowledge、logger 等最小 port
+- 只读 message / session window view
+- 业务卡片模板纯类型
+
+`extension-api` 不暴露：
+
+- `FeishuTransport`
+- `WhitelistStore`
+- `SessionWindowRecord`
+- `BridgeApp`
+- `saveSessionWindow()` / `createAndBindSession()` 等 session mutation API
+- 业务 service 实现类
+
+这仍然不是 L3 热拔插，也不是沙箱。
+扩展是受信代码；进程运行中新增、卸载、reload 仍是非目标。
+
+Phase 2 起，`ModuleConfigDefinition` 与 `ConfigLoadContext` 纳入 `extension-api` 公共契约。
+`ConfigLoadContext` 字段集继续冻结：`baseDir`、`dataDir`、`resolveRelative()`、`resolvedEmbeddingProvider?`。
+新增字段视为 breaking change，需要架构 review。
+
+启动期外部扩展加载器会扫描 `${BRIDGE_EXTENSIONS_DIR}` 或 `${BRIDGE_HOME:-.}/extensions`。
+加载失败的扩展会被跳过并记录 warning；不会阻止 bridge 核心启动。
+外部扩展 runtime module 通过 adapter 接入内部 `RuntimeModule` seam，只能看到 public context。
+
+Phase 3 起，外部扩展 manifest 可声明 `devMeta` 和 `devRuntime`。
+默认生产启动仍加载 `meta` / `runtime` 指向的构建产物。
+只有设置 `BRIDGE_EXTENSIONS_DEV=1` 或测试显式开启 source mode 时，loader 才会优先加载 dev source 入口。
+生产环境会忽略单独的 `BRIDGE_EXTENSIONS_DEV=1`，避免误 import `.ts` 源码。
+如果确实要在生产强制加载 dev source，需要同时设置 `BRIDGE_ALLOW_DEV_IN_PROD=1`，该模式只用于临时排障。
+TypeScript 源码入口只适用于 `tsx` 启动的开发模式；正式部署仍要求扩展自己构建到 `dist/`。
+外部扩展可以带自己的 `package.json` 和 `node_modules`。
+带依赖的外部扩展必须自行构建和安装依赖，不能假设 bridge 主仓库会提供这些包。
 
 当前强制试点：
 

@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
+import { defineExtension, type ExtensionMetaDefinition } from "../src/extension-api/index.js";
 import type { BuiltinExtensionMetaDefinition } from "../src/extensions/definition.js";
 import { builtinExtensionRegistry, builtinExtensions } from "../src/extensions/builtin.js";
 import { builtinExtensionCommands, builtinExtensionMetaRegistry } from "../src/extensions/builtin-meta.js";
@@ -33,6 +34,24 @@ describe("builtin extension registry", () => {
       "memory",
     ]);
     expect(builtinExtensionMetaRegistry.metas.map((meta) => meta.id)).toEqual(builtinExtensions.map((extension) => extension.id));
+  });
+
+  it("accepts extension-api meta and runtime definition shapes", () => {
+    const meta = {
+      id: "public-meta",
+      configKey: "knowledgeBase",
+      commands: [{ name: "public-command", owner: "business", description: "demo" }],
+    } satisfies ExtensionMetaDefinition<"knowledgeBase">;
+    const extension = defineExtension({
+      id: "public-runtime",
+      configKey: "knowledgeBase",
+      createModule: () => null,
+    });
+
+    expect(createBuiltinExtensionMetaRegistry([meta]).listCommands()).toEqual([
+      expect.objectContaining({ extensionId: "public-meta", name: "public-command" }),
+    ]);
+    expect(createBuiltinExtensionRegistry([extension]).extensions).toEqual([extension]);
   });
 
   it("rejects duplicate extension command names and aliases", () => {

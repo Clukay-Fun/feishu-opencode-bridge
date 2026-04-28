@@ -1,6 +1,8 @@
 # Build outputs
 node_modules/
 dist/
+!examples/extensions/*/dist/
+!examples/extensions/*/dist/*.js
 
 # Runtime state and local data
 logs/

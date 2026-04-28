@@ -69,6 +69,12 @@ export function createBuiltinExtensionMetaRegistry(
   };
 }
 
+export function mergeExtensionMetas(
+  ...groups: ReadonlyArray<readonly BuiltinExtensionMetaDefinition[]>
+): BuiltinExtensionMetaRegistry {
+  return createBuiltinExtensionMetaRegistry(groups.flat());
+}
+
 export function createBuiltinExtensionRegistry(
   extensions: readonly BuiltinExtensionDefinition[],
 ): BuiltinExtensionRegistry {
@@ -83,6 +89,12 @@ export function createBuiltinExtensionRegistry(
   return {
     extensions,
   };
+}
+
+export function mergeRuntimeExtensions(
+  ...groups: ReadonlyArray<readonly BuiltinExtensionDefinition[]>
+): BuiltinExtensionRegistry {
+  return createBuiltinExtensionRegistry(groups.flat());
 }
 
 function normalizeCommandNames(command: ExtensionCommandDefinition): string[] {

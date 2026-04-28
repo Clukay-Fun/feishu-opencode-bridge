@@ -130,6 +130,7 @@ export const ConfigSchema = z.object({
     ]),
   }).default({}),
   memory: MemoryConfigSchema.default({}),
+  extensions: z.record(z.unknown()).default({}),
   knowledgeBase: moduleConfigSchemas.knowledgeBase,
   contractAssistant: moduleConfigSchemas.contractAssistant,
   laborSkill: moduleConfigSchemas.laborSkill,
@@ -248,6 +249,7 @@ export type AppConfig = {
       enableWikiLinks: boolean;
     };
   };
+  extensions?: Record<string, unknown> | undefined;
   knowledgeBase: KnowledgeBaseConfig;
   contractAssistant?: ContractAssistantConfig;
   laborSkill?: LaborSkillConfig;

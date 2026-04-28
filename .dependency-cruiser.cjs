@@ -28,9 +28,21 @@ const FRAMEWORK_TOP_LEVEL_DIRS = [
 const FRAMEWORK_TOP_LEVEL_PATTERN = FRAMEWORK_TOP_LEVEL_DIRS.join("|");
 const BUSINESS_TOP_LEVEL_SEGMENT = `(?!(?:${FRAMEWORK_TOP_LEVEL_PATTERN})(?:/|$))[^/]+`;
 const BUSINESS_TOP_LEVEL_PATH = `^src/(${BUSINESS_TOP_LEVEL_SEGMENT})/`;
+const EXTERNAL_EXTENSION_PATH = "^(extensions/[^/]+|examples/extensions/[^/]+)/";
 
 module.exports = {
   forbidden: [
+    {
+      name: "external-extensions-must-only-import-extension-api",
+      severity: "error",
+      comment: "外部扩展只能依赖 src/extension-api 公共契约；不得直接 import bridge/runtime/feishu/store 或业务实现。",
+      from: {
+        path: EXTERNAL_EXTENSION_PATH,
+      },
+      to: {
+        path: "^src/(?!extension-api/)",
+      },
+    },
     {
       name: "core-must-not-import-domain-modules",
       severity: "error",

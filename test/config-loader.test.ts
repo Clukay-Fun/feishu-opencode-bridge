@@ -7,8 +7,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import { loadConfig } from "../src/config/loader.js";
+import type { ExtensionMetaDefinition } from "../src/extension-api/index.js";
 
 describe("loadConfig", () => {
   it("fails when config.json is missing", async () => {
@@ -50,6 +52,44 @@ describe("loadConfig", () => {
     const config = await loadConfig(configPath);
 
     expect(toStableConfigSnapshot(config, dir)).toEqual(expected);
+  });
+
+  it("normalizes external extension configs under extensions", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-extension-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({
+      ...baseConfig(),
+      extensions: {
+        demoExtension: {
+          enabled: true,
+          relativePath: "./demo-data",
+        },
+      },
+    }), "utf8");
+    const meta: ExtensionMetaDefinition = {
+      id: "demo-extension",
+      configKey: "demoExtension",
+      configDefinition: {
+        key: "demoExtension",
+        schema: z.object({
+          enabled: z.boolean().default(false),
+          relativePath: z.string().default("./default"),
+        }).default({}),
+        normalize(parsed: { enabled: boolean; relativePath: string }, context) {
+          return {
+            enabled: parsed.enabled,
+            absolutePath: context.resolveRelative(context.baseDir, parsed.relativePath),
+          };
+        },
+      },
+    };
+
+    const config = await loadConfig({ configPath, extensionMetas: [meta] });
+
+    expect(config.extensions?.demoExtension).toEqual({
+      enabled: true,
+      absolutePath: path.join(dir, "demo-data"),
+    });
   });
 });
 
