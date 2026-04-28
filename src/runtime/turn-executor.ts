@@ -157,7 +157,7 @@ export type TurnExecutorContext = {
     cleanup(turnId: string): void;
   };
   permissionManager: {
-    registerInteraction(interaction: PendingPermissionInteraction): void;
+    registerInteraction(interaction: PendingPermissionInteraction): Promise<boolean>;
     buildActionButtons(interaction: PendingPermissionInteraction): Array<{
       label: string;
       type: "default" | "primary" | "danger";
@@ -624,7 +624,16 @@ export class TurnExecutor {
       turnId: turn.turnId,
       expiresAt: Date.now() + PERMISSION_TTL_MS,
     };
-    this.context.permissionManager.registerInteraction(interaction);
+    const autoDecided = await this.context.permissionManager.registerInteraction(interaction);
+    if (autoDecided) {
+      runtime.snoozeWatchdog(PERMISSION_TTL_MS + 5_000);
+      await this.context.turnCardManager.updateTurnCard(turn.turnId, {
+        status: "处理中",
+        update: `权限 \`${escapeMarkdownText(permissionName)}\` 已由策略自动处理`,
+        target: "step",
+      });
+      return;
+    }
     this.context.setPendingInteraction(turn.conversationKey, interaction);
     runtime.snoozeWatchdog(PERMISSION_TTL_MS + 5_000);
     await this.context.turnCardManager.updateTurnCard(turn.turnId, {

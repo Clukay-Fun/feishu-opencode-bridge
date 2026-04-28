@@ -81,6 +81,8 @@ export type PendingFileInstructionInteraction = {
     fileName: string;
     size?: number | undefined;
   };
+  /** 区分普通文件与图片资源，下载时传给飞书 API。缺失时默认 "file"。 */
+  resourceType?: "file" | "image" | undefined;
 };
 
 export type PendingInteraction =

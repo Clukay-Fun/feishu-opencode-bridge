@@ -136,7 +136,9 @@ function toIncomingMessageView(message: IncomingChatMessage): ExtensionIncomingM
     threadKey: message.threadKey,
     conversationKey: message.conversationKey,
     messageType: message.messageType,
-    ...(message.messageType === "file" ? { file: { ...message.file } } : {}),
+    ...(message.messageType === "file" || message.messageType === "image"
+      ? { file: { ...message.file }, resourceType: message.resourceType }
+      : {}),
   };
 }
 

@@ -204,7 +204,7 @@ describe("knowledge base bridge flow", () => {
     const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
     const updatePayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
     expect(JSON.stringify(replyPayloads)).toContain("已收到文件");
-    expect(JSON.stringify(replyPayloads)).toContain("把这个文件入库");
+    expect(JSON.stringify(replyPayloads)).toContain("/help-file");
     expect(outbound.downloadMessageResource).toHaveBeenCalledWith("om_file_plain", "file_plain", "file");
     const request = promptAsync.mock.calls[0]?.[1];
     expect(request).toBeDefined();

@@ -30,6 +30,7 @@ export type RoutedText =
       | { kind: "delete"; index?: number | undefined; sessionId?: string | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined; confirm: boolean }
       | { kind: "allow"; policy: "once" | "always" }
       | { kind: "deny" }
+      | { kind: "help-file" }
       | { kind: "passthrough"; name: string; arguments: string[] };
   }
   | { kind: "message"; text: string };
@@ -268,6 +269,10 @@ export function routeIncomingText(text: string): RoutedText {
 
   if (rawCommand === "deny" && args.length === 0) {
     return { kind: "command", command: { kind: "deny" } };
+  }
+
+  if (rawCommand === "help-file" && args.length === 0) {
+    return { kind: "command", command: { kind: "help-file" } };
   }
 
   return {

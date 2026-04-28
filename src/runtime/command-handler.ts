@@ -44,7 +44,7 @@ const SESSION_SELECTION_TTL_MS = 180_000;
 const SESSION_DELETE_CONFIRM_TTL_MS = 30_000;
 const SESSIONS_ALL_PAGE_SIZE = 20;
 
-type CommandMessage = Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "threadKey" | "senderOpenId">;
+type CommandMessage = Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "threadKey" | "senderOpenId" | "rootId" | "parentId">;
 type CommandRouted = Extract<RoutedText, { kind: "command" }>;
 type PermissionResolution = "once" | "always" | "deny" | "timeout";
 type SessionSelectionOption = PendingSessionSelectionInteraction["options"][number];
@@ -133,8 +133,70 @@ const BRIDGE_OWNED_COMMAND_KINDS = new Set<Extract<RoutedText, { kind: "command"
   "delete",
   "allow",
   "deny",
+  "help-file",
   "passthrough",
 ]);
+
+/**
+ * 统一查找挂起的权限交互。
+ * 查找链: conversationKey -> rootId/parentId 匹配 permissionMessageId -> chatId+requester -> 唯一 active。
+ */
+function resolvePendingPermission(
+  pendingInteractions: Map<string, PendingInteraction>,
+  message: CommandMessage,
+): PendingPermissionInteraction | null {
+  const now = Date.now();
+  const isValid = (p: PendingPermissionInteraction) => !p.resolvedAt && p.expiresAt > now;
+
+  // 1. 按 conversationKey 精确查找
+  const direct = pendingInteractions.get(message.conversationKey);
+  if (direct?.kind === "permission" && isValid(direct)) {
+    return direct;
+  }
+
+  // 2. 按 rootId/parentId 匹配 permissionMessageId（卡片线程回复）
+  const threadCandidates = new Set([message.rootId, message.parentId].filter(Boolean));
+  if (threadCandidates.size > 0) {
+    for (const pending of pendingInteractions.values()) {
+      if (pending.kind !== "permission" || !isValid(pending)) continue;
+      if (pending.chatId === message.chatId && pending.permissionMessageId && threadCandidates.has(pending.permissionMessageId)) {
+        return pending;
+      }
+    }
+  }
+
+  // 3. 按 chatId + requester 查找
+  const candidates: PendingPermissionInteraction[] = [];
+  for (const pending of pendingInteractions.values()) {
+    if (pending.kind !== "permission" || !isValid(pending)) continue;
+    if (pending.chatId === message.chatId && pending.requesterOpenId === message.senderOpenId) {
+      candidates.push(pending);
+    }
+  }
+  if (candidates.length === 1) {
+    return candidates[0] ?? null;
+  }
+
+  // 4. 多 pending 时返回 null
+  return null;
+}
+
+/** 判断是否有多个挂起的权限请求（用于提示用户点击卡片）。 */
+function hasMultiplePendingPermissions(
+  pendingInteractions: Map<string, PendingInteraction>,
+  message: CommandMessage,
+): boolean {
+  const now = Date.now();
+  let count = 0;
+  for (const pending of pendingInteractions.values()) {
+    if (pending.kind !== "permission" || pending.resolvedAt || pending.expiresAt <= now) continue;
+    if (pending.chatId === message.chatId && pending.requesterOpenId === message.senderOpenId) {
+      count++;
+      if (count > 1) return true;
+    }
+  }
+  return false;
+}
 
 /** 判断命令是否由 bridge 核心层而不是业务模块处理。 */
 export function isBridgeOwnedCommand(command: Extract<RoutedText, { kind: "command" }>["command"]): boolean {
@@ -702,19 +764,40 @@ export class CommandHandler {
     }
 
     if (command.kind === "allow" || command.kind === "deny") {
-      const pending = this.context.pendingInteractions.get(message.conversationKey);
-      if (!pending || pending.kind !== "permission") {
+      const pending = resolvePendingPermission(this.context.pendingInteractions, message);
+      if (!pending) {
+        const multiple = hasMultiplePendingPermissions(this.context.pendingInteractions, message);
         await this.sendNotice(message, {
           title: "信息提示",
           template: "blue",
           icon: "info_outlined",
-          message: "当前没有待确认的权限请求。",
+          message: multiple
+            ? "检测到多个待确认的权限请求，请点击对应卡片按钮操作。"
+            : "当前没有待确认的权限请求。",
         });
         return;
       }
       const resolution: PermissionResolution = command.kind === "deny" ? "deny" : command.policy;
       await this.context.permissionManager.resolveInteraction(pending, resolution);
       await this.context.sendPayload(message.chatId, this.context.permissionManager.buildResolutionPayload(resolution), { event: "final message sent", transcriptType: "outbound-final", textPreview: resolution === "deny" ? "已拒绝权限请求。" : "已确认权限请求。", len: 8 }, { replyToMessageId: message.messageId });
+      return;
+    }
+
+    if (command.kind === "help-file") {
+      const helpText = [
+        "**文件处理示例**",
+        "",
+        "直接回复文件消息，输入以下指令：",
+        "",
+        "- `总结这个文件`",
+        "- `提取文件中的关键信息`",
+        "- `把这个文件入库`",
+        "- `分析这个 PDF 的内容`",
+        "- `识别这张图片中的文字`",
+        "",
+        "批量入库请发送 `/kb-ingest-start` 后重新上传文件。",
+      ].join("\n");
+      await this.context.sendMarkdown(message.chatId, helpText, message.messageId);
       return;
     }
 
@@ -740,45 +823,38 @@ export class CommandHandler {
   private async switchSessionByName(message: CommandMessage, window: SessionWindowRecord, rawQuery: string): Promise<void> {
     const query = normalizeSessionLookupText(rawQuery);
     if (!query) {
-      await this.context.sendMarkdown(message.chatId, "请在 `/switch` 后输入会话名称。", message.messageId);
+      await this.context.sendMarkdown(message.chatId, "请在 `/switch` 后输入会话名称或短 ID。", message.messageId);
       return;
     }
 
-    const openCodeSessions = await this.context.listOpenCodeSessionsById();
-    const candidateMap = new Map<string, SessionSelectionOption>();
-    for (const session of window.sessions) {
-      candidateMap.set(session.sessionId, {
-        index: candidateMap.size + 1,
-        sessionId: session.sessionId,
-        title: session.label,
-        current: session.sessionId === window.activeSessionId,
-        inWindow: true,
-      });
-    }
-    for (const session of openCodeSessions.values()) {
-      if (candidateMap.has(session.id)) {
-        continue;
-      }
-      candidateMap.set(session.id, {
-        index: candidateMap.size + 1,
-        sessionId: session.id,
-        title: resolveDisplayLabel(session, session.title ?? session.slug ?? session.id, session.id),
-        current: session.id === window.activeSessionId,
-        inWindow: false,
-      });
-    }
+    // 只在窗口可见 sessions 中匹配
+    const SHORT_ID_LENGTH = 12;
+    const candidates: SessionSelectionOption[] = window.sessions.map((session, index) => ({
+      index: index + 1,
+      sessionId: session.sessionId,
+      title: session.label,
+      current: session.sessionId === window.activeSessionId,
+      inWindow: true,
+    }));
 
-    const candidates = [...candidateMap.values()];
+    // 精确匹配: 标题或完整 sessionId
     const exactMatches = candidates.filter((candidate) => (
       normalizeSessionLookupText(candidate.title) === query
       || normalizeSessionLookupText(candidate.sessionId) === query
     ));
-    const matches = exactMatches.length > 0
+
+    // 前缀匹配: sessionId 前 12 位
+    const prefixMatches = exactMatches.length > 0
       ? exactMatches
-      : candidates.filter((candidate) => normalizeSessionLookupText(candidate.title).includes(query));
+      : candidates.filter((candidate) => {
+        const shortId = candidate.sessionId.slice(0, SHORT_ID_LENGTH).toLowerCase();
+        return shortId.startsWith(query) || normalizeSessionLookupText(candidate.title).includes(query);
+      });
+
+    const matches = exactMatches.length > 0 ? exactMatches : prefixMatches;
 
     if (matches.length === 0) {
-      await this.context.sendMarkdown(message.chatId, "未找到匹配的会话，请发送 `/sessions all` 查看完整列表。", message.messageId);
+      await this.context.sendMarkdown(message.chatId, "未找到匹配的会话，请发送 `/sessions` 查看列表。", message.messageId);
       return;
     }
 
@@ -790,15 +866,15 @@ export class CommandHandler {
           index: option.index,
           title: option.title,
           current: Boolean(option.current),
-          archived: !option.inWindow,
-          meta: option.current ? "当前" : option.inWindow ? "窗口中" : "已隐藏",
+          meta: option.current ? "当前" : "窗口中",
+          shortId: option.sessionId.slice(0, SHORT_ID_LENGTH),
         })),
         footer: "匹配到多个会话 · 发送 `/switch <编号>` 切换 · 3 分钟内有效",
       }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "匹配会话", len: 4 }, { replyToMessageId: message.messageId });
       return;
     }
 
-    await this.switchToSession(message, window, matches[0] as SessionSelectionOption, { clearPending: false, openCodeSessions });
+    await this.switchToSession(message, window, matches[0] as SessionSelectionOption, { clearPending: false });
   }
 
   private async resolveDeleteSessionById(

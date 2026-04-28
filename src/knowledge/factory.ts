@@ -22,7 +22,7 @@ import {
 } from "./index.js";
 
 type KnowledgeResourcePort = {
-  downloadMessageResource(messageId: string, fileKey: string, type: "file"): Promise<{
+  downloadMessageResource(messageId: string, fileKey: string, type: "file" | "image"): Promise<{
     fileName: string;
     mimeType: string;
     buffer: Buffer;
