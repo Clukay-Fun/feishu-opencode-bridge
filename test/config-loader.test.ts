@@ -9,7 +9,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { loadConfig } from "../src/config/loader.js";
+import { loadConfig, loadConfigWithWarnings } from "../src/config/loader.js";
 import type { ExtensionMetaDefinition } from "../src/extension-api/index.js";
 
 describe("loadConfig", () => {
@@ -90,6 +90,225 @@ describe("loadConfig", () => {
       enabled: true,
       absolutePath: path.join(dir, "demo-data"),
     });
+  });
+
+  it("maps namespace knowledge-base config back to config.knowledgeBase", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-extension-namespace-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({
+      ...baseConfig(),
+      embeddings: {
+        provider: {
+          baseUrl: "https://api.openai.com/v1/",
+          apiKey: "sk-test",
+          model: "text-embedding-3-small",
+        },
+      },
+      extensions: {
+        "knowledge-base": {
+          enabled: true,
+          ingest: {
+            allowedExtensions: [".PDF", ".MD"],
+          },
+          storage: {
+            bitable: {
+              appToken: "app_token",
+              tableId: "tbl_entries",
+            },
+          },
+        },
+      },
+    }), "utf8");
+
+    const config = await loadConfig(configPath);
+
+    expect(config.knowledgeBase.enabled).toBe(true);
+    expect(config.knowledgeBase.ingest.allowedExtensions).toEqual([".pdf", ".md"]);
+    expect(config.knowledgeBase.storage.bitable.appToken).toBe("app_token");
+    expect(config.extensions).toBeUndefined();
+  });
+
+  it("maps namespace contract-assistant and labor-skill configs back to stable output fields", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-extension-namespace-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({
+      ...baseConfig(),
+      extensions: {
+        "contract-assistant": {
+          enabled: false,
+          ingest: {
+            contractAllowedExtensions: [".DOCX"],
+          },
+        },
+        "labor-skill": {
+          enabled: true,
+          ingest: {
+            allowedExtensions: [".PDF", ".XLSX"],
+          },
+        },
+      },
+    }), "utf8");
+
+    const config = await loadConfig(configPath);
+
+    expect(config.contractAssistant?.ingest.contractAllowedExtensions).toEqual([".docx"]);
+    expect(config.laborSkill?.enabled).toBe(true);
+    expect(config.laborSkill?.ingest.allowedExtensions).toEqual([".pdf", ".xlsx"]);
+    expect(config.extensions).toBeUndefined();
+  });
+
+  it("prefers namespace config over legacy config and returns a warning", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-extension-conflict-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({
+      ...baseConfig(),
+      laborSkill: {
+        enabled: false,
+        ingest: {
+          allowedExtensions: [".txt"],
+        },
+      },
+      extensions: {
+        "labor-skill": {
+          enabled: true,
+          ingest: {
+            allowedExtensions: [".pdf"],
+          },
+        },
+      },
+    }), "utf8");
+
+    const result = await loadConfigWithWarnings(configPath);
+
+    expect(result.config.laborSkill?.enabled).toBe(true);
+    expect(result.config.laborSkill?.ingest.allowedExtensions).toEqual([".pdf"]);
+    expect(result.warnings).toEqual([{
+      code: "extension-config-overrides-legacy",
+      extensionId: "labor-skill",
+      configKey: "laborSkill",
+      message: "extensions[\"labor-skill\"] 已覆盖 legacy 顶层配置 laborSkill",
+    }]);
+  });
+
+  it("ignores invalid legacy config when namespace config overrides it", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-extension-conflict-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({
+      ...baseConfig(),
+      contractAssistant: {
+        enabled: true,
+      },
+      extensions: {
+        "contract-assistant": {
+          enabled: false,
+        },
+      },
+    }), "utf8");
+
+    const result = await loadConfigWithWarnings(configPath);
+
+    expect(result.config.contractAssistant?.enabled).toBe(false);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]?.extensionId).toBe("contract-assistant");
+  });
+
+  it("does not fall back to legacy config when namespace config is invalid", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-extension-invalid-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({
+      ...baseConfig(),
+      laborSkill: {
+        enabled: false,
+      },
+      extensions: {
+        "labor-skill": {
+          enabled: true,
+          ingest: {
+            maxFileSizeMb: -1,
+          },
+        },
+      },
+    }), "utf8");
+
+    await expect(loadConfig(configPath)).rejects.toThrow("maxFileSizeMb");
+  });
+
+  it("keeps unknown namespace ids under config.extensions", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-extension-unknown-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({
+      ...baseConfig(),
+      extensions: {
+        "unknown-extension": {
+          enabled: true,
+          custom: "value",
+        },
+      },
+    }), "utf8");
+
+    const config = await loadConfig(configPath);
+
+    expect(config.extensions?.["unknown-extension"]).toEqual({
+      enabled: true,
+      custom: "value",
+    });
+  });
+
+  it("normalizes external extension configs by namespace id without overriding builtins", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-extension-external-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({
+      ...baseConfig(),
+      extensions: {
+        "demo-extension": {
+          enabled: true,
+          relativePath: "./demo-data",
+        },
+        "knowledge-base": {
+          enabled: false,
+          query: {
+            topK: 7,
+          },
+        },
+      },
+    }), "utf8");
+    const demoMeta: ExtensionMetaDefinition = {
+      id: "demo-extension",
+      configKey: "demoExtension",
+      configDefinition: {
+        key: "demoExtension",
+        schema: z.object({
+          enabled: z.boolean().default(false),
+          relativePath: z.string().default("./default"),
+        }).default({}),
+        normalize(parsed: { enabled: boolean; relativePath: string }, context) {
+          return {
+            enabled: parsed.enabled,
+            absolutePath: context.resolveRelative(context.baseDir, parsed.relativePath),
+          };
+        },
+      },
+    };
+    const conflictingBuiltinMeta: ExtensionMetaDefinition = {
+      id: "knowledge-base",
+      configKey: "knowledgeBase",
+      configDefinition: {
+        key: "knowledgeBase",
+        schema: z.object({ query: z.object({ topK: z.number().default(99) }).default({}) }).default({}),
+        normalize() {
+          return { overwritten: true };
+        },
+      },
+    };
+
+    const config = await loadConfig({ configPath, extensionMetas: [demoMeta, conflictingBuiltinMeta] });
+
+    expect(config.knowledgeBase.query.topK).toBe(7);
+    expect(config.extensions?.["demo-extension"]).toEqual({
+      enabled: true,
+      absolutePath: path.join(dir, "demo-data"),
+    });
+    expect(config.extensions?.["knowledge-base"]).toBeUndefined();
   });
 });
 

@@ -5,7 +5,7 @@
  * - 处理信号退出时的资源回收与停止顺序。
  */
 import { createLogger } from "./logging/logger.js";
-import { loadConfig } from "./config/loader.js";
+import { loadConfigWithWarnings } from "./config/loader.js";
 import { BridgeApp } from "./runtime/app.js";
 import { FeishuApiClient } from "./feishu/api.js";
 import { createFeishuIngressOptions, FeishuWsClient } from "./feishu/ws.js";
@@ -18,10 +18,17 @@ import { loadExternalExtensions } from "./runtime/load-extensions.js";
 /** 组装并启动整个 bridge 运行时。 */
 async function main(): Promise<void> {
   const externalExtensions = await loadExternalExtensions();
-  const config = await loadConfig({ extensionMetas: externalExtensions.metas });
+  const { config, warnings: configWarnings } = await loadConfigWithWarnings({ extensionMetas: externalExtensions.metas });
   const outbound = new FeishuApiClient(config.feishu.appId, config.feishu.appSecret);
   await runStartupPreflight(config, outbound);
   const logger = await createLogger(config.logging.dir, config.logging);
+  for (const warning of configWarnings) {
+    logger.log("config/loader", warning.message, {
+      code: warning.code,
+      extensionId: warning.extensionId,
+      configKey: warning.configKey,
+    }, "warn");
+  }
   for (const warning of externalExtensions.warnings) {
     logger.log("runtime/extensions", warning, {}, "warn");
   }
