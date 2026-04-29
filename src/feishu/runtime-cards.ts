@@ -385,6 +385,7 @@ function buildCurrentModelBlock(currentModelLabel: string): Record<string, unkno
 function buildModelChip(model: ModelListCardView["providers"][number]["models"][number]): Record<string, unknown> {
   const label = model.id.includes("/") ? (model.id.split("/").at(-1) ?? model.id) : model.id;
   const highlighted = model.current;
+  const switchCommand = `/model use ${model.id}`;
   return {
     ...column([
       markdown(
@@ -393,6 +394,7 @@ function buildModelChip(model: ModelListCardView["providers"][number]["models"][
           : escapeText(label),
         { size: "notation" },
       ),
+      markdown(`\`${escapeText(switchCommand)}\``, { size: "notation" }),
     ], highlighted ? { bg: "purple-50" } : undefined),
     padding: "4px 4px 4px 4px",
   };

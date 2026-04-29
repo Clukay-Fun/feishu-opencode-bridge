@@ -701,6 +701,7 @@ describe("BridgeApp command surface", () => {
     expect(text).toContain("openai/gpt-5.4-mini");
     expect(text).toContain("OpenAI");
     expect(text).toContain("gpt-5.4-mini");
+    expect(text).toContain("/model use openai/gpt-5.4-mini");
     expect(text).not.toContain("gpt-5.4-mini 默认");
     expect(text).not.toContain("OpenCode 模型");
   });
