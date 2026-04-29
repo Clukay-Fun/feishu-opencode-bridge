@@ -59,6 +59,10 @@ export type SessionTransitionCardView = {
   preservePrevious?: boolean;
   currentLabel: string;
   currentTitle?: string;
+  review?: {
+    meta: string;
+    recentMessages: string[];
+  } | undefined;
   footer: string;
 };
 
@@ -163,6 +167,9 @@ export function buildSessionTransitionCardPayload(view: SessionTransitionCardVie
     `**${escapeText(view.currentLabel)}**`,
     view.preservePrevious ? "grey-50" : "green-50",
   ));
+  if (view.review) {
+    bodyElements.push(buildSessionReviewBlock(view.review));
+  }
   bodyElements.push(buildDivider());
   bodyElements.push(buildFooterTipBlock(view.footer, "calendar-add_outlined", "green", "notation"));
 
@@ -172,6 +179,18 @@ export function buildSessionTransitionCardPayload(view: SessionTransitionCardVie
     iconToken: view.iconToken,
     bodyElements,
   });
+}
+
+function buildSessionReviewBlock(review: NonNullable<SessionTransitionCardView["review"]>): Record<string, unknown> {
+  const lines = [
+    `**会话回顾**\n${escapeText(review.meta)}`,
+    ...review.recentMessages.map((line) => `- ${escapeText(line)}`),
+  ];
+  return columnSet([
+    column([
+      markdown(lines.join("\n"), { size: "notation", icon: { token: "history_outlined", color: "grey" } }),
+    ], { bg: "grey-50", weight: 1 }),
+  ]);
 }
 
 /** 构建 `/who` 结果卡。 */

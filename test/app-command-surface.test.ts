@@ -135,11 +135,15 @@ describe("BridgeApp command surface", () => {
       { id: "ses_1", title: "日常聊天", time: { created: 1, updated: 2 } },
       { id: "ses_2", title: "知识库入库与法律检索", time: { created: 1, updated: 1 } },
     ]));
+    const getSessionMessages = vi.fn(async () => ([
+      { info: { role: "user" }, parts: [{ type: "text", text: "上一轮用户问题" }] },
+      { info: { role: "assistant" }, parts: [{ type: "text", text: "上一轮助手回答" }] },
+    ]));
     const appAny = app as unknown as {
-      opencode: { listSessions: typeof listSessions };
+      opencode: { listSessions: typeof listSessions; getSessionMessages: typeof getSessionMessages };
       sessionMap: Record<string, SessionWindowRecord>;
     };
-    appAny.opencode = { listSessions };
+    appAny.opencode = { listSessions, getSessionMessages };
     appAny.sessionMap["oc_p2p_1"] = {
       mode: "multi",
       activeSessionId: "ses_1",
@@ -156,7 +160,12 @@ describe("BridgeApp command surface", () => {
 
     expect(appAny.sessionMap["oc_p2p_1"]?.activeSessionId).toBe("ses_2");
     expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("已切换会话");
-    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("知识库入库与法律检索");
+    const text = extractInteractiveText(getReplyPayloads(outbound)[0]);
+    expect(text).toContain("知识库入库与法律检索");
+    expect(text).toContain("会话回顾");
+    expect(text).toContain("ID：ses_2");
+    expect(text).toContain("用户：上一轮用户问题");
+    expect(text).toContain("助手：上一轮助手回答");
   });
 
   it("shows a disambiguation card when /switch name matches multiple sessions", async () => {

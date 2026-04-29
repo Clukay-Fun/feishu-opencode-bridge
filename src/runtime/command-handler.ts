@@ -44,6 +44,9 @@ const SESSION_SELECTION_TTL_MS = 180_000;
 const SESSION_DELETE_CONFIRM_TTL_MS = 30_000;
 const SESSIONS_ALL_PAGE_SIZE = 20;
 const SESSION_SHORT_ID_LENGTH = 12;
+const SESSION_REVIEW_MESSAGE_LIMIT = 20;
+const SESSION_REVIEW_PREVIEW_LIMIT = 3;
+const SESSION_REVIEW_TEXT_LIMIT = 80;
 
 type CommandMessage = Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "threadKey" | "senderOpenId" | "rootId" | "parentId">;
 type CommandRouted = Extract<RoutedText, { kind: "command" }>;
@@ -62,6 +65,7 @@ export type BridgeAppContext = {
     abort(sessionId: string): Promise<boolean>;
     listProviders(): Promise<OpenCodeProvidersResponse>;
     deleteSession(sessionId: string): Promise<boolean>;
+    getSessionMessages(sessionId: string, limit?: number): Promise<OpenCodeMessage[]>;
     runCommand(sessionId: string, input: { command: string; arguments: string[] }): Promise<OpenCodeMessage | null>;
   };
   whitelist: {
@@ -936,13 +940,42 @@ export class CommandHandler {
     const previous = getActiveSession(window);
     const current = getActiveSession(nextWindow);
     const messageCount = await this.context.getSessionMessageCount(match.sessionId);
+    const review = await this.buildSessionReview(match.sessionId, current, sessionMeta, messageCount);
     await this.context.sendPayload(message.chatId, buildSessionTransitionCardPayload({
       title: "已切换会话",
       iconToken: "sheet-iconsets-check_filled",
       previousLabel: previous?.sessionId === current?.sessionId ? null : previous?.label ?? null,
       currentLabel: current?.label ?? fallbackLabel,
+      review,
       footer: `创建于 ${formatSessionTimestamp(current?.createdAt ?? sessionMeta?.time?.created ?? Date.now())} · 共 ${messageCount} 条消息`,
     }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "已切换会话", len: 5 }, { replyToMessageId: message.messageId });
+  }
+
+  private async buildSessionReview(
+    sessionId: string,
+    current: SessionBindingRecord | null,
+    sessionMeta: OpenCodeSession | undefined,
+    messageCount: number,
+  ): Promise<{ meta: string; recentMessages: string[] } | undefined> {
+    try {
+      const messages = await this.context.opencode.getSessionMessages(sessionId, SESSION_REVIEW_MESSAGE_LIMIT);
+      const recentMessages = messages
+        .map(formatSessionMessagePreview)
+        .filter((line): line is string => Boolean(line))
+        .slice(-SESSION_REVIEW_PREVIEW_LIMIT);
+      const lastActiveAt = current?.lastUsedAt ?? sessionMeta?.time?.updated ?? sessionMeta?.time?.created;
+      return {
+        meta: [
+          `ID：${shortSessionId(sessionId)}`,
+          `消息：${messageCount} 条`,
+          `最后活跃：${formatSessionTimestamp(lastActiveAt)}`,
+        ].join(" · "),
+        recentMessages: recentMessages.length > 0 ? recentMessages : ["暂无可预览的最近消息"],
+      };
+    } catch {
+      // 回顾只是切换提示增强，读取历史失败不能阻断会话切换。
+      return undefined;
+    }
   }
 
   private async sendNotice(
@@ -1023,4 +1056,33 @@ function formatHiddenSessionDisplayTitle(index: number, sessionId: string): stri
 
 function shortSessionId(sessionId: string): string {
   return sessionId.length <= SESSION_SHORT_ID_LENGTH ? sessionId : sessionId.slice(0, SESSION_SHORT_ID_LENGTH);
+}
+
+function formatSessionMessagePreview(message: OpenCodeMessage): string | null {
+  const text = message.parts
+    .map((part) => (typeof part.text === "string" ? part.text : ""))
+    .join("\n")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (!text) {
+    return null;
+  }
+  return `${formatSessionMessageRole(message.info.role)}：${truncateSessionReviewText(text)}`;
+}
+
+function formatSessionMessageRole(role: unknown): string {
+  if (role === "assistant") {
+    return "助手";
+  }
+  if (role === "user") {
+    return "用户";
+  }
+  if (role === "system") {
+    return "系统";
+  }
+  return "消息";
+}
+
+function truncateSessionReviewText(value: string): string {
+  return value.length <= SESSION_REVIEW_TEXT_LIMIT ? value : `${value.slice(0, SESSION_REVIEW_TEXT_LIMIT - 3)}...`;
 }
