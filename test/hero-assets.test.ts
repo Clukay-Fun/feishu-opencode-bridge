@@ -17,6 +17,10 @@ const HERO_FILES = [
   "labor-law-faq.md",
 ];
 
+const LAUNCH_DOC_FILES = [
+  "docs/privacy-and-data-flow.md",
+];
+
 describe("hero assets", () => {
   it("keeps reproducible onboarding materials checked in", async () => {
     for (const file of HERO_FILES) {
@@ -26,7 +30,7 @@ describe("hero assets", () => {
   });
 
   it("does not contain obvious real secrets or non-placeholder case numbers", async () => {
-    const joined = (await Promise.all(HERO_FILES.map((file) => readFile(path.resolve("examples/hero", file), "utf8")))).join("\n");
+    const joined = (await Promise.all([...HERO_FILES.map((file) => path.resolve("examples/hero", file)), ...LAUNCH_DOC_FILES.map((file) => path.resolve(file))].map((file) => readFile(file, "utf8")))).join("\n");
 
     expect(joined).not.toMatch(/cli_[a-zA-Z0-9]{10,}/);
     expect(joined).not.toMatch(/(?:sk|ak)-[a-zA-Z0-9]{12,}/i);
@@ -34,5 +38,18 @@ describe("hero assets", () => {
     expect(joined).not.toMatch(/\(20\d{2}\)[\u4e00-\u9fa5]{1,3}\d{2,4}(?:民初|仲|劳人仲)\d{4,}号/);
     expect(joined).toContain("XX科技公司");
     expect(joined).toContain("(2026)京XX民初0001号");
+  });
+
+  it("keeps launch README promises visible", async () => {
+    const readme = await readFile(path.resolve("README.md"), "utf8");
+    const extensionGuide = await readFile(path.resolve("docs/guidelines/business-extension-development.md"), "utf8");
+
+    expect(readme).toContain("为什么不直接用 Claude / ChatGPT");
+    expect(readme).toContain("为什么不直接用成熟法律 AI");
+    expect(readme).toContain("不适合谁");
+    expect(readme).toContain("数据流向与隐私说明");
+    expect(extensionGuide).toContain("实验性能力");
+    expect(extensionGuide).toContain("受信代码");
+    expect(extensionGuide).toContain("API 不稳定");
   });
 });

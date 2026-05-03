@@ -3,15 +3,18 @@
  * 关注点:
  * - 在用户目录准备 BRIDGE_HOME/config/data/logs/extensions。
  * - 用包内 npm cache 安装 bridge 自身依赖，不污染系统全局。
- * - 将 onboard、doctor、start、init、guide 继续交给既有脚本处理。
+ * - 将 onboard、doctor、start、init、guide、backup/restore 继续交给既有脚本处理。
  */
 import { existsSync } from "node:fs";
 import path from "node:path";
 
+import { runBackupCli } from "./backup.mjs";
+import { runCostCli } from "./cost.mjs";
 import { runDoctor } from "./doctor.mjs";
 import { runGuide } from "./guide.mjs";
 import { runOnboard } from "./onboard.mjs";
 import { runStart } from "./start.mjs";
+import { runUpdateCli } from "./update.mjs";
 import { runWorkspaceDoctorCli, runWorkspaceInitCli } from "../workspace-init/workspace-init.mjs";
 import {
   createPortableEnv,
@@ -22,7 +25,7 @@ import {
 } from "./portable.mjs";
 import { findExecutable, isMainModule, runCommand } from "./checks.mjs";
 
-const SUPPORTED_COMMANDS = new Set(["onboard", "doctor", "start", "init", "guide", "help"]);
+const SUPPORTED_COMMANDS = new Set(["onboard", "doctor", "start", "init", "guide", "backup", "restore", "cost", "update", "help"]);
 
 export async function runBootstrap(options = {}) {
   const cwd = options.cwd ?? resolvePackageRoot(import.meta.url);
@@ -101,6 +104,49 @@ export async function runBootstrap(options = {}) {
     });
   }
 
+  if (command === "backup") {
+    return await runBackupCli(rawArgs.slice(1), {
+      cwd,
+      env,
+      logger,
+      platform: options.platform,
+      home: options.home,
+    });
+  }
+
+  if (command === "restore") {
+    return await runBackupCli(rawArgs, {
+      cwd,
+      env,
+      logger,
+      platform: options.platform,
+      home: options.home,
+    });
+  }
+
+  if (command === "cost") {
+    return await runCostCli(rawArgs.slice(1), {
+      cwd,
+      env,
+      logger,
+      platform: options.platform,
+      home: options.home,
+    });
+  }
+
+  if (command === "update") {
+    return await runUpdateCli(rawArgs.slice(1), {
+      cwd,
+      env,
+      logger,
+      platform: options.platform,
+      arch: options.arch,
+      home: options.home,
+      fetchImpl: options.fetchImpl,
+      runCommandFn: options.runCommandFn,
+    });
+  }
+
   if (command === "init") {
     return await runWorkspaceInitCli(rawArgs.slice(1), {
       cwd,
@@ -167,6 +213,10 @@ function printHelp(logger, bridgeHome) {
   logger.log("  bridge doctor workspace   诊断飞书多维表格工作区");
   logger.log("  bridge start     启动 OpenCode + Bridge");
   logger.log("  bridge init workspace   创建并写入飞书多维表格工作区");
+  logger.log("  bridge backup    备份本地用户数据");
+  logger.log("  bridge restore <zip>   恢复本地用户数据");
+  logger.log("  bridge cost      查看本地 AI 成本估算");
+  logger.log("  bridge update check|download|apply|rollback   检查或切换 portable 更新");
   logger.log("");
   logger.log(`用户数据目录：${bridgeHome}`);
 }

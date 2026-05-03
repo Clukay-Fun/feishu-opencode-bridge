@@ -1,7 +1,7 @@
 /**
  * 职责: 输出分组后的本地运行环境诊断结果。
  * 关注点:
- * - 调用统一检查器收集 bridge/lark/memory 结果。
+ * - 调用统一检查器收集 bridge/lark/memory/data-flow 结果。
  * - 以适合终端阅读的分组格式打印。
  * - 将 workspace 子诊断转交给工作区初始化模块，避免 Base 结构逻辑分散。
  */
@@ -29,6 +29,7 @@ export async function runDoctor(options = {}) {
   const bridge = results.filter((result) => result.group === "bridge");
   const lark = results.filter((result) => result.group === "lark");
   const memory = results.filter((result) => result.group === "memory");
+  const dataFlow = results.filter((result) => result.group === "data-flow");
 
   logger.log("### Bridge");
   for (const result of bridge) {
@@ -53,6 +54,18 @@ export async function runDoctor(options = {}) {
     logger.log("");
     logger.log("### Memory");
     for (const result of memory) {
+      logger.log(formatCheckLine(result));
+      const hint = formatCheckHint(result);
+      if (hint) {
+        logger.log(hint);
+      }
+    }
+  }
+
+  if (dataFlow.length > 0) {
+    logger.log("");
+    logger.log("### Data Flow");
+    for (const result of dataFlow) {
       logger.log(formatCheckLine(result));
       const hint = formatCheckHint(result);
       if (hint) {

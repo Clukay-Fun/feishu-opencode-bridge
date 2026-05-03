@@ -6,4 +6,19 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+
+if [ -z "${BRIDGE_CONFIG_PATH:-}" ] && [ -f "$ROOT/config.json" ]; then
+  case "$(uname -s)" in
+    Darwin)
+      PORTABLE_HOME="${BRIDGE_HOME:-$HOME/Library/Application Support/FeishuOpenCodeBridge}"
+      ;;
+    *)
+      PORTABLE_HOME="${BRIDGE_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/FeishuOpenCodeBridge}"
+      ;;
+  esac
+  if [ ! -f "$PORTABLE_HOME/config.json" ]; then
+    export BRIDGE_CONFIG_PATH="$ROOT/config.json"
+  fi
+fi
+
 exec "$ROOT/bridge" start

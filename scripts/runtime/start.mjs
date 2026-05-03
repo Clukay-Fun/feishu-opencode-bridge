@@ -14,6 +14,7 @@ import { spawn } from "node:child_process";
 
 import { resolveProjectConfigPath } from "./portable.mjs";
 import { markGuidePromptShown, readOnboardingState, resolveOnboardingStatePath } from "./onboarding-state.mjs";
+import { maybeCheckForUpdateOnStart } from "./update.mjs";
 import {
   createAugmentedEnv,
   assertPortAvailable,
@@ -52,6 +53,7 @@ export async function runStart(options = {}) {
   await mkdir(loggingDir, { recursive: true });
 
   logger.log("Feishu OpenCode Bridge");
+  await maybeCheckForUpdateOnStart({ cwd, env, logger, fetchImpl, platform: options.platform, home });
 
   const bridgePort = await ensureBridgePortAvailable({
     host: serverHost,

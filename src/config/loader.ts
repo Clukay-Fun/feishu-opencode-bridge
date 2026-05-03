@@ -159,6 +159,17 @@ export async function loadConfigWithWarnings(
       messagePolicy: parsed.logging.messagePolicy,
       redactFields: parsed.logging.redactFields,
     },
+    costs: {
+      enabled: parsed.costs.enabled,
+      currency: parsed.costs.currency,
+      dailyLimitCny: parsed.costs.dailyLimitCny,
+      modelPrices: parsed.costs.modelPrices,
+    },
+    updates: {
+      checkOnStart: parsed.updates.checkOnStart,
+      githubRepo: parsed.updates.githubRepo,
+      channel: parsed.updates.channel,
+    },
     memory: {
       enabled: parsed.memory.enabled,
       dbPath: resolveRelative(baseDir, parsed.memory.dbPath ?? path.join(dataDir, "memory.db")),

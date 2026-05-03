@@ -28,6 +28,10 @@ describe("routeIncomingText", () => {
       kind: "command",
       command: { kind: "guide" },
     });
+    expect(routeIncomingText("/cost")).toEqual({
+      kind: "command",
+      command: { kind: "cost" },
+    });
   });
 
   it("routes /sessions <index> without accepting bare numbers", () => {

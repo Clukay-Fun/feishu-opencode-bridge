@@ -12,6 +12,7 @@ export type RoutedText =
       | { kind: "new"; title?: string | undefined }
       | { kind: "rename"; title: string }
       | { kind: "status" }
+      | { kind: "cost" }
       | { kind: "abort" }
       | { kind: "models"; provider?: string | undefined }
       | { kind: "model-use"; model: string }
@@ -63,6 +64,10 @@ export function routeIncomingText(text: string): RoutedText {
 
   if (rawCommand === "status" && args.length === 0) {
     return { kind: "command", command: { kind: "status" } };
+  }
+
+  if (rawCommand === "cost" && args.length === 0) {
+    return { kind: "command", command: { kind: "cost" } };
   }
 
   if (rawCommand === "abort" && args.length === 0) {

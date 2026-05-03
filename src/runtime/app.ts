@@ -58,6 +58,7 @@ import { TurnExecutor } from "./turn-executor.js";
 import { TurnOwnedResourceStore } from "./turn-owned-resources.js";
 import { SlidingWindowRateLimiter } from "./rate-limiter.js";
 import { BridgeMessageContextStore, prependBridgeMessageContext } from "./message-context.js";
+import { CostTracker } from "./cost-tracker.js";
 import {
   addSession,
   addSessionWithoutActivating,
@@ -186,6 +187,7 @@ export class BridgeApp {
   private readonly permissionManager: PermissionManager;
   private readonly messageContextStore = new BridgeMessageContextStore();
   private readonly turnCardManager: TurnCardManager;
+  private readonly costTracker: CostTracker;
   private readonly turnOwnedResources: TurnOwnedResourceStore;
   private readonly turnExecutor: TurnExecutor;
   private readonly moduleManager: ModuleManager;
@@ -213,6 +215,7 @@ export class BridgeApp {
     this.opencode = deps?.opencode ?? new OpenCodeClient(config.opencode.baseUrl);
     this.eventStream = deps?.eventStream ?? new OpenCodeEventStream(config.opencode.baseUrl, logger);
     this.turnCardManager = new TurnCardManager(this.outbound, this.logger, this.config.feishu.behavior.replyInThread);
+    this.costTracker = new CostTracker(config.costs, config.storage.dataDir, logger);
     this.turnOwnedResources = new TurnOwnedResourceStore(this.logger);
     this.permissionManager = new PermissionManager({
       replyPermission: async (sessionId, permissionId, policy, remember) => {
@@ -269,6 +272,7 @@ export class BridgeApp {
       cleanupTurnResources: async (turnId) => await this.turnOwnedResources.cleanupTurn(turnId),
       setPendingInteraction: (conversationKey, interaction) => this.setPendingInteraction(conversationKey, interaction),
       sendPayload: async (chatId, payload, options, delivery) => await this.sendPayload(chatId, payload, options, delivery),
+      costTracker: this.costTracker,
     });
   }
 
@@ -448,6 +452,24 @@ export class BridgeApp {
       return;
     }
 
+    if (await this.costTracker.isDailyLimitExceeded()) {
+      const limit = this.costTracker.dailyLimitCny;
+      await this.sendPayload(message.chatId, buildNoticeCardPayload({
+        title: "已达到今日 AI 成本上限",
+        template: "orange",
+        iconToken: "wallet_outlined",
+        message: `今天的本地估算成本已达到上限${limit === undefined ? "" : `（¥${limit.toFixed(2)}）`}。\n普通对话已暂停，仍可使用 \`/cost\`、\`/status\`、\`/guide\` 查看状态。\n如需继续，请调整 config.json 的 \`costs.dailyLimitCny\` 后重启。`,
+        messageIconToken: "wallet_outlined",
+        messageIconColor: "orange",
+      }), {
+        event: "cost limit reached",
+        transcriptType: "outbound-final",
+        textPreview: "已达到今日 AI 成本上限",
+        len: 12,
+      }, { replyToMessageId: message.messageId });
+      return;
+    }
+
     const sessionId = await this.ensureSession(message);
     const executionKey = this.buildExecutionKey(message.conversationKey, sessionId);
     const queue = this.queues.get(executionKey);
@@ -581,6 +603,7 @@ export class BridgeApp {
     if (isBridgeOwnedCommand(routed.command)) {
       return await new CommandHandler({
         config: this.config,
+        costTracker: this.costTracker,
         opencode: this.opencode,
         whitelist: this.whitelist,
         getQueueState: (conversationKey, sessionId) => this.getQueueState(conversationKey, sessionId),

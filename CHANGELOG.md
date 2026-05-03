@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.56 - 2026-05-03
+
+### Added
+- Added local `bridge backup` / `bridge restore` for user-data backup and recovery.
+- Added local AI cost visibility with runtime usage ledger, Feishu `/cost`, `bridge cost`, and daily limit protection.
+- Added portable update check/download/apply/rollback commands backed by GitHub Release staging.
+- Added a data-flow/privacy doctor group plus promotion-facing privacy documentation.
+
+### Changed
+- Marked external extension loading as experimental trusted-code loading rather than a stable third-party plugin platform.
+
 ## 0.1.55 - 2026-05-03
 
 ### Added

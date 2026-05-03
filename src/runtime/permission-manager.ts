@@ -27,7 +27,7 @@ type SendPayloadOptions = {
 
 type PermissionManagerCallbacks = {
   clearPendingInteraction(conversationKey: string, keepNonExpiring: boolean): void;
-  updateTurnCard(turnId: string, update: { status?: string; update?: string; sanitize?: boolean; target?: "step" | "tool" | "final"; toolKey?: string }): Promise<void>;
+  updateTurnCard(turnId: string, update: { status?: string; update?: string; sanitize?: boolean; target?: "step" | "tool" | "final"; toolKey?: string; costSummary?: string }): Promise<void>;
   sendPayload(
     chatId: string,
     payload: FeishuPostPayload,

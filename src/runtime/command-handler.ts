@@ -9,6 +9,7 @@ import type { RoutedText } from "../bridge/router.js";
 import {
   buildLeaveCommandCardPayload,
   buildGuideCardPayload,
+  buildCostCommandCardPayload,
   buildModelListCardPayload,
   buildSessionListCardPayload,
   buildSessionTransitionCardPayload,
@@ -19,6 +20,7 @@ import { buildNoticeCardPayload, type FeishuPostPayload } from "../feishu/shared
 import type { TranscriptType } from "../logging/logger.js";
 import type { OpenCodeMessage, OpenCodeProvidersResponse, OpenCodeSession, OpenCodeSessionStatus } from "../opencode/client.js";
 import type { SessionBindingRecord, SessionWindowModelOverride, SessionWindowRecord } from "../store/mappings.js";
+import type { CostTracker } from "./cost-tracker.js";
 import type { IncomingChatMessage } from "./app.js";
 import {
   buildModelCardView,
@@ -60,7 +62,11 @@ export type BridgeAppContext = {
       sessionListLimit: number;
       maxSessionsPerWindow: number;
     };
+    costs?: {
+      dailyLimitCny?: number | undefined;
+    } | undefined;
   };
+  costTracker?: CostTracker | undefined;
   opencode: {
     getSessionStatuses(): Promise<Record<string, OpenCodeSessionStatus>>;
     abort(sessionId: string): Promise<boolean>;
@@ -126,6 +132,7 @@ const BRIDGE_OWNED_COMMAND_KINDS = new Set<Extract<RoutedText, { kind: "command"
   "new",
   "rename",
   "status",
+  "cost",
   "abort",
   "guide",
   "models",
@@ -282,6 +289,7 @@ export class CommandHandler {
       const currentSession = getActiveSession(window);
       const queueState = this.context.getQueueState(message.conversationKey, currentSession?.sessionId ?? null);
       const status = currentSession ? this.context.sessionStatuses.get(currentSession.sessionId)?.type ?? "unknown" : "unbound";
+      const costStatus = await this.buildCostStatusLabel();
       await this.context.sendPayload(message.chatId, buildStatusCommandCardPayload({
         currentSession: currentSession ? { sessionId: currentSession.sessionId, label: currentSession.label } : null,
         connectionState: this.context.eventStream.getConnectionState(),
@@ -291,11 +299,41 @@ export class CommandHandler {
         queueState: queueState.activeTurn ? "处理中" : "空闲",
         pendingCount: queueState.pendingCount,
         windowCount: window.sessions.length,
+        ...(costStatus ? { costStatus } : {}),
       }), {
         event: "final message sent",
         transcriptType: "outbound-final",
         textPreview: "会话状态",
         len: 4,
+      }, { replyToMessageId: message.messageId });
+      return;
+    }
+
+    if (command.kind === "cost") {
+      if (!this.context.costTracker?.enabled) {
+        await this.sendNotice(message, {
+          title: "成本统计未启用",
+          template: "grey",
+          icon: "info-hollow_filled",
+          message: "当前 `costs.enabled=false`，未记录本地 token/成本估算。",
+        });
+        return;
+      }
+      const today = await this.context.costTracker.summarizeToday();
+      const month = await this.context.costTracker.summarizeMonth();
+      const recent = [...month.entries].reverse().slice(0, 5);
+      await this.context.sendPayload(message.chatId, buildCostCommandCardPayload({
+        todayTokens: today.totalTokens,
+        todayCostCny: today.estimatedCostCny,
+        monthTokens: month.totalTokens,
+        monthCostCny: month.estimatedCostCny,
+        dailyLimitCny: this.context.costTracker.dailyLimitCny,
+        recent,
+      }), {
+        event: "final message sent",
+        transcriptType: "outbound-final",
+        textPreview: "AI 成本摘要",
+        len: 7,
       }, { replyToMessageId: message.messageId });
       return;
     }
@@ -1025,6 +1063,24 @@ export class CommandHandler {
       icon: "maybe_outlined",
       message: "当前会话正在执行任务，请先发送 `/abort`。",
     });
+  }
+
+  private async buildCostStatusLabel(): Promise<string | null> {
+    if (!this.context.costTracker?.enabled) {
+      return null;
+    }
+    const today = await this.context.costTracker.summarizeToday();
+    const limit = this.context.costTracker.dailyLimitCny;
+    if (limit === undefined || today.estimatedCostCny === undefined) {
+      return "成本 正常";
+    }
+    if (today.estimatedCostCny >= limit) {
+      return "成本 已达上限";
+    }
+    if (today.estimatedCostCny >= limit * 0.8) {
+      return "成本 接近上限";
+    }
+    return "成本 正常";
   }
 }
 

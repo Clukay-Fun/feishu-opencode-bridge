@@ -36,6 +36,7 @@ type TurnCardState = {
   progressUpdates: string[];
   toolUpdates: Array<{ key: string; view: ToolUpdateView }>;
   output: OutputView;
+  costSummary?: string | undefined;
 };
 
 type StreamFlushState = {
@@ -155,11 +156,12 @@ export class TurnCardManager {
   }
 
   /** 更新 turn 卡片中的状态、步骤、工具或最终输出。 */
-  async updateTurnCard(turnId: string, update: { status?: string; update?: string; sanitize?: boolean; target?: "step" | "tool" | "final"; toolKey?: string }): Promise<void> {
+  async updateTurnCard(turnId: string, update: { status?: string; update?: string; sanitize?: boolean; target?: "step" | "tool" | "final"; toolKey?: string; costSummary?: string }): Promise<void> {
     const card = this.turnCards.get(turnId);
     if (!card) return;
 
     if (update.status) card.status = update.status;
+    if (update.costSummary !== undefined) card.costSummary = update.costSummary;
     const nextUpdate = update.update ? (update.sanitize === false ? update.update.trim() : cleanAssistantReply(update.update)) : "";
     if (nextUpdate) {
       if (update.target === "tool") {
@@ -220,6 +222,7 @@ export class TurnCardManager {
       progressUpdates: card.progressUpdates,
       toolUpdates: card.toolUpdates.map((item) => item.view),
       output: card.output,
+      costSummary: card.costSummary,
     };
   }
 

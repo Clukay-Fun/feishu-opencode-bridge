@@ -72,17 +72,28 @@ export function createPortableEnv(options = {}) {
   const pathValue = [nodeBinDir, npmGlobalBin, localBin, env.PATH ?? ""]
     .filter(Boolean)
     .join(path.delimiter);
+  const preserveXdg = env.BRIDGE_PRESERVE_XDG === "1";
 
-  return {
+  const portableEnv = {
     ...env,
     PATH: pathValue,
     BRIDGE_HOME: bridgeHome,
     BRIDGE_CONFIG_PATH: resolveProjectConfigPath(cwd, { ...env, BRIDGE_HOME: bridgeHome }),
-    XDG_DATA_HOME: env.BRIDGE_PRESERVE_XDG === "1"
-      ? env.XDG_DATA_HOME
-      : path.join(bridgeHome, "xdg-data"),
     npm_config_cache: env.npm_config_cache ?? path.join(runtimeDir, "npm-cache"),
   };
+
+  if (preserveXdg) {
+    // 保留用户 shell 的 XDG_DATA_HOME；若用户未设置，则不要注入，交给 OpenCode 回落到 ~/.local/share。
+    if (typeof env.XDG_DATA_HOME === "string" && env.XDG_DATA_HOME.trim().length > 0) {
+      portableEnv.XDG_DATA_HOME = env.XDG_DATA_HOME;
+    } else {
+      delete portableEnv.XDG_DATA_HOME;
+    }
+  } else {
+    portableEnv.XDG_DATA_HOME = path.join(bridgeHome, "xdg-data");
+  }
+
+  return portableEnv;
 }
 
 export async function ensurePortableDirectories(options = {}) {

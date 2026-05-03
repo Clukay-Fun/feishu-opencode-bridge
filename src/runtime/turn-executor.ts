@@ -15,6 +15,7 @@ import { buildPermissionRequestCardPayload } from "../feishu/runtime-cards.js";
 import { buildAssistantMarkdownPayload, buildPostMarkdownPayload, type FeishuPostPayload } from "../feishu/shared-primitives.js";
 import { createTextPreview, logEvent, runWithLogContext, type Logger, type TranscriptType } from "../logging/logger.js";
 import { type OpenCodeMessage, type OpenCodeSessionStatus } from "../opencode/client.js";
+import { formatCostSummary, type CostTracker } from "./cost-tracker.js";
 import { getEventSessionId, type OpenCodeEvent } from "../opencode/events.js";
 import { type SessionWindowRecord } from "../store/mappings.js";
 import type { PendingInteraction } from "../bridge/state.js";
@@ -152,10 +153,11 @@ export type TurnExecutorContext = {
   turnCardManager: {
     createTurnCard(chatId: string, turnId: string, sessionId: string, replyToMessageId: string): Promise<{ messageId: string } | null>;
     flushStreamUpdate(turnId: string, text: string, force: boolean): Promise<void>;
-    updateTurnCard(turnId: string, update: { status?: string; update?: string; sanitize?: boolean; target?: "step" | "tool" | "final"; toolKey?: string }): Promise<void>;
+    updateTurnCard(turnId: string, update: { status?: string; update?: string; sanitize?: boolean; target?: "step" | "tool" | "final"; toolKey?: string; costSummary?: string }): Promise<void>;
     scheduleStreamUpdate(turnId: string, text: string): Promise<void>;
     cleanup(turnId: string): void;
   };
+  costTracker?: CostTracker | undefined;
   permissionManager: {
     registerInteraction(interaction: PendingPermissionInteraction): Promise<boolean>;
     buildActionButtons(interaction: PendingPermissionInteraction): Array<{
@@ -254,6 +256,16 @@ export class TurnExecutor {
       }
 
       const reply = cleanAssistantReply(await this.executeTurn(queueKey, turn as BridgeTurn & { sessionId: string }));
+      const costSummary = this.context.costTracker
+        ? formatCostSummary(await this.context.costTracker.recordTurn({
+          turnId: turn.turnId,
+          sessionId,
+          promptText: turn.text,
+          replyText: reply,
+          model: turn.model,
+          assistantMessage: await this.getLatestAssistantMessage(sessionId).catch(() => null),
+        }))
+        : "";
       this.context.logger.log("opencode/events", "reply completed", { turnId: turn.turnId, sessionId, len: reply.length });
       this.context.logger.logTranscript("opencode-reply", { sessionId, turnId: turn.turnId }, reply);
       await this.context.maybeUpdateSessionLabel(turn as BridgeTurn & { sessionId: string });
@@ -268,7 +280,7 @@ export class TurnExecutor {
         await this.sendTurnFallbackMarkdown(turn.chatId, reply, turn.inboundMessageId);
       }
       await this.context.turnCardManager.flushStreamUpdate(turn.turnId, reply, true);
-      await this.context.turnCardManager.updateTurnCard(turn.turnId, { status: "已完成", update: `最终回复已生成（${reply.length} 字）`, target: "step" });
+      await this.context.turnCardManager.updateTurnCard(turn.turnId, { status: "已完成", update: `最终回复已生成（${reply.length} 字）`, target: "step", ...(costSummary ? { costSummary } : {}) });
       queue.replaceActive(transitionTurn({ ...turn, sessionId }, "done"));
       logEvent(this.context.logger, "bridge/queue", "turn.completed", {
         turnId: turn.turnId,
@@ -297,7 +309,7 @@ export class TurnExecutor {
         }, "warn");
         await this.sendTurnFallbackMarkdown(turn.chatId, `处理失败：${escapeMarkdownText(detail)}`, turn.inboundMessageId);
       }
-      await this.context.turnCardManager.updateTurnCard(turn.turnId, { status: detail.includes("超时") ? "已超时" : "处理失败", update: detail, target: "step" });
+      await this.context.turnCardManager.updateTurnCard(turn.turnId, { status: detail.includes("超时") ? "已超时" : "处理失败", update: detail, target: "final" });
       queue.replaceActive(transitionTurn(turn, detail.includes("超时") ? "timeout" : "aborted"));
     } finally {
       this.context.clearTurnOwnedPendingInteraction(turn.conversationKey, turn.turnId);
@@ -593,6 +605,11 @@ export class TurnExecutor {
       return;
     }
 
+    if (event.type === "session.error") {
+      runtime.fail(new Error(formatOpenCodeSessionError(event)));
+      return;
+    }
+
     if (event.type === "session.idle") {
       await runtime.finish();
     }
@@ -796,6 +813,19 @@ function normalizeTurnFailureDetail(error: unknown): string {
   const detail = cleanAssistantReply(error instanceof Error ? error.message : String(error));
   const normalized = detail.toLowerCase();
 
+  if (normalized.includes("providermodelnotfounderror")) {
+    const provider = detail.match(/provider(?:ID|Id|id)["=: ]+["']?([^"',\s}]+)/)?.[1];
+    const model = detail.match(/model(?:ID|Id|id)["=: ]+["']?([^"',\s}]+)/)?.[1];
+    const modelLabel = provider && model ? `\`${provider}/${model}\`` : "当前模型";
+    return `${modelLabel} 在 OpenCode provider 中不存在。请先发送 \`/models\` 查看可用模型，或发送 \`/model reset\` 恢复 OpenCode 默认模型。`;
+  }
+
+  if (normalized.includes("model not found")) {
+    const model = normalizeMissingModelName(detail.match(/model not found:\s*([^"\n]+)/i)?.[1]);
+    const modelLabel = model ? `\`${model}\`` : "当前模型";
+    return `${modelLabel} 在 OpenCode provider 中不存在。请先发送 \`/models\` 查看可用模型，或发送 \`/model reset\` 恢复 OpenCode 默认模型。`;
+  }
+
   if (normalized.includes("token refresh failed") && normalized.includes("401")) {
     return "模型提供方登录已失效，请重新执行 `opencode providers login`。";
   }
@@ -809,4 +839,33 @@ function normalizeTurnFailureDetail(error: unknown): string {
   }
 
   return detail;
+}
+
+function formatOpenCodeSessionError(event: OpenCodeEvent): string {
+  const raw = serializeErrorValue(event.properties.error ?? event.properties.cause ?? event.raw ?? event.properties);
+  const normalized = raw.toLowerCase();
+  if (normalized.includes("providermodelnotfounderror")) {
+    const provider = raw.match(/provider(?:ID|Id|id)["=: ]+["']?([^"',\s}]+)/)?.[1];
+    const model = raw.match(/model(?:ID|Id|id)["=: ]+["']?([^"',\s}]+)/)?.[1];
+    return `ProviderModelNotFoundError providerID=${provider ?? ""} modelID=${model ?? ""}`;
+  }
+  if (normalized.includes("model not found")) {
+    const model = normalizeMissingModelName(raw.match(/model not found:\s*([^"\n]+)/i)?.[1]);
+    return `Model not found: ${model ?? ""}`;
+  }
+  return raw || "OpenCode session 执行失败。";
+}
+
+function serializeErrorValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value instanceof Error) return value.message;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function normalizeMissingModelName(value: string | undefined): string | undefined {
+  return value?.trim().replace(/\.$/, "");
 }

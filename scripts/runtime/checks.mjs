@@ -18,6 +18,7 @@ import { resolveProjectConfigPath } from "./portable.mjs";
 export const BRIDGE_GROUP = "bridge";
 export const LARK_GROUP = "lark";
 export const MEMORY_GROUP = "memory";
+export const DATA_FLOW_GROUP = "data-flow";
 export const MIN_NODE_MAJOR = 20;
 export const MIN_LARK_VERSION = "1.0.8";
 const OPENCODE_AUTH_REFRESH_WARN_MS = 24 * 60 * 60 * 1_000;
@@ -737,6 +738,57 @@ export async function checkObsidianSync(options = {}) {
   return createResult("obsidian-sync", MEMORY_GROUP, "Obsidian 同步", "pass", vaultPath);
 }
 
+// Report privacy/data-flow relevant settings without making compliance claims.
+export async function checkAiProviderDataFlow(options = {}) {
+  const state = options.state ?? await readProjectConfig(options.cwd, options.configPath);
+  if (!state.exists || state.error || !state.config) {
+    return createResult("dataflow-ai-provider", DATA_FLOW_GROUP, "AI Provider", "skip", "等待 config.json");
+  }
+  const baseUrl = state.config?.opencode?.baseUrl;
+  if (!isConfiguredValue(baseUrl)) {
+    return createResult("dataflow-ai-provider", DATA_FLOW_GROUP, "AI Provider", "skip", "等待 opencode.baseUrl");
+  }
+  return isLocalUrl(baseUrl)
+    ? createResult("dataflow-ai-provider", DATA_FLOW_GROUP, "AI Provider", "pass", `本地/私有地址：${baseUrl}`, "仍需确认 OpenCode provider 自身是否外发")
+    : createResult("dataflow-ai-provider", DATA_FLOW_GROUP, "AI Provider", "warn", `外部地址：${baseUrl}`, "真实案件使用前请确认所选 provider 的训练使用、retention 和合规条款");
+}
+
+export async function checkExternalOcrDataFlow(options = {}) {
+  const state = options.state ?? await readProjectConfig(options.cwd, options.configPath);
+  if (!state.exists || state.error || !state.config) {
+    return createResult("dataflow-ocr", DATA_FLOW_GROUP, "外部 OCR", "skip", "等待 config.json");
+  }
+  const parser = readKnowledgeParserConfig(state.config);
+  if (parser.externalApiEnabled === true) {
+    return createResult("dataflow-ocr", DATA_FLOW_GROUP, "外部 OCR", "warn", `已启用，provider order=${[...parser.pdfProviderOrder, ...parser.imageProviderOrder].join("、")}`, "扫描件/图片可能上传到配置的 OCR provider；敏感材料建议关闭或改用本地 OCR");
+  }
+  return createResult("dataflow-ocr", DATA_FLOW_GROUP, "外部 OCR", "pass", "未启用外部 OCR API");
+}
+
+export async function checkMemoryDataFlow(options = {}) {
+  const state = options.state ?? await readProjectConfig(options.cwd, options.configPath);
+  if (!state.exists || state.error || !state.config) {
+    return createResult("dataflow-memory", DATA_FLOW_GROUP, "长期记忆", "skip", "等待 config.json");
+  }
+  if (state.config?.memory?.enabled === true) {
+    const dbPath = resolveConfigValue(state.configPath, state.config.memory.dbPath) ?? path.join(path.dirname(state.configPath), "data", "memory.db");
+    return createResult("dataflow-memory", DATA_FLOW_GROUP, "长期记忆", "warn", `已启用，本地写入：${dbPath}`, "会从对话中提取长期事实；推广期非必开能力");
+  }
+  return createResult("dataflow-memory", DATA_FLOW_GROUP, "长期记忆", "pass", "未启用");
+}
+
+export async function checkLoggingDataFlow(options = {}) {
+  const state = options.state ?? await readProjectConfig(options.cwd, options.configPath);
+  if (!state.exists || state.error || !state.config) {
+    return createResult("dataflow-logging", DATA_FLOW_GROUP, "日志策略", "skip", "等待 config.json");
+  }
+  const policy = state.config?.logging?.messagePolicy ?? "preview";
+  const transcript = state.config?.logging?.enableTranscript !== false;
+  const detail = `messagePolicy=${policy}, transcript=${transcript ? "enabled" : "disabled"}`;
+  const status = policy === "full" ? "warn" : "pass";
+  return createResult("dataflow-logging", DATA_FLOW_GROUP, "日志策略", status, detail, status === "warn" ? "真实案件建议使用 preview/hash/none，避免完整消息进入日志" : undefined);
+}
+
 // Check whether a build output exists so the runtime can start without tsx.
 export async function checkBuildExists(options = {}) {
   const cwd = options.cwd ?? process.cwd();
@@ -828,7 +880,13 @@ export async function runAllChecks(options = {}) {
   const configPath = options.configPath ?? resolveProjectConfigPath(cwd, options.env);
   const state = await readProjectConfig(cwd, configPath);
   const memory = [await checkObsidianSync({ ...options, cwd, configPath, state })];
-  return [...bridge, ...lark, ...memory];
+  const dataFlow = [
+    await checkAiProviderDataFlow({ ...options, cwd, configPath, state }),
+    await checkExternalOcrDataFlow({ ...options, cwd, configPath, state }),
+    await checkMemoryDataFlow({ ...options, cwd, configPath, state }),
+    await checkLoggingDataFlow({ ...options, cwd, configPath, state }),
+  ];
+  return [...bridge, ...lark, ...memory, ...dataFlow];
 }
 
 // Map grouped diagnostic results to the process exit code used by doctor/onboard.
@@ -994,6 +1052,32 @@ function formatProviderName(providerId) {
 // Detect placeholder public URLs copied from examples.
 function isExampleUrl(value) {
   return typeof value === "string" && value.includes("example.com");
+}
+
+function isLocalUrl(value) {
+  try {
+    const url = new URL(value);
+    return ["127.0.0.1", "localhost", "::1"].includes(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function readKnowledgeParserConfig(config) {
+  const extensions = config.extensions && typeof config.extensions === "object" && !Array.isArray(config.extensions)
+    ? config.extensions
+    : {};
+  const knowledge = extensions["knowledge-base"] && typeof extensions["knowledge-base"] === "object" && !Array.isArray(extensions["knowledge-base"])
+    ? extensions["knowledge-base"]
+    : config.knowledgeBase;
+  const parser = knowledge?.parser && typeof knowledge.parser === "object" && !Array.isArray(knowledge.parser)
+    ? knowledge.parser
+    : {};
+  return {
+    externalApiEnabled: parser.externalApiEnabled === true,
+    pdfProviderOrder: Array.isArray(parser.pdfProviderOrder) ? parser.pdfProviderOrder : [],
+    imageProviderOrder: Array.isArray(parser.imageProviderOrder) ? parser.imageProviderOrder : [],
+  };
 }
 
 // Parse JSON command output without throwing.

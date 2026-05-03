@@ -116,8 +116,8 @@ export function buildModelCardView(
     currentModelLabel: currentModel ? `${currentModel.providerID}/${currentModel.modelID}` : "OpenCode 默认模型",
     providers: providerViews,
     footer: normalizedFilter
-      ? `OpenCode 默认模型：${formatProviderDefaults(providers.default)}\n发送 \`/model use <provider/model>\` 切换当前窗口模型\n发送 \`/model reset\` 恢复默认模型`
-      : `OpenCode 默认模型：${formatProviderDefaults(providers.default)}\n发送 \`/models <provider>\` 查看更多\n发送 \`/model use <provider/model>\` 切换当前窗口模型`,
+      ? `OpenCode 默认模型：${formatProviderDefaults(providers.default)}\n按供应商下方示例切换当前窗口模型\n发送 \`/model reset\` 恢复默认模型`
+      : `OpenCode 默认模型：${formatProviderDefaults(providers.default)}\n发送 \`/models <provider>\` 查看更多\n按供应商下方示例切换当前窗口模型`,
   };
 }
 

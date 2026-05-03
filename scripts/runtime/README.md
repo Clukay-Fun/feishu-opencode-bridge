@@ -17,7 +17,14 @@
 - `start.mjs`
   - 本地启动编排入口
 - `bootstrap.mjs`
-  - portable 包统一入口，准备用户目录、项目依赖并分发 onboard / doctor / start / init / guide
+  - portable 包统一入口，准备用户目录、项目依赖并分发 onboard / doctor / start / init / guide / backup / restore / cost / update
+- `backup.mjs`
+  - 备份和恢复本地用户数据目录
+  - 不触达飞书远端 Base，也不备份 `.runtime`、`node_modules`
+- `cost.mjs`
+  - 读取本地 `data/usage-ledger.jsonl`，输出 token 与金额估算摘要
+- `update.mjs`
+  - 检查 GitHub Release、下载 portable 包到 `.runtime/staging`，并显式切换或回滚
 - `portable.mjs`
   - portable 包目录、环境变量和 Node 下载元数据
 - `install-node.sh` / `install-node.ps1`
@@ -39,6 +46,14 @@
 - `bridge guide`
   - 输出缺配置、缺 workspace、doctor 未通过或已就绪等阶段化下一步
   - 与飞书 `/guide` 卡片配合，帮助新用户跑通 Hero 路线
+- `bridge backup`
+  - 将用户数据目录中的 `config.json`、`data/`、`logs/`、`extensions/` 等打包为 zip
+- `bridge restore <zip> [--force]`
+  - 恢复本地用户数据；默认拒绝覆盖已有 config/data
+- `bridge cost [--json]`
+  - 查看本地 AI token / 成本估算；`--reset-local` 只清本地 ledger
+- `bridge update check|download|apply|rollback`
+  - 检查新版、下载到 staging、显式切换或回滚；不覆盖用户数据目录
 - `bridge init export-schema`
   - 维护者命令，用当前配置指向的真实表结构刷新 `scripts/workspace-init/current-workspace-schema.json`
 

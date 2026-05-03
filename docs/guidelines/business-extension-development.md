@@ -131,6 +131,8 @@ export const exampleExtension: BuiltinExtensionDefinition = {
 `src/extension-api/` 是 L2 动态加载前置的公共契约面。
 未来外部扩展只能从这里 import 类型与 helper。
 
+当前 `extension-api` 仍是实验性能力：API 不稳定，扩展是受信代码加载，不提供沙箱隔离、第三方兼容承诺或运行时热拔插。推广期不建议把它包装成面向普通用户的插件生态；新增外部扩展前应审查源码、依赖和数据外发行为。
+
 允许使用：
 
 - `defineExtension()` / `defineCardTemplate()`

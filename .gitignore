@@ -15,6 +15,7 @@ mappings.json
 active-knowledge-ingests.json
 knowledge-base.db
 tmp-knowledge-check.txt
+usage-ledger.jsonl
 
 # Local tool state
 .DS_Store

@@ -232,6 +232,105 @@ describe("TurnExecutor text buffering", () => {
       model: { providerID: "openai", modelID: "gpt-5.4-mini" },
     }));
   });
+
+  it("surfaces OpenCode session errors with actionable model guidance", async () => {
+    const context = createContext();
+    const updateTurnCard = vi.fn(async () => {});
+    context.turnCardManager.createTurnCard = vi.fn(async () => ({ messageId: "om_card" }));
+    context.turnCardManager.updateTurnCard = updateTurnCard;
+    context.queues.get = () => ({
+      peek: () => createTurn({ model: { providerID: "minimax-cn-coding-plan", modelID: "MiniMax-M2.7" } }),
+      replaceActive() {},
+      current: () => createTurn(),
+      finishActive() {},
+    });
+    context.opencode.promptAsync = vi.fn(async () => {
+      queueMicrotask(() => {
+        void listener?.({
+          type: "session.error",
+          properties: {
+            sessionID: "ses_1",
+            error: {
+              name: "ProviderModelNotFoundError",
+              data: {
+                providerID: "minimax-cn-coding-plan",
+                modelID: "MiniMax-M2.7",
+              },
+            },
+          },
+          sessionId: "ses_1",
+          receivedAt: Date.now(),
+          streamEndpoint: "/event",
+          raw: {},
+        });
+      });
+      return {};
+    });
+    let listener: ((event: Record<string, unknown>) => Promise<void>) | null = null;
+    context.eventStream.subscribe = (handler) => {
+      listener = handler as (event: Record<string, unknown>) => Promise<void>;
+      return () => {};
+    };
+    const executor = new TurnExecutor(context) as unknown as {
+      runTurn: (queueKey: string) => Promise<void>;
+    };
+
+    await executor.runTurn("queue-1");
+
+    expect(updateTurnCard).toHaveBeenCalledWith("turn_1", expect.objectContaining({
+      status: "处理失败",
+      target: "final",
+      update: expect.stringContaining("/model reset"),
+    }));
+  });
+
+  it("normalizes generic model-not-found errors from OpenCode", async () => {
+    const context = createContext();
+    const updateTurnCard = vi.fn(async () => {});
+    context.turnCardManager.createTurnCard = vi.fn(async () => ({ messageId: "om_card" }));
+    context.turnCardManager.updateTurnCard = updateTurnCard;
+    context.queues.get = () => ({
+      peek: () => createTurn(),
+      replaceActive() {},
+      current: () => createTurn(),
+      finishActive() {},
+    });
+    context.opencode.promptAsync = vi.fn(async () => {
+      queueMicrotask(() => {
+        void listener?.({
+          type: "session.error",
+          properties: {
+            sessionID: "ses_1",
+            error: {
+              name: "UnknownError",
+              data: {
+                message: "Model not found: minimax-cn-coding-plan/MiniMax-M2.7.",
+              },
+            },
+          },
+          sessionId: "ses_1",
+          receivedAt: Date.now(),
+          streamEndpoint: "/event",
+          raw: {},
+        });
+      });
+      return {};
+    });
+    let listener: ((event: Record<string, unknown>) => Promise<void>) | null = null;
+    context.eventStream.subscribe = (handler) => {
+      listener = handler as (event: Record<string, unknown>) => Promise<void>;
+      return () => {};
+    };
+    const executor = new TurnExecutor(context) as unknown as {
+      runTurn: (queueKey: string) => Promise<void>;
+    };
+
+    await executor.runTurn("queue-1");
+
+    expect(updateTurnCard).toHaveBeenCalledWith("turn_1", expect.objectContaining({
+      update: expect.stringContaining("`minimax-cn-coding-plan/MiniMax-M2.7` 在 OpenCode provider 中不存在"),
+    }));
+  });
 });
 
 function createContext(): TurnExecutorContext {

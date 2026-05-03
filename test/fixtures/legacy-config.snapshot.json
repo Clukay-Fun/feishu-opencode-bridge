@@ -89,6 +89,16 @@
       "content"
     ]
   },
+  "costs": {
+    "enabled": true,
+    "currency": "CNY",
+    "modelPrices": {}
+  },
+  "updates": {
+    "checkOnStart": true,
+    "githubRepo": "clukay/feishu-opencode-bridge",
+    "channel": "stable"
+  },
   "memory": {
     "enabled": true,
     "dbPath": "<fixtureDir>/data/memory.db",

@@ -32,6 +32,7 @@ describe("setup entrypoints", () => {
     const script = await readFile(path.join(repoRoot, "start.command"), "utf8");
 
     expect(script).toContain("兼容旧版 macOS 双击启动入口");
+    expect(script).toContain("BRIDGE_CONFIG_PATH");
     expect(script).toContain("exec \"$ROOT/bridge\" start");
     expect(script).not.toContain("scripts/runtime/start.mjs");
   });
@@ -40,6 +41,7 @@ describe("setup entrypoints", () => {
     const script = await readFile(path.join(repoRoot, "start.bat"), "utf8");
 
     expect(script).toContain("兼容旧版 Windows 双击启动入口");
+    expect(script).toContain("BRIDGE_CONFIG_PATH");
     expect(script).toContain("bridge.cmd\" start");
     expect(script).not.toContain("scripts\\runtime\\start.mjs");
   });
@@ -49,6 +51,7 @@ describe("setup entrypoints", () => {
 
     expect(script).toContain("scripts/runtime/install-node.sh");
     expect(script).toContain("BRIDGE_HOME");
+    expect(script).toContain("BRIDGE_PRESERVE_XDG");
     expect(script).toContain("scripts/runtime/bootstrap.mjs");
   });
 

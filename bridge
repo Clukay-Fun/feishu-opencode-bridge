@@ -31,4 +31,8 @@ if [ -z "$BRIDGE_HOME" ]; then
   export BRIDGE_HOME
 fi
 
+# 默认复用用户自己的 OpenCode 数据目录。
+# 这样用户在 opencode CLI 里完成的 provider 登录、plan/model 配置，会被 Bridge 拉起的 opencode serve 读取到。
+export BRIDGE_PRESERVE_XDG="${BRIDGE_PRESERVE_XDG:-1}"
+
 exec "$NODE_BIN" "$ROOT/scripts/runtime/bootstrap.mjs" "$@"

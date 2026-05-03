@@ -24,6 +24,7 @@ export type TurnStatusCardView = {
   progressUpdates: readonly string[];
   toolUpdates: ReadonlyArray<ToolUpdateView>;
   output: OutputView;
+  costSummary?: string | undefined;
 };
 
 export type StatusCommandCardView = {
@@ -35,6 +36,22 @@ export type StatusCommandCardView = {
   queueState: string;
   pendingCount: number;
   windowCount: number;
+  costStatus?: string | undefined;
+};
+export type CostCommandCardView = {
+  todayTokens: number;
+  todayCostCny?: number | undefined;
+  monthTokens: number;
+  monthCostCny?: number | undefined;
+  dailyLimitCny?: number | undefined;
+  recent: Array<{
+    createdAt: string;
+    provider: string;
+    model: string;
+    totalTokens: number;
+    estimatedCostCny?: number | undefined;
+    source: "provider" | "estimated";
+  }>;
 };
 
 export type SessionListCardView = {
@@ -130,6 +147,44 @@ export function buildStatusCommandCardPayload(view: StatusCommandCardView): Feis
       buildStatusSystemBlock(view),
       buildDivider(),
       buildFooterTipBlock("`/sessions` 查看全部   `/new` 新建会话", "efficiency_outlined", "green", "normal_v2"),
+    ],
+  });
+}
+
+/** 构建 `/cost` 成本摘要卡。 */
+export function buildCostCommandCardPayload(view: CostCommandCardView): FeishuPostPayload {
+  const todayCost = view.todayCostCny === undefined ? "未配置价格" : `≈¥${view.todayCostCny.toFixed(4)}`;
+  const monthCost = view.monthCostCny === undefined ? "未配置价格" : `≈¥${view.monthCostCny.toFixed(4)}`;
+  const limit = view.dailyLimitCny === undefined ? "未设置" : `¥${view.dailyLimitCny.toFixed(2)}`;
+  const recent = view.recent.length === 0
+    ? "暂无本地成本记录"
+    : view.recent.map((entry) => {
+      const cost = entry.estimatedCostCny === undefined ? "" : ` · ≈¥${entry.estimatedCostCny.toFixed(4)}`;
+      const source = entry.source === "provider" ? "provider usage" : "估算";
+      return `- ${escapeText(entry.provider)}/${escapeText(entry.model)} · ${entry.totalTokens} tokens${cost} · ${source}`;
+    }).join("\n");
+
+  return buildInteractivePayload({
+    title: "AI 成本摘要",
+    template: "orange",
+    iconToken: "wallet_outlined",
+    bodyElements: [
+      columnSet([
+        column([
+          markdown(`**今日**\n${view.todayTokens} tokens\n${todayCost}`, { icon: { token: "calendar_outlined", color: "orange" } }),
+        ], { bg: "orange-50", weight: 1 }),
+        column([
+          markdown(`**本月**\n${view.monthTokens} tokens\n${monthCost}`, { icon: { token: "insert-chart_outlined", color: "blue" } }),
+        ], { bg: "wathet-50", weight: 1 }),
+      ]),
+      buildDivider(),
+      columnSet([
+        column([
+          markdown(`**日上限**\n${limit}\n\n${recent}`, { icon: { token: "info-hollow_filled", color: "grey" } }),
+        ], { bg: "grey-50", weight: 1 }),
+      ]),
+      buildDivider(),
+      buildFooterTipBlock("金额是本地估算，provider 账单以服务商为准。终端运行 `bridge cost` 查看更多。", "calculator_outlined", "grey", "notation"),
     ],
   });
 }
@@ -380,7 +435,7 @@ function buildTurnBodyElements(
 
   elements.push(buildOutputBlock(outputElements));
   elements.push(buildSpacerBlock());
-  elements.push(buildFooter(view.sessionId, view.durationText));
+  elements.push(buildFooter(view.sessionId, view.durationText, view.costSummary));
   return elements;
 }
 
@@ -421,6 +476,7 @@ function buildModelProviderBlock(provider: ModelListCardView["providers"][number
             ...columnSet(provider.models.map((model) => buildModelChip(model))),
             flex_mode: "flow",
           },
+          markdown(`切换示例：\`/model use ${escapeText(buildModelSwitchId(provider, provider.models[0]?.id ?? "<model>"))}\``, { size: "notation" }),
         ], { weight: 1 }),
         vertical_spacing: "4px",
       },
@@ -442,7 +498,6 @@ function buildCurrentModelBlock(currentModelLabel: string): Record<string, unkno
 function buildModelChip(model: ModelListCardView["providers"][number]["models"][number]): Record<string, unknown> {
   const label = model.id.includes("/") ? (model.id.split("/").at(-1) ?? model.id) : model.id;
   const highlighted = model.current;
-  const switchCommand = `/model use ${model.id}`;
   return {
     ...column([
       markdown(
@@ -451,10 +506,13 @@ function buildModelChip(model: ModelListCardView["providers"][number]["models"][
           : escapeText(label),
         { size: "notation" },
       ),
-      markdown(`\`${escapeText(switchCommand)}\``, { size: "notation" }),
     ], highlighted ? { bg: "purple-50" } : undefined),
     padding: "4px 4px 4px 4px",
   };
+}
+
+function buildModelSwitchId(provider: ModelListCardView["providers"][number], modelId: string): string {
+  return modelId.includes("/") ? modelId : `${provider.id}/${modelId}`;
 }
 
 function buildPermissionActionBlock(buttons: PermissionActionButton[]): Record<string, unknown> {
@@ -537,6 +595,7 @@ function buildStatusSystemBlock(view: StatusCommandCardView): Record<string, unk
     buildStatusChip(view.queueState, view.queueState === "空闲" ? "green-50" : "wathet-50"),
     buildStatusChip(`排队 ${view.pendingCount}`, "grey-50"),
     buildStatusChip(`窗口 ${view.windowCount}`, "grey-50"),
+    ...(view.costStatus ? [buildStatusChip(view.costStatus, view.costStatus.includes("已达") ? "red-50" : view.costStatus.includes("接近") ? "orange-50" : "green-50")] : []),
   ];
 
   return columnSet([
@@ -838,13 +897,14 @@ function buildSpacerBlock(): Record<string, unknown> {
   };
 }
 
-function buildFooter(sessionId: string, durationText: string): Record<string, unknown> {
+function buildFooter(sessionId: string, durationText: string, costSummary?: string): Record<string, unknown> {
   const duration = durationText ? `｜耗时：${durationText}` : "";
+  const cost = costSummary ? `｜${costSummary}` : "";
   return {
     tag: "div",
     text: {
       tag: "plain_text",
-      content: `ID：${shortSessionId(sessionId)}${duration}`,
+      content: `ID：${shortSessionId(sessionId)}${duration}${cost}`,
       text_size: "notation",
       text_align: "left",
       text_color: "grey",

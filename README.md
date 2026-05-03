@@ -11,6 +11,20 @@
 > **Feishu OpenCode Bridge 不是一个普通的飞书机器人。**
 > 它是把 OpenCode 运行时产品化到飞书里的 **Feishu-native runtime adapter**——让私聊、群聊、话题群都拥有会话窗口、过程卡片、权限确认、知识库、合同/劳动业务模块和长期记忆，真正成为 OpenCode 的工作入口。
 
+## 🔐 数据与合规先看
+
+真实合同、案件材料进来前，先看 [数据流向与隐私说明](docs/privacy-and-data-flow.md)。默认边界是：文本会进入你配置的 OpenCode / AI provider，合同和案件台账写入你自己的飞书 Base，本地保留配置、日志和 SQLite 索引，外部 OCR 默认关闭。
+
+敏感案件建议使用本地模型或私有模型网关，并保持 `memory.enabled=false`、`knowledgeBase.parser.externalApiEnabled=false`、`logging.messagePolicy=preview/hash/none`。
+
+## 🎯 为什么值得试
+
+**为什么不直接用 Claude / ChatGPT？** 通用对话工具没有飞书里的会话窗口、过程卡片、权限确认、Base 台账、批量材料入库和案件级状态。Bridge 的价值是把 AI 放进律师助理每天已经在用的飞书工作流里。
+
+**为什么不直接用成熟法律 AI 产品？** 成熟产品适合标准化 SaaS 场景；Bridge 更适合愿意自部署、想控制数据流向、需要低成本定制合同/劳动/知识库流程，并且已经在飞书协作的团队。
+
+**不适合谁？** 不使用飞书、不愿意维护本地服务、要求厂商提供完整合规责任背书、或大型律所需要统一采购审计流程的团队，不应把本项目当成开箱即用 SaaS。
+
 ## 📢 项目动态
 
 **2026-04-28** · 外部扩展进入受限加载阶段：公开 `extension-api`、启动期 manifest/config 归一化、外部 RuntimeModule 适配和本地扩展包管理命令，同时继续禁止热拔插和直接依赖 bridge 内部
@@ -211,6 +225,9 @@ Release 包用户优先使用 portable 入口：
 ./bridge start
 ./bridge guide
 ./bridge doctor workspace
+./bridge backup
+./bridge cost
+./bridge update check
 ```
 
 ```cmd
@@ -220,6 +237,9 @@ bridge.cmd init workspace
 bridge.cmd start
 bridge.cmd guide
 bridge.cmd doctor workspace
+bridge.cmd backup
+bridge.cmd cost
+bridge.cmd update check
 ```
 
 首次运行会自动下载 portable Node 到 `.runtime/node`，并把用户配置、数据和日志放到用户目录，避免升级新版包时覆盖旧数据。Windows 首次运行如果被 Defender 拦截，请将解压目录加入信任后重试。
@@ -227,6 +247,8 @@ bridge.cmd doctor workspace
 `bridge init workspace` 会使用当前 `lark-cli` 用户授权，在你的飞书账号下创建合同、发票、案件和知识库多维表格，并把新的 Base / Table ID 写回用户目录的 `config.json`。已有多维表格配置不会被静默覆盖；`--force` 只覆盖本地配置指向，不删除旧 Base、旧表或旧数据。
 
 初始化样例记录会写入正式 Base，并在用户数据目录生成 `data/init-seeds.json`。需要重建样例时运行 `bridge init workspace --reset-sample-data`，脚本只会删除 seed manifest 记录过的样例记录，找不到的记录会安静跳过。
+
+`bridge cost` / 飞书 `/cost` 会展示本地 token 与成本估算；金额只代表 Bridge 本地估算，真实账单以 AI provider 为准。`bridge update check` 会检查 GitHub Release 新版本；下载与切换需显式运行 `bridge update download` / `bridge update apply`。
 
 30 分钟跑通目标默认你已有 AI provider key，或已通过维护者提供的测试 key 入口拿到临时 key。首次体验素材见 `examples/hero/`，它们只使用 TXT / MD 路线，不依赖外部 OCR。启动后回到飞书发送 `/guide`，即可看到 60 秒新手引导；终端里运行 `bridge guide` 可查看当前阶段和下一步。
 
@@ -246,7 +268,7 @@ npm run doctor
 
 速查：
 
-`/new` · `/status` · `/sessions` · `/switch <编号>` — 会话控制
+`/new` · `/status` · `/cost` · `/sessions` · `/switch <编号>` — 会话与成本状态
 
 `/allow once` · `/allow always` · `/deny` — 权限确认
 

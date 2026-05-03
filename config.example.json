@@ -59,6 +59,23 @@
   "permissions": {
     "defaultPolicy": "ask"
   },
+  "costs": {
+    "enabled": true,
+    "currency": "CNY",
+    "dailyLimitCny": 20,
+    "modelPrices": {
+      "minimax-cn-coding-plan/MiniMax-M2.7": {
+        "inputPer1M": 1,
+        "outputPer1M": 8,
+        "cachedInputPer1M": 0.2
+      }
+    }
+  },
+  "updates": {
+    "checkOnStart": true,
+    "githubRepo": "clukay/feishu-opencode-bridge",
+    "channel": "stable"
+  },
   "embeddings": {
     "provider": {
       "baseUrl": "https://api.openai.com/v1/",

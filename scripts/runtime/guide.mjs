@@ -127,6 +127,8 @@ function renderGuide(view, logger) {
       logger.log(`  - ${fix}`);
     }
   }
+  logger.log("");
+  logger.log("数据流向：真实案件使用前请阅读 docs/privacy-and-data-flow.md；敏感案件建议使用本地或私有模型 provider。");
   if (view.statePath) {
     logger.log("");
     logger.log(`本地引导状态：${view.statePath}`);

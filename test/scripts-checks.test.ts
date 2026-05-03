@@ -12,6 +12,9 @@ import {
   assessOpencodeAuthPayload,
   assessLarkAuthPayload,
   checkConfigPublicUrl,
+  checkAiProviderDataFlow,
+  checkExternalOcrDataFlow,
+  checkMemoryDataFlow,
   checkObsidianSync,
   checkOpencodeModels,
   checkOpencodeDirectory,
@@ -161,6 +164,57 @@ describe("scripts/checks", () => {
     expect(result.detail).toContain("1 个 provider，2 个模型");
   });
 
+  it("reports external provider, OCR, and memory data-flow warnings", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-checks-data-flow-"));
+    await writeConfig(dir, {
+      opencode: {
+        baseUrl: "https://api.example-provider.test/",
+        directory: dir,
+      },
+      extensions: {
+        "knowledge-base": {
+          parser: {
+            externalApiEnabled: true,
+            pdfProviderOrder: ["mineru-agent"],
+            imageProviderOrder: ["paddleocr-vl-aistudio"],
+          },
+        },
+      },
+      memory: {
+        enabled: true,
+        dbPath: "./data/memory.db",
+      },
+    });
+
+    await expect(checkAiProviderDataFlow({ cwd: dir })).resolves.toMatchObject({
+      status: "warn",
+      detail: expect.stringContaining("外部地址"),
+    });
+    await expect(checkExternalOcrDataFlow({ cwd: dir })).resolves.toMatchObject({
+      status: "warn",
+      detail: expect.stringContaining("mineru-agent"),
+    });
+    await expect(checkMemoryDataFlow({ cwd: dir })).resolves.toMatchObject({
+      status: "warn",
+      detail: expect.stringContaining("memory.db"),
+    });
+  });
+
+  it("treats local OpenCode provider URLs as private-leaning", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-checks-data-flow-local-"));
+    await writeConfig(dir, {
+      opencode: {
+        baseUrl: "http://127.0.0.1:4096/",
+        directory: dir,
+      },
+    });
+
+    const result = await checkAiProviderDataFlow({ cwd: dir });
+
+    expect(result.status).toBe("pass");
+    expect(result.detail).toContain("本地/私有地址");
+  });
+
   it("skips obsidian sync when obsidian is not enabled", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-checks-obsidian-skip-"));
     await writeConfig(dir, {
@@ -244,8 +298,10 @@ async function writeConfig(dir: string, partial: Record<string, unknown>): Promi
       },
       ...(partial.memory ?? {}),
     },
+    extensions: partial.extensions ?? {},
     logging: {
       dir: "./logs",
+      ...(partial.logging ?? {}),
     },
   }, null, 2));
 }

@@ -51,6 +51,22 @@ const MemoryConfigSchema = z.object({
     });
   }
 });
+const ModelPriceSchema = z.object({
+  inputPer1M: z.number().nonnegative().optional(),
+  outputPer1M: z.number().nonnegative().optional(),
+  cachedInputPer1M: z.number().nonnegative().optional(),
+});
+const CostsConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  currency: z.literal("CNY").default("CNY"),
+  dailyLimitCny: z.number().positive().optional(),
+  modelPrices: z.record(ModelPriceSchema).default({}),
+}).default({});
+const UpdatesConfigSchema = z.object({
+  checkOnStart: z.boolean().default(true),
+  githubRepo: z.string().min(1).default("clukay/feishu-opencode-bridge"),
+  channel: z.literal("stable").default("stable"),
+}).default({});
 
 export const ConfigSchema = z.object({
   feishu: z.object({
@@ -133,6 +149,8 @@ export const ConfigSchema = z.object({
       "content",
     ]),
   }).default({}),
+  costs: CostsConfigSchema,
+  updates: UpdatesConfigSchema,
   memory: MemoryConfigSchema.default({}),
   extensions: z.record(z.unknown()).default({}),
   knowledgeBase: moduleConfigSchemas.knowledgeBase,
@@ -234,6 +252,21 @@ export type AppConfig = {
     format?: "pretty" | "json" | undefined;
     messagePolicy?: "full" | "preview" | "hash" | "none" | undefined;
     redactFields?: string[] | undefined;
+  };
+  costs?: {
+    enabled: boolean;
+    currency: "CNY";
+    dailyLimitCny?: number | undefined;
+    modelPrices: Record<string, {
+      inputPer1M?: number | undefined;
+      outputPer1M?: number | undefined;
+      cachedInputPer1M?: number | undefined;
+    }>;
+  };
+  updates?: {
+    checkOnStart: boolean;
+    githubRepo: string;
+    channel: "stable";
   };
   memory: {
     enabled: boolean;

@@ -26,6 +26,9 @@ import {
   resolveBridgeLaunch,
 } from "../scripts/runtime/start.mjs";
 import { runBootstrap, ensureBridgeDependencies } from "../scripts/runtime/bootstrap.mjs";
+import { createBackup, restoreBackup } from "../scripts/runtime/backup.mjs";
+import { runCostCli } from "../scripts/runtime/cost.mjs";
+import { checkForUpdate, downloadUpdate } from "../scripts/runtime/update.mjs";
 import { buildGuideView, runGuide } from "../scripts/runtime/guide.mjs";
 import { createPortableEnv, resolveBridgeHome, resolveNodeDownload, resolveProjectConfigPath } from "../scripts/runtime/portable.mjs";
 import { buildPortablePackage } from "../scripts/release/build-portable.mjs";
@@ -407,6 +410,42 @@ describe("scripts/portable bootstrap", () => {
     expect(env.XDG_DATA_HOME).toBe(path.join(bridgeHome, "xdg-data"));
   });
 
+  it("preserves the user OpenCode data home when requested", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-portable-xdg-"));
+    const bridgeHome = path.join(dir, "home");
+    const xdgDataHome = path.join(dir, "xdg-data");
+    const env = createPortableEnv({
+      cwd: dir,
+      env: {
+        BRIDGE_HOME: bridgeHome,
+        BRIDGE_PRESERVE_XDG: "1",
+        XDG_DATA_HOME: xdgDataHome,
+        PATH: "/usr/bin",
+      },
+      platform: "darwin",
+      home: dir,
+    });
+
+    expect(env.XDG_DATA_HOME).toBe(xdgDataHome);
+  });
+
+  it("does not inject XDG_DATA_HOME when preserving the default user OpenCode data home", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-portable-xdg-default-"));
+    const bridgeHome = path.join(dir, "home");
+    const env = createPortableEnv({
+      cwd: dir,
+      env: {
+        BRIDGE_HOME: bridgeHome,
+        BRIDGE_PRESERVE_XDG: "1",
+        PATH: "/usr/bin",
+      },
+      platform: "darwin",
+      home: dir,
+    });
+
+    expect(env.XDG_DATA_HOME).toBeUndefined();
+  });
+
   it("selects Node archives by platform and architecture", () => {
     expect(resolveNodeDownload({ platform: "win32", arch: "x64" }).archiveName).toContain("win-x64.zip");
     expect(resolveNodeDownload({ platform: "darwin", arch: "arm64" }).archiveName).toContain("darwin-arm64.tar.gz");
@@ -596,6 +635,58 @@ describe("scripts/guide", () => {
   });
 });
 
+describe("scripts/backup", () => {
+  it("backs up user data while excluding runtime folders", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-backup-"));
+    const bridgeHome = path.join(dir, "bridge-home");
+    await mkdir(path.join(bridgeHome, "data"), { recursive: true });
+    await mkdir(path.join(bridgeHome, "logs"), { recursive: true });
+    await mkdir(path.join(bridgeHome, "extensions", "demo"), { recursive: true });
+    await mkdir(path.join(bridgeHome, ".runtime", "node"), { recursive: true });
+    await writeFile(path.join(bridgeHome, "config.json"), "{}");
+    await writeFile(path.join(bridgeHome, "data", "knowledge-base.db"), "db");
+    await writeFile(path.join(bridgeHome, "logs", "bridge.log"), "log");
+    await writeFile(path.join(bridgeHome, "extensions", "demo", "manifest.json"), "{}");
+    await writeFile(path.join(bridgeHome, ".runtime", "node", "secret.txt"), "runtime");
+    const outputPath = path.join(dir, "backup.zip");
+
+    const result = await createBackup({ cwd: dir, bridgeHome, outputPath });
+    const restored = path.join(dir, "restored");
+    await restoreBackup({ cwd: dir, bridgeHome: restored, zipPath: result.outputPath });
+
+    await expect(readFile(path.join(restored, "config.json"), "utf8")).resolves.toBe("{}");
+    await expect(readFile(path.join(restored, "data", "knowledge-base.db"), "utf8")).resolves.toBe("db");
+    await expect(readFile(path.join(restored, "extensions", "demo", "manifest.json"), "utf8")).resolves.toBe("{}");
+    await expect(readFile(path.join(restored, ".runtime", "node", "secret.txt"), "utf8")).rejects.toThrow();
+  });
+
+  it("refuses restore over existing user data unless force is explicit", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-restore-"));
+    const source = path.join(dir, "source");
+    await mkdir(path.join(source, "data"), { recursive: true });
+    await writeFile(path.join(source, "config.json"), "{\"ok\":true}");
+    await writeFile(path.join(source, "data", "state.json"), "{}");
+    const { outputPath } = await createBackup({ cwd: dir, bridgeHome: source, outputPath: path.join(dir, "backup.zip") });
+    const target = path.join(dir, "target");
+    await mkdir(path.join(target, "data"), { recursive: true });
+    await writeFile(path.join(target, "config.json"), "{\"old\":true}");
+
+    await expect(restoreBackup({ cwd: dir, bridgeHome: target, zipPath: outputPath })).rejects.toThrow("--force");
+    await expect(restoreBackup({ cwd: dir, bridgeHome: target, zipPath: outputPath, force: true })).resolves.toMatchObject({
+      bridgeHome: target,
+    });
+    await expect(readFile(path.join(target, "config.json"), "utf8")).resolves.toBe("{\"ok\":true}");
+  });
+
+  it("rejects invalid backup files", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-restore-invalid-"));
+    const invalid = path.join(dir, "invalid.zip");
+    await writeFile(invalid, "not a zip");
+
+    await expect(restoreBackup({ cwd: dir, bridgeHome: path.join(dir, "target"), zipPath: invalid })).rejects.toThrow("zip");
+  });
+});
+
 describe("scripts/release portable package", () => {
   it("builds a dist-only portable package layout", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-release-portable-"));
@@ -777,5 +868,87 @@ describe("scripts/start", () => {
 
     expect(launch.command).toBe(process.execPath);
     expect(launch.args).toEqual([path.join(dir, "dist", "src", "index.js")]);
+  });
+});
+
+describe("scripts/cost", () => {
+  it("prints local usage summary and can reset only the local ledger", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-cost-cli-"));
+    const home = path.join(dir, "home");
+    const bridgeHome = path.join(home, "Library", "Application Support", "FeishuOpenCodeBridge");
+    const ledgerDir = path.join(bridgeHome, "data");
+    await mkdir(ledgerDir, { recursive: true });
+    await writeFile(path.join(ledgerDir, "usage-ledger.jsonl"), `${JSON.stringify({
+      schemaVersion: 1,
+      createdAt: new Date().toISOString(),
+      provider: "openai",
+      model: "gpt-test",
+      totalTokens: 100,
+      estimatedCostCny: 0.01,
+      source: "estimated",
+    })}\n`);
+    const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    await expect(runCostCli([], { cwd: dir, home, platform: "darwin", logger })).resolves.toBe(0);
+    expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("今日: 100 tokens"));
+
+    await expect(runCostCli(["--reset-local"], { cwd: dir, home, platform: "darwin", logger })).resolves.toBe(0);
+    await expect(readFile(path.join(ledgerDir, "usage-ledger.jsonl"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
+describe("scripts/update", () => {
+  it("detects newer GitHub releases", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-update-check-"));
+    await writeFile(path.join(dir, "package.json"), JSON.stringify({ version: "1.0.0" }));
+    await writeFile(path.join(dir, "config.json"), JSON.stringify({ updates: { githubRepo: "owner/repo" } }));
+
+    const result = await checkForUpdate({
+      cwd: dir,
+      fetchImpl: vi.fn(async () => new Response(JSON.stringify({
+        tag_name: "v1.2.0",
+        html_url: "https://github.com/owner/repo/releases/tag/v1.2.0",
+        assets: [],
+      }), { status: 200 })),
+    });
+
+    expect(result.hasUpdate).toBe(true);
+    expect(result.latestVersion).toBe("1.2.0");
+  });
+
+  it("downloads only matching portable assets into staging", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-update-download-"));
+    await writeFile(path.join(dir, "package.json"), JSON.stringify({ version: "1.0.0" }));
+    await writeFile(path.join(dir, "config.json"), JSON.stringify({ updates: { githubRepo: "owner/repo" } }));
+    const archiveBytes = Buffer.from("fake archive");
+    const runCommandFn = vi.fn(async (_command: string, _args: string[], options: { cwd: string }) => {
+      const packageDir = path.join(options.cwd, "feishu-opencode-bridge-macos-arm64");
+      await mkdir(packageDir, { recursive: true });
+      await writeFile(path.join(packageDir, "package.json"), "{}");
+      return { code: 0, stdout: "", stderr: "", signal: null, timedOut: false };
+    });
+
+    const result = await downloadUpdate({
+      cwd: dir,
+      platform: "darwin",
+      arch: "arm64",
+      runCommandFn,
+      fetchImpl: vi.fn(async (url: string) => {
+        if (url.includes("api.github.com")) {
+          return new Response(JSON.stringify({
+            tag_name: "v1.1.0",
+            assets: [
+              { name: "feishu-opencode-bridge-windows-x64.zip", size: 1, browser_download_url: "https://example.com/win.zip" },
+              { name: "feishu-opencode-bridge-macos-arm64.tar.gz", size: archiveBytes.length, browser_download_url: "https://example.com/mac.tar.gz" },
+            ],
+          }), { status: 200 });
+        }
+        return new Response(archiveBytes, { status: 200 });
+      }),
+    });
+
+    expect(result.stagingDir).toContain(path.join(".runtime", "staging", "1.1.0"));
+    expect(runCommandFn).toHaveBeenCalled();
+    expect(await readFile(path.join(result.stagingDir, "update-manifest.json"), "utf8")).toContain("macos-arm64");
   });
 });

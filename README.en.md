@@ -11,6 +11,20 @@
 > **Feishu OpenCode Bridge is not a normal Feishu bot.**
 > It is a **Feishu-native runtime adapter** that productizes the OpenCode runtime inside Feishu, giving private chats, group chats, and topic groups session windows, process cards, permission confirmation, a legal knowledge base, contract/labor modules, and long-term memory.
 
+## 🔐 Data And Compliance First
+
+Before sending real contracts or case materials, read [Privacy And Data Flow](docs/privacy-and-data-flow.md). By default, text goes through your configured OpenCode / AI provider, contract and case ledgers are stored in your own Feishu Base, local config/logs/SQLite indexes stay on your machine, and external OCR APIs are disabled.
+
+For sensitive cases, prefer a local model or private model gateway, keep `memory.enabled=false`, keep `knowledgeBase.parser.externalApiEnabled=false`, and avoid `logging.messagePolicy=full`.
+
+## 🎯 Why Use This
+
+**Why not just Claude / ChatGPT?** Generic chat tools do not provide Feishu-native session windows, process cards, permission confirmation, Base ledgers, batch material ingestion, or case-level state.
+
+**Why not a mature legal AI SaaS?** SaaS products fit standardized procurement. Bridge fits teams that already work in Feishu, can self-host, and want lower-cost customization plus clearer data-flow control.
+
+**Who is this not for?** Teams that do not use Feishu, do not want to run a local service, or require a vendor-backed compliance package should not treat this as an out-of-box SaaS.
+
 ## 📢 News
 
 - **2026-04-28** · External extensions entered a constrained loading phase: public `extension-api`, startup manifest/config normalization, and external RuntimeModule adaptation, while hot reload and direct bridge-internal imports remain unsupported
@@ -188,6 +202,9 @@ Release users should start from the portable launcher:
 ./bridge start
 ./bridge guide
 ./bridge doctor workspace
+./bridge backup
+./bridge cost
+./bridge update check
 ```
 
 ```cmd
@@ -197,6 +214,9 @@ bridge.cmd init workspace
 bridge.cmd start
 bridge.cmd guide
 bridge.cmd doctor workspace
+bridge.cmd backup
+bridge.cmd cost
+bridge.cmd update check
 ```
 
 The first run downloads portable Node into `.runtime/node` when needed. User config, data, and logs live in the OS user data directory so upgrading the program package will not overwrite them. On Windows, Defender may warn on the first downloaded runtime; trust the extracted directory if that happens.
@@ -204,6 +224,8 @@ The first run downloads portable Node into `.runtime/node` when needed. User con
 `bridge init workspace` uses the current `lark-cli` user authorization to create the contract, invoice, case, and knowledge-base Bitable tables under your Feishu account, then writes the new Base / Table IDs back to the user-data `config.json`. `--force` only rewrites the local config pointers; it never deletes old Bases, tables, or records.
 
 Starter records are tracked in `data/init-seeds.json` under the user data directory. To rebuild them, run `bridge init workspace --reset-sample-data`; the command only deletes record IDs from that local manifest and quietly skips records that no longer exist.
+
+`bridge cost` and Feishu `/cost` show local token/cost estimates only; the provider bill remains authoritative. `bridge update check` checks GitHub Releases, while downloads and switching require explicit `bridge update download` / `bridge update apply`.
 
 The 30-minute quick-start target assumes you already have an AI provider key, or have received a temporary test key through the maintainer-provided application channel. Reproducible first-run materials live in `examples/hero/` and avoid external OCR dependencies. After startup, send `/guide` in Feishu for the 60-second walkthrough; in the terminal, run `bridge guide` to see your current stage and next step.
 
@@ -223,7 +245,7 @@ If Feishu card buttons are enabled, also configure `server.publicBaseUrl` and `f
 
 Quick reference:
 
-- `/new` · `/status` · `/sessions` · `/switch <index>` — session control
+- `/new` · `/status` · `/cost` · `/sessions` · `/switch <index>` — session and cost status
 - `/allow once` · `/allow always` · `/deny` — permission confirmation
 - `/法律咨询 <question>` · `/kb-query <question>` — knowledge base query
 - `/合同起草开始` · `/案件录入 <case info>` — contract assistant
@@ -236,6 +258,7 @@ Quick reference:
 
 - `/new`: create a new session
 - `/status`: show the current window status
+- `/cost`: show local AI token/cost estimates
 - `/sessions`: list sessions
 - `/switch <index>`: switch sessions
 - `/rename <title>`: rename the current session

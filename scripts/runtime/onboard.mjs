@@ -161,6 +161,7 @@ export async function runOnboard(options = {}) {
   logger.log("  当前配置保证 p2p 私聊可用。");
   logger.log("  如需群聊严格 @bot，请后续补 botOpenId / selfBotOpenId。");
   logger.log("  如果 OpenCode 需要在其他项目目录工作，请修改 config.opencode.directory。");
+  logger.log("  真实案件使用前请先阅读 docs/privacy-and-data-flow.md；敏感案件建议使用本地或私有模型 provider。");
   logger.log("");
   logger.log("推荐下一步：");
   logger.log("  1. bridge init workspace");
