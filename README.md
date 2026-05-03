@@ -207,18 +207,28 @@ Release 包用户优先使用 portable 入口：
 ```bash
 # macOS / Linux
 ./bridge onboard
+./bridge init workspace
 ./bridge start
-./bridge doctor
+./bridge guide
+./bridge doctor workspace
 ```
 
 ```cmd
 :: Windows
 bridge.cmd onboard
+bridge.cmd init workspace
 bridge.cmd start
-bridge.cmd doctor
+bridge.cmd guide
+bridge.cmd doctor workspace
 ```
 
 首次运行会自动下载 portable Node 到 `.runtime/node`，并把用户配置、数据和日志放到用户目录，避免升级新版包时覆盖旧数据。Windows 首次运行如果被 Defender 拦截，请将解压目录加入信任后重试。
+
+`bridge init workspace` 会使用当前 `lark-cli` 用户授权，在你的飞书账号下创建合同、发票、案件和知识库多维表格，并把新的 Base / Table ID 写回用户目录的 `config.json`。已有多维表格配置不会被静默覆盖；`--force` 只覆盖本地配置指向，不删除旧 Base、旧表或旧数据。
+
+初始化样例记录会写入正式 Base，并在用户数据目录生成 `data/init-seeds.json`。需要重建样例时运行 `bridge init workspace --reset-sample-data`，脚本只会删除 seed manifest 记录过的样例记录，找不到的记录会安静跳过。
+
+30 分钟跑通目标默认你已有 AI provider key，或已通过维护者提供的测试 key 入口拿到临时 key。首次体验素材见 `examples/hero/`，它们只使用 TXT / MD 路线，不依赖外部 OCR。启动后回到飞书发送 `/guide`，即可看到 60 秒新手引导；终端里运行 `bridge guide` 可查看当前阶段和下一步。
 
 源码开发者仍可使用：
 

@@ -184,18 +184,28 @@ Release users should start from the portable launcher:
 ```bash
 # macOS / Linux
 ./bridge onboard
+./bridge init workspace
 ./bridge start
-./bridge doctor
+./bridge guide
+./bridge doctor workspace
 ```
 
 ```cmd
 :: Windows
 bridge.cmd onboard
+bridge.cmd init workspace
 bridge.cmd start
-bridge.cmd doctor
+bridge.cmd guide
+bridge.cmd doctor workspace
 ```
 
 The first run downloads portable Node into `.runtime/node` when needed. User config, data, and logs live in the OS user data directory so upgrading the program package will not overwrite them. On Windows, Defender may warn on the first downloaded runtime; trust the extracted directory if that happens.
+
+`bridge init workspace` uses the current `lark-cli` user authorization to create the contract, invoice, case, and knowledge-base Bitable tables under your Feishu account, then writes the new Base / Table IDs back to the user-data `config.json`. `--force` only rewrites the local config pointers; it never deletes old Bases, tables, or records.
+
+Starter records are tracked in `data/init-seeds.json` under the user data directory. To rebuild them, run `bridge init workspace --reset-sample-data`; the command only deletes record IDs from that local manifest and quietly skips records that no longer exist.
+
+The 30-minute quick-start target assumes you already have an AI provider key, or have received a temporary test key through the maintainer-provided application channel. Reproducible first-run materials live in `examples/hero/` and avoid external OCR dependencies. After startup, send `/guide` in Feishu for the 60-second walkthrough; in the terminal, run `bridge guide` to see your current stage and next step.
 
 Source contributors can still use:
 

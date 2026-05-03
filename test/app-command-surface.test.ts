@@ -48,6 +48,23 @@ describe("BridgeApp command surface", () => {
     expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("当前没有正在执行的任务");
   });
 
+  it("returns a core-owned guide card without creating an OpenCode session", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const ensureSession = vi.fn();
+    (app as unknown as { ensureSession: typeof ensureSession }).ensureSession = ensureSession;
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "guide" },
+    });
+
+    expect(ensureSession).not.toHaveBeenCalled();
+    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("60 秒新手引导");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("bridge doctor workspace");
+  });
+
+
   it("aborts the active turn and returns a terminal notice card", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
@@ -1569,6 +1586,7 @@ type AppCommandSurfaceTestRoute = {
     | { kind: "new"; title?: string | undefined }
     | { kind: "rename"; title: string }
     | { kind: "abort" }
+    | { kind: "guide" }
     | { kind: "models"; provider?: string | undefined }
     | { kind: "model-use"; model: string }
     | { kind: "model-reset" }

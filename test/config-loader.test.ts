@@ -423,8 +423,8 @@ describe("loadConfig memory settings", () => {
     expect(config.knowledgeBase.ingest.allowedExtensions).toEqual([".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp"]);
     expect(config.knowledgeBase.parser).toEqual({
       externalApiEnabled: false,
-      pdfProviderOrder: ["pdf-parse", "pymupdf4llm", "docling", "paddleocr-vl-aistudio", "mineru-agent"],
-      imageProviderOrder: ["paddleocr-vl-aistudio", "mineru-agent", "tesseract"],
+      pdfProviderOrder: ["pdf-parse", "pymupdf4llm", "docling"],
+      imageProviderOrder: ["tesseract"],
       ocrLang: "chi_sim+eng",
       timeoutMs: 180000,
       pollIntervalMs: 5000,

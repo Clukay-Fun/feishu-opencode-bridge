@@ -8,6 +8,7 @@ import type { PendingInteraction, PendingPermissionInteraction, PendingSessionSe
 import type { RoutedText } from "../bridge/router.js";
 import {
   buildLeaveCommandCardPayload,
+  buildGuideCardPayload,
   buildModelListCardPayload,
   buildSessionListCardPayload,
   buildSessionTransitionCardPayload,
@@ -126,6 +127,7 @@ const BRIDGE_OWNED_COMMAND_KINDS = new Set<Extract<RoutedText, { kind: "command"
   "rename",
   "status",
   "abort",
+  "guide",
   "models",
   "model-use",
   "model-reset",
@@ -323,6 +325,20 @@ export class CommandHandler {
         icon: "stop-record_filled",
         message: "当前任务已中止，可发送新消息继续对话。",
       });
+      return;
+    }
+
+    if (command.kind === "guide") {
+      const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
+      const currentSession = getActiveSession(window);
+      await this.context.sendPayload(message.chatId, buildGuideCardPayload({
+        windowLabel: currentSession?.label ?? "当前窗口暂无会话，可先发送 `/new` 创建会话。",
+      }), {
+        event: "final message sent",
+        transcriptType: "outbound-final",
+        textPreview: "60 秒新手引导",
+        len: 9,
+      }, { replyToMessageId: message.messageId });
       return;
     }
 

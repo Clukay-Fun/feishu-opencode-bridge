@@ -16,6 +16,7 @@ export type RoutedText =
       | { kind: "models"; provider?: string | undefined }
       | { kind: "model-use"; model: string }
       | { kind: "model-reset" }
+      | { kind: "guide" }
       | { kind: "leave" }
       | { kind: "who" }
       | { kind: "knowledge-query"; question: string; explicit?: boolean | undefined }
@@ -82,6 +83,10 @@ export function routeIncomingText(text: string): RoutedText {
 
   if (rawCommand === "model" && args.length === 1 && args[0] === "reset") {
     return { kind: "command", command: { kind: "model-reset" } };
+  }
+
+  if (rawCommand === "guide" && args.length === 0) {
+    return { kind: "command", command: { kind: "guide" } };
   }
 
   if (rawCommand === "leave" && args.length === 0) {

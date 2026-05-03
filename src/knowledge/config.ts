@@ -62,8 +62,8 @@ const DocumentParserProviderSchema = z.enum(["mineru-agent", "paddleocr-vl", "pa
 
 const KnowledgeBaseParserSchema = z.object({
   externalApiEnabled: z.boolean().default(false),
-  pdfProviderOrder: z.array(DocumentParserProviderSchema).default(["pdf-parse", "pymupdf4llm", "docling", "paddleocr-vl-aistudio", "mineru-agent"]),
-  imageProviderOrder: z.array(DocumentParserProviderSchema).default(["paddleocr-vl-aistudio", "mineru-agent", "tesseract"]),
+  pdfProviderOrder: z.array(DocumentParserProviderSchema).default(["pdf-parse", "pymupdf4llm", "docling"]),
+  imageProviderOrder: z.array(DocumentParserProviderSchema).default(["tesseract"]),
   ocrLang: z.string().min(1).default("chi_sim+eng"),
   timeoutMs: z.number().int().positive().default(180_000),
   pollIntervalMs: z.number().int().positive().default(5_000),
@@ -90,8 +90,8 @@ const KnowledgeBaseParserSchema = z.object({
 
 export const DEFAULT_KNOWLEDGE_BASE_PARSER_CONFIG = {
   externalApiEnabled: false,
-  pdfProviderOrder: ["pdf-parse", "pymupdf4llm", "docling", "paddleocr-vl-aistudio", "mineru-agent"],
-  imageProviderOrder: ["paddleocr-vl-aistudio", "mineru-agent", "tesseract"],
+  pdfProviderOrder: ["pdf-parse", "pymupdf4llm", "docling"],
+  imageProviderOrder: ["tesseract"],
   ocrLang: "chi_sim+eng",
   timeoutMs: 180_000,
   pollIntervalMs: 5_000,

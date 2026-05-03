@@ -3,9 +3,11 @@
  * 关注点:
  * - 调用统一检查器收集 bridge/lark/memory 结果。
  * - 以适合终端阅读的分组格式打印。
+ * - 将 workspace 子诊断转交给工作区初始化模块，避免 Base 结构逻辑分散。
  */
 import { formatCheckHint, formatCheckLine, getDoctorExitCode, isMainModule, runAllChecks } from "./checks.mjs";
 import { resolveProjectConfigPath } from "./portable.mjs";
+import { runWorkspaceDoctorCli } from "../workspace-init/workspace-init.mjs";
 
 // Run all diagnostics and render them by group for local troubleshooting.
 export async function runDoctor(options = {}) {
@@ -64,7 +66,10 @@ export async function runDoctor(options = {}) {
 
 if (isMainModule(import.meta.url)) {
   try {
-    const exitCode = await runDoctor();
+    const args = process.argv.slice(2);
+    const exitCode = args[0] === "workspace"
+      ? await runWorkspaceDoctorCli(args.slice(1))
+      : await runDoctor();
     process.exitCode = exitCode;
   } catch (error) {
     console.error(error);

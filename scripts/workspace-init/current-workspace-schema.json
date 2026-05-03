@@ -1,0 +1,5813 @@
+{
+  "schemaVersion": 1,
+  "name": "飞书 OpenCode Bridge 工作区",
+  "description": "基于维护者真实合同、发票、案件与知识库多维表格结构生成。",
+  "tables": [
+    {
+      "key": "contract",
+      "name": "合同管理表",
+      "sourceTableId": "tbl5zOHAFZIX53vJ",
+      "fields": [
+        {
+          "multiple": true,
+          "name": "承揽人",
+          "type": "user",
+          "sourceFieldId": "fld8to1Xla"
+        },
+        {
+          "bidirectional": false,
+          "link_table": "tbl5zOHAFZIX53vJ",
+          "name": "父记录",
+          "type": "link",
+          "sourceFieldId": "fldbZcCfHo"
+        },
+        {
+          "name": "具体类型/案由",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fld3KpWgM0"
+        },
+        {
+          "description": "合同签署日期",
+          "name": "签约日期",
+          "style": {
+            "format": "yyyy/MM/dd"
+          },
+          "type": "datetime",
+          "sourceFieldId": "fldWGlOIZs"
+        },
+        {
+          "multiple": true,
+          "name": "承办人",
+          "type": "user",
+          "sourceFieldId": "fldvNT1RVG"
+        },
+        {
+          "name": "信用代码/身份证",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fldCdRE7id"
+        },
+        {
+          "description": "描述分期付款安排",
+          "name": "付款节点",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fldhQGQLEY"
+        },
+        {
+          "name": "联系方式",
+          "style": {
+            "type": "phone"
+          },
+          "type": "text",
+          "sourceFieldId": "fldPHjP7Kz"
+        },
+        {
+          "description": "物理存档位置，如\"柜子\"",
+          "name": "原件存档位置",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fldVWgvgAQ"
+        },
+        {
+          "name": "项目名称",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fldcQKGKlH"
+        },
+        {
+          "name": "进度",
+          "style": {
+            "color": "SpectralGradient",
+            "percentage": true,
+            "type": "progress"
+          },
+          "type": "number",
+          "sourceFieldId": "fldnaserET"
+        },
+        {
+          "name": "律所合同号",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fld7O6DoVY"
+        },
+        {
+          "name": "已收款",
+          "style": {
+            "currency_code": "CNY",
+            "precision": 2,
+            "type": "currency"
+          },
+          "type": "number",
+          "sourceFieldId": "fldF6WeUNL"
+        },
+        {
+          "name": "客户收件地址",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "flddvZ39Cf"
+        },
+        {
+          "name": "风险代理比例",
+          "style": {
+            "percentage": true,
+            "precision": 2,
+            "thousands_separator": false,
+            "type": "plain"
+          },
+          "type": "number",
+          "sourceFieldId": "fldhjx1Urs"
+        },
+        {
+          "description": "委托方名称",
+          "name": "客户名称",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fldrN71Zm3"
+        },
+        {
+          "name": "附件",
+          "type": "attachment",
+          "sourceFieldId": "fldtFyM2W6"
+        },
+        {
+          "description": "合同总金额（元）",
+          "name": "合同金额",
+          "style": {
+            "currency_code": "CNY",
+            "precision": 2,
+            "type": "currency"
+          },
+          "type": "number",
+          "sourceFieldId": "fldmS1osz8"
+        },
+        {
+          "name": "联系人",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fldtDe0qkD"
+        },
+        {
+          "description": "合同生效日期（常法服务时间）",
+          "name": "常法合同开始结束日期",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fld7dzQbOX"
+        },
+        {
+          "bidirectional": true,
+          "bidirectional_link_field_id": "fldViWBFPr",
+          "link_table": "tblsz37bT8bttPtW",
+          "name": "关联项目",
+          "type": "link",
+          "sourceFieldId": "fld4KYises"
+        },
+        {
+          "name": "发票",
+          "type": "attachment",
+          "sourceFieldId": "fldtBgyklS"
+        },
+        {
+          "expression": "bitable::$table[tbl5zOHAFZIX53vJ].$field[fldmS1osz8]-bitable::$table[tbl5zOHAFZIX53vJ].$field[fldF6WeUNL]",
+          "name": "未收款",
+          "type": "formula",
+          "sourceFieldId": "fldBYogHmO"
+        },
+        {
+          "description": "合同盖章情况",
+          "multiple": false,
+          "name": "盖章状态",
+          "options": [
+            {
+              "name": "待双方盖章",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仅客户已盖章",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仅我方已盖章",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "双方已盖章",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "无需盖章",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            }
+          ],
+          "type": "select",
+          "sourceFieldId": "fldTYu03Vf"
+        },
+        {
+          "description": "区分合同类别",
+          "multiple": false,
+          "name": "合同类型",
+          "options": [
+            {
+              "name": "专项法律服务",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "【投标】入库",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "民事诉讼",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "常年法律顾问",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动仲裁案件",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "咨询代写",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "行政诉讼",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "委托代理合同",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "委托代理合同-民事",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            }
+          ],
+          "type": "select",
+          "sourceFieldId": "fld8QV7waP"
+        },
+        {
+          "name": "未开票金额",
+          "style": {
+            "currency_code": "CNY",
+            "precision": 2,
+            "type": "currency"
+          },
+          "type": "number",
+          "sourceFieldId": "fld5ZOcadw"
+        },
+        {
+          "expression": "YEAR(bitable::$table[tbl5zOHAFZIX53vJ].$field[fldWGlOIZs])",
+          "name": "年度",
+          "type": "formula",
+          "sourceFieldId": "fldOQhE1lw"
+        }
+      ]
+    },
+    {
+      "key": "invoice",
+      "name": "发票台账",
+      "sourceTableId": "tblfsJo4bLhryYKD",
+      "fields": [
+        {
+          "bidirectional": false,
+          "link_table": "tbl5zOHAFZIX53vJ",
+          "name": "关联合同",
+          "type": "link",
+          "sourceFieldId": "fldOEdoAg5"
+        },
+        {
+          "name": "创建时间",
+          "style": {
+            "format": "yyyy/MM/dd"
+          },
+          "type": "created_at",
+          "sourceFieldId": "fldjbrB5Ut"
+        },
+        {
+          "multiple": false,
+          "name": "团队成员",
+          "options": [
+            {
+              "name": "王伟艺",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "刘达",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "杨铖",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "廖聪",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "涂素雄",
+              "hue": "Green",
+              "lightness": "Lighter"
+            }
+          ],
+          "type": "select",
+          "sourceFieldId": "fldhwyTLlU"
+        },
+        {
+          "name": "附件",
+          "type": "attachment",
+          "sourceFieldId": "fldoHFGfS2"
+        },
+        {
+          "name": "发票金额",
+          "style": {
+            "currency_code": "CNY",
+            "precision": 2,
+            "type": "currency"
+          },
+          "type": "number",
+          "sourceFieldId": "fldJ31norQ"
+        },
+        {
+          "expression": "IF(bitable::$table[tblfsJo4bLhryYKD].$field[fldYj3Pku6]=\"\",\"\",MONTH(bitable::$table[tblfsJo4bLhryYKD].$field[fldYj3Pku6]-WEEKDAY(bitable::$table[tblfsJo4bLhryYKD].$field[fldYj3Pku6],2)+1)&\"月第\"&INT((DAY(bitable::$table[tblfsJo4bLhryYKD].$field[fldYj3Pku6]-WEEKDAY(bitable::$table[tblfsJo4bLhryYKD].$field[fldYj3Pku6],2)+1)+6)/7)&\"周\")",
+          "name": "周",
+          "type": "formula",
+          "sourceFieldId": "fld0Q7BtRm"
+        },
+        {
+          "name": "购买方",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fldKsYV3Tf"
+        },
+        {
+          "name": "开票日期",
+          "style": {
+            "format": "yyyy/MM/dd"
+          },
+          "type": "datetime",
+          "sourceFieldId": "fldYj3Pku6"
+        },
+        {
+          "name": "合同号",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fldrqW6oKN"
+        },
+        {
+          "name": "发票号",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fldvFr0nem"
+        },
+        {
+          "expression": "bitable::$table[tblfsJo4bLhryYKD].$field[fldJ31norQ]*0.28",
+          "name": "28%",
+          "type": "formula",
+          "sourceFieldId": "fld8OBXYTE"
+        },
+        {
+          "expression": "TEXT(bitable::$table[tblfsJo4bLhryYKD].$field[fldYj3Pku6],\"YYYY-MM\")",
+          "name": "年月",
+          "type": "formula",
+          "sourceFieldId": "fldt5mj28C"
+        }
+      ]
+    },
+    {
+      "key": "case",
+      "name": "案件管理表",
+      "sourceTableId": "tblsz37bT8bttPtW",
+      "fields": [
+        {
+          "name": "管辖权异议截止日",
+          "style": {
+            "format": "yyyy/MM/dd HH:mm"
+          },
+          "type": "datetime",
+          "sourceFieldId": "fldpczExHg"
+        },
+        {
+          "description": "填写对方当事人名称",
+          "name": "对方当事人",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fld3ze8mHQ"
+        },
+        {
+          "description": "作为唯一标识",
+          "name": "日期",
+          "style": {
+            "format": "yyyy/MM/dd"
+          },
+          "type": "datetime",
+          "sourceFieldId": "fldefa7DU8"
+        },
+        {
+          "description": "区分项目大类",
+          "multiple": false,
+          "name": "类型",
+          "options": [
+            {
+              "name": "专项法律服务",
+              "hue": "Blue",
+              "lightness": "Dark"
+            },
+            {
+              "name": "常年法律顾问",
+              "hue": "Blue",
+              "lightness": "Dark"
+            },
+            {
+              "name": "民事诉讼",
+              "hue": "Red",
+              "lightness": "Dark"
+            },
+            {
+              "name": "刑事诉讼",
+              "hue": "Red",
+              "lightness": "Dark"
+            },
+            {
+              "name": "劳动仲裁案件",
+              "hue": "Red",
+              "lightness": "Dark"
+            },
+            {
+              "name": "仲裁员案件",
+              "hue": "Red",
+              "lightness": "Dark"
+            },
+            {
+              "name": "行政诉讼",
+              "hue": "Red",
+              "lightness": "Dark"
+            },
+            {
+              "name": "商事仲裁案件",
+              "hue": "Red",
+              "lightness": "Dark"
+            },
+            {
+              "name": "执行",
+              "hue": "Red",
+              "lightness": "Dark"
+            },
+            {
+              "name": "咨询代写",
+              "hue": "Blue",
+              "lightness": "Dark"
+            },
+            {
+              "name": "破产",
+              "hue": "Blue",
+              "lightness": "Dark"
+            },
+            {
+              "name": "劳动仲裁",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            }
+          ],
+          "type": "select",
+          "sourceFieldId": "fldzHbz4fN"
+        },
+        {
+          "description": "客户名称",
+          "name": "委托人",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fld8Tl5O7H"
+        },
+        {
+          "name": "举证截止日",
+          "style": {
+            "format": "yyyy/MM/dd HH:mm"
+          },
+          "type": "datetime",
+          "sourceFieldId": "fld9CUzcy5"
+        },
+        {
+          "name": "联系人",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fldOCiAQAt"
+        },
+        {
+          "name": "查封到期日",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fld9NO9yKt"
+        },
+        {
+          "name": "待做事项",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fldwgqJxOk"
+        },
+        {
+          "name": "开庭日",
+          "style": {
+            "format": "yyyy/MM/dd HH:mm"
+          },
+          "type": "datetime",
+          "sourceFieldId": "fld3RKzT7m"
+        },
+        {
+          "bidirectional": true,
+          "bidirectional_link_field_id": "fld4KYises",
+          "description": "关联【合同管理表】，自动读取合同信息",
+          "link_table": "tbl5zOHAFZIX53vJ",
+          "name": "关联合同",
+          "type": "link",
+          "sourceFieldId": "fldViWBFPr"
+        },
+        {
+          "description": "协助办理的团队成员",
+          "multiple": true,
+          "name": "协办律师",
+          "options": [],
+          "type": "select",
+          "sourceFieldId": "fldKVWFidR"
+        },
+        {
+          "description": "法官姓名及联系方式",
+          "name": "承办法官、助理及联系方式",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fld5Ng1oVR"
+        },
+        {
+          "description": "诉讼案件的审理阶段",
+          "multiple": true,
+          "name": "程序阶段",
+          "options": [
+            {
+              "name": "一审",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "再审二审",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "指令再审",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "一审二审",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "二审",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "重审一审",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "重审二审",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "申诉",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "申诉抗诉",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "申请再审",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "提审",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "再审一审",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "执行",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仲裁",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "诉前调",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "执行异议（追加被执行人）",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "执行阶段",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "破产阶段",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "起诉立案",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仲裁阶段",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            }
+          ],
+          "type": "select",
+          "sourceFieldId": "fldQkhYIAV"
+        },
+        {
+          "multiple": false,
+          "name": "重要紧急程度",
+          "options": [
+            {
+              "name": "重要紧急",
+              "hue": "Red",
+              "lightness": "Dark"
+            },
+            {
+              "name": "紧急不重要",
+              "hue": "Orange",
+              "lightness": "Dark"
+            },
+            {
+              "name": "重要不紧急",
+              "hue": "Yellow",
+              "lightness": "Dark"
+            },
+            {
+              "name": "不紧急不重要",
+              "hue": "Green",
+              "lightness": "Dark"
+            }
+          ],
+          "type": "select",
+          "sourceFieldId": "fldZVKkTHy"
+        },
+        {
+          "description": "选择团队成员，可多选（联合承办）",
+          "multiple": true,
+          "name": "主办律师",
+          "options": [
+            {
+              "name": "刘达",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "陈一鸣",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "涂素雄",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "周琼",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "苏琼",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "邵婉仪",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "曾淑文",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "刘明月",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "王伟艺",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "杨铖",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "刘佳佳",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "廖聪",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            }
+          ],
+          "type": "select",
+          "sourceFieldId": "fldmDAs9lV"
+        },
+        {
+          "description": "其他补充说明",
+          "name": "备注",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fldRa1TpkZ"
+        },
+        {
+          "name": "审理法院",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fldLQSqGO9"
+        },
+        {
+          "description": "客户联系电话",
+          "name": "联系方式",
+          "style": {
+            "percentage": false,
+            "precision": 0,
+            "thousands_separator": false,
+            "type": "plain"
+          },
+          "type": "number",
+          "sourceFieldId": "fldebfKxUW"
+        },
+        {
+          "name": "开庭地点",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "flda3NZ9e2"
+        },
+        {
+          "expression": "YEAR(bitable::$table[tblsz37bT8bttPtW].$field[fldefa7DU8])",
+          "name": "年度",
+          "type": "formula",
+          "sourceFieldId": "fldeDnH9fs"
+        },
+        {
+          "description": "标识案件当前状态",
+          "multiple": false,
+          "name": "案件状态",
+          "options": [
+            {
+              "name": "未结",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "执行中",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "已结案",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "进行中",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            }
+          ],
+          "type": "select",
+          "sourceFieldId": "fldCZCMxUE"
+        },
+        {
+          "multiple": false,
+          "name": "案由",
+          "options": [
+            {
+              "name": "EMC合同纠纷",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "财产损害赔偿案件",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "财产损害赔偿纠纷",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "财产损失赔偿案",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "撤销公司决议纠纷",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "第三人撤销之诉",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "房屋租赁合同纠纷",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合同纠纷",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "计算机软件开发合同纠纷",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "继承权纠纷",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "建设工程合同纠纷",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "建设工程监理合同纠纷",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "建设工程设计合同纠纷案",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "建设工程施工合同纠纷",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "建设工程施工合同纠纷案",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "借款合同纠纷",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "经营场所、公共场所的经营者、管理者责任纠纷",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "竞业限制协议纠纷",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动争议案件",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动争议纠纷",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳务合同纠纷/建设工程施工合同纠纷",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "离婚纠纷",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "民间借贷纠纷",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "票据追索权纠纷",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "强制执行案",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "侵权纠纷",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "退伙纠纷案",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "物业服务合同纠纷",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "债权人代位析产纠纷",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "执行",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "二审",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "执行异议（追加被执行人）",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动争议",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            }
+          ],
+          "type": "select",
+          "sourceFieldId": "fldqa7FuDc"
+        },
+        {
+          "name": "上诉截止日",
+          "style": {
+            "format": "yyyy/MM/dd HH:mm"
+          },
+          "type": "datetime",
+          "sourceFieldId": "fldD3NYszD"
+        },
+        {
+          "description": "填写法院案号",
+          "name": "案号",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fldFh1vBup"
+        },
+        {
+          "description": "记录案件进展日志",
+          "name": "进展",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fldwzR1hEg"
+        },
+        {
+          "name": "反诉截止日",
+          "style": {
+            "format": "yyyy/MM/dd"
+          },
+          "type": "datetime",
+          "sourceFieldId": "fldEg2p1Ro"
+        },
+        {
+          "name": "创建时间",
+          "style": {
+            "format": "yyyy/MM/dd"
+          },
+          "type": "created_at",
+          "sourceFieldId": "fldJqBe52c"
+        }
+      ]
+    },
+    {
+      "key": "knowledge",
+      "name": "知识库问答",
+      "sourceTableId": "tblnAdncdOs8Aq6C",
+      "fields": [
+        {
+          "name": "embedding",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fldS8G3nwX"
+        },
+        {
+          "multiple": true,
+          "name": "标签",
+          "options": [
+            {
+              "name": "劳动合同解除",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "举证责任",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "违法解除",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "司法认定",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "违法解除风险",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "不能胜任工作",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "威科先行",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "裁判文书数量",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "地域分布",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动争议",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动合同",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "末位淘汰制",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "调岗调薪",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "绩效改进计划",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "考核文件",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动用工",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "调岗",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "解雇程序",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工会同意",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "岗位职责",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工作职责",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "证据",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "绩效考核",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "书面确认",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "证据保存",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "证据留存",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "书面通知",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "败诉风险",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "检索关键词",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "案由",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "检索范围",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "检索结果",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "案件数量",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动法",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "调岗条件",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "技术人员",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "调岗合法性",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动关系",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "二审",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "解除程序",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动合同法",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "送达证据",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动培训",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "调岗降薪",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "管理岗",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "操作岗",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "用人单位",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "免责声明",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动关系认定",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "未成年人保护",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动关系建立",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动合同签订",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动关系主体",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "港澳台居民就业",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "外国人就业",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动合同法适用范围",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "实习生",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "农民工",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "事业单位",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "会计师事务所",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "社会团体",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳务关系",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动仲裁受理范围",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "用工主体",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "建设工程",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "基层组织",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "特殊用工",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "特殊群体用工",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "农民合作社",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "破产清算",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动关系延续",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "就业歧视",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "关联公司",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "用人单位责任",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "招聘",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "双倍工资",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仲裁时效",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工龄",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合同变更",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "二倍工资",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "电子合同",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动报酬",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "集体合同",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "无固定期限劳动合同",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动合同续延",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动合同变更",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工龄计算",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "用工管理",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "未签合同",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "法律责任",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "医疗期",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合同续延",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "三期保护",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "2倍工资",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合同履行",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动规章制度",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "损害赔偿",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "试用期",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工资",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "最低工资标准",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "违约金",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "违法赔偿",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合同效力",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合同无效",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "竞业义务",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "连带赔偿",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "民主程序",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "职工代表大会",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工会",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合同签订",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动条件",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳务派遣",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动合同期限",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "非全日制用工",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "多重劳动关系",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "公益性岗位",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "经济补偿",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动保护",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动合同履行",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "企业变更",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工作年限计算",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "岗位调整",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "违约责任",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工资调整",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "协商一致",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "口头变更",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "书面形式",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "背景调查",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "犯罪记录查询",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "歧视",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "犯罪记录",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "解除劳动合同",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "欺诈认定",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "录用通知",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "试用期解除",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "录用条件",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "单方权利",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "单方调岗",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合理性原则",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "规章制度",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "不胜任调岗",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "三期女职工",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "集团公司",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "加班费",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工资支付",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "薪酬调整",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "加班",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "违法责任",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "包薪制",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "特殊工时制",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "不定时工作制",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合规操作",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "综合工时制",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "居家办公",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工时管理",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "考勤制度",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "远程办公",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "违纪处分",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工作时间",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "旷工",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "考勤管理",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "旷工解除",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "假期待遇",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "地域差异",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "休假制度",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "用工自主权",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "年休假",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "规章制度效力",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工资报酬",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "病假事假",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "病假",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "病假审批",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "病假工资",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "特殊疾病",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "旷工认定",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "返岗",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "被迫解除",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "约定",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "综合工时",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "特殊工时",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "停工停产",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "奖金",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "离职",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "经营困难",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "年终奖",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "经营自主权",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "社保",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "外籍员工",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "社会保险",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "销售提成",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "绩效薪酬",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "绩效管理",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "考核制度",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "绩效奖金",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "不胜任",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工伤认定",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工作原因",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "上下班途中",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "无过错责任",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "自身过错",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "交通事故",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "职业病",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "离职管理",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "健康检查",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动合规",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "职业病健康检查",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "法定义务",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "离职交接",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "辞职",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "代通知金",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "被迫离职",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工作地点变更",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "过失性辞退",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "严重违纪",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "不服从工作安排",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "客观情况重大变化",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "协商解除",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "经济性裁员",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "无过失性辞退",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "协商变更",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "赔偿金",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "解除",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动合同终止",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "退休",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合同终止",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "公司解散",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工作年限",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "用工形式",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合规",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "跨地区",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳务外包",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "法律关系",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合规风险",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "平台经济",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "新就业形态",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "新业态用工",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "平台用工",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "权利义务",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "共享用工",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "借调",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "退休返聘",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "竞业限制",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "商业秘密",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "协议效力",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动补偿",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "地方规定",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "补偿金",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "协议解除",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "报告义务",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "违约",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "竞争关系",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "证据收集",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "新用人单位风险",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "培训与服务期",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "服务期",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "股权激励",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "股东权利",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动关系解除",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "个人信息保护",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "个人信息",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "考勤",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "生物识别信息",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "员工权利",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "用人单位合规",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "跨境传输",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "争议处理",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "诉讼策略",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "风险控制",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合规管理",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "法律适用",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "外包",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "承揽",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "医疗补助费",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "福利费认定",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工资组成",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "民事诉讼",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "申请再审",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "再审条件",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "被迫解除劳动合同",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "用人单位违法",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "离职后诊断",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "患病解除",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工伤保险",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动合同顺延",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "法定情形",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "主体资格",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "人身损害赔偿",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "竞合",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "计算标准",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "诉讼受理",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动纠纷",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "包干工资",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "员工保护",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "伤残待遇",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "损失赔偿",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "被迫辞职",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "经济补偿金",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "退休年龄",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "费用垫付",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工作场所",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "拒不支付劳动报酬罪",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "刑事风险",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "法定节假日",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工时计算",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "法定调岗",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "不胜任工作",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工资基数",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动关系中止",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "刑事案件处理",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "电子数据证据",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "证据规则",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "计件工资",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "用工岗位",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "退回",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "带薪年休假",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "连续工作",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "分段计算",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "退回禁止",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "诉讼时效",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工伤责任主体",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动待遇",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工资标准",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "外国人在华就业",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "非法用工",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "失业保险",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "非自愿离职",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "招聘录用",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "刑事责任认定",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动仲裁",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "时效",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "追缴时效",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "平等就业权",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "保密义务",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工资结构",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "终局裁决",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "撤销仲裁",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "紧急任务",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "行政处罚",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "住房公积金",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "一裁终局",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "违法情形",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "累计工龄",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "培训服务期",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动监察",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "必备条款",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "年龄歧视",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工资福利",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "违纪处理",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "非终局裁决",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "混同用工",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "分包转包",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "用工主体责任",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "缴纳基数",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "补缴",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工时制度",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "补休",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "离职体检",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "赔偿责任",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "事假",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "打架斗殴",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "履行职责",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "缴费基数",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "用工单位义务",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动用工合规",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "代缴",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "协商",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "调解",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "申报时限",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "封顶",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "情势变更",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工资计算",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "三期女工",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "加班限制",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "入职计算",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "用工主体资格",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "双重劳动关系",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "兼职",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "养老保险",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "赔偿损失",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动用工关系",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "转业军人",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "退役金",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "自动离职",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "退休金",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "赔偿标准",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仲裁时效中断",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "责任主体",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "单位犯罪",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工会通知",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "外国人就业申请",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "聘用材料",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "行政审批",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "历史沿革",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "童工",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工伤赔偿",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "违法收取财物",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "超龄人员",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "诉讼主体",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "加付赔偿金",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "生育津贴",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "诉讼",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "前置程序",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仲裁",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动合同续签",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工作交接",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "醉酒",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "退休年龄认定",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "退休待遇",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "管辖",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "计算基数",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "骗保",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "休假",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工伤",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "伤残就业补助金",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "代缴社保",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "病假管理",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "违法分包",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "实际施工人",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "法定假期",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "生活护理费",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "客观情况",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "用工风险",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "失联员工",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动派遣",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "加班工资",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "违法辞退",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "默认调岗",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "无过错解除",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "诉讼当事人",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "用人单位主体",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "无固定期限合同",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "格式条款",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "侵权责任",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "追偿权",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "商业保险",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合并分立",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "涉外用工",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "就业资质",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "竞业限制与商业秘密",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "连带赔偿责任",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "任务型合同",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "公司搬迁",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "社保缴纳",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工时",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "退休人员",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "扣款规则",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "管辖权",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动争议管辖",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工资构成",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "一次性工伤医疗补助金",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "外国人就业证",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "就业证年检",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "非法就业认定",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "重复诉讼",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "程序合规",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "诉讼请求",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "离职时间约定",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "举证责任分配",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "内退人员",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工伤申报",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "医疗费用",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "最低工资",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "签订对象",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "数额标准",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "伤残等级",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "继续履行",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "程序时限",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "送达",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "辞职通知",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "紧急离职",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "人身安全",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "应急管理",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动诉讼",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "撤销仲裁裁决",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "多数劳动者",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仲裁效力",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "克扣工资",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "未成年工",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "禁忌从事",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合同订立",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动能力鉴定",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "退休退职",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "末位淘汰",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "刑事",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "拖欠工资",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "刑事责任",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工亡赔偿",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "个人所得税",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "福利补贴",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工资认定",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "停工留薪期",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "女职工保护",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仲裁请求变更",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "举证期限",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "实习管理",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "顶岗实习",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "实习生管理",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "新冠疫情",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工会程序",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "经营期限",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "刑事处罚",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "特殊福利",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "旷工处罚",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "送达程序",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "缺席处理",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "视为撤回",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "投诉渠道",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "排权免责",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "告知义务",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动者保护",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仲裁范围",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "遗属待遇",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "传染病",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "企业筹办",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "严重后果",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "特殊保护",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "主体变更",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "灵活用工",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "用人单位主体资格",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仲裁时效中止",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合同期限",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "跨年度安排",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "分支机构",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "平等就业",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合同主体变更",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "原件",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "违反规章制度",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "离职证明",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "金额计算",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仲裁程序",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "外国人在中国就业",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "护理假",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "老年人权益",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动合同效力",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "追诉时效",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "高管补偿",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "赔偿金计算",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动合同续订",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "地区差异",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合理路线",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "竞合处理",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "程序规则",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "立即解除",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "人身自由",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "标准工时",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "法律解释",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "期限计算",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动合同无效",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工资拖欠",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "受理",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "异地处理",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "违法后果",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "诉讼时效抗辩",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "用工单位责任",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工时限制",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "值班",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动期限",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "法律后果",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "双赔",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "公司高管",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "欺诈",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "审查范围",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "证书挂靠",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "违法行为",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "婚丧假",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "人事档案",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "反申请",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "答辩期",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "社保待遇",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "保险代理人",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "民事代理",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "公司设立",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "行政许可",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "精神疾病",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "抑郁症",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仲裁裁决",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "先行调解",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "违法终止",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "入职体检",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "因公外出",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "突发疾病",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "证件扣押",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "违法担保",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "录音录像",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动法适用",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "高温津贴",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "无效条款",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "和解协议",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "保险金标准",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "法律风险",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "泡病号",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "排除情形",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "故意犯罪",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "就业许可取消",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "缴费年限",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "退回条件",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "哺乳时间",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "违反企业规定",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动权益",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "童工禁止",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "身份核实",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "申领时限",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "客观情况变更",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "待岗",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "假期管理",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "丧葬补助",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "培训费",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "意外伤害",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "临近退休",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "约定禁区",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "重复仲裁",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "一事不再理",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "试用期规定",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "老员工保护",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "连带责任",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "雇主责任",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "挂靠经营",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "因工外出",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "非机动车事故",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仲裁管辖",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动合同恢复",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "解除终止",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "加班费计算",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "起算点",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "法律风险防范",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "关联企业规避",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动合同履行地",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "司法审查",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动合同中止",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "竞业限制与脱密期",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "诉讼权利",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "违法处罚",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仲裁受理",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "女职工权益",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "哺乳假",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "法定续延",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合同条款",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合同解除",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工作调动",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "文书规范",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动纪律",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "行政处分",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "纪律惩戒",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "用人单位义务",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "维权",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "诉讼程序",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动定员",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "协议变更",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "严重违反劳动纪律",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "支付令",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "督促程序",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "性别歧视",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "节假日",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "法律术语",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "全日制用工认定",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动者单方解除",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "赔偿",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "档案转移",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工亡",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动者权利",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动义务",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "处罚",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "处理程序",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "快递",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "性骚扰",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动合同必备条款",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "法律变更",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仲裁裁决执行",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "不予执行",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "起诉",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仲裁申请",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "申请材料",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "标准工时制",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "书面合同",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "注册资本",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "孕期",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "回避制度",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "性别平等",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "考勤证据",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "同工同酬",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "证明标准",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "盖然性规则",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "撤销裁决",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "扣押证件",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "收取财物",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "请求权",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "在家办公",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "证据保全",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "休息",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工作时间内",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "答辩书",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "先立案",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "延长工时",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "产假",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动用工管理权",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "聘用制",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "招聘歧视",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "就业促进",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "休息日",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "形成权",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "在校学生",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "实习",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "法院管辖",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动法律师",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "无效合同",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动关系终止",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "撤销条件",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "不可抗力",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "违法约定",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "诉讼管辖",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "司法管辖",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "随时解除",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "监督检查",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "行政执法",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "救济途径",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "调解协议",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "产假工资",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "受理期限",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "期限",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "用工期限",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "协议合规",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "基层法院",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "起诉权利",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "预告期",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "人身权益",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "婚假",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "假期",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "撤销处分",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "重新入职",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "法律释明",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "诉讼请求变更",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合同续签",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "解除合同",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "过错解除",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工资损失",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "撤销决定",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "跨地区派遣",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "执行",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仲裁员",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "资格条件",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动权利义务",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "职业道德",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "培训",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "鉴定",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合同类型",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "扣押档案",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "诉讼前置",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "先予执行",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "生育保险",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "当事人",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动争议证据",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动关系的建立",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合同订立期限",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工会监督",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "审理时限",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "用人单位告知义务",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动者说明义务",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "竞业禁止",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动法适用范围",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "立案",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "权利救济",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "税务",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仲裁前置",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "调解程序",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "加班值班区分",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "月工资计算",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "强迫加班",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "证明出具",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "法定代理",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "法律禁止",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "规章制度违法",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "诚实信用原则",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "21.75",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "休息权",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "违法解除劳动合同",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "民事赔偿",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "脱密期",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动争议仲裁",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仲裁裁决效力",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动定额",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "试用期管理",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "特殊劳动保护",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "欠薪维权",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "延期开庭",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "和解",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "终止",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "加班补休",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "休息日加班",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "举报控告",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动者权益",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "违章指挥",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "拒绝服从",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "程序实务",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "未成年工保护",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "争议类型",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "调解组织",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仲裁诉讼",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动争议处理",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "行政协调",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "用工日期",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "提前退休",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "特殊工种",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "加班时长",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "考勤记录",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动标准",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "就业平等",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合同形式",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "调解仲裁",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "孕期劳动保护",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "诉讼地位",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "病残",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "优先录用",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "职工名册",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "裁员",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仲裁当事人",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仲裁公开",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "承包经营",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "职业培训",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "上岗资格",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "报酬支付",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "哺乳期",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "不予执行抗辩",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动用人",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "委托代理",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动安全",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "第三人",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "证据准备",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "就业证件",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "补偿金拖欠",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "法定代表人变更",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "表见代理",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动者义务",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "民主管理",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "休息休假",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "特殊情形",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "法定休假日",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "最低工资保障",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工资分配",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "用人单位自主权",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动安全卫生",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "女职工特殊保护",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "未成年工特殊保护",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "诉讼仲裁",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动争议调解",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "集体合同争议",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "安全生产",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "人身权",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "竞业限制与双重劳动关系",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "行政合规",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "学生勤工助学",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "勤工助学",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "协议签订",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "挂靠关系",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "车辆挂靠",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "合同纠纷",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "承揽关系",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "雇佣关系",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "欺诈招聘",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "信息披露",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工资争议",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "欺诈与合同效力",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "书面劳动合同",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "外国企业代表机构",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "外交人员就业",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "外国企业代表处",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "返聘",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "严重违反规章制度",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "过失性解除",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "兼职与劳动关系",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "保密协议",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "停工待岗",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工资工时",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "强制执行",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工资扣减",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "经济损失赔偿",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "加班认定",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "综合计算工时制",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "婚假待遇",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "少数民族节日",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "节假日加班",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "请假",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "基本养老保险",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "五险二金",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "企业年金",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "医疗保险",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "行政救济",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "生育待遇",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "惩罚性赔偿",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "专业技术培训",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "争议解决",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "协议形式",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工资结算",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "职业病防治",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "职业病防护",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "信息公示",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "职业安全",
+              "hue": "Red",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "资金投入",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "职业病诊断",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "行政鉴定",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "费用承担",
+              "hue": "Lime",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "工资待遇",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "经期劳动禁忌",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "刑事犯罪",
+              "hue": "Orange",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "重大责任事故罪",
+              "hue": "Wathet",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "劳动就业",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "刑事合规",
+              "hue": "Turquoise",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "重大劳动安全事故罪",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "强迫劳动",
+              "hue": "Green",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "犯罪构成",
+              "hue": "Purple",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "共同犯罪",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "童工保护",
+              "hue": "Carmine",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "申请程序",
+              "hue": "Gray",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "司法救济",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "小额仲裁",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "申请撤销",
+              "hue": "Blue",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "撤销情形",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            },
+            {
+              "name": "仲裁执行",
+              "hue": "Yellow",
+              "lightness": "Lighter"
+            }
+          ],
+          "type": "select",
+          "sourceFieldId": "fldnE0NPZz"
+        },
+        {
+          "name": "入库时间",
+          "style": {
+            "format": "yyyy/MM/dd"
+          },
+          "type": "datetime",
+          "sourceFieldId": "fldDID0jHf"
+        },
+        {
+          "name": "页码/章节",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fldqX4Eo70"
+        },
+        {
+          "name": "问题",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fld0zHFA9U"
+        },
+        {
+          "name": "源文件",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fld1K4PZ4o"
+        },
+        {
+          "name": "法条",
+          "style": {
+            "type": "url"
+          },
+          "type": "text",
+          "sourceFieldId": "fldcFCYNor"
+        },
+        {
+          "name": "答案",
+          "style": {
+            "type": "plain"
+          },
+          "type": "text",
+          "sourceFieldId": "fldBpQ93Zq"
+        }
+      ]
+    }
+  ],
+  "sampleRecords": {
+    "contract": [
+      {
+        "项目名称": "初始化示例合同",
+        "客户名称": "示例客户有限公司",
+        "律所合同号": "DEMO-2026-001",
+        "合同金额": 10000,
+        "已收款": 3000,
+        "盖章状态": "待双方盖章",
+        "合同类型": "委托代理合同"
+      }
+    ],
+    "invoice": [
+      {
+        "购买方": "示例客户有限公司",
+        "发票金额": 3000,
+        "合同号": "DEMO-2026-001",
+        "发票号": "INV-DEMO-001"
+      }
+    ],
+    "case": [
+      {
+        "委托人": "示例客户有限公司",
+        "对方当事人": "示例对方",
+        "类型": "民事诉讼",
+        "案件状态": "进行中",
+        "案由": "合同纠纷",
+        "进展": "初始化样例：等待补充案件材料"
+      }
+    ],
+    "knowledge": [
+      {
+        "问题": "劳动合同解除时应注意哪些证据？",
+        "答案": "初始化样例：建议保留通知、送达、考核、沟通记录等材料。",
+        "源文件": "初始化样例",
+        "法条": "劳动合同法",
+        "标签": [
+          "劳动合同解除",
+          "证据"
+        ]
+      }
+    ]
+  }
+}

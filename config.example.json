@@ -87,7 +87,7 @@
     "knowledge-base": {
       "enabled": false,
       "autoDetect": {
-        "enabled": true,
+        "enabled": false,
         "minConfidence": 0.75
       },
       "query": {
@@ -131,8 +131,8 @@
       },
       "parser": {
         "externalApiEnabled": false,
-        "pdfProviderOrder": ["pdf-parse", "pymupdf4llm", "docling", "paddleocr-vl-aistudio", "mineru-agent"],
-        "imageProviderOrder": ["paddleocr-vl-aistudio", "mineru-agent", "tesseract"],
+        "pdfProviderOrder": ["pdf-parse", "pymupdf4llm", "docling"],
+        "imageProviderOrder": ["tesseract"],
         "ocrLang": "chi_sim+eng",
         "timeoutMs": 180000,
         "pollIntervalMs": 5000,

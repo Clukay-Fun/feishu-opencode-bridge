@@ -3,14 +3,16 @@
  * 关注点:
  * - 在用户目录准备 BRIDGE_HOME/config/data/logs/extensions。
  * - 用包内 npm cache 安装 bridge 自身依赖，不污染系统全局。
- * - 将 onboard、doctor、start 继续交给既有 runtime 脚本处理。
+ * - 将 onboard、doctor、start、init、guide 继续交给既有脚本处理。
  */
 import { existsSync } from "node:fs";
 import path from "node:path";
 
 import { runDoctor } from "./doctor.mjs";
+import { runGuide } from "./guide.mjs";
 import { runOnboard } from "./onboard.mjs";
 import { runStart } from "./start.mjs";
+import { runWorkspaceDoctorCli, runWorkspaceInitCli } from "../workspace-init/workspace-init.mjs";
 import {
   createPortableEnv,
   ensurePortableDirectories,
@@ -20,12 +22,13 @@ import {
 } from "./portable.mjs";
 import { findExecutable, isMainModule, runCommand } from "./checks.mjs";
 
-const SUPPORTED_COMMANDS = new Set(["onboard", "doctor", "start", "help"]);
+const SUPPORTED_COMMANDS = new Set(["onboard", "doctor", "start", "init", "guide", "help"]);
 
 export async function runBootstrap(options = {}) {
   const cwd = options.cwd ?? resolvePackageRoot(import.meta.url);
   const logger = options.logger ?? console;
-  const rawCommand = options.command ?? process.argv[2] ?? "onboard";
+  const rawArgs = options.args ?? process.argv.slice(2);
+  const rawCommand = options.command ?? rawArgs[0] ?? "onboard";
   const command = SUPPORTED_COMMANDS.has(rawCommand) ? rawCommand : "help";
   const env = createPortableEnv({
     cwd,
@@ -67,6 +70,16 @@ export async function runBootstrap(options = {}) {
   }
 
   if (command === "doctor") {
+    if (rawArgs[1] === "workspace") {
+      return await runWorkspaceDoctorCli(rawArgs.slice(2), {
+        cwd,
+        env,
+        configPath,
+        logger,
+        runCommandFn: options.runCommandFn,
+        findExecutableFn: options.findExecutableFn,
+      });
+    }
     return await runDoctor({
       cwd,
       env,
@@ -76,6 +89,26 @@ export async function runBootstrap(options = {}) {
       runCommandFn: options.runCommandFn,
       findExecutableFn: options.findExecutableFn,
       fetchImpl: options.fetchImpl,
+    });
+  }
+
+  if (command === "guide") {
+    return await runGuide({
+      cwd,
+      env,
+      configPath,
+      logger,
+    });
+  }
+
+  if (command === "init") {
+    return await runWorkspaceInitCli(rawArgs.slice(1), {
+      cwd,
+      env,
+      configPath,
+      logger,
+      runCommandFn: options.runCommandFn,
+      findExecutableFn: options.findExecutableFn,
     });
   }
 
@@ -129,8 +162,11 @@ function printHelp(logger, bridgeHome) {
   logger.log("");
   logger.log("用法：");
   logger.log("  bridge onboard   首次引导并生成配置");
+  logger.log("  bridge guide     查看当前阶段和下一步");
   logger.log("  bridge doctor    诊断当前环境");
+  logger.log("  bridge doctor workspace   诊断飞书多维表格工作区");
   logger.log("  bridge start     启动 OpenCode + Bridge");
+  logger.log("  bridge init workspace   创建并写入飞书多维表格工作区");
   logger.log("");
   logger.log(`用户数据目录：${bridgeHome}`);
 }

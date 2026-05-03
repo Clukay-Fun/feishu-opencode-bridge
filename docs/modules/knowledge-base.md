@@ -373,7 +373,7 @@ SQLite 表结构：
 外部 OCR API 默认关闭。
 只有显式设置 `knowledgeBase.parser.externalApiEnabled=true` 并启用对应 provider 时，才会上传材料到 MinerU 或 PaddleOCR-VL。
 
-默认策略优先本地提取：电子 PDF 先读文字层，复杂版式 PDF 再走本地 Markdown 解析，扫描版 PDF 前面抽不到内容时才进入 PaddleOCR-VL AIStudio / MinerU；图片材料直接进入 OCR provider 顺序。
+默认策略优先零外部依赖：电子 PDF 先读文字层，复杂版式 PDF 再走本地 Markdown 解析；图片材料默认只尝试本地 Tesseract。MinerU、PaddleOCR-VL 和 PaddleOCR-VL AIStudio 只有在显式启用 `externalApiEnabled` 并放入 provider order 后才会参与解析。
 
 ### 分块策略
 

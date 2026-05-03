@@ -1,6 +1,6 @@
 # 架构基线
 
-> 最后更新：2026-04-28
+> 最后更新：2026-05-03
 >
 > 这份文档定义了 post-demo 阶段的架构基线。
 > 如果它与 demo 导向的说明冲突，以这份文档的代码组织规则为准。
@@ -250,7 +250,7 @@ Feishu Transport
 - 把入站消息路由到 command、pending interaction、module chain 或默认 turn flow
 - 维护通用 `file-await-instruction` 挂起状态，并在兜底处理前按模块顺序询问是否接管
 - 对未被模块接管的普通文件或图片上传，core 可以直接创建默认识别 turn；图片资源以 OpenCode `image_url` part 透传，文件内容仍以本地临时路径交给 turn
-- 管理 bridge 命令面，例如 `/new`、`/sessions`、`/status`、`/close`、`/delete`
+- 管理 bridge 命令面，例如 `/new`、`/sessions`、`/status`、`/close`、`/delete`、`/guide`
 - 管理 queueing、turn execution、watchdog、process-card 生命周期和 final reply 投递
 - 管理 session-window 状态、interaction mode 状态，以及窗口级模型 override
 - 使用 observability event schema 输出 turn、permission 和 module 生命周期事件
@@ -353,7 +353,7 @@ Feishu Transport
 `src/runtime/preflight.ts` 与 `scripts/runtime/checks.mjs` 属于同一诊断面：
 
 - preflight 在启动时作为 runtime gate 运行
-- doctor 与 checks 独立运行，不进入 runtime handler chain
+- doctor、guide 与 checks 独立运行，不进入 runtime handler chain
 
 ### 6. Configuration
 

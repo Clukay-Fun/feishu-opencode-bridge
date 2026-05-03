@@ -3,7 +3,7 @@
  * 关注点: 验证核心路径、边界条件和回归场景。
  */
 import { PassThrough } from "node:stream";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -22,9 +22,11 @@ import {
   ensureBridgePortAvailable,
   isBridgeHealthy,
   ensureOpencodeServer,
+  maybePrintGuidePrompt,
   resolveBridgeLaunch,
 } from "../scripts/runtime/start.mjs";
 import { runBootstrap, ensureBridgeDependencies } from "../scripts/runtime/bootstrap.mjs";
+import { buildGuideView, runGuide } from "../scripts/runtime/guide.mjs";
 import { createPortableEnv, resolveBridgeHome, resolveNodeDownload, resolveProjectConfigPath } from "../scripts/runtime/portable.mjs";
 import { buildPortablePackage } from "../scripts/release/build-portable.mjs";
 
@@ -217,6 +219,24 @@ describe("scripts/onboard", () => {
 
     expect(calls).toContain("providers login");
     expect(result.status).toBe("pass");
+  });
+
+  it("prints a manual test-key channel when provider auth is still unavailable", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "bridge-onboard-opencode-test-key-"));
+    const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    const result = await maybeLoginOpencodeProvider({
+      cwd: process.cwd(),
+      env: { BRIDGE_TEST_KEY_URL: "https://example.com/apply-test-key" },
+      home,
+      logger,
+      opencodePath: "/tmp/opencode",
+      promptYesNoFn: vi.fn(async () => false),
+      runCommandFn: vi.fn(async () => ({ code: 0, stdout: "", stderr: "", signal: null, timedOut: false })),
+    });
+
+    expect(result.status).toBe("fail");
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("https://example.com/apply-test-key"));
   });
 
   it("exits successfully when start is offered but the user declines", async () => {
@@ -429,6 +449,151 @@ describe("scripts/portable bootstrap", () => {
       configPath: path.join(bridgeHome, "config.json"),
     }));
   });
+
+  it("dispatches workspace init through bootstrap", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-bootstrap-init-"));
+    await mkdir(path.join(dir, "node_modules"), { recursive: true });
+    const bridgeHome = path.join(dir, "bridge-home");
+    const configPath = path.join(bridgeHome, "config.json");
+    await mkdir(bridgeHome, { recursive: true });
+    await writeFile(configPath, JSON.stringify({
+      extensions: {
+        "knowledge-base": { storage: { bitable: {} } },
+        "contract-assistant": { storage: {} },
+      },
+    }), "utf8");
+    const schemaPath = path.join(dir, "schema.json");
+    await writeFile(schemaPath, JSON.stringify({
+      schemaVersion: 1,
+      name: "测试工作区",
+      tables: [
+        { key: "contract", name: "合同管理表", sourceTableId: "old_contract", fields: [{ sourceFieldId: "fld_contract", name: "客户名称", type: "text" }] },
+        { key: "invoice", name: "发票台账", sourceTableId: "old_invoice", fields: [{ sourceFieldId: "fld_invoice", name: "发票号", type: "text" }] },
+        { key: "case", name: "案件管理表", sourceTableId: "old_case", fields: [{ sourceFieldId: "fld_case", name: "案号", type: "text" }] },
+        { key: "knowledge", name: "知识库问答", sourceTableId: "old_knowledge", fields: [{ sourceFieldId: "fld_question", name: "问题", type: "text" }] },
+      ],
+      sampleRecords: {},
+    }), "utf8");
+
+    const runCommandFn = vi.fn(async (_command: string, args: string[]) => {
+      if (args[1] === "+base-create") {
+        return { code: 0, stdout: JSON.stringify({ data: { base: { app_token: "app_new" } } }), stderr: "", signal: null, timedOut: false };
+      }
+      if (args[1] === "+table-create") {
+        const name = args[args.indexOf("--name") + 1];
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            data: {
+              table: { table_id: `tbl_${name}` },
+              fields: [{ name: JSON.parse(args[args.indexOf("--fields") + 1] ?? "[]")[0].name, id: `fld_${name}` }],
+            },
+          }),
+          stderr: "",
+          signal: null,
+          timedOut: false,
+        };
+      }
+      return { code: 0, stdout: JSON.stringify({ data: { field: { id: "fld_x", name: "x" } } }), stderr: "", signal: null, timedOut: false };
+    });
+
+    const exitCode = await runBootstrap({
+      cwd: dir,
+      args: ["init", "workspace", "--schema", schemaPath],
+      env: { BRIDGE_HOME: bridgeHome, PATH: "" },
+      logger: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      findExecutableFn: (command: string) => command === "lark-cli" ? "/tmp/lark-cli" : null,
+      runCommandFn,
+    });
+
+    expect(exitCode).toBe(0);
+    const updated = JSON.parse(await readFile(configPath, "utf8"));
+    expect(updated.extensions["contract-assistant"].storage.baseToken).toBe("app_new");
+  });
+
+  it("dispatches guide through bootstrap", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-bootstrap-guide-"));
+    await mkdir(path.join(dir, "node_modules"), { recursive: true });
+    const bridgeHome = path.join(dir, "bridge-home");
+    const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    const exitCode = await runBootstrap({
+      cwd: dir,
+      args: ["guide"],
+      env: { BRIDGE_HOME: bridgeHome, PATH: "" },
+      logger,
+      findExecutableFn: vi.fn(),
+      runCommandFn: vi.fn(),
+    });
+
+    expect(exitCode).toBe(1);
+    expect(logger.log).toHaveBeenCalledWith("Feishu OpenCode Bridge — 新手引导");
+    expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("bridge onboard"));
+  });
+});
+
+describe("scripts/guide", () => {
+  it("points missing config users back to onboard", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-guide-missing-"));
+    const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    const exitCode = await runGuide({ cwd: dir, env: {}, logger });
+
+    expect(exitCode).toBe(1);
+    expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("还没有生成配置"));
+    expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("bridge onboard"));
+  });
+
+  it("moves users through workspace, doctor, and ready states", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-guide-state-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({
+      storage: { dataDir: "./data" },
+      extensions: {
+        "knowledge-base": { storage: { bitable: { appToken: "app", tableId: "tbl_knowledge" } } },
+        "contract-assistant": {
+          storage: {
+            baseToken: "app",
+            contractTableId: "tbl_contract",
+            invoiceTableId: "tbl_invoice",
+            caseTableId: "tbl_case",
+          },
+        },
+      },
+    }), "utf8");
+
+    await expect(buildGuideView({ cwd: dir, configPath })).resolves.toMatchObject({
+      status: "needs-doctor",
+      nextSteps: expect.arrayContaining(["bridge doctor workspace"]),
+    });
+
+    await mkdir(path.join(dir, "data"), { recursive: true });
+    await writeFile(path.join(dir, "data", "onboarding-state.json"), JSON.stringify({
+      schemaVersion: 1,
+      lastWorkspaceDoctor: {
+        status: "fail",
+        checkedAt: "2026-05-03T00:00:00.000Z",
+        failedChecks: [{ id: "fields", label: "合同管理表 字段", detail: "缺字段：客户名称" }],
+      },
+    }), "utf8");
+    await expect(buildGuideView({ cwd: dir, configPath })).resolves.toMatchObject({
+      status: "needs-fix",
+      detail: expect.stringContaining("缺字段"),
+    });
+
+    await writeFile(path.join(dir, "data", "onboarding-state.json"), JSON.stringify({
+      schemaVersion: 1,
+      lastWorkspaceDoctor: {
+        status: "pass",
+        checkedAt: "2026-05-03T00:00:00.000Z",
+        failedChecks: [],
+      },
+    }), "utf8");
+    await expect(buildGuideView({ cwd: dir, configPath })).resolves.toMatchObject({
+      status: "ready",
+      nextSteps: expect.arrayContaining(["bridge start", "在飞书里发送 /guide"]),
+    });
+  });
 });
 
 describe("scripts/release portable package", () => {
@@ -457,6 +622,20 @@ describe("scripts/release portable package", () => {
 });
 
 describe("scripts/start", () => {
+  it("prints the Feishu /guide hint only once per user data directory", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-start-guide-"));
+    const configPath = path.join(dir, "config.json");
+    const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const config = { storage: { dataDir: "./data" } };
+
+    await expect(maybePrintGuidePrompt({ config, configPath, logger })).resolves.toBe(true);
+    await expect(maybePrintGuidePrompt({ config, configPath, logger })).resolves.toBe(false);
+
+    expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("/guide"));
+    const state = JSON.parse(await readFile(path.join(dir, "data", "onboarding-state.json"), "utf8"));
+    expect(state.guideShownAt).toEqual(expect.any(String));
+  });
+
   it("reuses existing opencode serve instead of spawning a new one", async () => {
     const spawnFn = vi.fn();
     const result = await ensureOpencodeServer({

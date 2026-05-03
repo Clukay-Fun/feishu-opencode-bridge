@@ -14,6 +14,7 @@ import {
   buildKnowledgeIngestSessionPayload,
   buildKnowledgeQueryEmptyPayload,
   buildKnowledgeQueryPayload,
+  buildGuideCardPayload,
   buildLaborAnalysisCompletedPayload,
   buildLaborAnalysisProgressPayload,
   buildNoticeCardPayload,
@@ -238,6 +239,18 @@ describe("buildPostPayload", () => {
     expect(content.body.elements[1].columns[0].elements[1].columns[0].elements[0].content).toBe("connected");
     expect(content.body.elements[1].columns[0].elements[1].columns[2].elements[0].content).toBe("知识库模式");
     expect(content.body.elements[3].columns[0].elements[0].content).toContain("`/sessions` 查看全部");
+  });
+
+  it("renders a guide card with reproducible hero actions", () => {
+    const payload = buildGuideCardPayload({ windowLabel: "日常会话" });
+    const content = JSON.parse(payload.content) as any;
+    const serialized = JSON.stringify(content);
+
+    expect(content.header.title.content).toBe("60 秒新手引导");
+    expect(serialized).toContain("contract-draft-prompt.txt");
+    expect(serialized).toContain("labor-contract.txt");
+    expect(serialized).toContain("/kb-ingest-start");
+    expect(serialized).toContain("bridge doctor workspace");
   });
 
   it("renders a non-empty sessions command card", () => {

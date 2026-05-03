@@ -2,6 +2,7 @@
   "exports": [
     "FeishuPostPayload",
     "ContractDraftProgressView",
+    "GuideCardView",
     "InvoiceRecognizeProgressView",
     "KnowledgeIngestFailureCardView",
     "KnowledgeIngestProgressCardView",
@@ -30,6 +31,7 @@
     "buildContractDraftProgressPayload",
     "buildInvoiceRecognizeCompletedPayload",
     "buildInvoiceRecognizeProgressPayload",
+    "buildGuideCardPayload",
     "buildKnowledgeIngestFailurePayload",
     "buildKnowledgeIngestPayload",
     "buildKnowledgeIngestProcessingPayload",

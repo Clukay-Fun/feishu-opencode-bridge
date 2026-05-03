@@ -157,13 +157,9 @@
       "pdfProviderOrder": [
         "pdf-parse",
         "pymupdf4llm",
-        "docling",
-        "paddleocr-vl-aistudio",
-        "mineru-agent"
+        "docling"
       ],
       "imageProviderOrder": [
-        "paddleocr-vl-aistudio",
-        "mineru-agent",
         "tesseract"
       ],
       "ocrLang": "chi_sim+eng",

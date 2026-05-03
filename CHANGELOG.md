@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.55 - 2026-05-03
+
+### Added
+- Added `bridge guide`, a local onboarding state file, and the Feishu `/guide` card for first-run next-step guidance.
+- Added `bridge doctor workspace` for diagnosing Bitable workspace configuration, table fields, access failures, and missing Base scopes.
+- Added workspace starter-record seed manifests under `data/init-seeds.json` plus `bridge init workspace --reset-sample-data` for safe sample reset.
+- Added reproducible Hero onboarding materials under `examples/hero/`.
+
+### Changed
+- Clarified that `bridge init workspace --force` only rewrites local Base / Table pointers and never deletes remote data.
+- Quieted new-install defaults for the promotion path: knowledge auto-detect and memory remain off by default, and external OCR providers are not in the default parser order.
+- Documented that the 30-minute quick-start path assumes an existing AI provider key or a manually issued temporary test key.
+
 ## 0.1.54 - 2026-04-28
 
 ### Added

@@ -88,6 +88,10 @@ export type ModelListCardView = {
   footer: string;
 };
 
+export type GuideCardView = {
+  windowLabel: string;
+};
+
 export type PermissionActionButton = {
   label: string;
   type: "default" | "primary" | "danger";
@@ -304,6 +308,30 @@ export function buildPermissionRequestCardPayload(view: PermissionRequestCardVie
   });
 }
 
+/** 构建 `/guide` 新手引导卡。 */
+export function buildGuideCardPayload(view: GuideCardView): FeishuPostPayload {
+  return buildInteractivePayload({
+    title: "60 秒新手引导",
+    template: "blue",
+    iconToken: "compass_outlined",
+    bodyElements: [
+      columnSet([
+        column([
+          markdown(`**当前窗口**\n${escapeText(view.windowLabel)}\n\n先跑通一条 Hero 路线，再开始处理真实材料。`, {
+            icon: { token: "info-hollow_filled", color: "blue" },
+          }),
+        ], { bg: "blue-50", weight: 1 }),
+      ]),
+      buildDivider(),
+      buildGuideStepBlock("1", "合同起草", "复制 `examples/hero/contract-draft-prompt.txt` 的内容发给我。"),
+      buildGuideStepBlock("2", "合同录入", "上传 `examples/hero/labor-contract.txt`，再按合同助手提示处理。"),
+      buildGuideStepBlock("3", "知识库入库", "上传 `examples/hero/labor-law-faq.md`，再发送 `/kb-ingest-start`。"),
+      buildDivider(),
+      buildFooterTipBlock("常用命令：`/new` · `/sessions` · `/models` · `/help-file`。本地排查运行 `bridge doctor workspace`。", "efficiency_outlined", "green", "notation"),
+    ],
+  });
+}
+
 // #endregion
 
 type CardState = {
@@ -370,6 +398,16 @@ function buildPermissionRequestBlock(permissionName: string): Record<string, unk
         },
       ]),
     ], { weight: 1 }),
+  ]);
+}
+
+function buildGuideStepBlock(index: string, title: string, detail: string): Record<string, unknown> {
+  return columnSet([
+    column([
+      markdown(`**${index}. ${escapeText(title)}**\n${detail}`, {
+        icon: { token: "send_outlined", color: "green" },
+      }),
+    ], { bg: "grey-50", weight: 1 }),
   ]);
 }
 

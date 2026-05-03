@@ -161,6 +161,12 @@ export async function runOnboard(options = {}) {
   logger.log("  当前配置保证 p2p 私聊可用。");
   logger.log("  如需群聊严格 @bot，请后续补 botOpenId / selfBotOpenId。");
   logger.log("  如果 OpenCode 需要在其他项目目录工作，请修改 config.opencode.directory。");
+  logger.log("");
+  logger.log("推荐下一步：");
+  logger.log("  1. bridge init workspace");
+  logger.log("  2. bridge doctor workspace");
+  logger.log("  3. bridge start");
+  logger.log("  随时运行 bridge guide 查看当前阶段。");
 
   if (shouldOfferStart(results)) {
     const launchNow = await promptYesNoFn("当前环境已接近可运行状态，是否现在启动完整栈？", false);
@@ -424,6 +430,10 @@ export async function maybeLoginOpencodeProvider(options) {
   }
 
   logger.warn(`当前 OpenCode provider 未就绪：${status.detail}`);
+  logger.warn("如果还没有可用的 AI provider key，可以先向维护者申请测试 key；P0 阶段不自动发放 key。");
+  if (typeof options.env?.BRIDGE_TEST_KEY_URL === "string" && options.env.BRIDGE_TEST_KEY_URL.trim().length > 0) {
+    logger.warn(`测试 key 申请入口：${options.env.BRIDGE_TEST_KEY_URL}`);
+  }
   const shouldLogin = await options.promptYesNoFn("是否现在运行 opencode providers login 完成模型提供方登录？", true);
   if (!shouldLogin) {
     return status;
