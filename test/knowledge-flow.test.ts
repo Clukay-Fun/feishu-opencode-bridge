@@ -199,12 +199,10 @@ describe("knowledge base bridge flow", () => {
         fileName: "说明.txt",
       },
     });
-    await app.handleIncomingMessage(createTextMessage("总结这个文件", "om_instruction"));
 
     const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
     const updatePayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
-    expect(JSON.stringify(replyPayloads)).toContain("已收到文件");
-    expect(JSON.stringify(replyPayloads)).toContain("/help-file");
+    expect(JSON.stringify(replyPayloads)).toContain("处理中");
     expect(outbound.downloadMessageResource).toHaveBeenCalledWith("om_file_plain", "file_plain", "file");
     const request = promptAsync.mock.calls[0]?.[1];
     expect(request).toBeDefined();
@@ -212,11 +210,50 @@ describe("knowledge base bridge flow", () => {
     const localPath = promptText.match(/本地路径：(.+)/)?.[1]?.trim();
     expect(promptText).toContain("本地路径：");
     expect(promptText).toContain("说明.txt");
+    expect(promptText).toContain("请直接识别并总结这个文件的内容");
+    expect(promptText).toContain("如果是发票");
     expect(promptText).toContain("不要默认把文件写入知识库");
     expect(promptText).not.toContain("这是一个需要总结的普通文件。");
     expect(JSON.stringify(updatePayloads)).toContain("文件总结完成");
     expect(localPath).toBeTruthy();
     await expect(readFile(localPath!, "utf8")).rejects.toThrow();
+  });
+
+  it("sends uploaded images to OpenCode as image parts for immediate recognition", async () => {
+    const outbound = {
+      ...createOutbound(),
+      downloadMessageResource: vi.fn(async () => ({
+        fileName: "img_v3_abc123",
+        mimeType: "image/png",
+        buffer: Buffer.from("fake image bytes", "utf8"),
+      })),
+    };
+    const eventStream = new FakeOpenCodeEventStream();
+    const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "这是一张发票图片。" });
+    const promptAsync = vi.spyOn(opencode, "promptAsync");
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
+      knowledge: null,
+      opencode,
+      eventStream,
+      memory: null,
+    });
+
+    await app.handleIncomingMessage({
+      ...createTextMessage("[图片]", "om_image"),
+      messageType: "image",
+      file: {
+        fileKey: "img_v3_abc123",
+        fileName: "img_v3_abc123.png",
+      },
+      resourceType: "image",
+    });
+
+    expect(outbound.downloadMessageResource).toHaveBeenCalledWith("om_image", "img_v3_abc123", "image");
+    const request = promptAsync.mock.calls[0]?.[1];
+    const promptText = request?.parts.map((part) => part.text ?? "").join("\n") ?? "";
+    expect(promptText).toContain("请直接识别并总结这个图片的内容");
+    expect(promptText).toContain("文件名：img_v3_abc123.png");
+    expect(request?.parts.some((part) => part.type === "image_url")).toBe(true);
   });
 
   it("cleans temporary regular-file resources even when the turn fails", async () => {
@@ -250,7 +287,6 @@ describe("knowledge base bridge flow", () => {
         fileName: "说明.txt",
       },
     });
-    await app.handleIncomingMessage(createTextMessage("总结这个文件", "om_instruction"));
 
     expect(localPath).toContain("bridge-turn-file-");
     await expect(readFile(localPath, "utf8")).rejects.toThrow();
@@ -367,7 +403,6 @@ describe("knowledge base bridge flow", () => {
         size: 1,
       },
     });
-    await app.handleIncomingMessage(createTextMessage("总结这个文件", "om_instruction"));
 
     expect(outbound.downloadMessageResource).toHaveBeenCalledWith("om_file_empty", "file_empty", "file");
     expect(promptAsync).not.toHaveBeenCalled();
@@ -402,7 +437,6 @@ describe("knowledge base bridge flow", () => {
         size: 1,
       },
     });
-    await app.handleIncomingMessage(createTextMessage("总结这个文件", "om_instruction"));
 
     expect(outbound.downloadMessageResource).toHaveBeenCalledWith("om_file_missing", "file_missing", "file");
     expect(promptAsync).not.toHaveBeenCalled();

@@ -442,7 +442,7 @@ export class TurnExecutor {
       });
 
       watchdog.start();
-      void this.context.opencode.promptAsync(turn.sessionId, buildPromptRequest(turn.text, systemPrompt, turn.model))
+      void this.context.opencode.promptAsync(turn.sessionId, buildPromptRequest(turn.text, systemPrompt, turn.model, turn.promptParts))
         .then(() => {
           queue.replaceActive(transitionTurn(turn, "awaiting-sse"));
           void this.context.turnCardManager.updateTurnCard(turn.turnId, { status: "处理中", update: "请求已发送，等待事件流...", target: "step" });

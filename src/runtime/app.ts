@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { QueueRegistry } from "../bridge/queue.js";
-import { type PendingInteraction, type PendingKnowledgeIngestInteraction, type PendingPermissionInteraction } from "../bridge/state.js";
+import { type PendingFileInstructionInteraction, type PendingInteraction, type PendingKnowledgeIngestInteraction, type PendingPermissionInteraction } from "../bridge/state.js";
 import type { ModuleManager } from "../bridge/module.js";
 import { routeIncomingText, type RoutedText } from "../bridge/router.js";
 import type { BridgeTurn } from "../bridge/turn.js";
@@ -30,6 +30,7 @@ import type { KnowledgeRuntimeModule } from "../knowledge/runtime-module.js";
 import type { MemoryService } from "../memory/index.js";
 import {
   OpenCodeClient,
+  type OpenCodePromptPart,
   type OpenCodeSession,
   type OpenCodeSessionStatus,
 } from "../opencode/client.js";
@@ -425,7 +426,7 @@ export class BridgeApp {
         return;
       }
       const resourceType = message.resourceType ?? (message.messageType === "image" ? "image" : "file");
-      this.setPendingInteraction(message.conversationKey, {
+      const pending: PendingFileInstructionInteraction = {
         kind: "file-await-instruction",
         chatId: message.chatId,
         conversationKey: message.conversationKey,
@@ -438,25 +439,8 @@ export class BridgeApp {
           size: message.file.size,
         },
         resourceType,
-      });
-      await this.sendPayload(message.chatId, buildNoticeCardPayload({
-        title: "已收到文件",
-        template: "blue",
-        iconToken: "file-link-docx_outlined",
-        message: [
-          `文件：${message.file.fileName}`,
-          "",
-          "发送指令处理，或 `/help-file` 查看示例",
-        ].join("\n"),
-        messageIconToken: "file-link-docx_outlined",
-        messageIconColor: "blue",
-        showMessageIcon: false,
-      }), {
-        event: "file instruction requested",
-        transcriptType: "outbound-final",
-        textPreview: "已收到文件，请说明处理方式。",
-        len: 14,
-      }, { replyToMessageId: message.messageId });
+      };
+      await this.handleFileInstructionPending(this.buildAutoFileInstructionMessage(message), pending);
       return;
     }
 
@@ -682,6 +666,29 @@ export class BridgeApp {
     return pending.kind === "question" || pending.kind === "permission";
   }
 
+  private buildAutoFileInstructionMessage(message: IncomingFileMessage): IncomingTextMessage {
+    const noun = message.messageType === "image" ? "图片" : "文件";
+    return {
+      chatId: message.chatId,
+      chatType: message.chatType,
+      senderOpenId: message.senderOpenId,
+      messageId: message.messageId,
+      rawContent: message.rawContent,
+      plainText: [
+        `请直接识别并总结这个${noun}的内容。`,
+        "先判断它大概是什么类型，例如发票、合同、判决书、聊天截图、表格、普通文档或其他材料。",
+        "如果是发票，请把能识别到的关键信息逐项列出：发票类型、发票号码、开票日期、购买方、销售方、项目名称、金额、税额、价税合计、备注等；未识别到的字段写“未识别”。",
+        "如果是合同、判决书或其他文档，请列出文件类型、主体/案由、第一页或主要内容摘要、关键日期、关键金额、重要当事人和需要注意的风险点。",
+        "只回复识别结果本身，不要写入知识库、合同台账或发票台账，也不要反问用户要做什么。",
+      ].join("\n"),
+      rootId: message.rootId,
+      parentId: message.parentId,
+      threadKey: message.threadKey,
+      conversationKey: message.conversationKey,
+      messageType: "text",
+    };
+  }
+
   /**
    * 处理“先传文件，后补说明”这一类挂起文件指令流程。
    */
@@ -703,7 +710,7 @@ export class BridgeApp {
       return true;
     }
     const turnId = crypto.randomUUID();
-    let processed: { prompt: string } | null = null;
+    let processed: { prompt: string; promptParts?: OpenCodePromptPart[] | undefined } | null = null;
     try {
       processed = await this.prepareFileForOpenCodeTurn(turnId, pending, instruction);
     } catch (error) {
@@ -747,6 +754,7 @@ export class BridgeApp {
       inboundMessageId: message.messageId,
       plainText: `${instruction}\n\n[文件] ${pending.file.fileName}`,
       text: this.buildPromptTextWithMessageContext(message, processed.prompt),
+      promptParts: processed.promptParts,
       model: window.modelOverride,
       sessionId,
       logContext: this.buildTurnLogContext(message, turnId, sessionId),
@@ -937,29 +945,33 @@ export class BridgeApp {
     turnId: string,
     pending: Extract<PendingInteraction, { kind: "file-await-instruction" }>,
     instruction: string,
-  ): Promise<{ prompt: string }> {
+  ): Promise<{ prompt: string; promptParts?: OpenCodePromptPart[] | undefined }> {
     const resources = this.outbound as OutboundPort & Partial<KnowledgeResourcePort>;
     if (!resources.downloadMessageResource) {
       throw new Error("当前运行环境不支持下载飞书文件。");
     }
     const downloaded = await resources.downloadMessageResource(pending.file.messageId, pending.file.fileKey, pending.resourceType ?? "file");
-    this.validateRegularFileInput(downloaded.fileName, downloaded.buffer.byteLength);
-    const localPath = await this.saveUploadedFileForTurn(turnId, downloaded.fileName, downloaded.buffer);
+    const fileName = normalizeDownloadedResourceFileName(downloaded.fileName, downloaded.mimeType, pending);
+    this.validateRegularFileInput(fileName, downloaded.buffer.byteLength);
+    const localPath = await this.saveUploadedFileForTurn(turnId, fileName, downloaded.buffer);
+    const promptParts = buildUploadedResourcePromptParts(fileName, downloaded.mimeType, downloaded.buffer, pending.resourceType);
     return {
       prompt: [
         "用户上传了一个文件，并要求你按下述需求处理。",
         "bridge 已将附件下载到本地绝对路径；你与 bridge 在同一台机器上，可按需直接读取该路径。",
+        "如果本次上传的是图片，bridge 也会把图片内容作为独立 image part 随请求发送；请优先基于图片内容识别。",
         "不要默认把文件写入知识库。",
         "只有当用户明确要求“入库 / 加入知识库 / 导入知识库”时，才使用知识库本地命令。",
         "",
         `用户需求：${instruction}`,
-        `文件名：${downloaded.fileName}`,
+        `文件名：${fileName}`,
         `MIME：${downloaded.mimeType}`,
         `本地路径：${localPath}`,
         `来源文件消息：${pending.file.messageId}`,
         "",
         "如果用户只是要总结、识别、分析、改写或提问，请直接基于该文件完成任务。",
       ].join("\n"),
+      promptParts,
     };
   }
 
@@ -1598,4 +1610,69 @@ function sanitizeUploadedFileName(fileName: string): string {
   const safeName = base || "uploaded-file";
   const safeExt = parsed.ext.replace(/[^a-zA-Z0-9.]+/g, "");
   return `${safeName}${safeExt}`;
+}
+
+function normalizeDownloadedResourceFileName(
+  downloadedFileName: string,
+  mimeType: string,
+  pending: PendingFileInstructionInteraction,
+): string {
+  const extension = path.extname(downloadedFileName).toLowerCase();
+  if (extension) {
+    return downloadedFileName;
+  }
+  const pendingExtension = path.extname(pending.file.fileName).toLowerCase();
+  if (pendingExtension) {
+    return `${downloadedFileName}${pendingExtension}`;
+  }
+  const mimeExtension = extensionFromMimeType(mimeType);
+  return mimeExtension ? `${downloadedFileName}${mimeExtension}` : downloadedFileName;
+}
+
+function buildUploadedResourcePromptParts(
+  fileName: string,
+  mimeType: string,
+  buffer: Buffer,
+  resourceType?: "file" | "image",
+): OpenCodePromptPart[] | undefined {
+  const extension = path.extname(fileName).toLowerCase();
+  const imageMimeType = mimeType.startsWith("image/")
+    ? mimeType
+    : resourceType === "image"
+      ? mimeTypeFromImageExtension(extension)
+      : undefined;
+  if (!imageMimeType) {
+    return undefined;
+  }
+  return [{
+    type: "image_url",
+    image_url: {
+      url: `data:${imageMimeType};base64,${buffer.toString("base64")}`,
+    },
+  }];
+}
+
+function extensionFromMimeType(mimeType: string): string | undefined {
+  if (mimeType.includes("jpeg")) return ".jpg";
+  if (mimeType.includes("png")) return ".png";
+  if (mimeType.includes("webp")) return ".webp";
+  if (mimeType.includes("pdf")) return ".pdf";
+  if (mimeType.includes("text/markdown")) return ".md";
+  if (mimeType.startsWith("text/")) return ".txt";
+  if (mimeType.includes("wordprocessingml.document")) return ".docx";
+  return undefined;
+}
+
+function mimeTypeFromImageExtension(extension: string): string | undefined {
+  switch (extension) {
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".webp":
+      return "image/webp";
+    case ".png":
+      return "image/png";
+    default:
+      return undefined;
+  }
 }

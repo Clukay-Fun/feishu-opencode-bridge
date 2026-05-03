@@ -8,6 +8,7 @@ dist/
 logs/
 data/
 config.json
+.runtime/
 
 # Legacy root-level runtime artifacts
 mappings.json

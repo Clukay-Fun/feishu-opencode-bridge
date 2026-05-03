@@ -37,7 +37,10 @@ export async function loadConfigWithWarnings(
   input?: string | { configPath?: string | undefined; extensionMetas?: readonly ExtensionMetaDefinition[] | undefined },
 ): Promise<{ config: AppConfig; warnings: ConfigWarning[] }> {
   const options = typeof input === "string" ? { configPath: input } : input;
-  const resolvedConfigPath = options?.configPath ? path.resolve(options.configPath) : path.resolve("config.json");
+  const defaultConfigPath = process.env.BRIDGE_CONFIG_PATH && process.env.BRIDGE_CONFIG_PATH.trim().length > 0
+    ? process.env.BRIDGE_CONFIG_PATH
+    : "config.json";
+  const resolvedConfigPath = path.resolve(options?.configPath ?? defaultConfigPath);
   const raw = JSON.parse(await readFile(resolvedConfigPath, "utf8")) as unknown;
   const rawRecord = asRecord(raw);
   const parsed = ConfigSchema.parse(stripOverriddenLegacyModuleConfigs(rawRecord));

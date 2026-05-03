@@ -13,6 +13,8 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { resolveProjectConfigPath } from "./portable.mjs";
+
 export const BRIDGE_GROUP = "bridge";
 export const LARK_GROUP = "lark";
 export const MEMORY_GROUP = "memory";
@@ -184,7 +186,7 @@ export async function runCommand(command, args = [], options = {}) {
 }
 
 // Read and parse `config.json`, returning existence and parse-state metadata.
-export async function readProjectConfig(cwd = process.cwd(), configPath = path.join(cwd, "config.json")) {
+export async function readProjectConfig(cwd = process.cwd(), configPath = resolveProjectConfigPath(cwd)) {
   try {
     const rawText = await readFile(configPath, "utf8");
     const config = JSON.parse(rawText);
@@ -356,7 +358,7 @@ export function assessOpencodeAuthPayload(payload, now = Date.now()) {
 // Check whether `config.json` exists and parses correctly.
 export async function checkConfigExists(options = {}) {
   const cwd = options.cwd ?? process.cwd();
-  const configPath = options.configPath ?? path.join(cwd, "config.json");
+  const configPath = options.configPath ?? resolveProjectConfigPath(cwd, options.env);
   const state = await readProjectConfig(cwd, configPath);
   if (!state.exists) {
     return createResult("config-exists", BRIDGE_GROUP, "配置文件", "fail", "未找到 config.json", "复制 config.example.json 并填写必要字段");
@@ -769,7 +771,7 @@ export async function checkPortAvailable(options = {}) {
 // Run the bridge-related diagnostics that gate local startup.
 export async function runBridgeChecks(options = {}) {
   const cwd = options.cwd ?? process.cwd();
-  const configPath = options.configPath ?? path.join(cwd, "config.json");
+  const configPath = options.configPath ?? resolveProjectConfigPath(cwd, options.env);
   const state = await readProjectConfig(cwd, configPath);
   const results = [];
 
@@ -800,7 +802,7 @@ export async function runBridgeChecks(options = {}) {
 // Run lark-cli related diagnostics separately for grouped doctor output.
 export async function runLarkChecks(options = {}) {
   const cwd = options.cwd ?? process.cwd();
-  const configPath = options.configPath ?? path.join(cwd, "config.json");
+  const configPath = options.configPath ?? resolveProjectConfigPath(cwd, options.env);
   const state = await readProjectConfig(cwd, configPath);
   const results = [];
 
@@ -823,7 +825,7 @@ export async function runAllChecks(options = {}) {
   const bridge = await runBridgeChecks(options);
   const lark = await runLarkChecks(options);
   const cwd = options.cwd ?? process.cwd();
-  const configPath = options.configPath ?? path.join(cwd, "config.json");
+  const configPath = options.configPath ?? resolveProjectConfigPath(cwd, options.env);
   const state = await readProjectConfig(cwd, configPath);
   const memory = [await checkObsidianSync({ ...options, cwd, configPath, state })];
   return [...bridge, ...lark, ...memory];

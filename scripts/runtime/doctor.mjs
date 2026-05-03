@@ -5,12 +5,17 @@
  * - 以适合终端阅读的分组格式打印。
  */
 import { formatCheckHint, formatCheckLine, getDoctorExitCode, isMainModule, runAllChecks } from "./checks.mjs";
+import { resolveProjectConfigPath } from "./portable.mjs";
 
 // Run all diagnostics and render them by group for local troubleshooting.
 export async function runDoctor(options = {}) {
   const logger = options.logger ?? console;
-  const results = await runAllChecks({
-    cwd: options.cwd,
+  const cwd = options.cwd ?? process.cwd();
+  const configPath = options.configPath ?? resolveProjectConfigPath(cwd, options.env);
+  const runAllChecksFn = options.runAllChecksFn ?? runAllChecks;
+  const results = await runAllChecksFn({
+    cwd,
+    configPath,
     env: options.env,
     includeDoctorExtras: true,
     includeLarkDoctor: true,

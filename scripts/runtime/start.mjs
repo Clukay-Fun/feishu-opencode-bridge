@@ -12,6 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
+import { resolveProjectConfigPath } from "./portable.mjs";
 import {
   createAugmentedEnv,
   assertPortAvailable,
@@ -29,10 +30,11 @@ export async function runStart(options = {}) {
   const fetchImpl = options.fetchImpl ?? fetch;
   const home = options.home ?? os.homedir();
   const env = createAugmentedEnv(cwd, options.env ?? process.env, home);
-  const configState = await readProjectConfig(cwd);
+  const configPath = options.configPath ?? resolveProjectConfigPath(cwd, env);
+  const configState = await readProjectConfig(cwd, configPath);
 
   if (!configState.exists || configState.error || !configState.config) {
-    throw new Error("缺少可用的 config.json，请先运行 npm run onboard");
+    throw new Error(`缺少可用的 config.json：${configPath}，请先运行 bridge onboard 或 npm run onboard`);
   }
 
   const rawConfig = configState.config;

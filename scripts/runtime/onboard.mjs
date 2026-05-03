@@ -5,11 +5,12 @@
  * - 在需要时安装命令行工具并引导登录。
  * - 生成 config.json，并在环境就绪时可直接启动完整栈。
  */
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline/promises";
 
+import { resolveProjectConfigPath, resolveRuntimeDir } from "./portable.mjs";
 import {
   assessOpencodeAuthPayload,
   assessLarkAuthPayload,
@@ -35,7 +36,7 @@ export async function runOnboard(options = {}) {
   const runCommandFn = options.runCommandFn ?? runCommand;
   const findExecutableFn = options.findExecutableFn ?? findExecutable;
   const runAllChecksFn = options.runAllChecksFn ?? runAllChecks;
-  const configPath = path.join(cwd, "config.json");
+  const configPath = options.configPath ?? resolveProjectConfigPath(cwd, env);
 
   logger.log("Feishu OpenCode Bridge — 首次引导");
 
@@ -113,6 +114,7 @@ export async function runOnboard(options = {}) {
 
     await generateConfigFile({
       cwd,
+      configPath,
       appId: credentials.appId,
       appSecret: credentials.appSecret,
       opencodeDirectory: cwd,
@@ -234,7 +236,10 @@ export async function ensureOpencodeInstalled(options) {
     return { env, path: null };
   }
 
-  const installResult = await runCommandFn("npm", ["i", "-g", "opencode-ai@latest"], {
+  const installArgs = isPortableEnv(env)
+    ? ["install", "--prefix", path.join(resolveRuntimeDir(cwd), "npm-global"), "opencode-ai@latest"]
+    : ["i", "-g", "opencode-ai@latest"];
+  const installResult = await runCommandFn("npm", installArgs, {
     cwd,
     env,
     timeoutMs: 10 * 60_000,
@@ -242,7 +247,7 @@ export async function ensureOpencodeInstalled(options) {
     onStderr: (text) => process.stderr.write(text),
   });
   if (installResult.code !== 0) {
-    logger.warn("通过 npm 全局安装 opencode 失败。");
+    logger.warn(isPortableEnv(env) ? "通过 portable npm prefix 安装 opencode 失败。" : "通过 npm 全局安装 opencode 失败。");
     printOpencodeManualHints(logger);
     return { env, path: null };
   }
@@ -272,6 +277,27 @@ export async function ensureLarkCliInstalled(options) {
   if (existing) {
     logger.log(`检测到 lark-cli：${existing}`);
     return { env, path: existing };
+  }
+
+  if (isPortableEnv(env)) {
+    logger.log("未检测到 lark-cli，正在尝试安装到 .runtime/npm-global ...");
+    const prefix = path.join(resolveRuntimeDir(cwd), "npm-global");
+    const localInstall = await runCommandFn("npm", ["install", "--prefix", prefix, "@larksuite/cli"], {
+      cwd,
+      env,
+      timeoutMs: 10 * 60_000,
+      onStdout: (text) => process.stdout.write(text),
+      onStderr: (text) => process.stderr.write(text),
+    });
+    env = createAugmentedEnv(cwd, env, home);
+    const installed = findExecutableFn("lark-cli", { cwd, env, home });
+    if (localInstall.code === 0 && installed) {
+      logger.log(`lark-cli 安装完成：${installed}`);
+      return { env, path: installed };
+    }
+    logger.warn("无法安装 portable lark-cli。");
+    logger.warn(`请手动执行：npm install --prefix "${prefix}" @larksuite/cli`);
+    return { env, path: null };
   }
 
   logger.log("未检测到 lark-cli，正在尝试全局安装 @larksuite/cli ...");
@@ -493,13 +519,14 @@ export async function generateConfigFile(options) {
   const cwd = options.cwd ?? process.cwd();
   const logger = options.logger ?? console;
   const templatePath = path.join(cwd, "config.example.json");
-  const configPath = path.join(cwd, "config.json");
+  const configPath = options.configPath ?? resolveProjectConfigPath(cwd, options.env);
   const template = JSON.parse(await readFile(templatePath, "utf8"));
   const generated = generateConfigObject(template, {
     appId: options.appId,
     appSecret: options.appSecret,
     opencodeDirectory: options.opencodeDirectory ?? cwd,
   });
+  await mkdir(path.dirname(configPath), { recursive: true });
   await writeFile(configPath, `${JSON.stringify(generated, null, 2)}\n`, "utf8");
   logger.log(`已生成 ${configPath}`);
   return configPath;
@@ -593,6 +620,10 @@ function printOpencodeManualHints(logger) {
   logger.warn("  Windows：scoop install extras/opencode");
   logger.warn("  Windows：choco install opencode");
   logger.warn("  通用：npm i -g opencode-ai@latest");
+}
+
+function isPortableEnv(env) {
+  return typeof env.BRIDGE_HOME === "string" && env.BRIDGE_HOME.trim().length > 0;
 }
 
 // Parse JSON helper output without throwing inside onboarding control flow.

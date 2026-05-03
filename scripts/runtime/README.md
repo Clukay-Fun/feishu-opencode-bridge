@@ -12,8 +12,15 @@
   - 首次引导入口
 - `start.mjs`
   - 本地启动编排入口
+- `bootstrap.mjs`
+  - portable 包统一入口，准备用户目录、项目依赖并分发 onboard / doctor / start
+- `portable.mjs`
+  - portable 包目录、环境变量和 Node 下载元数据
+- `install-node.sh` / `install-node.ps1`
+  - 无系统 Node 时下载包内 portable Node
 
 使用原则：
 
 - 与运行环境、安装、启动、诊断直接相关的脚本放在这里
 - 新的共享检查逻辑优先并入 `checks.mjs`，不要再在根目录复制一份
+- portable 入口设置 `BRIDGE_HOME` 后，配置默认写入用户目录；普通 npm 脚本未设置 `BRIDGE_HOME` 时仍使用仓库根 `config.json`

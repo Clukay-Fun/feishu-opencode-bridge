@@ -8,18 +8,23 @@ import type { PendingQuestionInteraction } from "../bridge/state.js";
 import type { BridgeTurn } from "../bridge/turn.js";
 import type { FeishuPostPayload, OutputView, ToolUpdateView } from "../feishu/shared-primitives.js";
 import type { ModelListCardView } from "../feishu/runtime-cards.js";
-import type { OpenCodeMessage, OpenCodeModelRef, OpenCodeProvidersResponse, OpenCodeSession } from "../opencode/client.js";
+import type { OpenCodeMessage, OpenCodeModelRef, OpenCodePromptPart, OpenCodeProvidersResponse, OpenCodeSession } from "../opencode/client.js";
 import type { SessionBindingRecord, SessionWindowRecord } from "../store/mappings.js";
 import type { IncomingChatMessage, PermissionCardActionValue } from "./app.js";
 import { getVisibleSessions } from "./session-windows.js";
 
 //#region Prompt composition
 // Build an OpenCode prompt payload from plain text and optional system prompt.
-export function buildPromptRequest(text: string, system?: string, model?: OpenCodeModelRef): { system?: string; model?: OpenCodeModelRef; parts: Array<{ type: "text"; text: string }> } {
+export function buildPromptRequest(
+  text: string,
+  system?: string,
+  model?: OpenCodeModelRef,
+  extraParts: OpenCodePromptPart[] = [],
+): { system?: string; model?: OpenCodeModelRef; parts: OpenCodePromptPart[] } {
   return {
     ...(system ? { system } : {}),
     ...(model ? { model } : {}),
-    parts: [{ type: "text", text }],
+    parts: [{ type: "text", text }, ...extraParts],
   };
 }
 

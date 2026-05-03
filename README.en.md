@@ -179,20 +179,30 @@ flowchart TB
 
 ## 🚀 Quick Start
 
+Release users should start from the portable launcher:
+
 ```bash
-# 1. Install dependencies
+# macOS / Linux
+./bridge onboard
+./bridge start
+./bridge doctor
+```
+
+```cmd
+:: Windows
+bridge.cmd onboard
+bridge.cmd start
+bridge.cmd doctor
+```
+
+The first run downloads portable Node into `.runtime/node` when needed. User config, data, and logs live in the OS user data directory so upgrading the program package will not overwrite them. On Windows, Defender may warn on the first downloaded runtime; trust the extracted directory if that happens.
+
+Source contributors can still use:
+
+```bash
 npm install
-
-# 2. Prepare config
 cp config.example.json config.json
-
-# 3. Start OpenCode
-opencode serve
-
-# 4. Start the bridge
 npm run dev
-
-# 5. Run diagnostics
 npm run doctor
 ```
 

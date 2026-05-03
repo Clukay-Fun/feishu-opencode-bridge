@@ -6,7 +6,7 @@
  * - 为队列、执行器和卡片管理器提供共享状态模型。
  */
 import type { LogContext } from "../logging/logger.js";
-import type { OpenCodeModelRef } from "../opencode/client.js";
+import type { OpenCodeModelRef, OpenCodePromptPart } from "../opencode/client.js";
 
 export type BridgeTurn = {
   // Stable identity for one bridge turn across queueing and execution.
@@ -21,6 +21,7 @@ export type BridgeTurn = {
   inboundMessageId: string;
   plainText: string;
   text: string;
+  promptParts?: OpenCodePromptPart[] | undefined;
   model?: OpenCodeModelRef | undefined;
   // Runtime-owned session and message anchors created while the turn executes.
   sessionId?: string;

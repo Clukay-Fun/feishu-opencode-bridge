@@ -24,6 +24,9 @@ import {
   ensureOpencodeServer,
   resolveBridgeLaunch,
 } from "../scripts/runtime/start.mjs";
+import { runBootstrap, ensureBridgeDependencies } from "../scripts/runtime/bootstrap.mjs";
+import { createPortableEnv, resolveBridgeHome, resolveNodeDownload, resolveProjectConfigPath } from "../scripts/runtime/portable.mjs";
+import { buildPortablePackage } from "../scripts/release/build-portable.mjs";
 
 describe("scripts/onboard", () => {
   it("does not overwrite existing config by default", async () => {
@@ -74,6 +77,43 @@ describe("scripts/onboard", () => {
     expect(calls).toContain("install -g @larksuite/cli");
     expect(calls.some((line) => line.includes("--prefix"))).toBe(true);
     expect(result.path).toContain(path.join(".local", "node_modules", ".bin", "lark-cli"));
+  });
+
+  it("installs lark-cli into the portable npm prefix when BRIDGE_HOME is set", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-onboard-lark-portable-"));
+    const home = path.join(dir, "home");
+    const bridgeHome = path.join(dir, "bridge-home");
+    await mkdir(home, { recursive: true });
+    const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const calls: string[] = [];
+    let installed = false;
+
+    const runCommandFn = vi.fn(async (_command: string, args: string[]) => {
+      calls.push(args.join(" "));
+      if (args[0] === "install" && args[1] === "--prefix") {
+        installed = true;
+      }
+      return { code: 0, stdout: "", stderr: "", signal: null, timedOut: false };
+    });
+
+    const findExecutableFn = vi.fn(() => {
+      if (installed) {
+        return path.join(dir, ".runtime", "npm-global", "node_modules", ".bin", "lark-cli");
+      }
+      return null;
+    });
+
+    const result = await ensureLarkCliInstalled({
+      cwd: dir,
+      env: { BRIDGE_HOME: bridgeHome },
+      home,
+      logger,
+      runCommandFn,
+      findExecutableFn,
+    });
+
+    expect(calls).toEqual([`install --prefix ${path.join(dir, ".runtime", "npm-global")} @larksuite/cli`]);
+    expect(result.path).toContain(path.join(".runtime", "npm-global", "node_modules", ".bin", "lark-cli"));
   });
 
   it("preserves template defaults while replacing credentials and directory", () => {
@@ -327,6 +367,92 @@ describe("scripts/onboard", () => {
     expect(shouldOfferStart([
       { group: "bridge", status: "fail", id: "config-feishu" },
     ])).toBe(false);
+  });
+});
+
+describe("scripts/portable bootstrap", () => {
+  it("resolves user data and config paths from BRIDGE_HOME", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-portable-paths-"));
+    const bridgeHome = path.join(dir, "home");
+    const env = createPortableEnv({
+      cwd: dir,
+      env: { BRIDGE_HOME: bridgeHome, PATH: "/usr/bin" },
+      platform: "darwin",
+      home: dir,
+    });
+
+    expect(resolveBridgeHome({ env, platform: "darwin", home: dir })).toBe(bridgeHome);
+    expect(resolveProjectConfigPath(dir, env)).toBe(path.join(bridgeHome, "config.json"));
+    expect(env.PATH).toContain(path.join(dir, ".runtime", "node", "bin"));
+    expect(env.XDG_DATA_HOME).toBe(path.join(bridgeHome, "xdg-data"));
+  });
+
+  it("selects Node archives by platform and architecture", () => {
+    expect(resolveNodeDownload({ platform: "win32", arch: "x64" }).archiveName).toContain("win-x64.zip");
+    expect(resolveNodeDownload({ platform: "darwin", arch: "arm64" }).archiveName).toContain("darwin-arm64.tar.gz");
+  });
+
+  it("skips dependency installation when node_modules already exists", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-bootstrap-deps-"));
+    await mkdir(path.join(dir, "node_modules"), { recursive: true });
+    const runCommandFn = vi.fn();
+
+    await ensureBridgeDependencies({
+      cwd: dir,
+      env: {},
+      logger: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      runCommandFn,
+      findExecutableFn: vi.fn(),
+    });
+
+    expect(runCommandFn).not.toHaveBeenCalled();
+  });
+
+  it("dispatches doctor with portable config path", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-bootstrap-doctor-"));
+    await mkdir(path.join(dir, "node_modules"), { recursive: true });
+    const bridgeHome = path.join(dir, "bridge-home");
+    const runAllChecksFn = vi.fn(async () => []);
+
+    const exitCode = await runBootstrap({
+      cwd: dir,
+      command: "doctor",
+      env: { BRIDGE_HOME: bridgeHome, PATH: "" },
+      logger: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      runAllChecksFn,
+      findExecutableFn: vi.fn(),
+      runCommandFn: vi.fn(),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(runAllChecksFn).toHaveBeenCalledWith(expect.objectContaining({
+      configPath: path.join(bridgeHome, "config.json"),
+    }));
+  });
+});
+
+describe("scripts/release portable package", () => {
+  it("builds a dist-only portable package layout", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-release-portable-"));
+    await mkdir(path.join(dir, "dist", "src"), { recursive: true });
+    await mkdir(path.join(dir, "scripts", "runtime"), { recursive: true });
+    await writeFile(path.join(dir, "dist", "src", "index.js"), "console.log('ok');");
+    await writeFile(path.join(dir, "scripts", "runtime", "bootstrap.mjs"), "export {};");
+    for (const file of ["bridge", "bridge.cmd", "bridge.ps1", "package.json", "package-lock.json", "config.example.json", "README.md", "README.en.md"]) {
+      await writeFile(path.join(dir, file), "{}");
+    }
+    const runCommandFn = vi.fn(async () => ({ code: 0, stdout: "", stderr: "", signal: null, timedOut: false }));
+
+    const result = await buildPortablePackage({
+      cwd: dir,
+      platform: "darwin",
+      arch: "arm64",
+      logger: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      runCommandFn,
+    });
+
+    expect(result.packageDir).toContain("feishu-opencode-bridge-macos-arm64");
+    expect(runCommandFn).toHaveBeenCalledWith("tar", expect.arrayContaining(["feishu-opencode-bridge-macos-arm64"]), expect.any(Object));
   });
 });
 

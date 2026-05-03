@@ -202,20 +202,30 @@ flowchart TB
 
 ## 🚀 快速开始
 
+Release 包用户优先使用 portable 入口：
+
 ```bash
-# 1. 安装依赖
+# macOS / Linux
+./bridge onboard
+./bridge start
+./bridge doctor
+```
+
+```cmd
+:: Windows
+bridge.cmd onboard
+bridge.cmd start
+bridge.cmd doctor
+```
+
+首次运行会自动下载 portable Node 到 `.runtime/node`，并把用户配置、数据和日志放到用户目录，避免升级新版包时覆盖旧数据。Windows 首次运行如果被 Defender 拦截，请将解压目录加入信任后重试。
+
+源码开发者仍可使用：
+
+```bash
 npm install
-
-# 2. 准备配置
 cp config.example.json config.json
-
-# 3. 启动 OpenCode
-opencode serve
-
-# 4. 启动 Bridge
 npm run dev
-
-# 5. 运行诊断
 npm run doctor
 ```
 

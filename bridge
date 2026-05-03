@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# 职责: macOS / Linux portable 包统一入口。
+# 关注点:
+# - 优先使用包内 .runtime/node，不要求用户预装 Node。
+# - 缺 Node 时自动下载 portable Node。
+# - 后续命令统一交给 scripts/runtime/bootstrap.mjs。
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+NODE_BIN="$ROOT/.runtime/node/bin/node"
+
+if [ ! -x "$NODE_BIN" ]; then
+  if command -v node >/dev/null 2>&1; then
+    NODE_BIN="$(command -v node)"
+  else
+    "$ROOT/scripts/runtime/install-node.sh" "$ROOT"
+    NODE_BIN="$ROOT/.runtime/node/bin/node"
+  fi
+fi
+
+export BRIDGE_HOME="${BRIDGE_HOME:-}"
+if [ -z "$BRIDGE_HOME" ]; then
+  case "$(uname -s)" in
+    Darwin)
+      BRIDGE_HOME="$HOME/Library/Application Support/FeishuOpenCodeBridge"
+      ;;
+    *)
+      BRIDGE_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/FeishuOpenCodeBridge"
+      ;;
+  esac
+  export BRIDGE_HOME
+fi
+
+exec "$NODE_BIN" "$ROOT/scripts/runtime/bootstrap.mjs" "$@"
