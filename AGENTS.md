@@ -55,6 +55,16 @@
 - Post-freeze feature PRs should include the new-feature checklist self-check when relevant.
 - Keep updating the same branch and PR while the related feature line is still open and unmerged.
 - Once a PR has been merged into `main`, do not reopen or reuse it for follow-up work; create a new branch and a new PR instead.
+- GitHub Release / portable packaging workflow:
+  - Create releases only from a clean `main`; first confirm `git status --short --branch` is clean, `main` is synced with `origin/main`, and `package.json` version matches the corresponding `CHANGELOG.md` entry.
+  - Use `v<package.version>` for the release tag. Prefer a Chinese release title in the format `v<version>: <release theme>`.
+  - Before publishing, run at least `npm run build` and `npm test`. If a test command fails, distinguish a real test regression from an invalid CLI flag before reporting the result.
+  - Default portable package names should be `feishu-opencode-bridge-<platform>-<arch>`. For the current host platform, run `npm run release:portable` and upload the generated archive as a GitHub Release artifact.
+  - When multi-platform artifacts are needed, reuse `buildPortablePackage()` from `scripts/release/build-portable.mjs` and pass explicit `platform`, `arch`, and `outRoot` values for `macos-arm64`, `linux-x64`, and `windows-x64`. On non-Windows hosts, a system `zip` command may be used instead of PowerShell for the Windows archive.
+  - Write release notes in Chinese. Recommended sections are `重点更新`, `Portable 包`, `首次运行`, and `验证`; the validation section must list only commands and checks that were actually run.
+  - Create the release with `gh release create v<version> <artifact...> --repo Clukay-Fun/feishu-opencode-bridge --target main --title "<Chinese title>" --notes-file <notes.md> --latest`.
+  - After publishing, verify the result with `gh release view v<version> --repo Clukay-Fun/feishu-opencode-bridge --json tagName,name,url,assets,isDraft,isPrerelease,targetCommitish,publishedAt` and `gh release list --repo Clukay-Fun/feishu-opencode-bridge --limit 5`.
+  - Prefer writing release artifacts to `/tmp/feishu-opencode-bridge-release-<version>`. After publishing, run `git status --short --branch` again to ensure temporary archives or notes did not pollute the repository.
 
 ## Maintainer Responsibilities
 
