@@ -3,7 +3,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6)](https://www.typescriptlang.org/)
 [![Feishu](https://img.shields.io/badge/Feishu-Bridge-0F6FFF)](https://open.feishu.cn/)
-[![测试](https://img.shields.io/badge/tests-499%20passing-success)](#%EF%B8%8F-开发命令)
+[![测试](https://img.shields.io/badge/tests-545%20passing-success)](#%EF%B8%8F-开发命令)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **中文** | [英文版](README.en.md)
@@ -17,15 +17,9 @@
 
 敏感案件建议使用本地模型或私有模型网关，并保持 `memory.enabled=false`、`knowledgeBase.parser.externalApiEnabled=false`、`logging.messagePolicy=preview/hash/none`。
 
-## 🎯 为什么值得试
-
-**为什么不直接用 Claude / ChatGPT？** 通用对话工具没有飞书里的会话窗口、过程卡片、权限确认、Base 台账、批量材料入库和案件级状态。Bridge 的价值是把 AI 放进律师助理每天已经在用的飞书工作流里。
-
-**为什么不直接用成熟法律 AI 产品？** 成熟产品适合标准化 SaaS 场景；Bridge 更适合愿意自部署、想控制数据流向、需要低成本定制合同/劳动/知识库流程，并且已经在飞书协作的团队。
-
-**不适合谁？** 不使用飞书、不愿意维护本地服务、要求厂商提供完整合规责任背书、或大型律所需要统一采购审计流程的团队，不应把本项目当成开箱即用 SaaS。
-
 ## 📢 项目动态
+
+**2026-05-04** · `v0.1.56` 已发布 GitHub Release，提供 macOS arm64、Linux x64、Windows x64 portable 包；新增本地备份/恢复、成本统计、portable 更新检查/下载/切换/回滚，以及数据流向与隐私诊断能力
 
 **2026-04-28** · 外部扩展进入受限加载阶段：公开 `extension-api`、启动期 manifest/config 归一化、外部 RuntimeModule 适配和本地扩展包管理命令，同时继续禁止热拔插和直接依赖 bridge 内部
 
