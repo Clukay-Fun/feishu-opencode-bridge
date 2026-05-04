@@ -30,6 +30,7 @@ import type { KnowledgeRuntimeModule } from "../knowledge/runtime-module.js";
 import type { MemoryService } from "../memory/index.js";
 import {
   OpenCodeClient,
+  type OpenCodePromptPart,
   type OpenCodeSession,
   type OpenCodeSessionStatus,
 } from "../opencode/client.js";
@@ -732,7 +733,7 @@ export class BridgeApp {
       return true;
     }
     const turnId = crypto.randomUUID();
-    let processed: { prompt: string } | null = null;
+    let processed: { prompt: string; promptParts?: OpenCodePromptPart[] | undefined } | null = null;
     try {
       processed = await this.prepareFileForOpenCodeTurn(turnId, pending, instruction);
     } catch (error) {
@@ -776,6 +777,7 @@ export class BridgeApp {
       inboundMessageId: message.messageId,
       plainText: `${instruction}\n\n[文件] ${pending.file.fileName}`,
       text: this.buildPromptTextWithMessageContext(message, processed.prompt),
+      promptParts: processed.promptParts,
       model: window.modelOverride,
       sessionId,
       logContext: this.buildTurnLogContext(message, turnId, sessionId),
@@ -966,7 +968,7 @@ export class BridgeApp {
     turnId: string,
     pending: Extract<PendingInteraction, { kind: "file-await-instruction" }>,
     instruction: string,
-  ): Promise<{ prompt: string }> {
+  ): Promise<{ prompt: string; promptParts?: OpenCodePromptPart[] | undefined }> {
     const resources = this.outbound as OutboundPort & Partial<KnowledgeResourcePort>;
     if (!resources.downloadMessageResource) {
       throw new Error("当前运行环境不支持下载飞书文件。");
@@ -976,6 +978,7 @@ export class BridgeApp {
     this.validateRegularFileInput(fileName, downloaded.buffer.byteLength);
     const localPath = await this.saveUploadedFileForTurn(turnId, fileName, downloaded.buffer);
     const extractedPreview = await this.extractUploadedFilePreview(fileName, downloaded.buffer);
+    const promptParts = buildUploadedResourcePromptParts(fileName, downloaded.mimeType, downloaded.buffer, pending.resourceType);
     return {
       prompt: [
         "用户上传了一个文件，并要求你按下述需求处理。",
@@ -995,6 +998,7 @@ export class BridgeApp {
         "",
         "如果用户只是要总结、识别、分析、改写或提问，请直接基于该文件完成任务。",
       ].join("\n"),
+      promptParts,
     };
   }
 
@@ -1668,6 +1672,29 @@ function normalizeDownloadedResourceFileName(
   return mimeExtension ? `${downloadedFileName}${mimeExtension}` : downloadedFileName;
 }
 
+function buildUploadedResourcePromptParts(
+  fileName: string,
+  mimeType: string,
+  buffer: Buffer,
+  resourceType?: "file" | "image",
+): OpenCodePromptPart[] | undefined {
+  const extension = path.extname(fileName).toLowerCase();
+  const imageMimeType = mimeType.startsWith("image/")
+    ? mimeType
+    : resourceType === "image"
+      ? mimeTypeFromImageExtension(extension)
+      : undefined;
+  if (!imageMimeType) {
+    return undefined;
+  }
+  return [{
+    type: "image_url",
+    image_url: {
+      url: `data:${imageMimeType};base64,${buffer.toString("base64")}`,
+    },
+  }];
+}
+
 function extensionFromMimeType(mimeType: string): string | undefined {
   if (mimeType.includes("jpeg")) return ".jpg";
   if (mimeType.includes("png")) return ".png";
@@ -1677,4 +1704,18 @@ function extensionFromMimeType(mimeType: string): string | undefined {
   if (mimeType.startsWith("text/")) return ".txt";
   if (mimeType.includes("wordprocessingml.document")) return ".docx";
   return undefined;
+}
+
+function mimeTypeFromImageExtension(extension: string): string | undefined {
+  switch (extension) {
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".webp":
+      return "image/webp";
+    case ".png":
+      return "image/png";
+    default:
+      return undefined;
+  }
 }

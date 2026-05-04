@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.58 - 2026-05-04
+
+### Fixed
+- Restored image uploads as OpenCode `image_url` prompt parts while keeping local turn-file paths and extracted previews available for fallback handling.
+
 ## 0.1.57 - 2026-05-04
 
 ### Added

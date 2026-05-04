@@ -254,7 +254,7 @@ describe("knowledge base bridge flow", () => {
     const promptText = request?.parts.map((part) => part.text ?? "").join("\n") ?? "";
     expect(promptText).toContain("请直接识别并总结这个图片的内容");
     expect(promptText).toContain("文件名：img_v3_abc123.png");
-    expect(request?.parts.some((part) => part.type === "image_url")).toBe(false);
+    expect(request?.parts.some((part) => part.type === "image_url")).toBe(true);
   });
 
   it("cleans temporary regular-file resources even when the turn fails", async () => {

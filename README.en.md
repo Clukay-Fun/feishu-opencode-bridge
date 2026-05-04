@@ -27,6 +27,7 @@ For sensitive cases, prefer a local model or private model gateway, keep `memory
 
 ## 📢 News
 
+- **2026-05-04** · `0.1.58` development update restored uploaded images as OpenCode `image_url` prompt parts while keeping local turn-file paths and extracted previews as fallbacks
 - **2026-05-04** · `0.1.57` development updates added contract-assistant natural-language skill routing, structured invoice extraction, Bitable field fallback, Feishu card-action troubleshooting docs, and refreshed the verification baseline to 69 test files / 571 tests
 - **2026-04-28** · External extensions entered a constrained loading phase: public `extension-api`, startup manifest/config normalization, and external RuntimeModule adaptation, while hot reload and direct bridge-internal imports remain unsupported
 - **2026-04-27** · Built-in business extensions split into data-only meta and runtime extensions, tightening the boundaries for config, command declarations, business card templates, and RuntimeModule creation
