@@ -219,7 +219,7 @@ Feishu Transport
 
 - 解析 Feishu 入站消息与附件
 - 发送与更新消息和卡片
-- 归一化 callback 输入
+- 归一化 callback 输入，并只记录 allowlist 诊断字段，避免泄漏原始回调 payload 或密钥
 - 处理 Feishu markdown 与 card payload 规则
 - 封装 reply 与 thread reply 等投递细节
 - 通过共享 logger pipeline，以稳定 scope 命名和 observability event schema 输出日志与 transcript
@@ -250,7 +250,7 @@ Feishu Transport
 
 - 把入站消息路由到 command、pending interaction、module chain 或默认 turn flow
 - 维护通用 `file-await-instruction` 挂起状态，并在兜底处理前按模块顺序询问是否接管
-- 对未被模块接管的普通文件或图片上传，core 可以直接创建默认识别 turn；图片资源以 OpenCode `image_url` part 透传，文件内容仍以本地临时路径交给 turn
+- 对未被模块接管的普通文件或图片上传，core 可以直接创建默认识别 turn；图片按飞书 image 资源下载并保存成本地文件路径，避免向 OpenCode `prompt_async` 发送不兼容的多模态 part
 - 管理 bridge 命令面，例如 `/new`、`/sessions`、`/status`、`/close`、`/delete`、`/guide`、`/cost`
 - 管理 queueing、turn execution、watchdog、process-card 生命周期和 final reply 投递
 - 管理 session-window 状态、interaction mode 状态，以及窗口级模型 override
