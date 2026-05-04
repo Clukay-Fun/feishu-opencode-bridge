@@ -287,7 +287,16 @@ export class ContractAssistantService {
       createSessionTitle: "[bridge] contract-extract",
       buildPrompt: ({ fileName, extractedText }) => resolveContractExtractPrompt(fileName, extractedText ?? ""),
     });
+    if (readBoolean(result, "isContract") === false) {
+      const documentType = readString(result, "documentType") ?? "非合同文件";
+      const rejectReason = readString(result, "rejectReason") ?? "上传内容不像合同、协议或合同模板。";
+      throw new Error(`这份文件识别为${documentType}，暂不录入合同台账：${rejectReason}`);
+    }
     const record = normalizeContractRecord(readRecord(result, "record"));
+    if (!hasUsefulContractRecord(record)) {
+      const documentType = readString(result, "documentType") ?? "未知文件";
+      throw new Error(`这份文件识别为${documentType}，未提取到足够的合同台账信息，暂不录入。`);
+    }
     const summary = readString(result, "summary") ?? "已提取合同台账信息。";
     const recordId = await this.resources.createBitableRecord(
       this.config.storage.baseToken,
@@ -1296,12 +1305,23 @@ function normalizeContractRecord(record: Record<string, unknown> | null): Record
   copyNumber(input, fields, "合同金额");
   copyString(input, fields, "付款节点");
   copyString(input, fields, "联系人");
-  copyString(input, fields, "联系方式");
   copyString(input, fields, "客户收件地址");
   copyString(input, fields, "信用代码/身份证");
   copyUserArray(input, fields, "承揽人");
   copyUserArray(input, fields, "承办人");
   return fields;
+}
+
+function hasUsefulContractRecord(record: Record<string, unknown>): boolean {
+  return [
+    "项目名称",
+    "律所合同号",
+    "客户名称",
+    "合同类型",
+    "具体类型/案由",
+    "签约日期",
+    "合同金额",
+  ].some((key) => record[key] !== undefined);
 }
 
 function normalizeContractRecordForDraft(
@@ -1323,7 +1343,6 @@ export function normalizeInvoiceRecord(
 ): Record<string, unknown> {
   const input = record ?? {};
   const fields: Record<string, unknown> = {};
-  copyString(input, fields, "合同号");
   copyInvoicePayer(input, fields, options);
   copyString(input, fields, "发票号");
   copyDate(input, fields, "开票日期");
@@ -1339,7 +1358,6 @@ export function normalizeCaseRecord(record: Record<string, unknown> | null): Rec
   copyString(input, fields, "委托人");
   copyString(input, fields, "对方当事人");
   copyString(input, fields, "联系人");
-  copyString(input, fields, "联系方式");
   copyString(input, fields, "案号");
   copyString(input, fields, "审理法院");
   copyAliasString(input, fields, "受理机构", "审理法院");
