@@ -5,8 +5,7 @@
  * - 将消息解析后分发给运行时模块与 OpenCode。
  * - 协调卡片更新、状态持久化和异常兜底。
  */
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { QueueRegistry } from "../bridge/queue.js";
@@ -25,12 +24,12 @@ import { createTextPreview, getLogContext, logEvent, type LogContext, type Logge
 import {
   type KnowledgeBasePort,
 } from "../knowledge/index.js";
+import { parseKnowledgeFile } from "../knowledge/parser.js";
 import type { ExtensionDefinition } from "../extension-api/index.js";
 import type { KnowledgeRuntimeModule } from "../knowledge/runtime-module.js";
 import type { MemoryService } from "../memory/index.js";
 import {
   OpenCodeClient,
-  type OpenCodePromptPart,
   type OpenCodeSession,
   type OpenCodeSessionStatus,
 } from "../opencode/client.js";
@@ -733,7 +732,7 @@ export class BridgeApp {
       return true;
     }
     const turnId = crypto.randomUUID();
-    let processed: { prompt: string; promptParts?: OpenCodePromptPart[] | undefined } | null = null;
+    let processed: { prompt: string } | null = null;
     try {
       processed = await this.prepareFileForOpenCodeTurn(turnId, pending, instruction);
     } catch (error) {
@@ -777,7 +776,6 @@ export class BridgeApp {
       inboundMessageId: message.messageId,
       plainText: `${instruction}\n\n[文件] ${pending.file.fileName}`,
       text: this.buildPromptTextWithMessageContext(message, processed.prompt),
-      promptParts: processed.promptParts,
       model: window.modelOverride,
       sessionId,
       logContext: this.buildTurnLogContext(message, turnId, sessionId),
@@ -968,7 +966,7 @@ export class BridgeApp {
     turnId: string,
     pending: Extract<PendingInteraction, { kind: "file-await-instruction" }>,
     instruction: string,
-  ): Promise<{ prompt: string; promptParts?: OpenCodePromptPart[] | undefined }> {
+  ): Promise<{ prompt: string }> {
     const resources = this.outbound as OutboundPort & Partial<KnowledgeResourcePort>;
     if (!resources.downloadMessageResource) {
       throw new Error("当前运行环境不支持下载飞书文件。");
@@ -977,12 +975,13 @@ export class BridgeApp {
     const fileName = normalizeDownloadedResourceFileName(downloaded.fileName, downloaded.mimeType, pending);
     this.validateRegularFileInput(fileName, downloaded.buffer.byteLength);
     const localPath = await this.saveUploadedFileForTurn(turnId, fileName, downloaded.buffer);
-    const promptParts = buildUploadedResourcePromptParts(fileName, downloaded.mimeType, downloaded.buffer, pending.resourceType);
+    const extractedPreview = await this.extractUploadedFilePreview(fileName, downloaded.buffer);
     return {
       prompt: [
         "用户上传了一个文件，并要求你按下述需求处理。",
         "bridge 已将附件下载到本地绝对路径；你与 bridge 在同一台机器上，可按需直接读取该路径。",
-        "如果本次上传的是图片，bridge 也会把图片内容作为独立 image part 随请求发送；请优先基于图片内容识别。",
+        "如果本次上传的是图片，请直接基于本地路径读取图片内容；不要再要求用户重新上传。",
+        "bridge 已尽力用本地文档解析/OCR 管线提取正文预览；如果预览为空或质量较低，请结合本地路径继续判断。",
         "不要默认把文件写入知识库。",
         "只有当用户明确要求“入库 / 加入知识库 / 导入知识库”时，才使用知识库本地命令。",
         "",
@@ -991,18 +990,35 @@ export class BridgeApp {
         `MIME：${downloaded.mimeType}`,
         `本地路径：${localPath}`,
         `来源文件消息：${pending.file.messageId}`,
+        "已提取内容预览：",
+        extractedPreview || "无",
         "",
         "如果用户只是要总结、识别、分析、改写或提问，请直接基于该文件完成任务。",
       ].join("\n"),
-      promptParts,
     };
+  }
+
+  /**
+   * 为默认文件识别 turn 提供轻量正文预览，失败时不阻断用户流程。
+   */
+  private async extractUploadedFilePreview(fileName: string, buffer: Buffer): Promise<string> {
+    const parsed = await parseKnowledgeFile(fileName, buffer, this.config.knowledgeBase.parser).catch((error) => {
+      this.logger.log("bridge/app", "uploaded file preview extraction failed", {
+        fileName,
+        detail: error instanceof Error ? error.message : String(error),
+      }, "warn");
+      return null;
+    });
+    return parsed?.normalizedMarkdown.trim().slice(0, 4_000) ?? "";
   }
 
   /**
    * 将上传附件保存到 turn 级临时目录，并注册清理动作。
    */
   private async saveUploadedFileForTurn(turnId: string, fileName: string, buffer: Buffer): Promise<string> {
-    const tempDir = await mkdtemp(path.join(tmpdir(), "bridge-turn-file-"));
+    const tempRoot = path.resolve(this.config.storage.dataDir, "turn-files");
+    await mkdir(tempRoot, { recursive: true });
+    const tempDir = await mkdtemp(path.join(tempRoot, "bridge-turn-file-"));
     const targetPath = path.join(tempDir, sanitizeUploadedFileName(fileName));
     await writeFile(targetPath, buffer);
     this.turnOwnedResources.register(turnId, { path: tempDir });
@@ -1652,29 +1668,6 @@ function normalizeDownloadedResourceFileName(
   return mimeExtension ? `${downloadedFileName}${mimeExtension}` : downloadedFileName;
 }
 
-function buildUploadedResourcePromptParts(
-  fileName: string,
-  mimeType: string,
-  buffer: Buffer,
-  resourceType?: "file" | "image",
-): OpenCodePromptPart[] | undefined {
-  const extension = path.extname(fileName).toLowerCase();
-  const imageMimeType = mimeType.startsWith("image/")
-    ? mimeType
-    : resourceType === "image"
-      ? mimeTypeFromImageExtension(extension)
-      : undefined;
-  if (!imageMimeType) {
-    return undefined;
-  }
-  return [{
-    type: "image_url",
-    image_url: {
-      url: `data:${imageMimeType};base64,${buffer.toString("base64")}`,
-    },
-  }];
-}
-
 function extensionFromMimeType(mimeType: string): string | undefined {
   if (mimeType.includes("jpeg")) return ".jpg";
   if (mimeType.includes("png")) return ".png";
@@ -1684,18 +1677,4 @@ function extensionFromMimeType(mimeType: string): string | undefined {
   if (mimeType.startsWith("text/")) return ".txt";
   if (mimeType.includes("wordprocessingml.document")) return ".docx";
   return undefined;
-}
-
-function mimeTypeFromImageExtension(extension: string): string | undefined {
-  switch (extension) {
-    case ".jpg":
-    case ".jpeg":
-      return "image/jpeg";
-    case ".webp":
-      return "image/webp";
-    case ".png":
-      return "image/png";
-    default:
-      return undefined;
-  }
 }

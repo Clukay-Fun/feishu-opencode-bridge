@@ -172,7 +172,7 @@ describe("knowledge base bridge flow", () => {
     expect(JSON.stringify(replyPayloads)).not.toContain("已收到结束指令，将处理完当前队列后结束");
   });
 
-  it("keeps regular files as local-path inputs for OpenCode instead of pre-parsing them in bridge", async () => {
+  it("keeps regular files as local-path inputs for OpenCode and adds a lightweight text preview", async () => {
     const outbound = {
       ...createOutbound(),
       downloadMessageResource: vi.fn(async () => ({
@@ -213,7 +213,8 @@ describe("knowledge base bridge flow", () => {
     expect(promptText).toContain("请直接识别并总结这个文件的内容");
     expect(promptText).toContain("如果是发票");
     expect(promptText).toContain("不要默认把文件写入知识库");
-    expect(promptText).not.toContain("这是一个需要总结的普通文件。");
+    expect(promptText).toContain("已提取内容预览");
+    expect(promptText).toContain("这是一个需要总结的普通文件。");
     expect(JSON.stringify(updatePayloads)).toContain("文件总结完成");
     expect(localPath).toBeTruthy();
     await expect(readFile(localPath!, "utf8")).rejects.toThrow();
@@ -253,7 +254,7 @@ describe("knowledge base bridge flow", () => {
     const promptText = request?.parts.map((part) => part.text ?? "").join("\n") ?? "";
     expect(promptText).toContain("请直接识别并总结这个图片的内容");
     expect(promptText).toContain("文件名：img_v3_abc123.png");
-    expect(request?.parts.some((part) => part.type === "image_url")).toBe(true);
+    expect(request?.parts.some((part) => part.type === "image_url")).toBe(false);
   });
 
   it("cleans temporary regular-file resources even when the turn fails", async () => {
