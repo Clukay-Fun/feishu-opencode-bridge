@@ -3,7 +3,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6)](https://www.typescriptlang.org/)
 [![Feishu](https://img.shields.io/badge/Feishu-Bridge-0F6FFF)](https://open.feishu.cn/)
-[![测试](https://img.shields.io/badge/tests-562%20passing-success)](#%EF%B8%8F-开发命令)
+[![测试](https://img.shields.io/badge/tests-571%20passing-success)](#%EF%B8%8F-开发命令)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **中文** | [英文版](README.en.md)
@@ -19,7 +19,7 @@
 
 ## 📢 项目动态
 
-**2026-05-04** · `0.1.57` 开发版补充合同助手自然语言 skill 路由、发票结构化识别、Bitable 字段降级重试和飞书卡片回调排障文档，当前验证基线更新为 68 个测试文件、562 个测试
+**2026-05-04** · `0.1.57` 开发版补充合同助手自然语言 skill 路由、发票结构化识别、Bitable 字段降级重试和飞书卡片回调排障文档，当前验证基线更新为 69 个测试文件、571 个测试
 
 **2026-05-04** · `v0.1.56` 已发布 GitHub Release，提供 macOS arm64、Linux x64、Windows x64 portable 包；新增本地备份/恢复、成本统计、portable 更新检查/下载/切换/回滚，以及数据流向与隐私诊断能力
 
@@ -420,7 +420,7 @@ npm run dev
 npm run dev:once
 ```
 
-当前完整验证基线：**68 test files · 562 tests passing**
+当前完整验证基线：**69 test files · 571 tests passing**
 
 ## 📂 项目目录
 

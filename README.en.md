@@ -3,7 +3,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6)](https://www.typescriptlang.org/)
 [![Feishu](https://img.shields.io/badge/Feishu-Bridge-0F6FFF)](https://open.feishu.cn/)
-[![Tests](https://img.shields.io/badge/tests-562%20passing-success)](#%EF%B8%8F-development-commands)
+[![Tests](https://img.shields.io/badge/tests-571%20passing-success)](#%EF%B8%8F-development-commands)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 [中文](README.md) | **English**
@@ -27,7 +27,7 @@ For sensitive cases, prefer a local model or private model gateway, keep `memory
 
 ## 📢 News
 
-- **2026-05-04** · `0.1.57` development updates added contract-assistant natural-language skill routing, structured invoice extraction, Bitable field fallback, Feishu card-action troubleshooting docs, and refreshed the verification baseline to 68 test files / 562 tests
+- **2026-05-04** · `0.1.57` development updates added contract-assistant natural-language skill routing, structured invoice extraction, Bitable field fallback, Feishu card-action troubleshooting docs, and refreshed the verification baseline to 69 test files / 571 tests
 - **2026-04-28** · External extensions entered a constrained loading phase: public `extension-api`, startup manifest/config normalization, and external RuntimeModule adaptation, while hot reload and direct bridge-internal imports remain unsupported
 - **2026-04-27** · Built-in business extensions split into data-only meta and runtime extensions, tightening the boundaries for config, command declarations, business card templates, and RuntimeModule creation
 - **2026-04-24** · All open issues except the paused permission-button callback line have been closed, and the project moved into maintainer cleanup before the next release
@@ -354,7 +354,7 @@ npm run dev
 npm run dev:once
 ```
 
-Current full verification baseline: **68 test files · 562 tests passing**
+Current full verification baseline: **69 test files · 571 tests passing**
 
 ## 📂 Project Layout
 
