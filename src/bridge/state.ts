@@ -28,7 +28,7 @@ export type PendingPermissionInteraction = {
   turnId: string;
   expiresAt: number;
   resolvedAt?: number | undefined;
-  resolution?: "once" | "always" | "deny" | "timeout" | undefined;
+  resolution?: "once" | "always" | "deny" | "timeout" | "upstream-expired" | undefined;
 };
 
 export type PendingSessionSelectionInteraction = {

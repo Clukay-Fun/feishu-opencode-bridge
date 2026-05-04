@@ -4,9 +4,11 @@
  * - 处理 /new、/status、/sessions、/allow 等命令。
  * - 连接会话窗口状态、OpenCode 能力和飞书卡片输出。
  */
+import crypto from "node:crypto";
 import type { PendingInteraction, PendingPermissionInteraction, PendingSessionSelectionInteraction } from "../bridge/state.js";
 import type { RoutedText } from "../bridge/router.js";
 import {
+  buildButtonCallbackTestCardPayload,
   buildLeaveCommandCardPayload,
   buildGuideCardPayload,
   buildCostCommandCardPayload,
@@ -53,7 +55,7 @@ const SESSION_REVIEW_TEXT_LIMIT = 80;
 
 type CommandMessage = Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "threadKey" | "senderOpenId" | "rootId" | "parentId">;
 type CommandRouted = Extract<RoutedText, { kind: "command" }>;
-type PermissionResolution = "once" | "always" | "deny" | "timeout";
+type PermissionResolution = "once" | "always" | "deny" | "timeout" | "upstream-expired";
 type SessionSelectionOption = PendingSessionSelectionInteraction["options"][number];
 
 export type BridgeAppContext = {
@@ -65,6 +67,11 @@ export type BridgeAppContext = {
     costs?: {
       dailyLimitCny?: number | undefined;
     } | undefined;
+    feishu: {
+      cardActions: {
+        path: string;
+      };
+    };
   };
   costTracker?: CostTracker | undefined;
   opencode: {
@@ -135,6 +142,7 @@ const BRIDGE_OWNED_COMMAND_KINDS = new Set<Extract<RoutedText, { kind: "command"
   "cost",
   "abort",
   "guide",
+  "button-test",
   "models",
   "model-use",
   "model-reset",
@@ -376,6 +384,19 @@ export class CommandHandler {
         transcriptType: "outbound-final",
         textPreview: "60 秒新手引导",
         len: 9,
+      }, { replyToMessageId: message.messageId });
+      return;
+    }
+
+    if (command.kind === "button-test") {
+      await this.context.sendPayload(message.chatId, buildButtonCallbackTestCardPayload({
+        nonce: crypto.randomUUID(),
+        callbackPath: this.context.config.feishu.cardActions.path,
+      }), {
+        event: "final message sent",
+        transcriptType: "outbound-final",
+        textPreview: "按钮回调测试",
+        len: 6,
       }, { replyToMessageId: message.messageId });
       return;
     }
@@ -838,7 +859,8 @@ export class CommandHandler {
       }
       const resolution: PermissionResolution = command.kind === "deny" ? "deny" : command.policy;
       await this.context.permissionManager.resolveInteraction(pending, resolution);
-      await this.context.sendPayload(message.chatId, this.context.permissionManager.buildResolutionPayload(resolution), { event: "final message sent", transcriptType: "outbound-final", textPreview: resolution === "deny" ? "已拒绝权限请求。" : "已确认权限请求。", len: 8 }, { replyToMessageId: message.messageId });
+      const finalResolution = pending.resolution ?? resolution;
+      await this.context.sendPayload(message.chatId, this.context.permissionManager.buildResolutionPayload(finalResolution), { event: "final message sent", transcriptType: "outbound-final", textPreview: finalResolution === "upstream-expired" ? "权限请求已失效。" : finalResolution === "deny" ? "已拒绝权限请求。" : "已确认权限请求。", len: 8 }, { replyToMessageId: message.messageId });
       return;
     }
 

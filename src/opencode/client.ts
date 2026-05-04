@@ -115,6 +115,17 @@ type RequestOptions = {
   expectedStatus?: number;
 };
 
+export class OpenCodeRequestError extends Error {
+  constructor(
+    readonly status: number,
+    readonly statusText: string,
+    readonly responseBody?: string | undefined,
+  ) {
+    super(`OpenCode request failed: ${status} ${statusText}${responseBody ? `: ${responseBody}` : ""}`);
+    this.name = "OpenCodeRequestError";
+  }
+}
+
 export class OpenCodeClient {
   constructor(private readonly baseUrl: URL) {}
 
@@ -203,10 +214,18 @@ export class OpenCodeClient {
 
   /** 回应一条权限请求。 */
   async replyPermission(sessionId: string, permissionId: string, response: PermissionPolicy, remember: boolean): Promise<boolean> {
-    return this.request(`/session/${encodeURIComponent(sessionId)}/permissions/${encodeURIComponent(permissionId)}`, {
-      method: "POST",
-      body: { response, remember },
-    });
+    try {
+      const result = await this.request<unknown>(`/session/${encodeURIComponent(sessionId)}/permissions/${encodeURIComponent(permissionId)}`, {
+        method: "POST",
+        body: { response, remember },
+      });
+      return result === undefined ? true : result !== false;
+    } catch (error) {
+      if (error instanceof OpenCodeRequestError && [404, 409, 410].includes(error.status)) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   /** 回答模型提出的问题。 */
@@ -241,13 +260,13 @@ export class OpenCodeClient {
     const expectedStatus = options.expectedStatus;
     if (expectedStatus !== undefined) {
       if (response.status !== expectedStatus) {
-        throw new Error(`OpenCode request failed: ${response.status} ${response.statusText}`);
+        throw await buildOpenCodeRequestError(response);
       }
       return undefined as T;
     }
 
     if (!response.ok) {
-      throw new Error(`OpenCode request failed: ${response.status} ${response.statusText}`);
+      throw await buildOpenCodeRequestError(response);
     }
 
     if (response.status === 204) {
@@ -256,6 +275,15 @@ export class OpenCodeClient {
 
     return (await response.json()) as T;
   }
+}
+
+async function buildOpenCodeRequestError(response: Response): Promise<OpenCodeRequestError> {
+  const body = await response.text().catch(() => "");
+  return new OpenCodeRequestError(
+    response.status,
+    response.statusText,
+    body.trim() ? body.trim().slice(0, 1_000) : undefined,
+  );
 }
 
 export function createOpenCodeHeaders(initialHeaders?: Record<string, string>): Record<string, string> {

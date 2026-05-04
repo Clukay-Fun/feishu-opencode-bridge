@@ -12,7 +12,7 @@ import type { PermissionPolicy } from "../opencode/client.js";
 import type { PermissionCardActionValue } from "./app.js";
 import { isPermissionCardActionValue } from "./app-helpers.js";
 
-type PermissionResolution = "once" | "always" | "deny" | "timeout";
+type PermissionResolution = "once" | "always" | "deny" | "timeout" | "upstream-expired";
 
 type OpenCodePermissionPort = {
   replyPermission(sessionId: string, permissionId: string, policy: PermissionPolicy, remember: boolean): Promise<boolean>;
@@ -113,7 +113,7 @@ export class PermissionManager {
 
     try {
       await this.resolveInteraction(interaction, value.policy);
-      return this.callbacks.toCardContent(this.buildResolutionPayload(value.policy));
+      return this.callbacks.toCardContent(this.buildResolutionPayload(interaction.resolution ?? value.policy));
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       this.logger.log("bridge/permission", "card action failed", {
@@ -164,36 +164,73 @@ export class PermissionManager {
       return this.buildNoticePayload("提醒", "yellow", "maybe_outlined", "权限请求已超时，已默认拒绝。");
     }
 
+    if (resolution === "upstream-expired") {
+      return this.buildNoticePayload("提醒", "yellow", "maybe_outlined", "OpenCode 已不再等待该权限请求，请重新触发操作。");
+    }
+
     return this.buildNoticePayload("错误", "red", "more-close_outlined", "当前权限请求已拒绝。");
   }
 
   /** 将权限结果回传给 OpenCode，并同步本地状态。 */
   async resolveInteraction(interaction: PendingPermissionInteraction, resolution: PermissionResolution): Promise<void> {
     const remember = resolution === "always";
-    const response: PermissionPolicy = resolution === "deny" || resolution === "timeout" ? "reject" : resolution;
+    const response: PermissionPolicy = resolution === "deny" || resolution === "timeout" || resolution === "upstream-expired" ? "reject" : resolution;
     this.processing.add(interaction.permissionVersion);
     try {
-      await this.opencode.replyPermission(interaction.sessionId, interaction.permissionId, response, remember);
+      const accepted = resolution === "upstream-expired"
+        ? false
+        : await this.opencode.replyPermission(interaction.sessionId, interaction.permissionId, response, remember);
+      const finalResolution: PermissionResolution = accepted || resolution === "timeout" ? resolution : "upstream-expired";
       interaction.resolvedAt = Date.now();
-      interaction.resolution = resolution;
+      interaction.resolution = finalResolution;
       this.interactions.set(interaction.permissionVersion, interaction);
       this.callbacks.clearPendingInteraction(interaction.conversationKey, false);
-      await this.callbacks.updateTurnCard(interaction.turnId, {
-        status: "处理中",
-        update: resolution === "timeout" ? "权限请求已超时，已默认拒绝" : `已处理权限请求：${interaction.permissionName}`,
-        target: "step",
-      });
+      try {
+        await this.callbacks.updateTurnCard(interaction.turnId, {
+          status: finalResolution === "upstream-expired" || finalResolution === "timeout" ? "已结束" : "处理中",
+          update: this.buildTurnCardUpdateText(finalResolution, interaction.permissionName),
+          target: "step",
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        this.logger.log("bridge/permission", "turn card update failed after permission decision", {
+          permissionId: interaction.permissionId,
+          nonce: interaction.permissionVersion,
+          resolution: finalResolution,
+          detail,
+        }, "warn");
+      }
       logEvent(this.logger, "bridge/permission", "permission.decided", {
         turnId: interaction.turnId,
         sessionId: interaction.sessionId,
         chatId: interaction.chatId,
         permissionId: interaction.permissionId,
-        decision: resolution === "deny" || resolution === "timeout" ? "denied" : "approved",
-        decisionSource: resolution === "timeout" ? "timeout" : "user",
+        decision: finalResolution === "deny" || finalResolution === "timeout" || finalResolution === "upstream-expired" ? "denied" : "approved",
+        decisionSource: finalResolution === "timeout"
+          ? "timeout"
+          : finalResolution === "upstream-expired"
+            ? "upstream-expired"
+            : "user",
       });
     } finally {
       this.processing.delete(interaction.permissionVersion);
     }
+  }
+
+  /** 尝试将权限结果回传给 OpenCode；失败会降级为 upstream-expired。 */
+  async tryResolveInteraction(interaction: PendingPermissionInteraction, resolution: PermissionResolution): Promise<PermissionResolution> {
+    await this.resolveInteraction(interaction, resolution);
+    return interaction.resolution ?? resolution;
+  }
+
+  private buildTurnCardUpdateText(resolution: PermissionResolution, permissionName: string): string {
+    if (resolution === "timeout") {
+      return "权限请求已超时，已默认拒绝";
+    }
+    if (resolution === "upstream-expired") {
+      return "OpenCode 已不再等待该权限请求，请重新触发操作";
+    }
+    return `已处理权限请求：${permissionName}`;
   }
 
   /** 处理权限超时，并按需通知聊天窗口。 */

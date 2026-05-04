@@ -55,11 +55,29 @@ describe("OpenCodeClient", () => {
     vi.stubGlobal("fetch", fetch);
     const client = new OpenCodeClient(new URL("http://127.0.0.1:4096/"));
 
-    await client.replyPermission("ses_9", "per_7", "always", true);
+    await expect(client.replyPermission("ses_9", "per_7", "always", true)).resolves.toBe(true);
 
     const [url, init] = fetch.mock.calls[0] as [URL, RequestInit];
     expect(String(url)).toBe("http://127.0.0.1:4096/session/ses_9/permissions/per_7");
     expect(init.body).toBe(JSON.stringify({ response: "always", remember: true }));
+  });
+
+  it("returns false when permission reply is no longer accepted by OpenCode", async () => {
+    for (const status of [404, 409, 410]) {
+      const fetch = vi.fn().mockResolvedValue(new Response("expired", { status }));
+      vi.stubGlobal("fetch", fetch);
+      const client = new OpenCodeClient(new URL("http://127.0.0.1:4096/"));
+
+      await expect(client.replyPermission("ses_9", "per_7", "once", false)).resolves.toBe(false);
+    }
+  });
+
+  it("keeps other permission reply failures as errors", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response("server error", { status: 500, statusText: "Server Error" }));
+    vi.stubGlobal("fetch", fetch);
+    const client = new OpenCodeClient(new URL("http://127.0.0.1:4096/"));
+
+    await expect(client.replyPermission("ses_9", "per_7", "once", false)).rejects.toThrow("500");
   });
 
   it("uses DELETE /session/:id when removing a session", async () => {

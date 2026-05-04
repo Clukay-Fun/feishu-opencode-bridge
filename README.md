@@ -56,7 +56,7 @@ OpenCode turn 执行链抽象出 `prepareTurnExecution` / `handlePermissionAsked
 
 **过程卡片**：运行中的 OpenCode turn 通过飞书卡片持续更新状态、工具调用和最终回复
 
-**权限确认**：OpenCode 权限请求以 `/allow`、`/deny` 文本命令作为稳定路径，按钮回调链路保留为后续验证项
+**权限确认**：OpenCode 权限请求支持飞书按钮审批，并保留 `/allow once`、`/allow always`、`/deny` 文本兜底
 
 **群聊协作**：通过白名单绑定支持群内免重复 `@bot` 的协作流
 
@@ -256,7 +256,7 @@ npm run doctor
 ```
 
 至少需要配置 `feishu.appId`、`feishu.appSecret`、`opencode.baseUrl`、`opencode.directory`、`storage.dataDir`。
-如果启用飞书卡片按钮，还需要配置 `server.publicBaseUrl` 和 `feishu.cardActions`。
+如果启用飞书卡片按钮，还需要配置 HTTPS 公网 `server.publicBaseUrl` 和 `feishu.cardActions`，再运行 `bridge doctor` 检查回调 URL 与 `/healthz`。
 
 ## 📖 常用命令
 
@@ -265,6 +265,8 @@ npm run doctor
 `/new` · `/status` · `/cost` · `/sessions` · `/switch <编号>` — 会话与成本状态
 
 `/allow once` · `/allow always` · `/deny` — 权限确认
+
+`/button-test` — 发送一张按钮回调测试卡，用于验收飞书 Action 回调链路
 
 `/法律咨询 <问题>` · `/kb-query <问题>` — 知识库查询
 

@@ -64,6 +64,22 @@ describe("BridgeApp command surface", () => {
     expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("bridge doctor workspace");
   });
 
+  it("returns a callback demo card without creating an OpenCode session", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const ensureSession = vi.fn();
+    (app as unknown as { ensureSession: typeof ensureSession }).ensureSession = ensureSession;
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "button-test" },
+    });
+
+    expect(ensureSession).not.toHaveBeenCalled();
+    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("按钮回调测试");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("点击测试回调");
+  });
+
 
   it("aborts the active turn and returns a terminal notice card", async () => {
     const outbound = createOutbound();
@@ -1588,6 +1604,7 @@ type AppCommandSurfaceTestRoute = {
     | { kind: "rename"; title: string }
     | { kind: "abort" }
     | { kind: "guide" }
+    | { kind: "button-test" }
     | { kind: "models"; provider?: string | undefined }
     | { kind: "model-use"; model: string }
     | { kind: "model-reset" }

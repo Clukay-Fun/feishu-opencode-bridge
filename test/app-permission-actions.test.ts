@@ -167,6 +167,75 @@ describe("BridgeApp permission card actions", () => {
     expect(JSON.stringify(card)).toContain("当前权限请求已确认，可继续执行");
     expect(getReplyPayloads(outbound)).toHaveLength(0);
   });
+
+  it("handles duplicate card callbacks idempotently without repeating OpenCode side effects", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    let release!: () => void;
+    const replyPermission = vi.fn(() => new Promise<boolean>((resolve) => {
+      release = () => resolve(true);
+    }));
+    (app as unknown as { opencode: { replyPermission: typeof replyPermission } }).opencode = { replyPermission };
+
+    const interaction = seedPermission(app);
+    const value = buildActionValue(interaction, "once");
+    const first = app.handlePermissionCardAction(interaction.requesterOpenId, interaction.permissionMessageId ?? "", value);
+    await Promise.resolve();
+    const second = await app.handlePermissionCardAction(interaction.requesterOpenId, interaction.permissionMessageId ?? "", value);
+
+    expect(replyPermission).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(second)).toContain("当前权限请求正在处理");
+
+    release();
+    const firstCard = await first;
+    const third = await app.handlePermissionCardAction(interaction.requesterOpenId, interaction.permissionMessageId ?? "", value);
+
+    expect(JSON.stringify(firstCard)).toContain("当前权限请求已确认，可继续执行");
+    expect(JSON.stringify(third)).toContain("当前权限请求已确认，可继续执行");
+    expect(replyPermission).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns upstream-expired when OpenCode no longer waits for the permission", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const replyPermission = vi.fn(async () => false);
+    (app as unknown as { opencode: { replyPermission: typeof replyPermission } }).opencode = { replyPermission };
+
+    const interaction = seedPermission(app);
+    const card = await app.handlePermissionCardAction(
+      interaction.requesterOpenId,
+      interaction.permissionMessageId ?? "",
+      buildActionValue(interaction, "once"),
+    );
+
+    expect(replyPermission).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(card)).toContain("OpenCode 已不再等待该权限请求");
+    expect(interaction.resolution).toBe("upstream-expired");
+  });
+
+  it("keeps the OpenCode decision when updating the Feishu turn card fails", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const replyPermission = vi.fn(async () => true);
+    (app as unknown as { opencode: { replyPermission: typeof replyPermission } }).opencode = { replyPermission };
+    (app as unknown as { turnCardManager: { updateTurnCard: () => Promise<void> } }).turnCardManager = {
+      async updateTurnCard() {
+        throw new Error("Feishu update failed");
+      },
+    };
+
+    const interaction = seedPermission(app);
+    const card = await app.handlePermissionCardAction(
+      interaction.requesterOpenId,
+      interaction.permissionMessageId ?? "",
+      buildActionValue(interaction, "once"),
+    );
+
+    expect(replyPermission).toHaveBeenCalledTimes(1);
+    expect(interaction.resolution).toBe("once");
+    expect(JSON.stringify(card)).toContain("当前权限请求已确认，可继续执行");
+  });
+
   it("keeps text /allow once fallback working", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());

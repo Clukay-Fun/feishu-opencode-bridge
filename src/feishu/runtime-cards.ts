@@ -121,6 +121,11 @@ export type PermissionRequestCardView = {
   expiresInSeconds: number;
 };
 
+export type ButtonCallbackTestCardView = {
+  nonce: string;
+  callbackPath: string;
+};
+
 // #region 运行时主卡片
 
 /** 构建 turn 过程卡。 */
@@ -387,6 +392,27 @@ export function buildGuideCardPayload(view: GuideCardView): FeishuPostPayload {
   });
 }
 
+/** 构建按钮回调真机验收卡。 */
+export function buildButtonCallbackTestCardPayload(view: ButtonCallbackTestCardView): FeishuPostPayload {
+  return buildInteractivePayload({
+    title: "按钮回调测试",
+    template: "blue",
+    iconToken: "click_outlined",
+    bodyElements: [
+      columnSet([
+        column([
+          markdown(`**用途**\n点击下方按钮，验证飞书卡片 action 是否能回调到 Bridge。\n\n回调路径：\`${escapeText(view.callbackPath)}\`\n测试 nonce：\`${escapeText(view.nonce)}\``, {
+            icon: { token: "info-hollow_filled", color: "blue" },
+          }),
+        ], { bg: "blue-50", weight: 1 }),
+      ]),
+      buildDivider(),
+      buildButtonCallbackTestActionBlock(view),
+      buildFooterTipBlock("如果点击后没有提示，请先运行 `bridge doctor`，再检查 `http/card-action` 日志。", "wrench_outlined", "grey", "notation"),
+    ],
+  });
+}
+
 // #endregion
 
 type CardState = {
@@ -552,6 +578,40 @@ function buildPermissionActionBlock(buttons: PermissionActionButton[]): Record<s
       ],
       vertical_align: "top",
     })),
+    margin: "0px 0px 0px 0px",
+  };
+}
+
+function buildButtonCallbackTestActionBlock(view: ButtonCallbackTestCardView): Record<string, unknown> {
+  return {
+    tag: "column_set",
+    flex_mode: "stretch",
+    horizontal_spacing: "8px",
+    horizontal_align: "left",
+    columns: [
+      {
+        tag: "column",
+        width: "auto",
+        elements: [
+          {
+            tag: "button",
+            text: {
+              tag: "plain_text",
+              content: "点击测试回调",
+            },
+            type: "primary",
+            width: "fill",
+            size: "medium",
+            value: {
+              kind: "callback-demo",
+              nonce: view.nonce,
+              source: "button-test",
+            },
+          },
+        ],
+        vertical_align: "top",
+      },
+    ],
     margin: "0px 0px 0px 0px",
   };
 }

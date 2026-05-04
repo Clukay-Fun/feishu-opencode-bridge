@@ -27,6 +27,9 @@ vi.mock("@larksuiteoapi/node-sdk", () => {
   ) {
     return async (req: http.IncomingMessage, res: http.ServerResponse) => {
       const body = await readJsonBody(req);
+      if (body.__sdkError) {
+        throw new Error("signature check failed");
+      }
       const result = await dispatcher.handler(body);
       res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
       res.end(JSON.stringify(result ?? actionResults.nextResult));
@@ -89,6 +92,26 @@ describe("startBridgeHttpServer", () => {
     expect(await response.text()).toBe("not found");
   });
 
+  it("returns a JSON diagnostic response for card action GET probes", async () => {
+    const port = await reservePort();
+    const server = await startBridgeHttpServer(
+      createConfig(port, { enabled: true }),
+      { handlePermissionCardAction: vi.fn(async () => ({ ok: true })) },
+      logger(),
+    );
+    servers.push(server);
+
+    const response = await fetch(`http://127.0.0.1:${port}/webhook/card`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(await response.json()).toEqual(expect.objectContaining({
+      ok: true,
+      cardActionsEnabled: true,
+      cardActionsPath: "/webhook/card",
+    }));
+  });
+
   it("delegates card action callbacks to the permission handler", async () => {
     const port = await reservePort();
     const handlePermissionCardAction = vi.fn(async () => ({ card: { title: "权限已处理" } }));
@@ -141,13 +164,13 @@ describe("startBridgeHttpServer", () => {
     expect(callbackLog).toBeDefined();
     expect(callbackLog?.[0]).toBe("http/server");
     expect(callbackLog?.[2]).toEqual(expect.objectContaining({
-      actorOpenId: "ou_nested",
+      actorPresent: true,
       openMessageId: "om_nested",
-      actionValueKind: "permission",
-      "callback.operator.operator_id.open_id": "ou_nested",
-      "callback.context.open_message_id": "om_nested",
-      "callback.action.value.kind": "permission",
+      actionKind: "permission",
+      nonce: "",
+      permissionId: "",
     }));
+    expect(JSON.stringify(callbackLog?.[2])).not.toContain("ou_nested");
   });
 
   it("passes encryptKey to the card action sdk handler", async () => {
@@ -195,6 +218,146 @@ describe("startBridgeHttpServer", () => {
     expect(response.status).toBe(200);
     expect(handlePermissionCardAction).toHaveBeenCalledWith("ou_requester_nested", "", { kind: "permission", source: "nested" });
     expect(await response.json()).toEqual({ card: { title: "权限已处理" } });
+  });
+
+  it("finds permission action values from nested card 2.0 callback payloads", async () => {
+    const port = await reservePort();
+    const handlePermissionCardAction = vi.fn(async () => ({ card: { title: "权限已处理" } }));
+    const server = await startBridgeHttpServer(
+      createConfig(port, { enabled: true }),
+      { handlePermissionCardAction },
+      logger(),
+    );
+    servers.push(server);
+
+    const response = await fetch(`http://127.0.0.1:${port}/webhook/card`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        operator: { operator_id: { open_id: "ou_requester" } },
+        context: { open_message_id: "om_nested_action", open_chat_id: "oc_group_123456789" },
+        card: {
+          elements: [
+            {
+              actions: [
+                { value: { kind: "permission", permissionId: "perm_nested", nonce: "nonce_nested" } },
+              ],
+            },
+          ],
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(handlePermissionCardAction).toHaveBeenCalledWith(
+      "ou_requester",
+      "om_nested_action",
+      { kind: "permission", permissionId: "perm_nested", nonce: "nonce_nested" },
+    );
+  });
+
+  it("stops nested permission action lookup after depth 5", async () => {
+    const port = await reservePort();
+    const handlePermissionCardAction = vi.fn(async () => ({ card: { title: "权限已处理" } }));
+    const server = await startBridgeHttpServer(
+      createConfig(port, { enabled: true }),
+      { handlePermissionCardAction },
+      logger(),
+    );
+    servers.push(server);
+
+    const response = await fetch(`http://127.0.0.1:${port}/webhook/card`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        open_id: "ou_requester",
+        deep: { a: { b: { c: { d: { e: { f: { kind: "permission", permissionId: "too_deep" } } } } } } },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(handlePermissionCardAction).toHaveBeenCalledWith("ou_requester", "", {});
+  });
+
+  it("does not enter permission handling when actor open id is missing", async () => {
+    const port = await reservePort();
+    const handlePermissionCardAction = vi.fn(async () => ({ card: { title: "权限已处理" } }));
+    const httpLogger = logger();
+    const server = await startBridgeHttpServer(
+      createConfig(port, { enabled: true }),
+      { handlePermissionCardAction },
+      httpLogger,
+    );
+    servers.push(server);
+
+    const response = await fetch(`http://127.0.0.1:${port}/webhook/card`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        context: { open_message_id: "om_missing_actor" },
+        action: { value: { kind: "permission", permissionId: "perm_1" } },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(handlePermissionCardAction).not.toHaveBeenCalled();
+    expect(await response.text()).toContain("无法识别操作者");
+    expect(httpLogger.log).toHaveBeenCalledWith("http/server", "callback actor missing", expect.objectContaining({
+      actorPresent: false,
+    }), "warn");
+  });
+
+  it("handles callback demo buttons without entering permission handling", async () => {
+    const port = await reservePort();
+    const handlePermissionCardAction = vi.fn(async () => ({ card: { title: "权限已处理" } }));
+    const httpLogger = logger();
+    const server = await startBridgeHttpServer(
+      createConfig(port, { enabled: true }),
+      { handlePermissionCardAction },
+      httpLogger,
+    );
+    servers.push(server);
+
+    const response = await fetch(`http://127.0.0.1:${port}/webhook/card`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        operator: { operator_id: { open_id: "ou_demo" } },
+        context: { open_message_id: "om_demo", open_chat_id: "oc_demo_chat" },
+        action: { value: { kind: "callback-demo", nonce: "nonce_demo" } },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(handlePermissionCardAction).not.toHaveBeenCalled();
+    expect(await response.text()).toContain("按钮回调已到达 Bridge");
+    expect(httpLogger.log).toHaveBeenCalledWith("http/server", "callback demo action handled", expect.objectContaining({
+      actionKind: "callback-demo",
+      nonce: "nonce_demo",
+    }));
+  });
+
+  it("returns 400 with safe diagnostics when SDK adapter fails", async () => {
+    const port = await reservePort();
+    const httpLogger = logger();
+    const server = await startBridgeHttpServer(
+      createConfig(port, { enabled: true, verificationToken: "secret-token", encryptKey: "secret-encrypt-key" }),
+      { handlePermissionCardAction: vi.fn(async () => ({ ok: true })) },
+      httpLogger,
+    );
+    servers.push(server);
+
+    const response = await fetch(`http://127.0.0.1:${port}/webhook/card`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "User-Agent": "lark-test" },
+      body: JSON.stringify({ __sdkError: true, token: "secret-token", encrypt: "secret-encrypt-key" }),
+    });
+
+    expect(response.status).toBe(400);
+    const logText = JSON.stringify(httpLogger.log.mock.calls);
+    expect(logText).toContain("callback adapter failed");
+    expect(logText).not.toContain("secret-token");
+    expect(logText).not.toContain("secret-encrypt-key");
   });
 });
 

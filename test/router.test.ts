@@ -28,6 +28,14 @@ describe("routeIncomingText", () => {
       kind: "command",
       command: { kind: "guide" },
     });
+    expect(routeIncomingText("/button-test")).toEqual({
+      kind: "command",
+      command: { kind: "button-test" },
+    });
+    expect(routeIncomingText("/callback-test")).toEqual({
+      kind: "command",
+      command: { kind: "button-test" },
+    });
     expect(routeIncomingText("/cost")).toEqual({
       kind: "command",
       command: { kind: "cost" },

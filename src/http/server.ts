@@ -54,6 +54,74 @@ function extractOpenMessageId(event: unknown): string {
     || readNestedString(event, "open_message_id");
 }
 
+type NormalizedCardActionCallback = {
+  actorOpenId: string;
+  openMessageId: string;
+  actionValue: Record<string, unknown>;
+  chatId: string;
+  host: string;
+};
+
+/** 将 SDK 解密/验签后的卡片事件收口为权限处理需要的最小视图。 */
+export function normalizeCardActionCallback(event: unknown): NormalizedCardActionCallback {
+  return {
+    actorOpenId: extractActorOpenId(event),
+    openMessageId: extractOpenMessageId(event),
+    actionValue: extractActionValue(event),
+    chatId: extractChatId(event),
+    host: readNestedString(event, "context", "host") || readNestedString(event, "host"),
+  };
+}
+
+/** 优先读取标准 action.value；缺失时只查找权限按钮 value。 */
+function extractActionValue(event: unknown): Record<string, unknown> {
+  const direct = asRecord(asRecord(event)?.action)?.value;
+  const directRecord = asRecord(direct);
+  if (directRecord) {
+    return directRecord;
+  }
+
+  return findPermissionActionValue(event, 0) ?? {};
+}
+
+/** 从回调里提取 chat id，仅用于日志和诊断。 */
+function extractChatId(event: unknown): string {
+  return readNestedString(event, "context", "open_chat_id")
+    || readNestedString(event, "context", "chat_id")
+    || readNestedString(event, "open_chat_id")
+    || readNestedString(event, "chat_id");
+}
+
+/** 在异常卡片结构里有限递归查找权限按钮 value，避免记录或遍历整个 payload。 */
+function findPermissionActionValue(value: unknown, depth: number): Record<string, unknown> | null {
+  if (depth > 5) {
+    return null;
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  if (record.kind === "permission") {
+    return record;
+  }
+
+  for (const nested of Object.values(record)) {
+    if (Array.isArray(nested)) {
+      for (const item of nested) {
+        const found = findPermissionActionValue(item, depth + 1);
+        if (found) return found;
+      }
+      continue;
+    }
+    const found = findPermissionActionValue(nested, depth + 1);
+    if (found) return found;
+  }
+
+  return null;
+}
+
 export type BridgeHttpServer = {
   close(): Promise<void>;
 };
@@ -94,25 +162,46 @@ export async function startBridgeHttpServer(
             : {}),
         },
         async (event) => {
-          const actorOpenId = extractActorOpenId(event);
-          const openMessageId = extractOpenMessageId(event);
-          const actionValue = event.action?.value ?? {};
+          const callback = normalizeCardActionCallback(event);
 
           return await runWithLogContext({
-            userId: actorOpenId,
-            messageId: openMessageId,
+            userId: callback.actorOpenId,
+            messageId: callback.openMessageId,
           }, async () => {
             logger.log("http/server", "callback event parsed", {
-              actorOpenId,
-              openMessageId,
-              actionValueKind: typeof actionValue.kind === "string" ? actionValue.kind : "",
-              ...flattenScalarFields("callback", event),
+              actorPresent: callback.actorOpenId.length > 0,
+              openMessageId: callback.openMessageId,
+              actionKind: typeof callback.actionValue.kind === "string" ? callback.actionValue.kind : "",
+              nonce: typeof callback.actionValue.nonce === "string" ? callback.actionValue.nonce : "",
+              permissionId: typeof callback.actionValue.permissionId === "string" ? callback.actionValue.permissionId : "",
+              chatSummary: summarizeIdentifier(callback.chatId),
+              host: callback.host,
             });
 
+            if (!callback.actorOpenId) {
+              logger.log("http/server", "callback actor missing", {
+                actorPresent: false,
+                openMessageId: callback.openMessageId,
+                actionKind: typeof callback.actionValue.kind === "string" ? callback.actionValue.kind : "",
+              }, "warn");
+              return buildCardActionNotice("无法识别操作者，请使用文本命令兜底。");
+            }
+
+            if (callback.actionValue.kind === "callback-demo") {
+              logger.log("http/server", "callback demo action handled", {
+                actorPresent: true,
+                openMessageId: callback.openMessageId,
+                actionKind: "callback-demo",
+                nonce: typeof callback.actionValue.nonce === "string" ? callback.actionValue.nonce : "",
+                chatSummary: summarizeIdentifier(callback.chatId),
+              });
+              return buildCardActionNotice("按钮回调已到达 Bridge，链路正常。");
+            }
+
             return await actions.handlePermissionCardAction(
-              actorOpenId,
-              openMessageId,
-              actionValue,
+              callback.actorOpenId,
+              callback.openMessageId,
+              callback.actionValue,
             );
           });
         },
@@ -139,6 +228,18 @@ export async function startBridgeHttpServer(
       return;
     }
 
+    if (adapter && url.pathname === config.feishu.cardActions.path && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({
+        ok: true,
+        bridgeVersion: APP_VERSION,
+        cardActionsEnabled: true,
+        cardActionsPath: config.feishu.cardActions.path,
+        message: "card action callback endpoint is ready; Feishu callbacks must use POST",
+      }));
+      return;
+    }
+
     if (adapter && url.pathname === config.feishu.cardActions.path) {
       await runWithLogContext({ correlationId: randomUUID() }, async () => {
         logger.log("http/card-action", "callback received", {
@@ -147,7 +248,22 @@ export async function startBridgeHttpServer(
           userAgent: req.headers["user-agent"] ?? "",
           contentType: req.headers["content-type"] ?? "",
         });
-        await adapter(req, res);
+        try {
+          await adapter(req, res);
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          logger.log("http/card-action", "callback adapter failed", {
+            method: req.method ?? "UNKNOWN",
+            path: url.pathname,
+            userAgent: req.headers["user-agent"] ?? "",
+            contentType: req.headers["content-type"] ?? "",
+            detail,
+          }, "warn");
+          if (!res.headersSent) {
+            res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
+            res.end(JSON.stringify({ error: "invalid card action callback" }));
+          }
+        }
       });
       return;
     }
@@ -187,36 +303,23 @@ export async function startBridgeHttpServer(
   };
 }
 
-/** 展开对象中的标量字段，便于日志记录。 */
-function flattenScalarFields(prefix: string, value: unknown): Record<string, string | number | boolean | null> {
-  const fields: Record<string, string | number | boolean | null> = {};
-  collectScalarFields(fields, prefix, value);
-  return fields;
+/** 仅展示 id 形态，不在日志中输出完整群聊或消息标识。 */
+function summarizeIdentifier(value: string): string {
+  if (!value) {
+    return "";
+  }
+  if (value.length <= 10) {
+    return value;
+  }
+  return `${value.slice(0, 6)}...${value.slice(-4)}`;
 }
 
-/** 递归收集对象中的标量字段。 */
-function collectScalarFields(
-  fields: Record<string, string | number | boolean | null>,
-  path: string,
-  value: unknown,
-): void {
-  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    fields[path] = value;
-    return;
-  }
-
-  if (Array.isArray(value)) {
-    value.forEach((item, index) => {
-      collectScalarFields(fields, `${path}.${index}`, item);
-    });
-    return;
-  }
-
-  if (!value || typeof value !== "object") {
-    return;
-  }
-
-  for (const [key, nestedValue] of Object.entries(value)) {
-    collectScalarFields(fields, `${path}.${key}`, nestedValue);
-  }
+/** 构建卡片 action 的轻量提示响应。 */
+function buildCardActionNotice(content: string): Record<string, unknown> {
+  return {
+    toast: {
+      type: "warning",
+      content,
+    },
+  };
 }
