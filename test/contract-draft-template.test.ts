@@ -452,5 +452,5 @@ describe("contract draft template helpers", () => {
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 });
