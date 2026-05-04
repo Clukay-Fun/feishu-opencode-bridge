@@ -13,6 +13,7 @@ const RETRY_BASE_DELAY_MS = 500;
 export class FeishuApiClient {
   private cachedToken: { token: string; expiresAt: number } | null = null;
   private tokenRequest: Promise<string> | null = null;
+  private readonly bitableFieldCache = new Map<string, BitableFieldSchema[]>();
 
   constructor(private readonly appId: string, private readonly appSecret: string) {}
 
@@ -130,6 +131,21 @@ export class FeishuApiClient {
       }
       throw new Error(`Feishu createBitableRecord failed: ${secondAttempt.msg}`);
     }
+
+    if (isFieldNameNotFound(firstAttempt.msg)) {
+      const tableFields = await this.listBitableFields(token, appToken, tableId).catch(() => []);
+      const filteredFields = filterBitableFieldsBySchema(fields, tableFields);
+      if (Object.keys(filteredFields).length === 0) {
+        throw new Error(`Feishu createBitableRecord failed: ${firstAttempt.msg}; attempted fields: ${Object.keys(fields).join(", ") || "none"}; table fields: ${tableFields.map((field) => field.name).join(", ") || "unknown"}`);
+      }
+      if (!hasSameFieldKeys(fields, filteredFields)) {
+        const secondAttempt = await this.createBitableRecordOnce(token, appToken, tableId, filteredFields);
+        if (secondAttempt.ok) {
+          return secondAttempt.recordId;
+        }
+        throw new Error(`Feishu createBitableRecord failed: ${secondAttempt.msg}`);
+      }
+    }
     throw new Error(`Feishu createBitableRecord failed: ${firstAttempt.msg}`);
   }
 
@@ -243,7 +259,65 @@ export class FeishuApiClient {
     }
     return { ok: true, recordId };
   }
+
+  /** 列出多维表格字段元数据，用于字段名错误时按真实表结构降级重试。 */
+  private async listBitableFields(token: string, appToken: string, tableId: string): Promise<BitableFieldSchema[]> {
+    const cacheKey = `${appToken}:${tableId}`;
+    const cached = this.bitableFieldCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const results: BitableFieldSchema[] = [];
+    let pageToken = "";
+    let hasMore = true;
+
+    while (hasMore) {
+      const url = new URL(`https://open.feishu.cn/open-apis/bitable/v1/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/fields`);
+      url.searchParams.set("page_size", "100");
+      if (pageToken) {
+        url.searchParams.set("page_token", pageToken);
+      }
+      const response = await withRetry(() => fetch(url, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }));
+      const body = (await response.json()) as {
+        code: number;
+        msg?: string;
+        data?: {
+          has_more?: boolean;
+          page_token?: string;
+          items?: Array<{ field_name?: string; name?: string; field_id?: string; type?: unknown }>;
+        };
+      };
+      if (!response.ok || body.code !== 0) {
+        throw new Error(`Feishu listBitableFields failed: ${body.msg ?? response.statusText}`);
+      }
+      for (const item of body.data?.items ?? []) {
+        const name = typeof item.field_name === "string" && item.field_name.trim()
+          ? item.field_name.trim()
+          : typeof item.name === "string" && item.name.trim()
+            ? item.name.trim()
+            : undefined;
+        if (name) {
+          results.push({ name });
+        }
+      }
+      hasMore = Boolean(body.data?.has_more && body.data.page_token);
+      pageToken = body.data?.page_token ?? "";
+    }
+
+    this.bitableFieldCache.set(cacheKey, results);
+    return results;
+  }
 }
+
+type BitableFieldSchema = {
+  name: string;
+};
 
 function normalizeDownloadedFileName(value: string): string {
   const decoded = safeDecodeURIComponent(value).replace(/^"+|"+$/g, "").trim();
@@ -297,6 +371,26 @@ function normalizeFieldsForSingleSelectRetry(fields: Record<string, unknown>, er
     ...fields,
     标签: typeof tags[0] === "string" ? tags[0] : "",
   };
+}
+
+function isFieldNameNotFound(errorMessage: string): boolean {
+  return errorMessage.includes("FieldNameNotFound");
+}
+
+function filterBitableFieldsBySchema(fields: Record<string, unknown>, tableFields: BitableFieldSchema[]): Record<string, unknown> {
+  if (tableFields.length === 0) {
+    return fields;
+  }
+  const allowed = new Set(tableFields.map((field) => field.name));
+  return Object.fromEntries(
+    Object.entries(fields).filter(([key]) => allowed.has(key)),
+  );
+}
+
+function hasSameFieldKeys(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return leftKeys.length === rightKeys.length && leftKeys.every((key, index) => key === rightKeys[index]);
 }
 
 async function withRetry(run: () => Promise<Response>): Promise<Response> {

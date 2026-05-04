@@ -149,6 +149,38 @@ describe("FeishuApiClient", () => {
     expect(requestBody.fields.标签).toEqual(["劳动", "合同"]);
   });
 
+  it("filters unknown bitable fields by table schema after FieldNameNotFound", async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ code: 0, tenant_access_token: "token_1" }))
+      .mockResolvedValueOnce(jsonResponse({ code: 1002, msg: "FieldNameNotFound" }, 400))
+      .mockResolvedValueOnce(jsonResponse({
+        code: 0,
+        data: {
+          items: [
+            { field_name: "发票号" },
+            { field_name: "开票日期" },
+          ],
+        },
+      }))
+      .mockResolvedValueOnce(jsonResponse({ code: 0, data: { record: { record_id: "rec_ok" } } }));
+    vi.stubGlobal("fetch", fetch);
+    const client = new FeishuApiClient("app", "secret");
+
+    await expect(client.createBitableRecord("app_token", "tbl_invoice", {
+      付款方: "张三",
+      发票号: "032001900104",
+      开票日期: 1_776_000_000_000,
+    })).resolves.toBe("rec_ok");
+
+    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(String(fetch.mock.calls[2]?.[0])).toContain("/tables/tbl_invoice/fields");
+    const retryBody = JSON.parse(fetch.mock.calls[3]?.[1]?.body as string);
+    expect(retryBody.fields).toEqual({
+      发票号: "032001900104",
+      开票日期: 1_776_000_000_000,
+    });
+  });
+
   it("repairs mojibake filenames when downloading message resources", async () => {
     vi.useFakeTimers();
     const fileBytes = new Uint8Array([1, 2, 3]);
