@@ -5,7 +5,7 @@
  * - 按文件类型调用对应解析路径，统一产出可分析文本。
  * - 作为 contract-assistant 与 labor-skill 之间已经落地的 shared workflow。
  */
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import * as XLSX from "xlsx";
@@ -23,6 +23,12 @@ export type EvidenceFileRef = {
   messageId: string;
   fileKey: string;
   fileName: string;
+  size?: number | undefined;
+};
+
+export type LocalEvidenceFileRef = {
+  localPath: string;
+  fileName?: string | undefined;
   size?: number | undefined;
 };
 
@@ -44,7 +50,7 @@ export type PreparedEvidenceFile = {
 };
 
 export type EvidenceExtractRequest = {
-  file: EvidenceFileRef;
+  file: EvidenceFileRef | LocalEvidenceFileRef;
   allowedExtensions: string[];
   maxFileSizeMb: number;
   maxExtractedTextLength?: number | undefined;
@@ -60,6 +66,11 @@ export type PreparedEvidenceExtractRequest = {
   buildPrompt(input: { fileName: string; localPath: string; extractedText?: string }): string;
 };
 
+export type PreparedEvidenceJsonResult = {
+  result: Record<string, unknown>;
+  preparedFile: PreparedEvidenceFile;
+};
+
 export class EvidenceExtractService {
   constructor(
     private readonly resources: EvidenceExtractResourcePort,
@@ -69,7 +80,7 @@ export class EvidenceExtractService {
   ) {}
 
   async prepareFile(
-    file: EvidenceFileRef,
+    file: EvidenceFileRef | LocalEvidenceFileRef,
     options: {
       allowedExtensions: string[];
       maxFileSizeMb: number;
@@ -77,7 +88,9 @@ export class EvidenceExtractService {
       parseTextExtensions?: string[] | undefined;
     },
   ): Promise<PreparedEvidenceFile> {
-    const downloaded = await this.resources.downloadMessageResource(file.messageId, file.fileKey, "file");
+    const downloaded = isLocalEvidenceFileRef(file)
+      ? await readLocalEvidenceFile(file)
+      : await this.resources.downloadMessageResource(file.messageId, file.fileKey, "file");
     validateEvidenceFile(downloaded.fileName, downloaded.buffer, options.allowedExtensions, options.maxFileSizeMb);
     const extension = path.extname(downloaded.fileName).toLowerCase();
     const localPath = await saveEvidenceTempFile(downloaded.fileName, downloaded.buffer);
@@ -107,7 +120,7 @@ export class EvidenceExtractService {
     };
   }
 
-  async extractJson(request: EvidenceExtractRequest): Promise<{ result: Record<string, unknown>; preparedFile: PreparedEvidenceFile }> {
+  async extractJson(request: EvidenceExtractRequest): Promise<PreparedEvidenceJsonResult> {
     const preparedFile = await this.prepareFile(request.file, {
       allowedExtensions: request.allowedExtensions,
       maxFileSizeMb: request.maxFileSizeMb,
@@ -155,6 +168,23 @@ export class EvidenceExtractService {
       });
     }
   }
+}
+
+function isLocalEvidenceFileRef(file: EvidenceFileRef | LocalEvidenceFileRef): file is LocalEvidenceFileRef {
+  return "localPath" in file;
+}
+
+async function readLocalEvidenceFile(file: LocalEvidenceFileRef): Promise<{
+  fileName: string;
+  mimeType: string;
+  buffer: Buffer;
+}> {
+  const buffer = await readFile(file.localPath);
+  return {
+    fileName: file.fileName?.trim() || path.basename(file.localPath),
+    mimeType: extensionToMimeType(path.extname(file.localPath).toLowerCase()),
+    buffer,
+  };
 }
 
 function buildPromptRequest(prompt: string, preparedFile: PreparedEvidenceFile, model?: OpenCodeModelRef): OpenCodePromptRequest {

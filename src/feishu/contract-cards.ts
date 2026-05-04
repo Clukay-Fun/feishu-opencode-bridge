@@ -223,7 +223,7 @@ export function buildInvoiceRecognizeCompletedPayload(
   result: InvoiceRecognizeResult,
   options: { elapsedMs: number; recordUrl: string },
 ): FeishuPostPayload {
-  const payer = readCaseField(result.record, "付款方");
+  const payer = readCaseField(result.record, "购买方") ?? readCaseField(result.record, "付款方");
   const invoiceNo = readCaseField(result.record, "发票号");
   const invoiceDate = readCaseField(result.record, "开票日期");
   const amount = readInvoiceAmount(result.record);

@@ -22,10 +22,18 @@ import {
   EvidenceExtractService,
   type EvidenceExtractResourcePort,
   type EvidenceFileRef,
+  type LocalEvidenceFileRef,
+  type PreparedEvidenceJsonResult,
 } from "../workflows/evidence-extract.js";
+import {
+  buildInvoiceRepairPrompt,
+  extractStructuredInvoice,
+  type StructuredInvoiceExtraction,
+} from "./invoice-structured.js";
 import {
   buildCaseCreatePrompt,
   buildCaseUpdatePrompt,
+  buildContractAssistantIntentPrompt,
   buildContractDraftPrompt,
   buildContractExtractPrompt,
   buildContractWorkbenchApplyPrompt,
@@ -47,6 +55,21 @@ type ContractAssistantResourcePort = EvidenceExtractResourcePort & {
 };
 
 export type ContractAssistantFileRef = EvidenceFileRef;
+export type ContractAssistantFileInput = EvidenceFileRef | LocalEvidenceFileRef;
+
+export type ContractAssistantIntentSkill =
+  | "invoice-recognize"
+  | "contract-extract"
+  | "case-manage"
+  | "contract-draft"
+  | "none";
+
+export type ContractAssistantIntentResult = {
+  skill: ContractAssistantIntentSkill;
+  confidence: number;
+  needsFile: boolean;
+  reason: string;
+};
 
 export type ContractDraftResult = {
   docTitle: string;
@@ -277,7 +300,7 @@ export class ContractAssistantService {
   }
 
   // Extract structured contract information from an uploaded document.
-  async extractContract(file: ContractAssistantFileRef): Promise<ContractExtractResult> {
+  async extractContract(file: ContractAssistantFileInput): Promise<ContractExtractResult> {
     const { result } = await this.evidenceExtractor.extractJson({
       file,
       allowedExtensions: this.config.ingest.contractAllowedExtensions,
@@ -307,8 +330,8 @@ export class ContractAssistantService {
   }
 
   // Recognize invoice fields from an uploaded invoice file and match related contract context.
-  async recognizeInvoice(file: ContractAssistantFileRef): Promise<InvoiceRecognizeResult> {
-    const { result } = await this.evidenceExtractor.extractJson({
+  async recognizeInvoice(file: ContractAssistantFileInput): Promise<InvoiceRecognizeResult> {
+    const extraction = await this.evidenceExtractor.extractJson({
       file,
       allowedExtensions: this.config.ingest.invoiceAllowedExtensions,
       maxFileSizeMb: this.config.ingest.maxFileSizeMb,
@@ -321,11 +344,16 @@ export class ContractAssistantService {
         extractedText: extractedText || undefined,
       }),
     });
+    const { result, structured } = await this.prepareInvoiceRecognitionResult(extraction);
     const summary = readString(result, "summary") ?? "已识别发票信息。";
-    const record = normalizeInvoiceRecord(readRecord(result, "record"), {
+    const record = normalizeInvoiceRecord({
+      ...structured?.fields,
+      ...readRecord(result, "record"),
+    }, {
       matchHints: readRecord(result, "matchHints"),
       summary,
     });
+    assertUsefulInvoiceRecord(record, structured);
     const recordId = await this.resources.createBitableRecord(
       this.config.storage.baseToken,
       this.config.storage.invoiceTableId,
@@ -336,6 +364,66 @@ export class ContractAssistantService {
       summary,
       record,
       recordId,
+    };
+  }
+
+  private async prepareInvoiceRecognitionResult(
+    extraction: PreparedEvidenceJsonResult,
+  ): Promise<{ result: Record<string, unknown>; structured: StructuredInvoiceExtraction | null }> {
+    const text = extraction.preparedFile.extractedText.trim();
+    if (!text) {
+      return { result: extraction.result, structured: null };
+    }
+    const structured = extractStructuredInvoice(text);
+    if (!structured.detection.isInvoice) {
+      throw new Error(`这份文件不像发票，暂不写入发票台账：${structured.detection.reason}`);
+    }
+    const repaired = await this.repairStructuredInvoiceFields(text, structured).catch((error) => {
+      this.logger.log("contract-assistant", "invoice repair skipped", {
+        detail: error instanceof Error ? error.message : String(error),
+      }, "warn");
+      return structured.fields;
+    });
+    return {
+      result: {
+        ...extraction.result,
+        record: {
+          ...repaired,
+          ...readRecord(extraction.result, "record"),
+        },
+      },
+      structured: {
+        ...structured,
+        fields: repaired,
+        missingFields: Object.keys(repaired).length > 0
+          ? structured.missingFields.filter((field) => repaired[field] === undefined)
+          : structured.missingFields,
+      },
+    };
+  }
+
+  private async repairStructuredInvoiceFields(
+    text: string,
+    structured: StructuredInvoiceExtraction,
+  ): Promise<Record<string, unknown>> {
+    if (structured.missingFields.length === 0) {
+      return structured.fields;
+    }
+    const result = await this.askForJson(
+      buildInvoiceRepairPrompt({
+        text,
+        confirmedFields: structured.fields,
+        missingFields: structured.missingFields,
+      }),
+      resolveModel(this.config, "invoice"),
+    );
+    const patch = readRecord(result, "patch") ?? {};
+    const allowedPatch = Object.fromEntries(
+      Object.entries(patch).filter(([key, value]) => structured.missingFields.includes(key) && value !== undefined && value !== null && value !== ""),
+    );
+    return {
+      ...structured.fields,
+      ...allowedPatch,
     };
   }
   //#endregion
@@ -352,6 +440,30 @@ export class ContractAssistantService {
       record,
     );
     return { summary, record, recordId };
+  }
+
+  async classifyIntent(input: {
+    userText: string;
+    fileName?: string | undefined;
+    localPath?: string | undefined;
+    hasRecentFile?: boolean | undefined;
+  }): Promise<ContractAssistantIntentResult> {
+    const result = await this.askForJson(
+      buildContractAssistantIntentPrompt({
+        userText: input.userText,
+        fileName: input.fileName,
+        localPath: input.localPath,
+        hasRecentFile: Boolean(input.hasRecentFile || input.fileName || input.localPath),
+      }),
+      resolveModel(this.config, "default"),
+    );
+    const skill = normalizeIntentSkill(readString(result, "skill"));
+    return {
+      skill,
+      confidence: clampConfidence(readNumber(result, "confidence")),
+      needsFile: readBoolean(result, "needsFile") ?? (skill === "invoice-recognize" || skill === "contract-extract"),
+      reason: readString(result, "reason") ?? "",
+    };
   }
 
   // Update an existing case record by matching the target and patching its fields.
@@ -532,7 +644,7 @@ export class ContractAssistantService {
     invoiceRecord: Record<string, unknown>,
   ): Promise<{ recordId: string; label: string } | null> {
     const contractNo = readString(matchHints, "contractNo") ?? readFieldString(invoiceRecord, "合同号");
-    const payer = readString(matchHints, "payer") ?? readFieldString(invoiceRecord, "付款方");
+    const payer = readString(matchHints, "payer") ?? readFieldString(invoiceRecord, "购买方") ?? readFieldString(invoiceRecord, "付款方");
     const amount = readNumber(matchHints, "amount") ?? readFieldNumber(invoiceRecord, "发票金额");
     const contracts = await this.resources.listBitableRecords(this.config.storage.baseToken, this.config.storage.contractTableId);
     const matched = contracts.find((item) => {
@@ -1128,7 +1240,7 @@ async function resolveCaseUpdatePrompt(request: string): Promise<string> {
   );
 }
 
-function resolveModel(config: ContractAssistantConfig, step: "draft" | "extract" | "invoice" | "caseManage"): OpenCodeModelRef | undefined {
+function resolveModel(config: ContractAssistantConfig, step: "default" | "draft" | "extract" | "invoice" | "caseManage"): OpenCodeModelRef | undefined {
   const normalized = (config.models[step] ?? config.models.default)?.trim();
   if (!normalized) {
     return undefined;
@@ -1225,6 +1337,25 @@ function readBoolean(value: Record<string, unknown> | null, key: string): boolea
     }
   }
   return undefined;
+}
+
+function normalizeIntentSkill(value: string | undefined): ContractAssistantIntentSkill {
+  switch (value) {
+    case "invoice-recognize":
+    case "contract-extract":
+    case "case-manage":
+    case "contract-draft":
+      return value;
+    default:
+      return "none";
+  }
+}
+
+function clampConfidence(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(1, value));
 }
 
 function readFieldString(fields: Record<string, unknown>, key: string): string | undefined {
@@ -1348,6 +1479,21 @@ export function normalizeInvoiceRecord(
   copyDate(input, fields, "开票日期");
   copyNumber(input, fields, "发票金额");
   return fields;
+}
+
+function assertUsefulInvoiceRecord(record: Record<string, unknown>, structured: StructuredInvoiceExtraction | null): void {
+  const hasCoreFields = Boolean(
+    readFieldString(record, "发票号")
+    && readFieldString(record, "开票日期")
+    && readFieldNumber(record, "发票金额") !== undefined
+  );
+  if (hasCoreFields) {
+    return;
+  }
+  const reason = structured
+    ? `${structured.detection.reason}；缺少字段：${structured.missingFields.join("、") || "核心字段"}`
+    : "未提取到足够的发票核心字段";
+  throw new Error(`发票识别结果不足，暂不写入发票台账：${reason}`);
 }
 
 export function normalizeCaseRecord(record: Record<string, unknown> | null): Record<string, unknown> {
@@ -1609,7 +1755,7 @@ function copyInvoicePayer(
   const fallback = [alias, hintClient, summaryClient].find((item) => item && !isLawFirmName(item));
   const payer = direct && isLawFirmName(direct) ? fallback : (direct ?? fallback);
   if (payer) {
-    target["付款方"] = payer;
+    target["购买方"] = payer;
   }
 }
 

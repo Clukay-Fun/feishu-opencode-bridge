@@ -111,7 +111,7 @@ export function buildInvoiceRecognizePrompt(fileName: string, localPath: string,
     "- matchHints: 合同匹配线索",
     "",
     "record 可包含这些字段：",
-    "合同号、付款方、发票号、开票日期、发票金额、备注",
+    "合同号、购买方、发票号、开票日期、发票金额、备注",
     "",
     "matchHints 可包含这些字段：",
     "contractNo、clientName、payer、amount",
@@ -120,7 +120,7 @@ export function buildInvoiceRecognizePrompt(fileName: string, localPath: string,
     "1. 优先从发票正文提取结构化信息。",
     "2. 如果是图片或 PDF，你可以读取本地路径对应文件进行分析。",
     "3. 发票金额输出数字，日期优先 YYYY-MM-DD。",
-    "4. 付款方必须填写发票购买方/客户/委托人；北京市隆安（深圳）律师事务所通常是销售方/服务方，不要填成付款方。",
+    "4. 购买方必须填写发票购买方/客户/委托人；北京市隆安（深圳）律师事务所通常是销售方/服务方，不要填成购买方。",
     "5. matchHints.clientName 和 matchHints.payer 也必须指向购买方/客户，不要填律所名称。",
     "",
     `文件名：${fileName}`,
@@ -128,6 +128,44 @@ export function buildInvoiceRecognizePrompt(fileName: string, localPath: string,
     extractedText
       ? `补充可提取文本：\n---\n${extractedText}\n---`
       : "补充可提取文本：无",
+  ].join("\n");
+}
+
+export function buildContractAssistantIntentPrompt(input: {
+  userText: string;
+  fileName?: string | undefined;
+  localPath?: string | undefined;
+  hasRecentFile: boolean;
+}): string {
+  return [
+    "你是合同助手的 skill 意图路由器。",
+    "请根据用户当前文字、最近材料上下文和 skill 描述，判断是否应由合同助手执行某个 skill。",
+    "只输出 JSON 对象，不要输出额外说明。",
+    "",
+    "可选 skill：",
+    "- invoice-recognize：用户提供发票图片、照片或 PDF，需要识别发票字段、写入发票记录或录入发票台账。",
+    "- contract-extract：用户提供合同、协议、委托代理合同或法律服务合同文件，需要提取合同字段、写入合同台账或录入合同。",
+    "- case-manage：用户用文字提供案件基本信息，需要新增案件管理记录或录入案件台账。",
+    "- contract-draft：用户用文字描述合同需求，需要起草合同或生成合同草稿。",
+    "- none：不属于以上合同助手能力，或意图不清楚。",
+    "",
+    "输出字段：",
+    "- skill: invoice-recognize | contract-extract | case-manage | contract-draft | none",
+    "- confidence: 0 到 1 的数字",
+    "- needsFile: boolean，执行该 skill 是否需要材料文件",
+    "- reason: 30 字以内原因",
+    "",
+    "规则：",
+    "1. 不要按固定话术或关键词机械匹配，要结合 skill 描述理解意图。",
+    "2. slash command 已由系统强制处理；这里只判断自然语言。",
+    "3. 发票识别和合同录入通常需要最近上传文件或本地路径。",
+    "4. 案件录入和合同起草可以仅根据文字执行。",
+    "5. 如果用户只是闲聊、询问说明、要求知识库入库或劳动争议材料生成，输出 none。",
+    "6. 如果缺少执行所需文件但意图明确，仍输出对应 skill，并把 needsFile 设为 true。",
+    "",
+    `最近文件：${input.hasRecentFile ? input.fileName ?? "有" : "无"}`,
+    `本地路径：${input.localPath ?? "无"}`,
+    `用户文字：${input.userText}`,
   ].join("\n");
 }
 

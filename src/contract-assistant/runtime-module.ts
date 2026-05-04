@@ -37,7 +37,9 @@ import { PersistedInteractionManager } from "../runtime/persisted-interaction-ma
 import type {
   ContractAssistantService,
   ContractClause,
+  ContractAssistantFileInput,
   ContractAssistantFileRef,
+  ContractAssistantIntentResult,
   ContractState,
   ContractWorkbenchModelResult,
 } from "./index.js";
@@ -119,6 +121,7 @@ type PendingInteraction = PendingUploadInteraction | PendingDraftInteraction | P
 
 const CONTRACT_EXTRACT_COMMAND_ALIASES = new Set(["contract-extract", "合同录入"]);
 const INVOICE_RECOGNIZE_COMMAND_ALIASES = new Set(["invoice-recognize", "识别发票"]);
+const SKILL_INTENT_CONFIDENCE_THRESHOLD = 0.72;
 
 export class ContractAssistantRuntimeModule implements RuntimeModule {
   readonly name = "contract-assistant";
@@ -203,7 +206,8 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     }
 
     if (!pending) {
-      return { claimed: false };
+      const claimed = await this.handleNaturalLanguageIntent(message);
+      return { claimed };
     }
 
     if (pending.kind === "contract-draft-onboard") {
@@ -227,7 +231,8 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     if (message.messageType === "file" || message.senderOpenId !== pending.requesterOpenId) {
       return false;
     }
-    const pendingKind = detectPendingUploadKind(message.plainText);
+    const forcedKind = detectPendingUploadKind(message.plainText);
+    const pendingKind = forcedKind ?? await this.classifyPendingUploadKind(message.plainText, pending.file.fileName);
     if (!pendingKind) {
       return false;
     }
@@ -384,11 +389,21 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     }
 
     if (normalized === "contract-extract" || normalized === "合同录入") {
+      const localPath = extractLocalPath(command.arguments.join(" ").trim());
+      if (localPath) {
+        await this.handleContractExtract(message, buildLocalContractFileInput(localPath));
+        return true;
+      }
       await this.startPendingUpload(message, "contract-extract", "请直接上传 1 份合同文件，我会提取字段并写入合同台账。");
       return true;
     }
 
     if (normalized === "invoice-recognize" || normalized === "识别发票") {
+      const localPath = extractLocalPath(command.arguments.join(" ").trim());
+      if (localPath) {
+        await this.handleInvoiceRecognize(message, buildLocalContractFileInput(localPath));
+        return true;
+      }
       await this.startPendingUpload(message, "invoice-recognize", "请直接上传 1 份发票文件，我会识别字段并写入发票记录。");
       return true;
     }
@@ -501,6 +516,85 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       size: message.file.size,
     });
     return true;
+  }
+
+  private async handleNaturalLanguageIntent(message: IncomingChatMessage): Promise<boolean> {
+    if (message.messageType === "file" || message.messageType === "image" || !this.featureConfig.enabled || !this.deps.service) {
+      return false;
+    }
+    const text = message.plainText.trim();
+    if (!text || looksLikeKnowledgeOrLaborRequest(text)) {
+      return false;
+    }
+    const localPath = extractLocalPath(text) ?? undefined;
+    const intent = await this.classifyIntentSafely({
+      userText: text,
+      localPath,
+      hasRecentFile: Boolean(localPath),
+    });
+    if (!isConfidentIntent(intent)) {
+      return false;
+    }
+    if (intent.skill === "invoice-recognize" || intent.skill === "contract-extract") {
+      if (!localPath) {
+        await this.sendNotice(message, {
+          title: intent.skill === "invoice-recognize" ? "请提供发票文件" : "请提供合同文件",
+          template: "blue",
+          icon: "file-link-docx_outlined",
+          message: intent.skill === "invoice-recognize"
+            ? "我已识别到你想执行发票识别。请上传发票文件，或在同一句里提供本地文件路径；也可以用 `/识别发票` 强制进入发票识别。"
+            : "我已识别到你想执行合同录入。请上传合同文件，或在同一句里提供本地文件路径；也可以用 `/合同录入` 强制进入合同录入。",
+        });
+        return true;
+      }
+      const file = buildLocalContractFileInput(localPath);
+      if (intent.skill === "invoice-recognize") {
+        await this.handleInvoiceRecognize(message, file);
+        return true;
+      }
+      await this.handleContractExtract(message, file);
+      return true;
+    }
+    if (intent.skill === "case-manage") {
+      await this.handleCaseCreate(message, text);
+      return true;
+    }
+    if (intent.skill === "contract-draft") {
+      await this.handleContractDraft(message, text);
+      return true;
+    }
+    return false;
+  }
+
+  private async classifyPendingUploadKind(text: string, fileName: string): Promise<PendingUploadKind | null> {
+    const intent = await this.classifyIntentSafely({
+      userText: text,
+      fileName,
+      hasRecentFile: true,
+    });
+    if (!isConfidentIntent(intent)) {
+      return null;
+    }
+    if (intent.skill === "invoice-recognize" || intent.skill === "contract-extract") {
+      return intent.skill;
+    }
+    return null;
+  }
+
+  private async classifyIntentSafely(input: {
+    userText: string;
+    fileName?: string | undefined;
+    localPath?: string | undefined;
+    hasRecentFile?: boolean | undefined;
+  }): Promise<ContractAssistantIntentResult | null> {
+    try {
+      return await this.deps.service!.classifyIntent(input);
+    } catch (error) {
+      this.deps.logger.log("contract-assistant", "skill intent router skipped", {
+        detail: error instanceof Error ? error.message : String(error),
+      }, "warn");
+      return null;
+    }
   }
 
   private async startContractDraftOnboard(
@@ -772,7 +866,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
 
   private async handleContractExtract(
     message: Pick<IncomingChatMessage, "chatId" | "messageId">,
-    file: ContractAssistantFileRef,
+    file: ContractAssistantFileInput,
   ): Promise<void> {
     const processing = await this.sendNotice(message, {
       title: "合同录入中",
@@ -815,7 +909,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
 
   private async handleInvoiceRecognize(
     message: Pick<IncomingChatMessage, "chatId" | "messageId">,
-    file: ContractAssistantFileRef,
+    file: ContractAssistantFileInput,
   ): Promise<void> {
     const startedAt = Date.now();
     const progressState = createInvoiceRecognizeProgressState();
@@ -823,8 +917,8 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     const processing = await this.deps.transport.sendPayload(message.chatId, buildInvoiceRecognizeProgressPayload(progressState), {
       event: "invoice recognize started",
       transcriptType: "outbound-final",
-      textPreview: file.fileName,
-      len: file.fileName.length,
+      textPreview: getContractFileName(file),
+      len: getContractFileName(file).length,
     }, { replyToMessageId: message.messageId });
     try {
       const result = await this.deps.service!.recognizeInvoice(file);
@@ -2057,6 +2151,40 @@ function detectPendingUploadKind(text: string): PendingUploadKind | null {
     return "invoice-recognize";
   }
   return null;
+}
+
+function isConfidentIntent(intent: ContractAssistantIntentResult | null): intent is ContractAssistantIntentResult {
+  return Boolean(intent && intent.skill !== "none" && intent.confidence >= SKILL_INTENT_CONFIDENCE_THRESHOLD);
+}
+
+function extractLocalPath(text: string): string | null {
+  const trimmed = text.trim();
+  const quoted = trimmed.match(/[`"'“”‘’]((?:~\/|\/)[^`"'“”‘’]+)[`"'“”‘’]/);
+  if (quoted?.[1]) {
+    return normalizeLocalPath(quoted[1]);
+  }
+  const absolute = trimmed.match(/(?:^|\s)((?:~\/|\/)[^\s，。；,;]+)/);
+  return absolute?.[1] ? normalizeLocalPath(absolute[1]) : null;
+}
+
+function normalizeLocalPath(value: string): string {
+  return value.replace(/^~/, process.env.HOME ?? "~").trim();
+}
+
+function buildLocalContractFileInput(localPath: string): ContractAssistantFileInput {
+  return {
+    localPath,
+    fileName: path.basename(localPath),
+  };
+}
+
+function getContractFileName(file: ContractAssistantFileInput): string {
+  return file.fileName?.trim() || ("localPath" in file ? path.basename(file.localPath) : "上传文件");
+}
+
+function looksLikeKnowledgeOrLaborRequest(text: string): boolean {
+  const normalized = text.replace(/\s+/g, "");
+  return /(知识库|入库|检索知识|查询知识|劳动争议工作台|劳动案件工作台|证据链|生成材料|劳动分析)/.test(normalized);
 }
 
 function isContractReentryCommand(command: ContractAssistantCommand, pendingKind: PendingInteraction["kind"]): boolean {

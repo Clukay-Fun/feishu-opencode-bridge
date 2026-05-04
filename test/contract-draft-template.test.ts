@@ -166,7 +166,7 @@ describe("contract draft template helpers", () => {
       发票金额: "20000",
     });
 
-    expect(record["付款方"]).toBe("张某某");
+    expect(record["购买方"]).toBe("张某某");
     expect(typeof record["开票日期"]).toBe("number");
     expect(record["发票金额"]).toBe(20000);
   });
@@ -183,7 +183,7 @@ describe("contract draft template helpers", () => {
       },
     });
 
-    expect(record["付款方"]).toBe("张某某");
+    expect(record["购买方"]).toBe("张某某");
   });
 
   it("normalizes invoice payer from summary when model omits buyer aliases", () => {
@@ -194,7 +194,7 @@ describe("contract draft template helpers", () => {
       summary: "付款方 张某某，身份证号 330100199003010011，增值税普通发票。",
     });
 
-    expect(record["付款方"]).toBe("张某某");
+    expect(record["购买方"]).toBe("张某某");
   });
 
   it("adds a reminder to the most recent case when no target is provided", async () => {

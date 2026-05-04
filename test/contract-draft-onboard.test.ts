@@ -47,7 +47,14 @@ function createFileMessage(fileName: string): IncomingChatMessage {
   };
 }
 
-function createModule(existingTempDir?: string) {
+function createModule(existingTempDir?: string, options?: {
+  classifyIntent?: (input: {
+    userText: string;
+    fileName?: string | undefined;
+    localPath?: string | undefined;
+    hasRecentFile?: boolean | undefined;
+  }) => Promise<{ skill: string; confidence: number; needsFile: boolean; reason: string }>;
+}) {
   const tempDir = existingTempDir ?? path.join(os.tmpdir(), `contract-onboard-test-${Math.random().toString(16).slice(2)}`);
   const sendPayload = vi.fn(async (
     chatId: string,
@@ -112,13 +119,26 @@ function createModule(existingTempDir?: string) {
     summary: "付款方 张三，身份证号 110101199001010011，增值税普通发票，项目 诉讼代理律师费",
     recordId: "rec_invoice_1",
     record: {
-      付款方: "张三",
+      购买方: "张三",
       发票号: "032001900104",
       开票日期: "2026-04-10",
       发票金额: 20000,
     },
     matchedContract: "委托代理合同（张三 vs 北京XX科技）",
   }));
+  const extractContract = vi.fn(async () => ({
+    summary: "已提取合同字段",
+    recordId: "rec_contract_1",
+    record: {
+      项目名称: "委托代理合同",
+    },
+  }));
+  const classifyIntent = vi.fn(options?.classifyIntent ?? (async () => ({
+    skill: "none",
+    confidence: 0,
+    needsFile: false,
+    reason: "",
+  })));
   const listReminderItems = vi.fn(async () => ({
     contractLines: ["委托代理合同：未收款 ¥10000，未开票 ¥0；付款节点：04-20"],
     invoiceLines: [],
@@ -173,7 +193,9 @@ function createModule(existingTempDir?: string) {
       listDraftTemplates,
       draftContract,
       createCase,
+      extractContract,
       recognizeInvoice,
+      classifyIntent,
       listReminderItems,
       addCaseReminder,
     } as never,
@@ -190,7 +212,9 @@ function createModule(existingTempDir?: string) {
     listDraftTemplates,
     draftContract,
     createCase,
+    extractContract,
     recognizeInvoice,
+    classifyIntent,
     listReminderItems,
     addCaseReminder,
   };
@@ -231,6 +255,45 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     }
   });
 
+  it("uses skill intent routing to claim an uploaded invoice without fixed wording", async () => {
+    const { module, recognizeInvoice, classifyIntent, tempDir } = createModule(undefined, {
+      classifyIntent: async () => ({
+        skill: "invoice-recognize",
+        confidence: 0.91,
+        needsFile: true,
+        reason: "发票录入",
+      }),
+    });
+    try {
+      const claimed = await module.claimFileInstruction?.({
+        kind: "file-await-instruction",
+        chatId: "chat-1",
+        conversationKey: "chat-1:thread-1",
+        requesterOpenId: "ou_user",
+        replyToMessageId: "msg-file",
+        file: {
+          messageId: "msg-file",
+          fileKey: "file_1",
+          fileName: "invoice.pdf",
+          size: 1024,
+        },
+      }, createTextMessage("处理一下，录进去"));
+
+      expect(claimed).toBe(true);
+      expect(classifyIntent).toHaveBeenCalledWith(expect.objectContaining({
+        userText: "处理一下，录进去",
+        fileName: "invoice.pdf",
+        hasRecentFile: true,
+      }));
+      expect(recognizeInvoice).toHaveBeenCalledWith(expect.objectContaining({
+        messageId: "msg-file",
+        fileName: "invoice.pdf",
+      }));
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
   it("falls back to waiting for a new upload when the pending file type is incompatible", async () => {
     const { module, sendPayload, recognizeInvoice, tempDir } = createModule();
     try {
@@ -251,6 +314,58 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
       expect(claimed).toBe(true);
       expect(recognizeInvoice).not.toHaveBeenCalled();
       expect(JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {})).toContain("重新上传 1 份发票文件");
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("routes natural language with a local invoice path to invoice recognize", async () => {
+    const { module, recognizeInvoice, classifyIntent, tempDir } = createModule(undefined, {
+      classifyIntent: async () => ({
+        skill: "invoice-recognize",
+        confidence: 0.94,
+        needsFile: true,
+        reason: "发票识别",
+      }),
+    });
+    try {
+      const message = createTextMessage("把 /tmp/invoice.pdf 识别后录入台账");
+      const result = await module.handleMessage({
+        message,
+        routed: routeIncomingText(message.plainText),
+      });
+
+      expect(result).toEqual({ claimed: true });
+      expect(classifyIntent).toHaveBeenCalledWith(expect.objectContaining({
+        localPath: "/tmp/invoice.pdf",
+      }));
+      expect(recognizeInvoice).toHaveBeenCalledWith(expect.objectContaining({
+        localPath: "/tmp/invoice.pdf",
+        fileName: "invoice.pdf",
+      }));
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("routes natural case creation through the skill intent router", async () => {
+    const { module, createCase, tempDir } = createModule(undefined, {
+      classifyIntent: async () => ({
+        skill: "case-manage",
+        confidence: 0.88,
+        needsFile: false,
+        reason: "案件录入",
+      }),
+    });
+    try {
+      const message = createTextMessage("新增一个案件：张三和北京XX科技劳动争议，仲裁阶段");
+      const result = await module.handleMessage({
+        message,
+        routed: routeIncomingText(message.plainText),
+      });
+
+      expect(result).toEqual({ claimed: true });
+      expect(createCase).toHaveBeenCalledWith(message.plainText);
     } finally {
       await cleanupModule(module, tempDir);
     }
