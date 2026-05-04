@@ -10,7 +10,8 @@ import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { promisify } from "node:util";
 
 import { resolveProjectConfigPath } from "./portable.mjs";
 import { markGuidePromptShown, readOnboardingState, resolveOnboardingStatePath } from "./onboarding-state.mjs";
@@ -25,6 +26,8 @@ import {
   resolveConfigValue,
   terminateChild,
 } from "./checks.mjs";
+
+const execFileAsync = promisify(execFile);
 
 export async function runStart(options = {}) {
   const cwd = options.cwd ?? process.cwd();
@@ -56,11 +59,14 @@ export async function runStart(options = {}) {
   await maybeCheckForUpdateOnStart({ cwd, env, logger, fetchImpl, platform: options.platform, home });
 
   const bridgePort = await ensureBridgePortAvailable({
+    cwd,
     host: serverHost,
     port: serverPort,
     logger,
     fetchImpl,
     assertPortAvailableFn: options.assertPortAvailableFn ?? assertPortAvailable,
+    listPortListenersFn: options.listPortListenersFn ?? listPortListeners,
+    terminatePidFn: options.terminatePidFn ?? terminatePid,
   });
   if (bridgePort.alreadyRunning) {
     logger.log("Bridge 已在运行，可以直接回到飞书继续使用。");
@@ -138,9 +144,11 @@ export async function maybePrintGuidePrompt(options) {
 
 // Check whether the configured Bridge port is free or already served by this project.
 export async function ensureBridgePortAvailable(options = {}) {
+  const cwd = options.cwd ?? process.cwd();
   const host = options.host ?? "127.0.0.1";
   const port = Number(options.port ?? 3000);
   const logger = options.logger ?? console;
+  const assertPortAvailableFn = options.assertPortAvailableFn ?? assertPortAvailable;
 
   if (!Number.isFinite(port) || port <= 0) {
     throw new Error("config.json server.port 不合法");
@@ -152,12 +160,142 @@ export async function ensureBridgePortAvailable(options = {}) {
   }
 
   try {
-    await (options.assertPortAvailableFn ?? assertPortAvailable)(port, host);
+    await assertPortAvailableFn(port, host);
     logger.log(`[1/3] 检查 Bridge ... ${host}:${port} 可用`);
     return { alreadyRunning: false };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    const reclaimed = await tryReclaimStaleBridgePort({
+      cwd,
+      host,
+      port,
+      logger,
+      listPortListenersFn: options.listPortListenersFn ?? listPortListeners,
+      terminatePidFn: options.terminatePidFn ?? terminatePid,
+    });
+    if (reclaimed) {
+      await assertPortAvailableFn(port, host);
+      logger.log(`[1/3] 检查 Bridge ... 已清理旧进程，${host}:${port} 可用`);
+      return { alreadyRunning: false };
+    }
     throw new Error(`Bridge 端口 ${host}:${port} 已被其他进程占用。若是旧的 Bridge，请先关闭旧窗口或结束旧进程后再启动；若只是想使用，直接回到飞书即可。详情：${detail}`);
+  }
+}
+
+// Reclaim only stale Bridge processes that belong to this project directory.
+export async function tryReclaimStaleBridgePort(options = {}) {
+  const cwd = path.resolve(options.cwd ?? process.cwd());
+  const logger = options.logger ?? console;
+  const listeners = await (options.listPortListenersFn ?? listPortListeners)(options.port, options.host);
+  const staleListeners = listeners.filter((listener) => isProjectBridgeProcess(listener.command, cwd));
+
+  if (staleListeners.length === 0) {
+    return false;
+  }
+
+  logger.warn?.(`[1/3] 检查 Bridge ... 发现旧 Bridge 进程占用 ${options.host}:${options.port}，正在清理：${staleListeners.map((item) => item.pid).join(", ")}`);
+  for (const listener of staleListeners) {
+    await (options.terminatePidFn ?? terminatePid)(listener.pid);
+  }
+  await sleep(1_000);
+  return true;
+}
+
+// List listening processes for a TCP port using platform tools.
+export async function listPortListeners(port, _host = "127.0.0.1") {
+  if (process.platform === "win32") {
+    return [];
+  }
+
+  try {
+    const result = await execFileAsync("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], {
+      timeout: 2_000,
+      maxBuffer: 256 * 1024,
+    });
+    const pids = parseLsofPidOutput(result.stdout);
+    if (pids.length === 0) {
+      return [];
+    }
+    const psResult = await execFileAsync("ps", ["-p", pids.join(","), "-o", "pid=,command="], {
+      timeout: 2_000,
+      maxBuffer: 256 * 1024,
+    });
+    return parsePsProcessOutput(psResult.stdout);
+  } catch {
+    return [];
+  }
+}
+
+// Parse `lsof -t` output into unique numeric process ids.
+export function parseLsofPidOutput(output) {
+  return [...new Set(String(output ?? "")
+    .split(/\s+/)
+    .map((value) => Number(value))
+    .filter((pid) => Number.isFinite(pid) && pid > 0))];
+}
+
+// Parse `ps -o pid=,command=` output into pid/command pairs.
+export function parsePsProcessOutput(output) {
+  const processes = [];
+  for (const rawLine of String(output ?? "").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const match = /^(\d+)\s+(.+)$/.exec(line);
+    if (match) {
+      processes.push({ pid: Number(match[1]), command: match[2] ?? "" });
+    }
+  }
+  return processes.filter((item) => Number.isFinite(item.pid));
+}
+
+// Decide whether a port listener is a stale Bridge runtime from the same checkout.
+export function isProjectBridgeProcess(command, cwd) {
+  const normalizedCommand = String(command ?? "");
+  const normalizedCwd = path.resolve(cwd);
+  return normalizedCommand.includes(normalizedCwd)
+    && (
+      normalizedCommand.includes("scripts/runtime/bootstrap.mjs")
+      || normalizedCommand.includes("dist/src/index.js")
+      || normalizedCommand.includes("dist/index.js")
+      || normalizedCommand.includes("src/index.ts")
+    );
+}
+
+// Terminate a process by pid, escalating only if it does not exit.
+export async function terminatePid(pid, platform = process.platform) {
+  if (!Number.isFinite(pid) || pid <= 0) {
+    return;
+  }
+
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return;
+  }
+
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) {
+      return;
+    }
+    await sleep(100);
+  }
+
+  if (platform !== "win32") {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // 进程可能已经退出；这里不再把清理失败升级成启动失败。
+    }
+  }
+}
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
   }
 }
 

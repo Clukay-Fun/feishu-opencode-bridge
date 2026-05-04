@@ -42,7 +42,7 @@ describe("runStartupPreflight", () => {
     }, () => {})).rejects.toThrow("缺少 feishu.cardActions.verificationToken");
   });
 
-  it("fails when button mode is enabled without an encrypt key", async () => {
+  it("passes when button mode is enabled without an encrypt key", async () => {
     stubHealthyFetch();
 
     const config = baseConfig();
@@ -51,10 +51,10 @@ describe("runStartupPreflight", () => {
 
     await expect(runStartupPreflight(config, {
       getTenantToken: async () => "tenant-token",
-    }, () => {})).rejects.toThrow("缺少 feishu.cardActions.encryptKey");
+    }, () => {})).resolves.toBeUndefined();
   });
 
-  it("passes when card actions have both verificationToken and encryptKey", async () => {
+  it("passes when card actions have both verificationToken and optional encryptKey", async () => {
     stubHealthyFetch();
 
     const config = baseConfig();

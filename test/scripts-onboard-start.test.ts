@@ -20,10 +20,14 @@ import {
 } from "../scripts/runtime/onboard.mjs";
 import {
   ensureBridgePortAvailable,
+  isProjectBridgeProcess,
   isBridgeHealthy,
   ensureOpencodeServer,
   maybePrintGuidePrompt,
+  parseLsofPidOutput,
+  parsePsProcessOutput,
   resolveBridgeLaunch,
+  tryReclaimStaleBridgePort,
 } from "../scripts/runtime/start.mjs";
 import { runBootstrap, ensureBridgeDependencies } from "../scripts/runtime/bootstrap.mjs";
 import { createBackup, restoreBackup } from "../scripts/runtime/backup.mjs";
@@ -823,7 +827,72 @@ describe("scripts/start", () => {
       assertPortAvailableFn: vi.fn(async () => {
         throw new Error("listen EADDRINUSE");
       }),
+      listPortListenersFn: vi.fn(async () => []),
     })).rejects.toThrow(/Bridge 端口 127\.0\.0\.1:3000 已被其他进程占用/);
+  });
+
+  it("reclaims stale bridge listeners from the same project before starting", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-start-reclaim-"));
+    const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const terminatePidFn = vi.fn(async () => undefined);
+    let attempts = 0;
+
+    const result = await ensureBridgePortAvailable({
+      cwd: dir,
+      host: "127.0.0.1",
+      port: 3000,
+      logger,
+      fetchImpl: vi.fn(async () => {
+        throw new Error("connect refused");
+      }),
+      assertPortAvailableFn: vi.fn(async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error("listen EADDRINUSE");
+        }
+      }),
+      listPortListenersFn: vi.fn(async () => [{
+        pid: 4321,
+        command: `${process.execPath} ${path.join(dir, "dist/src/index.js")}`,
+      }]),
+      terminatePidFn,
+    });
+
+    expect(result).toEqual({ alreadyRunning: false });
+    expect(terminatePidFn).toHaveBeenCalledWith(4321);
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("发现旧 Bridge 进程占用"));
+    expect(logger.log).toHaveBeenCalledWith("[1/3] 检查 Bridge ... 已清理旧进程，127.0.0.1:3000 可用");
+  });
+
+  it("does not reclaim unrelated listeners on the bridge port", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-start-external-port-"));
+    const terminatePidFn = vi.fn(async () => undefined);
+
+    await expect(tryReclaimStaleBridgePort({
+      cwd: dir,
+      host: "127.0.0.1",
+      port: 3000,
+      logger: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      listPortListenersFn: vi.fn(async () => [{
+        pid: 9999,
+        command: "/usr/bin/python3 -m http.server 3000",
+      }]),
+      terminatePidFn,
+    })).resolves.toBe(false);
+
+    expect(terminatePidFn).not.toHaveBeenCalled();
+  });
+
+  it("parses port listener process output and recognizes project bridge commands", () => {
+    const dir = "/tmp/bridge-start-parse";
+
+    expect(parseLsofPidOutput("123\n123\n456\n")).toEqual([123, 456]);
+    expect(parsePsProcessOutput(`  123 ${process.execPath} ${dir}/dist/src/index.js\n`)).toEqual([{
+      pid: 123,
+      command: `${process.execPath} ${dir}/dist/src/index.js`,
+    }]);
+    expect(isProjectBridgeProcess(`${process.execPath} ${dir}/dist/src/index.js`, dir)).toBe(true);
+    expect(isProjectBridgeProcess("/usr/bin/python3 -m http.server 3000", dir)).toBe(false);
   });
 
   it("recognizes bridge health responses", async () => {

@@ -413,7 +413,34 @@ export async function checkConfigPublicUrl(options = {}) {
   if (!isConfiguredValue(publicBaseUrl) || isExampleUrl(publicBaseUrl)) {
     return createResult("config-publicurl", BRIDGE_GROUP, "公网回调", "fail", "已启用卡片按钮，但 server.publicBaseUrl 未正确配置", "填写可公网访问的 HTTPS 地址");
   }
-  return createResult("config-publicurl", BRIDGE_GROUP, "公网回调", "pass", "publicBaseUrl 已配置");
+  let callbackUrl;
+  let healthUrl;
+  try {
+    const publicUrl = new URL(publicBaseUrl);
+    if (publicUrl.protocol !== "https:") {
+      return createResult("config-publicurl", BRIDGE_GROUP, "公网回调", "fail", `卡片按钮回调必须使用 HTTPS 公网地址：${publicBaseUrl}`, "配置反向代理或公网 HTTPS 隧道后重试");
+    }
+    if (isLocalUrl(publicBaseUrl)) {
+      return createResult("config-publicurl", BRIDGE_GROUP, "公网回调", "fail", `卡片按钮回调不能使用 localhost / 127.0.0.1：${publicBaseUrl}`, "填写飞书后端可访问的 HTTPS 公网地址");
+    }
+    callbackUrl = new URL(state.config.feishu.cardActions.path, publicUrl).toString();
+    healthUrl = new URL("/healthz", publicUrl).toString();
+  } catch {
+    return createResult("config-publicurl", BRIDGE_GROUP, "公网回调", "fail", `server.publicBaseUrl 不是合法 URL：${publicBaseUrl}`, "填写可公网访问的 HTTPS 地址");
+  }
+
+  const fetchImpl = options.fetchImpl ?? fetch;
+  try {
+    const response = await fetchImpl(healthUrl, { signal: AbortSignal.timeout(3_000) });
+    if (!response.ok) {
+      return createResult("config-publicurl", BRIDGE_GROUP, "公网回调", "fail", `/healthz 不可达或返回非 2xx：${response.status}`, `回调 URL：${callbackUrl}；先确认公网入口转发到 Bridge`);
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return createResult("config-publicurl", BRIDGE_GROUP, "公网回调", "fail", `/healthz 不可达：${detail}`, `回调 URL：${callbackUrl}；doctor 通过也只是必要不充分条件，最终以飞书回调日志为准`);
+  }
+
+  return createResult("config-publicurl", BRIDGE_GROUP, "公网回调", "pass", `回调 URL：${callbackUrl}；/healthz 当前机器访问通过`);
 }
 
 // Check the local Node.js major version against the runtime minimum.
@@ -830,7 +857,7 @@ export async function runBridgeChecks(options = {}) {
   results.push(await checkConfigExists({ cwd, configPath, state }));
   results.push(await checkConfigFeishu({ cwd, configPath, state }));
   results.push(await checkConfigOpencode({ cwd, configPath, state }));
-  results.push(await checkConfigPublicUrl({ cwd, configPath, state }));
+  results.push(await checkConfigPublicUrl({ ...options, cwd, configPath, state }));
   results.push(await checkNodeVersion({ version: options.version }));
   results.push(await checkDepsInstalled({ cwd }));
   results.push(await checkPythonBin(options));

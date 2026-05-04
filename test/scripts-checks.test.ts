@@ -115,6 +115,54 @@ describe("scripts/checks", () => {
     expect(result.status).toBe("skip");
   });
 
+  it("fails card action publicBaseUrl when it is localhost or HTTP", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-checks-public-url-local-"));
+    await writeConfig(dir, {
+      feishu: {
+        cardActions: {
+          enabled: true,
+          path: "/webhook/card",
+          verificationToken: "token",
+          encryptKey: "encrypt",
+        },
+      },
+      server: {
+        publicBaseUrl: "http://127.0.0.1:3000/",
+      },
+    });
+
+    const result = await checkConfigPublicUrl({ cwd: dir });
+
+    expect(result.status).toBe("fail");
+    expect(result.detail).toContain("HTTPS");
+  });
+
+  it("checks card action healthz and shows callback URL", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-checks-public-url-healthz-"));
+    await writeConfig(dir, {
+      feishu: {
+        cardActions: {
+          enabled: true,
+          path: "/webhook/card",
+          verificationToken: "token",
+          encryptKey: "encrypt",
+        },
+      },
+      server: {
+        publicBaseUrl: "https://bridge.test/",
+      },
+    });
+
+    const result = await checkConfigPublicUrl({
+      cwd: dir,
+      fetchImpl: vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })),
+    });
+
+    expect(result.status).toBe("pass");
+    expect(result.detail).toContain("https://bridge.test/webhook/card");
+    expect(result.detail).toContain("/healthz");
+  });
+
   it("warns when opencode.directory exists but is not a git repo", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-checks-worktree-"));
     const workspace = path.join(dir, "workspace");

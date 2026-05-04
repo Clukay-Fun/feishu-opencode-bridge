@@ -116,6 +116,28 @@ https://bridge.example.com/webhook/card
 - verification token
 - encrypt key（如果启用了加密推送）
 
+配置完成后先运行：
+
+```bash
+bridge doctor
+```
+
+`cardActions.enabled=true` 时，doctor 会检查：
+
+- `server.publicBaseUrl` 必须是非示例、非 localhost 的 HTTPS 公网地址。
+- 回调 URL 会按 `publicBaseUrl + feishu.cardActions.path` 展示，默认是 `/webhook/card`。
+- 当前机器访问 `${publicBaseUrl}/healthz` 必须返回 2xx。
+
+注意：doctor 从当前机器访问 `/healthz` 通过只是必要不充分条件，不等于飞书后端一定能访问。最终仍以 Bridge 的 HTTP callback 日志为准。
+
+排错顺序建议：
+
+1. 先运行 `bridge doctor`，确认公网回调配置没有硬错误。
+2. 再确认 Caddy / ngrok / 反向代理能把 HTTPS 流量转发到 Bridge。
+3. 点击一次权限卡按钮，查看 `http/card-action` 和 `http/server` 日志。
+4. 如需不触发 OpenCode 权限流，只验证按钮回调，可在飞书发送 `/button-test`，点击“点击测试回调”按钮。
+5. 如果按钮链路仍失败，先用 `/allow once`、`/allow always`、`/deny` 文本命令兜底完成当前权限处理。
+
 ## 7. 启动 Bridge
 
 ```bash
