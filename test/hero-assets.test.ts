@@ -44,9 +44,9 @@ describe("hero assets", () => {
     const readme = await readFile(path.resolve("README.md"), "utf8");
     const extensionGuide = await readFile(path.resolve("docs/guidelines/business-extension-development.md"), "utf8");
 
-    expect(readme).toContain("为什么不直接用 Claude / ChatGPT");
-    expect(readme).toContain("为什么不直接用成熟法律 AI");
-    expect(readme).toContain("不适合谁");
+    expect(readme).toContain("## 📢 项目动态");
+    expect(readme).toContain("v0.1.56");
+    expect(readme).toContain("portable 包");
     expect(readme).toContain("数据流向与隐私说明");
     expect(extensionGuide).toContain("实验性能力");
     expect(extensionGuide).toContain("受信代码");
