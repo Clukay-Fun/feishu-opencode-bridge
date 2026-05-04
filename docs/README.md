@@ -12,6 +12,7 @@
 
 - [架构基线](architecture-baseline.md)：freeze 之后的运行时边界、data-only extension meta / runtime extension seam 和 reviewer 规则。
 - [部署说明](deploy.md)：本地与服务器部署、环境变量、Caddy、健康检查和验收步骤。
+- [飞书卡片回调排障记录](troubleshooting-card-actions.md)：记录 quick tunnel、端口残留和“返回数据不是合法 JSON”的排查路径。
 - [飞书 Markdown 输出规范](feishu-markdown.md)：面向飞书输出的 Markdown 规则与长文本排版约束。
 - [可观测性事件规范](observability/event-schema.md)：运行时可观测性的稳定事件名与日志字段。
 
