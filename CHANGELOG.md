@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.57 - 2026-05-04
+
+### Added
+- Added structured invoice detection and field repair before writing invoice ledger records.
+- Added natural-language skill intent routing for contract extraction, invoice recognition, case management, and contract drafting.
+- Added local-path evidence inputs so contract and invoice workflows can process explicitly provided local files.
+- Added troubleshooting documentation for Feishu card-action callback JSON validation failures.
+
+### Changed
+- Changed invoice ledger normalization to prefer the `购买方` field while keeping card display compatible with older `付款方` records.
+- Improved Feishu Bitable record writes by filtering unknown fields against the live table schema after `FieldNameNotFound`.
+
 ## 0.1.56 - 2026-05-03
 
 ### Added
