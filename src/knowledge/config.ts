@@ -127,6 +127,23 @@ const KnowledgeBaseModelsSchema = z.object({
   rerank: KnowledgeBaseModelRefSchema.optional(),
 }).default({});
 
+const KnowledgeBaseObsidianSchema = z.object({
+  enabled: z.boolean().default(false),
+  vaultPath: z.string().min(1).optional(),
+  baseDir: z.string().min(1).default("Legal Knowledge"),
+  enableWikiLinks: z.boolean().default(true),
+}).default({});
+
+const PkulawTransportSchema = z.enum(["auto", "stdio", "http"]);
+
+const KnowledgeBaseAuthoritySourcesSchema = z.object({
+  pkulaw: z.object({
+    enabled: z.boolean().default(false),
+    cliCommand: z.string().min(1).default("pkulaw-mcp"),
+    transport: PkulawTransportSchema.default("auto"),
+  }).default({}),
+}).default({});
+
 const KnowledgeBaseConfigSchema = z.object({
   enabled: z.boolean().default(false),
   autoDetect: KnowledgeBaseAutoDetectSchema,
@@ -136,6 +153,8 @@ const KnowledgeBaseConfigSchema = z.object({
   models: KnowledgeBaseModelsSchema,
   ingest: KnowledgeBaseIngestSchema,
   parser: KnowledgeBaseParserSchema,
+  obsidian: KnowledgeBaseObsidianSchema,
+  authoritySources: KnowledgeBaseAuthoritySourcesSchema,
 }).default({});
 
 type KnowledgeBaseParsedConfig = z.infer<typeof KnowledgeBaseConfigSchema>;
@@ -218,6 +237,19 @@ export type KnowledgeBaseConfig = {
       useChartRecognition: boolean;
     };
   } | undefined;
+  obsidian?: {
+    enabled: boolean;
+    vaultPath?: string | undefined;
+    baseDir: string;
+    enableWikiLinks: boolean;
+  } | undefined;
+  authoritySources?: {
+    pkulaw: {
+      enabled: boolean;
+      cliCommand: string;
+      transport: "auto" | "stdio" | "http";
+    };
+  } | undefined;
 };
 
 export const knowledgeBaseConfigDefinition: ModuleConfigDefinition<KnowledgeBaseParsedConfig, KnowledgeBaseConfig> = {
@@ -267,6 +299,14 @@ function validateKnowledgeBaseConfig(value: KnowledgeBaseParsedConfig, context: 
       code: z.ZodIssueCode.custom,
       path: ["storage", "bitable", "tableId"],
       message: "knowledgeBase.enabled=true 时必须提供 knowledgeBase.storage.bitable.tableId",
+    });
+  }
+
+  if (value.obsidian.enabled && !value.obsidian.vaultPath) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["obsidian", "vaultPath"],
+      message: "knowledgeBase.obsidian.enabled=true 时必须提供 vaultPath",
     });
   }
 }
@@ -361,6 +401,21 @@ function normalizeKnowledgeBaseConfig(
         useDocOrientationClassify: parsed.parser.paddleocrAiStudio.useDocOrientationClassify,
         useDocUnwarping: parsed.parser.paddleocrAiStudio.useDocUnwarping,
         useChartRecognition: parsed.parser.paddleocrAiStudio.useChartRecognition,
+      },
+    },
+    obsidian: {
+      enabled: parsed.obsidian.enabled,
+      vaultPath: parsed.obsidian.vaultPath
+        ? context.resolveRelative(context.baseDir, parsed.obsidian.vaultPath)
+        : undefined,
+      baseDir: parsed.obsidian.baseDir,
+      enableWikiLinks: parsed.obsidian.enableWikiLinks,
+    },
+    authoritySources: {
+      pkulaw: {
+        enabled: parsed.authoritySources.pkulaw.enabled,
+        cliCommand: parsed.authoritySources.pkulaw.cliCommand,
+        transport: parsed.authoritySources.pkulaw.transport,
       },
     },
   };

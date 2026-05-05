@@ -12,7 +12,7 @@ import type { AppConfig } from "../config/schema.js";
 import type { Logger } from "../logging/logger.js";
 import type { OpenCodeMessage, OpenCodeModelRef } from "../opencode/client.js";
 
-export type UsageSource = "provider" | "estimated";
+export type UsageSource = "provider" | "estimated" | "external-call";
 
 export type UsageLedgerEntry = {
   schemaVersion: 1;
@@ -22,6 +22,9 @@ export type UsageLedgerEntry = {
   provider: string;
   model: string;
   source: UsageSource;
+  tool?: string | undefined;
+  operation?: string | undefined;
+  durationMs?: number | undefined;
   inputTokens: number;
   outputTokens: number;
   cachedInputTokens: number;
@@ -127,6 +130,48 @@ export class CostTracker {
       provider: entry.provider,
       model: entry.model,
     };
+  }
+
+  async recordExternalCall(input: {
+    turnId: string;
+    sessionId: string;
+    provider: string;
+    tool: string;
+    operation: string;
+    durationMs: number;
+  }): Promise<UsageLedgerEntry | null> {
+    if (!this.resolvedConfig.enabled) {
+      return null;
+    }
+    const entry: UsageLedgerEntry = {
+      schemaVersion: 1,
+      createdAt: new Date().toISOString(),
+      turnId: input.turnId,
+      sessionId: input.sessionId,
+      provider: input.provider,
+      // 兼容既有 ledger schema；真实工具语义放在 tool / operation。
+      model: `${input.provider}/${input.tool}`,
+      source: "external-call",
+      tool: input.tool,
+      operation: input.operation,
+      durationMs: input.durationMs,
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedInputTokens: 0,
+      totalTokens: 0,
+      currency: "CNY",
+    };
+    await mkdir(path.dirname(this.ledgerPath), { recursive: true });
+    await appendFile(this.ledgerPath, `${JSON.stringify(entry)}\n`, "utf8");
+    this.logger.log("cost/usage", "external call recorded", {
+      turnId: entry.turnId,
+      sessionId: entry.sessionId,
+      provider: entry.provider,
+      tool: entry.tool,
+      operation: entry.operation,
+      durationMs: entry.durationMs,
+    });
+    return entry;
   }
 
   async summarizeToday(now = new Date()): Promise<CostWindowSummary> {

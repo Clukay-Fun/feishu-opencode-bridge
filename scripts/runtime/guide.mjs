@@ -137,9 +137,11 @@ function renderGuide(view, logger) {
 
 function buildHeroSteps() {
   return [
-    "合同起草：复制 examples/hero/contract-draft-prompt.txt 到飞书发送。",
-    "合同录入：上传 examples/hero/labor-contract.txt，并按合同助手提示处理。",
-    "知识库入库：上传 examples/hero/labor-law-faq.md，再发送 /kb-ingest-start。",
+    "上传样例材料：使用 examples/hero/ 或 test/fixtures/labor-harness/wrongful-termination.json 中的违法解除素材。",
+    "启动劳动分析：在飞书发送 /劳动分析，补充材料后发送 /劳动分析结束。",
+    "确认检索词：按卡片提示确认或编辑检索词，再查询本地知识库 / pkulaw 权威源。",
+    "查看输出：重点看争议焦点、请求权基础、证据缺口、策略与文书草稿摘要。",
+    "查看回归：本地运行 npm run labor:harness，按终端输出路径打开报告。",
   ];
 }
 

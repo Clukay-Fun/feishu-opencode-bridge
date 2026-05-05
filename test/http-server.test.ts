@@ -137,6 +137,39 @@ describe("startBridgeHttpServer", () => {
     expect(await response.json()).toEqual({ card: { title: "权限已处理" } });
   });
 
+  it("delegates non-permission card actions to the generic handler", async () => {
+    const port = await reservePort();
+    const handlePermissionCardAction = vi.fn(async () => ({ card: { title: "权限已处理" } }));
+    const handleCardAction = vi.fn(async () => ({ toast: { type: "success", content: "已处理" } }));
+    const server = await startBridgeHttpServer(
+      createConfig(port, { enabled: true }),
+      { handlePermissionCardAction, handleCardAction },
+      logger(),
+    );
+    servers.push(server);
+
+    const value = {
+      kind: "labor-authority-search",
+      action: "confirm",
+      conversationKey: "chat-1:thread-1",
+      nonce: "nonce_labor",
+    };
+    const response = await fetch(`http://127.0.0.1:${port}/webhook/card`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        open_id: "ou_requester",
+        open_message_id: "om_labor_1",
+        action: { value },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(handlePermissionCardAction).not.toHaveBeenCalled();
+    expect(handleCardAction).toHaveBeenCalledWith("ou_requester", "om_labor_1", value);
+    expect(await response.json()).toEqual({ toast: { type: "success", content: "已处理" } });
+  });
+
   it("extracts nested callback identifiers for permission actions", async () => {
     const port = await reservePort();
     const handlePermissionCardAction = vi.fn(async () => ({ card: { title: "权限已处理" } }));

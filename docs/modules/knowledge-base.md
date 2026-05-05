@@ -96,6 +96,15 @@ bridge 读写 Bitable 使用的是 `config.json` 中 `feishu.appId` / `feishu.ap
 @bot 读取 https://example.com/law 这个网页并入库
 ```
 
+也支持先上传材料，再用自然语言触发入库：
+
+```
+上传：《公司法实务.pdf》《合同法案例.pdf》《知产合规.pdf》
+@bot 把刚才上传的三本书收入知识库
+```
+
+这种入口只在用户明确表达入库意图时触发。普通的“总结一下刚才的文件”仍走默认文件总结，不会写入知识库。
+
 URL 入库路径：bridge 创建一次 OpenCode 短生命周期 session，使用 `models.webRead` 指定的模型读取网页并整理成 Markdown，再交给知识库入库管线。结束入库时发送：
 
 ```

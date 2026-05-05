@@ -532,6 +532,73 @@ describe("loadConfig memory settings", () => {
     await expect(loadConfig(configPath)).rejects.toThrow("vaultPath");
   });
 
+  it("normalizes knowledge Obsidian and pkulaw authority source config", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({
+      ...baseConfig(),
+      embeddings: {
+        provider: {
+          baseUrl: "http://127.0.0.1:11434/v1",
+          apiKey: "test",
+          model: "embedding",
+        },
+      },
+      knowledgeBase: {
+        enabled: true,
+        storage: {
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+          },
+        },
+        obsidian: {
+          enabled: true,
+          vaultPath: "./vault",
+          baseDir: "法律知识",
+        },
+        authoritySources: {
+          pkulaw: {
+            enabled: true,
+            cliCommand: "pkulaw-mcp",
+            transport: "http",
+          },
+        },
+      },
+    }), "utf8");
+
+    const config = await loadConfig(configPath);
+
+    expect(config.knowledgeBase.obsidian).toEqual(expect.objectContaining({
+      enabled: true,
+      vaultPath: path.join(dir, "vault"),
+      baseDir: "法律知识",
+      enableWikiLinks: true,
+    }));
+    expect(config.knowledgeBase.authoritySources?.pkulaw).toEqual({
+      enabled: true,
+      cliCommand: "pkulaw-mcp",
+      transport: "http",
+    });
+  });
+
+  it("rejects unsupported pkulaw transport config", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({
+      ...baseConfig(),
+      knowledgeBase: {
+        authoritySources: {
+          pkulaw: {
+            transport: "websocket",
+          },
+        },
+      },
+    }), "utf8");
+
+    await expect(loadConfig(configPath)).rejects.toThrow(/auto|stdio|http|Invalid enum value/);
+  });
+
   it("fills contract assistant defaults when omitted", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-"));
     const configPath = path.join(dir, "config.json");

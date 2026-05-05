@@ -4,6 +4,8 @@
  * - 区分单材料提取与多材料汇总两类任务。
  * - 让模型输出结构稳定、便于后续程序消费。
  */
+import { LABOR_OUTPUT_TEMPLATE_HINTS } from "./templates/index.js";
+
 export function buildLaborMaterialExtractPrompt(fileName: string, content: string, localPath?: string): string {
   return [
     "你是劳动争议材料分析助手。",
@@ -50,6 +52,13 @@ export function buildLaborAggregatePrompt(materialsJson: string, notesText: stri
     "- missingEvidence: 字符串数组",
     "- nextActions: 字符串数组",
     "- legalSupports: 数组，元素字段为 issue、rule、relation",
+    "- keyIssues: 字符串数组，归纳 3-6 个争议焦点",
+    "- claimBasis: 数组，元素字段为 claim、basis、evidence、risk、reviewNote",
+    "- strategy: 对象，字段为 litigation、mediation、response，均为字符串数组",
+    "- draftDocuments: 数组，元素字段为 type、summary、content",
+    "",
+    "劳动领域模板约束：",
+    LABOR_OUTPUT_TEMPLATE_HINTS,
     "",
     "规则：",
     "1. 重点回答：现有证据能支持哪些劳动主张，缺哪些关键材料。",

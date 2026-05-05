@@ -644,11 +644,13 @@ describe("scripts/backup", () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-backup-"));
     const bridgeHome = path.join(dir, "bridge-home");
     await mkdir(path.join(bridgeHome, "data"), { recursive: true });
+    await mkdir(path.join(bridgeHome, "data", "pkulaw-cache"), { recursive: true });
     await mkdir(path.join(bridgeHome, "logs"), { recursive: true });
     await mkdir(path.join(bridgeHome, "extensions", "demo"), { recursive: true });
     await mkdir(path.join(bridgeHome, ".runtime", "node"), { recursive: true });
     await writeFile(path.join(bridgeHome, "config.json"), "{}");
     await writeFile(path.join(bridgeHome, "data", "knowledge-base.db"), "db");
+    await writeFile(path.join(bridgeHome, "data", "pkulaw-cache", "cached.json"), "{}");
     await writeFile(path.join(bridgeHome, "logs", "bridge.log"), "log");
     await writeFile(path.join(bridgeHome, "extensions", "demo", "manifest.json"), "{}");
     await writeFile(path.join(bridgeHome, ".runtime", "node", "secret.txt"), "runtime");
@@ -660,6 +662,7 @@ describe("scripts/backup", () => {
 
     await expect(readFile(path.join(restored, "config.json"), "utf8")).resolves.toBe("{}");
     await expect(readFile(path.join(restored, "data", "knowledge-base.db"), "utf8")).resolves.toBe("db");
+    await expect(readFile(path.join(restored, "data", "pkulaw-cache", "cached.json"), "utf8")).rejects.toThrow();
     await expect(readFile(path.join(restored, "extensions", "demo", "manifest.json"), "utf8")).resolves.toBe("{}");
     await expect(readFile(path.join(restored, ".runtime", "node", "secret.txt"), "utf8")).rejects.toThrow();
   });

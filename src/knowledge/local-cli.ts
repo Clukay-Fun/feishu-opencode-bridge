@@ -346,6 +346,24 @@ async function inspectKnowledgeDoctor(runtime: CliRuntime, options: { online: bo
       ? "已允许外部 OCR API 上传。"
       : "外部 OCR API 上传默认关闭。",
   });
+  checks.push({
+    name: "obsidian",
+    ok: runtime.config.knowledgeBase.obsidian?.enabled
+      ? Boolean(runtime.config.knowledgeBase.obsidian.vaultPath)
+      : true,
+    detail: runtime.config.knowledgeBase.obsidian?.enabled
+      ? `Obsidian 导出已启用：${runtime.config.knowledgeBase.obsidian.vaultPath ?? "缺少 vaultPath"}`
+      : "Obsidian 导出未启用。",
+  });
+  checks.push({
+    name: "pkulaw",
+    ok: runtime.config.knowledgeBase.authoritySources?.pkulaw.enabled
+      ? Boolean(runtime.config.knowledgeBase.authoritySources.pkulaw.cliCommand)
+      : true,
+    detail: runtime.config.knowledgeBase.authoritySources?.pkulaw.enabled
+      ? `pkulaw transport=${runtime.config.knowledgeBase.authoritySources.pkulaw.transport} command=${runtime.config.knowledgeBase.authoritySources.pkulaw.cliCommand}`
+      : "pkulaw 权威源未启用，本地知识库检索照常可用。",
+  });
 
   if (options.online) {
     checks.push(await wrapDoctorCheck("opencode.health", async () => {

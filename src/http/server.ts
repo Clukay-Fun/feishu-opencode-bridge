@@ -21,6 +21,11 @@ type CardActionPort = {
     openMessageId: string,
     value: Record<string, unknown>,
   ): Promise<Record<string, unknown>>;
+  handleCardAction?(
+    actorOpenId: string,
+    openMessageId: string,
+    value: Record<string, unknown>,
+  ): Promise<Record<string, unknown>>;
 };
 
 /** 尝试把值收窄为普通对象。 */
@@ -198,11 +203,23 @@ export async function startBridgeHttpServer(
               return buildCardActionNotice("按钮回调已到达 Bridge，链路正常。");
             }
 
-            return await actions.handlePermissionCardAction(
-              callback.actorOpenId,
-              callback.openMessageId,
-              callback.actionValue,
-            );
+            if (!callback.actionValue.kind || callback.actionValue.kind === "permission") {
+              return await actions.handlePermissionCardAction(
+                callback.actorOpenId,
+                callback.openMessageId,
+                callback.actionValue,
+              );
+            }
+
+            if (actions.handleCardAction) {
+              return await actions.handleCardAction(
+                callback.actorOpenId,
+                callback.openMessageId,
+                callback.actionValue,
+              );
+            }
+
+            return buildCardActionNotice("未识别的卡片操作，请使用文本命令兜底。");
           });
         },
       ),

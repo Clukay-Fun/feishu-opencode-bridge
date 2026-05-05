@@ -172,6 +172,88 @@ describe("knowledge base bridge flow", () => {
     expect(JSON.stringify(replyPayloads)).not.toContain("已收到结束指令，将处理完当前队列后结束");
   });
 
+  it("ingests recently uploaded files when the next message asks to save them to the knowledge base", async () => {
+    const outbound = createOutbound();
+    const eventStream = new FakeOpenCodeEventStream();
+    const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "文件总结完成。" });
+    const ingestFile = vi.fn(async (file) => ({
+      sourceFile: file.fileName,
+      rawExtractedCount: 2,
+      dedupedCount: 0,
+      extractedCount: 2,
+      tagCounts: { 通用法律: 2 },
+      durationMs: 1_000,
+    }));
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
+      knowledge: {
+        async query() {
+          return { question: "", results: [] };
+        },
+        ingestFile,
+        async syncMirror() {},
+        close() {},
+      },
+      opencode,
+      eventStream,
+      memory: null,
+    });
+
+    await app.handleIncomingMessage(createUploadedFileMessage("公司法实务.pdf", "om_book_1", "file_book_1"));
+    await app.handleIncomingMessage(createUploadedFileMessage("合同法案例.pdf", "om_book_2", "file_book_2"));
+    await app.handleIncomingMessage(createUploadedFileMessage("知产合规.pdf", "om_book_3", "file_book_3"));
+    expect(ingestFile).not.toHaveBeenCalled();
+
+    await app.handleIncomingMessage(createTextMessage("把刚才上传的三本书收入知识库", "om_ingest_recent"));
+
+    await vi.waitFor(() => {
+      expect(ingestFile).toHaveBeenCalledTimes(3);
+    });
+    expect(ingestFile.mock.calls.map((call) => call[0].fileName)).toEqual([
+      "公司法实务.pdf",
+      "合同法案例.pdf",
+      "知产合规.pdf",
+    ]);
+    const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+    const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+    expect(JSON.stringify(replyPayloads)).toContain("知识入库已开启");
+    expect(JSON.stringify(replyPayloads)).toContain("已收到入库素材");
+    expect(JSON.stringify(updatedPayloads)).toContain("知识入库完成");
+    expect(JSON.stringify(updatedPayloads)).toContain("公司法实务.pdf 等 3 个素材");
+    expect(JSON.stringify(updatedPayloads)).toContain("入库 6");
+    expect(JSON.stringify(updatedPayloads)).toContain("公司法实务.pdf");
+    expect(JSON.stringify(updatedPayloads)).toContain("合同法案例.pdf");
+    expect(JSON.stringify(updatedPayloads)).toContain("知产合规.pdf");
+  });
+
+  it("does not hijack recent uploaded files when the next message only asks for a summary", async () => {
+    const outbound = createOutbound();
+    const eventStream = new FakeOpenCodeEventStream();
+    const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "普通总结完成。" });
+    const ingestFile = vi.fn();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
+      knowledge: {
+        async query() {
+          return { question: "", results: [] };
+        },
+        ingestFile,
+        async syncMirror() {},
+        close() {},
+      },
+      opencode,
+      eventStream,
+      memory: null,
+    });
+
+    await app.handleIncomingMessage(createUploadedFileMessage("说明.txt", "om_recent_file", "file_recent"));
+    await app.handleIncomingMessage(createTextMessage("帮我总结一下刚才的文件", "om_summary_recent"));
+
+    await vi.waitFor(() => {
+      const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+      expect(JSON.stringify(updatedPayloads)).toContain("普通总结完成");
+    });
+    expect(ingestFile).not.toHaveBeenCalled();
+  });
+
   it("keeps regular files as local-path inputs for OpenCode and adds a lightweight text preview", async () => {
     const outbound = {
       ...createOutbound(),
@@ -1183,6 +1265,18 @@ function createIngestReplyMessage(text: string, messageId: string): IncomingChat
     ...createTextMessage(text, messageId),
     rootId: "om_reply",
     parentId: "om_reply",
+  };
+}
+
+function createUploadedFileMessage(fileName: string, messageId: string, fileKey: string): IncomingChatMessage {
+  return {
+    ...createTextMessage(fileName, messageId),
+    messageType: "file",
+    file: {
+      fileKey,
+      fileName,
+      size: 1_024,
+    },
   };
 }
 

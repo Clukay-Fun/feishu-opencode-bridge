@@ -247,9 +247,9 @@ describe("buildPostPayload", () => {
     const serialized = JSON.stringify(content);
 
     expect(content.header.title.content).toBe("60 秒新手引导");
-    expect(serialized).toContain("contract-draft-prompt.txt");
-    expect(serialized).toContain("labor-contract.txt");
-    expect(serialized).toContain("/kb-ingest-start");
+    expect(serialized).toContain("/劳动分析");
+    expect(serialized).toContain("检索词");
+    expect(serialized).toContain("labor:harness");
     expect(serialized).toContain("bridge doctor workspace");
   });
 

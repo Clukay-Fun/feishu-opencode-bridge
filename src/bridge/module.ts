@@ -46,6 +46,11 @@ export interface RuntimeModule {
   ): Promise<boolean>;
   beforeTurn?(context: RuntimeModuleBeforeTurnContext): Promise<{ systemBlocks?: string[] } | void>;
   afterTurn?(context: RuntimeModuleAfterTurnContext): Promise<void>;
+  handleCardAction?(
+    actorOpenId: string,
+    openMessageId: string,
+    value: Record<string, unknown>,
+  ): Promise<Record<string, unknown> | null>;
 }
 
 /**
@@ -170,10 +175,34 @@ export class ModuleManager {
     }
   }
 
+  /** 依次询问模块是否处理业务卡片按钮回调。 */
+  async handleCardAction(
+    actorOpenId: string,
+    openMessageId: string,
+    value: Record<string, unknown>,
+  ): Promise<Record<string, unknown> | null> {
+    for (const module of this.modules) {
+      if (!module.handleCardAction) {
+        continue;
+      }
+      const startedAt = Date.now();
+      try {
+        const result = await module.handleCardAction(actorOpenId, openMessageId, value);
+        if (result) {
+          this.logModuleInvoked(module, "handleCardAction", "claimed", startedAt);
+          return result;
+        }
+      } catch (error) {
+        this.logModuleFailed(module, "handleCardAction", error);
+      }
+    }
+    return null;
+  }
+
   /** 记录模块调用成功日志。 */
   private logModuleInvoked(
     module: RuntimeModule,
-    hook: "handleMessage" | "claimFileInstruction" | "beforeTurn" | "afterTurn" | "stop",
+    hook: "handleMessage" | "claimFileInstruction" | "beforeTurn" | "afterTurn" | "handleCardAction" | "stop",
     result: "claimed" | "completed",
     startedAt: number,
   ): void {
@@ -191,7 +220,7 @@ export class ModuleManager {
   /** 记录模块调用失败日志。 */
   private logModuleFailed(
     module: RuntimeModule,
-    hook: "handleMessage" | "claimFileInstruction" | "beforeTurn" | "afterTurn" | "stop",
+    hook: "handleMessage" | "claimFileInstruction" | "beforeTurn" | "afterTurn" | "handleCardAction" | "stop",
     error: unknown,
   ): void {
     if (!this.logger) {

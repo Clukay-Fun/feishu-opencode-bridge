@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { detectKnowledgeWebIngest, detectLegalQuestion } from "../src/knowledge/detector.js";
+import { detectKnowledgeMaterialIngestIntent, detectKnowledgeWebIngest, detectLegalQuestion } from "../src/knowledge/detector.js";
 
 describe("detectLegalQuestion", () => {
   it("matches high-signal legal questions conservatively", () => {
@@ -54,5 +54,35 @@ describe("detectKnowledgeWebIngest", () => {
     const result = detectKnowledgeWebIngest("https://example.com/law", { requireIngestIntent: false });
     expect(result.matched).toBe(true);
     expect(result.url).toBe("https://example.com/law");
+  });
+});
+
+describe("detectKnowledgeMaterialIngestIntent", () => {
+  it("matches natural language requests to ingest recent materials", () => {
+    const samples = [
+      "把刚才上传的三本书收入知识库",
+      "这些文件整理到知识库",
+      "上面的材料写入知识库",
+      "入库",
+    ];
+
+    for (const sample of samples) {
+      const result = detectKnowledgeMaterialIngestIntent(sample);
+      expect(result.matched, sample).toBe(true);
+      expect(result.confidence, sample).toBeGreaterThanOrEqual(0.7);
+    }
+  });
+
+  it("keeps summaries and negative instructions out of ingest routing", () => {
+    const samples = [
+      "帮我总结一下刚才的文件",
+      "先不要入库，看看这是什么材料",
+      "这些文件不要写入知识库",
+    ];
+
+    for (const sample of samples) {
+      const result = detectKnowledgeMaterialIngestIntent(sample);
+      expect(result.matched, sample).toBe(false);
+    }
   });
 });

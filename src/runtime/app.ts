@@ -243,6 +243,7 @@ export class BridgeApp {
       transport,
       logger: this.logger,
       opencode: this.opencode as OpenCodeClient,
+      costTracker: this.costTracker,
       whitelist: this.whitelist,
       getSessionWindow: (conversationKey, chatType) => this.getSessionWindow(conversationKey, chatType),
       saveSessionWindow: async (conversationKey, window) => await this.saveSessionWindow(conversationKey, window),
@@ -329,6 +330,21 @@ export class BridgeApp {
     value: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
     return await this.permissionManager.handleCardAction(actorOpenId, openMessageId, value);
+  }
+
+  /** 处理业务模块卡片回调。 */
+  async handleCardAction(
+    actorOpenId: string,
+    openMessageId: string,
+    value: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const result = await this.moduleManager.handleCardAction(actorOpenId, openMessageId, value);
+    return result ?? {
+      toast: {
+        type: "warning",
+        content: "未识别的卡片操作，请使用文本命令兜底。",
+      },
+    };
   }
 
   // #endregion

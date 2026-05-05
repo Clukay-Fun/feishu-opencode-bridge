@@ -16,6 +16,7 @@ import type { KnowledgeRuntimeModule } from "../knowledge/runtime-module.js";
 import type { Logger } from "../logging/logger.js";
 import { MemoryService } from "../memory/index.js";
 import type { OpenCodeClient } from "../opencode/client.js";
+import type { CostTracker } from "./cost-tracker.js";
 import type { SessionBindingRecord, SessionWindowRecord } from "../store/mappings.js";
 import type { WhitelistStore } from "../store/whitelist.js";
 import type { IncomingChatMessage } from "./app.js";
@@ -45,6 +46,7 @@ export function createRuntimeModules(options: {
   >;
   memory?: MemoryService | null;
   knowledge?: KnowledgeBasePort | null;
+  costTracker?: Pick<CostTracker, "recordExternalCall"> | undefined;
   externalExtensions?: readonly ExtensionDefinition[] | undefined;
   whitelist: Pick<WhitelistStore, "bind">;
   getSessionWindow(conversationKey: string, chatType?: string): SessionWindowRecord;
@@ -71,6 +73,7 @@ export function createRuntimeModules(options: {
       opencode: options.opencode,
       memory,
       knowledge,
+      costTracker: options.costTracker,
       whitelist: options.whitelist,
       getSessionWindow: options.getSessionWindow,
       saveSessionWindow: options.saveSessionWindow,

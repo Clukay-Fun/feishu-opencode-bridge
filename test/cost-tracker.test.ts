@@ -83,6 +83,30 @@ describe("CostTracker", () => {
     expect(summary?.totalTokens).toBeGreaterThan(0);
     await expect(tracker.isDailyLimitExceeded()).resolves.toBe(true);
   });
+
+  it("records external tool calls without persisting user text", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-cost-external-"));
+    const tracker = new CostTracker({
+      enabled: true,
+      currency: "CNY",
+      modelPrices: {},
+    }, dir, fakeLogger());
+
+    await tracker.recordExternalCall({
+      turnId: "turn_3",
+      sessionId: "labor-chat",
+      provider: "pkulaw",
+      tool: "law-semantic",
+      operation: "search_article",
+      durationMs: 123,
+    });
+
+    const ledger = await readFile(path.join(dir, "usage-ledger.jsonl"), "utf8");
+    expect(ledger).toContain("\"source\":\"external-call\"");
+    expect(ledger).toContain("\"tool\":\"law-semantic\"");
+    expect(ledger).toContain("\"operation\":\"search_article\"");
+    expect(ledger).not.toContain("违法解除劳动合同");
+  });
 });
 
 function fakeLogger() {

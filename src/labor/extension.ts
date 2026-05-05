@@ -5,6 +5,7 @@
  * - 复用 data-only meta 的 id/configKey/commands，避免字符串漂移。
  */
 import type { BuiltinExtensionDefinition } from "../extensions/definition.js";
+import { PkulawAuthorityService } from "../knowledge/pkulaw-authority.js";
 import type { OpenCodeClient } from "../opencode/client.js";
 import { DEFAULT_LABOR_SKILL_CONFIG } from "./config.js";
 import { laborSkillExtensionMeta } from "./extension.meta.js";
@@ -17,6 +18,14 @@ export const laborSkillExtension: BuiltinExtensionDefinition = {
   commands: laborSkillExtensionMeta.commands,
   createModule(context) {
     const config = context.config.laborSkill ?? DEFAULT_LABOR_SKILL_CONFIG;
+    const authority = context.config.knowledgeBase.authoritySources?.pkulaw.enabled
+      ? new PkulawAuthorityService(
+        context.config.knowledgeBase,
+        context.config.storage.dataDir,
+        context.logger,
+        context.costTracker,
+      )
+      : null;
     const service = config.enabled
       ? new LaborSkillService(
         config,
@@ -25,6 +34,7 @@ export const laborSkillExtension: BuiltinExtensionDefinition = {
         context.opencode as OpenCodeClient,
         context.logger,
         context.knowledge,
+        authority,
         context.config.knowledgeBase?.parser,
       )
       : null;

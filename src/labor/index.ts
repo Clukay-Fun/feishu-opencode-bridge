@@ -11,6 +11,11 @@ import path from "node:path";
 import type { LaborSkillConfig } from "../config/schema.js";
 import type { DocumentParserOptions } from "../document-pipeline/index.js";
 import type { KnowledgeBasePort } from "../knowledge/index.js";
+import type {
+  PkulawAuthorityItem,
+  PkulawAuthoritySearchResult,
+  PkulawAuthorityService,
+} from "../knowledge/pkulaw-authority.js";
 import type { Logger } from "../logging/logger.js";
 import type { OpenCodeClient, OpenCodeModelRef, OpenCodePromptRequest } from "../opencode/client.js";
 import { extractAssistantText } from "../runtime/app-helpers.js";
@@ -23,6 +28,7 @@ import {
 import { syncEvidenceLedger, type EvidenceLedgerResourcePort } from "../workflows/evidence-ledger.js";
 import { generateCaseWorkflowWorkbench } from "../workflows/case-workflow.js";
 import { buildTimelineMermaid, escapeMermaidLabel } from "../workflows/timeline-build.js";
+import { checkLaborLegalCitations, formatCitationReviewText } from "./legal-citation.js";
 import { buildLaborAggregatePrompt, buildLaborMaterialExtractPrompt } from "./prompts.js";
 
 type OpenCodePort = Pick<OpenCodeClient, "createSession" | "postMessageSync" | "deleteSession">;
@@ -49,6 +55,18 @@ export type LaborAggregateResult = {
   missingEvidence: string[];
   nextActions: string[];
   legalSupports: Array<{ issue: string; rule: string; relation: string }>;
+  keyIssues: string[];
+  claimBasis: ClaimBasisItem[];
+  strategy: { litigation: string[]; mediation: string[]; response: string[] };
+  draftDocuments: Array<{ type: string; summary: string; content?: string | undefined }>;
+};
+
+export type ClaimBasisItem = {
+  claim: string;
+  basis: string;
+  evidence: string[];
+  risk?: string | undefined;
+  reviewNote?: string | undefined;
 };
 
 export type LaborAnalyzeResult = {
@@ -63,6 +81,17 @@ export type LaborAnalyzeResult = {
   extractedMaterials: LaborMaterialExtraction[];
   aggregate: LaborAggregateResult;
   warnings: string[];
+};
+
+export type LaborAuthoritySearchDraft = {
+  mainQuery: string;
+  alternatives: string[];
+  reason: string;
+};
+
+export type LaborAuthorityAppendResult = {
+  markdown: string;
+  search: PkulawAuthoritySearchResult;
 };
 
 export type LaborMaterialExtractResult = {
@@ -88,10 +117,56 @@ export class LaborSkillService {
     private readonly opencode: OpenCodePort,
     private readonly logger: Logger,
     private readonly knowledge: KnowledgeBasePort | null,
+    private readonly authority: Pick<PkulawAuthorityService, "searchLawSemantic"> | null = null,
     parserOptions?: DocumentParserOptions | undefined,
   ) {
     this.evidenceExtractor = new EvidenceExtractService(resources, opencode, logger, parserOptions);
     this.cacheFilePath = path.join(dataDir, "labor-skill-cache.json");
+  }
+
+  buildAuthoritySearchDraft(result: LaborAnalyzeResult): LaborAuthoritySearchDraft {
+    const aggregate = result.aggregate;
+    const seeds = [
+      ...aggregate.keyIssues,
+      ...aggregate.issues.map((item) => item.issue),
+      ...aggregate.claimBasis.map((item) => item.claim),
+      ...aggregate.missingEvidence.slice(0, 2),
+    ]
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const uniqueSeeds = [...new Set(seeds)].slice(0, 5);
+    const mainQuery = uniqueSeeds[0]
+      ? `劳动争议 ${uniqueSeeds[0]}`
+      : "劳动争议 违法解除劳动合同";
+    const alternatives = uniqueSeeds.slice(1, 5).map((item) => `劳动争议 ${item}`);
+    return {
+      mainQuery,
+      alternatives,
+      reason: "根据劳动分析报告中的争议焦点、请求项和证据缺口生成；确认后只追加权威法规区块，不重跑分析。",
+    };
+  }
+
+  async appendAuthoritySearch(
+    result: LaborAnalyzeResult,
+    input: {
+      query: string;
+      turnId: string;
+      sessionId: string;
+    },
+  ): Promise<LaborAuthorityAppendResult> {
+    const search = this.authority
+      ? await this.authority.searchLawSemantic(input)
+      : {
+        status: "disabled" as const,
+        query: input.query,
+        items: [],
+        durationMs: 0,
+        message: "pkulaw 未启用。",
+      };
+    return {
+      search,
+      markdown: renderPkulawAuthorityAppendMarkdown(result.title, search),
+    };
   }
 
   // #region 对外分析入口
@@ -427,6 +502,20 @@ function normalizeAggregateResult(
     missingEvidence: readStringArray(value, "missingEvidence").map(redactEvidenceText),
     nextActions: readStringArray(value, "nextActions").map(redactEvidenceText),
     legalSupports: legalSupports.length > 0 ? legalSupports : fallbackSupports,
+    keyIssues: readStringArray(value, "keyIssues").map(redactEvidenceText),
+    claimBasis: readRecordArray(value, "claimBasis").map((item) => omitUndefined({
+      claim: redactEvidenceText(readString(item, "claim") ?? "待明确请求项"),
+      basis: redactEvidenceText(readString(item, "basis") ?? "需人工补核"),
+      evidence: readStringArray(item, "evidence").map(redactEvidenceText),
+      risk: redactEvidenceText(readString(item, "risk") ?? ""),
+      reviewNote: redactEvidenceText(readString(item, "reviewNote") ?? ""),
+    })),
+    strategy: normalizeLaborStrategy(readRecord(value, "strategy")),
+    draftDocuments: readRecordArray(value, "draftDocuments").map((item) => omitUndefined({
+      type: redactEvidenceText(readString(item, "type") ?? "待定文书"),
+      summary: redactEvidenceText(readString(item, "summary") ?? ""),
+      content: redactEvidenceText(readString(item, "content") ?? ""),
+    })),
   };
 }
 
@@ -524,6 +613,14 @@ export function renderLaborWorkbenchMarkdown(result: LaborAggregateResult, mater
     "",
     renderEvidenceTable(result.evidenceRows),
     "",
+    "### 争议焦点",
+    "",
+    ...renderBulletList(result.keyIssues.length > 0 ? result.keyIssues : result.issues.map((item) => item.issue)),
+    "",
+    "### 请求权基础审核",
+    "",
+    renderClaimBasisTable(result.claimBasis),
+    "",
     "### 关键事实时间线",
     "",
     renderTimelineTable(result.timeline),
@@ -542,6 +639,23 @@ export function renderLaborWorkbenchMarkdown(result: LaborAggregateResult, mater
     "",
     renderLegalSupportTable(result.legalSupports),
     "",
+    "**法条引用风险**",
+    ...renderBulletList(formatCitationReviewText(checkLaborLegalCitations(JSON.stringify(result)))),
+    "",
+    "### 策略与文书草稿摘要",
+    "",
+    "**诉讼/仲裁推进策略**",
+    ...renderBulletList(result.strategy.litigation),
+    "",
+    "**调解谈判策略**",
+    ...renderBulletList(result.strategy.mediation),
+    "",
+    "**庭审回应策略**",
+    ...renderBulletList(result.strategy.response),
+    "",
+    "**文书草稿摘要**",
+    ...renderDraftDocumentList(result.draftDocuments),
+    "",
     "### 待补材料与下一步建议",
     "",
     "**待补材料**",
@@ -557,6 +671,62 @@ export function renderLaborWorkbenchMarkdown(result: LaborAggregateResult, mater
     "- 输出限制：本底稿不构成正式法律意见，不能替代律师独立判断。",
   ];
   return lines.join("\n");
+}
+
+export function renderPkulawAuthorityAppendMarkdown(title: string, search: PkulawAuthoritySearchResult): string {
+  const lines = [
+    `### ${title}｜权威法规补充`,
+    "",
+    "> 本区块来自北大法宝 law-semantic 检索，只作为权威法规线索并列展示；不替换本地知识库结论，也未触发劳动分析二次生成。",
+    "",
+    `- 检索词：${redactEvidenceText(search.query || "未生成")}`,
+    `- 检索状态：${localizePkulawStatus(search.status)}`,
+    `- 耗时：${search.durationMs}ms`,
+    "",
+  ];
+  if (search.items.length === 0) {
+    lines.push(search.status === "timeout" ? "权威检索超时，原劳动分析报告仍可使用。" : ("message" in search ? search.message : "未检索到权威法规。"));
+    return lines.join("\n");
+  }
+  lines.push(renderPkulawAuthorityTable(search.items));
+  lines.push("");
+  lines.push("### 需人工复核");
+  lines.push("- 权威法规与本地知识库出现差异时，由承办律师判断适用版本和引用范围。");
+  lines.push("- 法规时效性、地域适用和案件事实匹配度需人工复核。");
+  return lines.join("\n");
+}
+
+function renderPkulawAuthorityTable(rows: PkulawAuthorityItem[]): string {
+  const visible = rows.slice(0, 5);
+  return [
+    "<lark-table rows=\"" + (visible.length + 1) + "\" cols=\"4\" header-row=\"true\" column-widths=\"220,330,120,180\">",
+    "",
+    ...buildLarkTableRow(["法规/文件", "命中内容", "时效性", "来源"]),
+    ...visible.flatMap((row) => buildLarkTableRow([
+      row.title,
+      row.excerpt,
+      row.timeliness ?? "-",
+      [row.sourceUpdatedAt ? `更新时间：${row.sourceUpdatedAt}` : "", row.url ?? ""].filter(Boolean).join("\n") || "-",
+    ])),
+    "</lark-table>",
+  ].join("\n");
+}
+
+function localizePkulawStatus(status: PkulawAuthoritySearchResult["status"]): string {
+  switch (status) {
+    case "success":
+      return "已检索";
+    case "cache-hit":
+      return "命中缓存";
+    case "timeout":
+      return "权威检索超时";
+    case "disabled":
+      return "pkulaw 未启用";
+    case "empty":
+      return "未检索到权威法规";
+    case "error":
+      return "权威检索不可用";
+  }
 }
 
 function renderMermaidBlock(source: string): string {
@@ -628,6 +798,33 @@ function renderLegalSupportTable(rows: LaborAggregateResult["legalSupports"]): s
     "</lark-table>",
   ];
   return body.join("\n");
+}
+
+function renderClaimBasisTable(rows: LaborAggregateResult["claimBasis"]): string {
+  const visible = rows.length > 0
+    ? rows.slice(0, 8)
+    : [{ claim: "待明确请求项", basis: "需人工补核", evidence: [], risk: "待补充", reviewNote: "需人工复核" }];
+  const body = [
+    "<lark-table rows=\"" + (visible.length + 1) + "\" cols=\"5\" header-row=\"true\" column-widths=\"160,220,220,180,180\">",
+    "",
+    ...buildLarkTableRow(["请求项", "请求权基础", "证据支撑", "风险", "复核提示"]),
+    ...visible.flatMap((row) => buildLarkTableRow([
+      row.claim,
+      row.basis,
+      row.evidence.join("；") || "-",
+      row.risk ?? "-",
+      row.reviewNote ?? "-",
+    ])),
+    "</lark-table>",
+  ];
+  return body.join("\n");
+}
+
+function renderDraftDocumentList(rows: LaborAggregateResult["draftDocuments"]): string[] {
+  if (rows.length === 0) {
+    return ["- 暂无文书草稿摘要；建议先补充事实与证据后再生成正式文书。"];
+  }
+  return rows.slice(0, 5).map((item) => `- ${redactEvidenceText(item.type)}：${redactEvidenceText(item.summary || "待补充摘要")}`);
 }
 
 function renderBulletList(items: string[]): string[] {
@@ -773,6 +970,22 @@ function readRecordArray(value: Record<string, unknown> | null, key: string): Ar
     return [];
   }
   return target.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item));
+}
+
+function readRecord(value: Record<string, unknown> | null, key: string): Record<string, unknown> | null {
+  if (!value) return null;
+  const target = value[key];
+  return target && typeof target === "object" && !Array.isArray(target)
+    ? target as Record<string, unknown>
+    : null;
+}
+
+function normalizeLaborStrategy(value: Record<string, unknown> | null): LaborAggregateResult["strategy"] {
+  return {
+    litigation: readStringArray(value, "litigation").map(redactEvidenceText),
+    mediation: readStringArray(value, "mediation").map(redactEvidenceText),
+    response: readStringArray(value, "response").map(redactEvidenceText),
+  };
 }
 
 function escapeCell(value: string): string {

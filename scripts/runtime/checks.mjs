@@ -18,6 +18,8 @@ import { resolveProjectConfigPath } from "./portable.mjs";
 export const BRIDGE_GROUP = "bridge";
 export const LARK_GROUP = "lark";
 export const MEMORY_GROUP = "memory";
+export const KNOWLEDGE_GROUP = "knowledge";
+export const LABOR_GROUP = "labor";
 export const DATA_FLOW_GROUP = "data-flow";
 export const MIN_NODE_MAJOR = 20;
 export const MIN_LARK_VERSION = "1.0.8";
@@ -765,6 +767,62 @@ export async function checkObsidianSync(options = {}) {
   return createResult("obsidian-sync", MEMORY_GROUP, "Obsidian 同步", "pass", vaultPath);
 }
 
+export async function checkKnowledgeObsidianExport(options = {}) {
+  const state = options.state ?? await readProjectConfig(options.cwd, options.configPath);
+  if (!state.exists || state.error || !state.config) {
+    return createResult("knowledge-obsidian", KNOWLEDGE_GROUP, "知识库 Obsidian", "skip", "等待 config.json");
+  }
+  const obsidian = readKnowledgeBaseConfig(state.config)?.obsidian;
+  if (obsidian?.enabled !== true) {
+    return createResult("knowledge-obsidian", KNOWLEDGE_GROUP, "知识库 Obsidian", "skip", "未启用");
+  }
+  const vaultPath = resolveConfigValue(state.configPath, obsidian.vaultPath);
+  if (!vaultPath) {
+    return createResult("knowledge-obsidian", KNOWLEDGE_GROUP, "知识库 Obsidian", "warn", "已启用但缺少 vaultPath", "填写 knowledgeBase.obsidian.vaultPath");
+  }
+  try {
+    await access(vaultPath, constants.R_OK | constants.W_OK);
+    return createResult("knowledge-obsidian", KNOWLEDGE_GROUP, "知识库 Obsidian", "pass", `${vaultPath}；baseDir=${obsidian.baseDir ?? "Legal Knowledge"}`);
+  } catch (error) {
+    return createResult("knowledge-obsidian", KNOWLEDGE_GROUP, "知识库 Obsidian", "warn", `Vault 不可读写：${vaultPath}`, error instanceof Error ? error.message : String(error));
+  }
+}
+
+export async function checkPkulawAuthoritySource(options = {}) {
+  const state = options.state ?? await readProjectConfig(options.cwd, options.configPath);
+  if (!state.exists || state.error || !state.config) {
+    return createResult("pkulaw-authority", KNOWLEDGE_GROUP, "pkulaw 权威源", "skip", "等待 config.json");
+  }
+  const pkulaw = readKnowledgeBaseConfig(state.config)?.authoritySources?.pkulaw;
+  if (pkulaw?.enabled !== true) {
+    return createResult("pkulaw-authority", KNOWLEDGE_GROUP, "pkulaw 权威源", "skip", "未启用");
+  }
+  const executable = findExecutable(pkulaw.cliCommand ?? "pkulaw-mcp", options);
+  if (!executable) {
+    return createResult("pkulaw-authority", KNOWLEDGE_GROUP, "pkulaw 权威源", "warn", `未找到 ${pkulaw.cliCommand ?? "pkulaw-mcp"}`, "先运行 npm install -g @pkulaw/mcp-cli 或使用 npx 验证");
+  }
+  const result = await (options.runCommandFn ?? runCommand)(executable, ["check"], {
+    cwd: options.cwd,
+    env: options.env,
+    timeoutMs: 10_000,
+  });
+  if (result.code === 0) {
+    return createResult("pkulaw-authority", KNOWLEDGE_GROUP, "pkulaw 权威源", "pass", `transport=${pkulaw.transport ?? "auto"}`);
+  }
+  return createResult("pkulaw-authority", KNOWLEDGE_GROUP, "pkulaw 权威源", "warn", summarizeCommandOutput(result), "pkulaw 需要先执行 pkulaw-mcp init --authorization \"Bearer <Token>\"");
+}
+
+export async function checkLaborHarnessFixture(options = {}) {
+  const cwd = options.cwd ?? process.cwd();
+  const fixturePath = path.join(cwd, "test/fixtures/labor-harness/wrongful-termination.json");
+  try {
+    await access(fixturePath, constants.R_OK);
+    return createResult("labor-harness-fixture", LABOR_GROUP, "Labor Harness Fixture", "pass", path.relative(cwd, fixturePath));
+  } catch (error) {
+    return createResult("labor-harness-fixture", LABOR_GROUP, "Labor Harness Fixture", "warn", "缺少违法解除 fixture", error instanceof Error ? error.message : String(error));
+  }
+}
+
 // Report privacy/data-flow relevant settings without making compliance claims.
 export async function checkAiProviderDataFlow(options = {}) {
   const state = options.state ?? await readProjectConfig(options.cwd, options.configPath);
@@ -907,13 +965,18 @@ export async function runAllChecks(options = {}) {
   const configPath = options.configPath ?? resolveProjectConfigPath(cwd, options.env);
   const state = await readProjectConfig(cwd, configPath);
   const memory = [await checkObsidianSync({ ...options, cwd, configPath, state })];
+  const knowledge = [
+    await checkKnowledgeObsidianExport({ ...options, cwd, configPath, state }),
+    await checkPkulawAuthoritySource({ ...options, cwd, configPath, state }),
+  ];
+  const labor = [await checkLaborHarnessFixture({ ...options, cwd, configPath, state })];
   const dataFlow = [
     await checkAiProviderDataFlow({ ...options, cwd, configPath, state }),
     await checkExternalOcrDataFlow({ ...options, cwd, configPath, state }),
     await checkMemoryDataFlow({ ...options, cwd, configPath, state }),
     await checkLoggingDataFlow({ ...options, cwd, configPath, state }),
   ];
-  return [...bridge, ...lark, ...memory, ...dataFlow];
+  return [...bridge, ...lark, ...memory, ...knowledge, ...labor, ...dataFlow];
 }
 
 // Map grouped diagnostic results to the process exit code used by doctor/onboard.
@@ -1091,12 +1154,7 @@ function isLocalUrl(value) {
 }
 
 function readKnowledgeParserConfig(config) {
-  const extensions = config.extensions && typeof config.extensions === "object" && !Array.isArray(config.extensions)
-    ? config.extensions
-    : {};
-  const knowledge = extensions["knowledge-base"] && typeof extensions["knowledge-base"] === "object" && !Array.isArray(extensions["knowledge-base"])
-    ? extensions["knowledge-base"]
-    : config.knowledgeBase;
+  const knowledge = readKnowledgeBaseConfig(config);
   const parser = knowledge?.parser && typeof knowledge.parser === "object" && !Array.isArray(knowledge.parser)
     ? knowledge.parser
     : {};
@@ -1105,6 +1163,15 @@ function readKnowledgeParserConfig(config) {
     pdfProviderOrder: Array.isArray(parser.pdfProviderOrder) ? parser.pdfProviderOrder : [],
     imageProviderOrder: Array.isArray(parser.imageProviderOrder) ? parser.imageProviderOrder : [],
   };
+}
+
+function readKnowledgeBaseConfig(config) {
+  const extensions = config.extensions && typeof config.extensions === "object" && !Array.isArray(config.extensions)
+    ? config.extensions
+    : {};
+  return extensions["knowledge-base"] && typeof extensions["knowledge-base"] === "object" && !Array.isArray(extensions["knowledge-base"])
+    ? extensions["knowledge-base"]
+    : config.knowledgeBase;
 }
 
 // Parse JSON command output without throwing.

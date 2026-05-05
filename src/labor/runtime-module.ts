@@ -5,6 +5,7 @@
  * - 管理材料上传态交互以及进度卡、结果卡更新。
  */
 import { DEFAULT_LABOR_SKILL_CONFIG, type AppConfig } from "../config/schema.js";
+import crypto from "node:crypto";
 import path from "node:path";
 import type { RuntimeModule, RuntimeModuleHandleResult, RuntimeModuleMessageContext } from "../bridge/module.js";
 import {
@@ -14,17 +15,23 @@ import {
 } from "../feishu/shared-primitives.js";
 import {
   buildLaborAnalysisCompletedPayload,
+  buildLaborAuthoritySearchConfirmPayload,
   buildLaborAnalysisProgressPayload,
   type LaborAnalysisCompletedCardView,
   type LaborAnalysisProgressCardView,
 } from "../feishu/labor-cards.js";
 import { createTextPreview, type Logger } from "../logging/logger.js";
 import type { KnowledgeBasePort } from "../knowledge/index.js";
-import type { IncomingChatMessage } from "../runtime/app.js";
+import type { IncomingChatMessage, IncomingFileMessage } from "../runtime/app.js";
 import type { RoutedText } from "../bridge/router.js";
 import type { FeishuTransport } from "../runtime/feishu-transport.js";
 import { PersistedInteractionManager } from "../runtime/persisted-interaction-manager.js";
-import type { LaborSkillService, LaborMaterialExtraction } from "./index.js";
+import type {
+  LaborAnalyzeResult,
+  LaborAuthoritySearchDraft,
+  LaborSkillService,
+  LaborMaterialExtraction,
+} from "./index.js";
 
 type LaborRuntimeModuleDeps = {
   config: AppConfig;
@@ -37,6 +44,7 @@ type LaborRuntimeModuleDeps = {
 type LaborCommand = Extract<RoutedText, { kind: "command" }>["command"];
 
 type PendingLaborInteraction = {
+  stage?: "collecting" | "authority-confirmation" | undefined;
   chatId: string;
   chatType: string;
   conversationKey: string;
@@ -53,6 +61,12 @@ type PendingLaborInteraction = {
     fileName: string;
     size?: number | undefined;
   }>;
+  authority?: {
+    result: LaborAnalyzeResult;
+    draft: LaborAuthoritySearchDraft;
+    reportMessageId: string;
+    nonce: string;
+  } | undefined;
 };
 
 type LaborProgressState = {
@@ -70,12 +84,26 @@ type LaborProgressState = {
   }>;
 };
 
+type RecentLaborMaterial = {
+  chatId: string;
+  conversationKey: string;
+  requesterOpenId: string;
+  messageId: string;
+  fileKey: string;
+  fileName: string;
+  size?: number | undefined;
+  createdAt: number;
+};
+
+const MAX_RECENT_LABOR_MATERIALS = 10;
+
 export class LaborRuntimeModule implements RuntimeModule {
   readonly name = "labor";
   readonly priority = 40;
 
   private readonly featureConfig;
   private readonly interactions: PersistedInteractionManager<PendingLaborInteraction>;
+  private readonly recentMaterials = new Map<string, RecentLaborMaterial[]>();
 
   constructor(private readonly deps: LaborRuntimeModuleDeps) {
     this.featureConfig = deps.config.laborSkill ?? DEFAULT_LABOR_SKILL_CONFIG;
@@ -100,6 +128,7 @@ export class LaborRuntimeModule implements RuntimeModule {
 
   /** 停止交互状态管理器。 */
   async stop(): Promise<void> {
+    this.recentMaterials.clear();
     await this.interactions.stop();
   }
 
@@ -109,6 +138,11 @@ export class LaborRuntimeModule implements RuntimeModule {
     const pending = this.findInteraction(message);
 
     if (pending) {
+      if (pending.stage === "authority-confirmation") {
+        await this.handleAuthorityConfirmation(message, pending);
+        return { claimed: true };
+      }
+
       if (routed?.kind === "command" && isLaborEndCommand(routed.command)) {
         await this.finishCollection(message, pending);
         return { claimed: true };
@@ -138,11 +172,51 @@ export class LaborRuntimeModule implements RuntimeModule {
       return { claimed: true };
     }
 
+    if (this.captureRecentMaterial(message)) {
+      return { claimed: false };
+    }
+
     if (routed?.kind !== "command") {
+      if (await this.handleRecentMaterialIntent(message)) {
+        return { claimed: true };
+      }
       return { claimed: false };
     }
 
     return { claimed: await this.handleCommand(message, routed.command) };
+  }
+
+  async handleCardAction(
+    actorOpenId: string,
+    openMessageId: string,
+    value: Record<string, unknown>,
+  ): Promise<Record<string, unknown> | null> {
+    if (value.kind !== "labor-authority-search") {
+      return null;
+    }
+    const conversationKey = typeof value.conversationKey === "string" ? value.conversationKey : "";
+    const pending = conversationKey ? this.interactions.get(conversationKey) : null;
+    if (!pending || pending.stage !== "authority-confirmation" || !pending.authority) {
+      return buildLaborActionToast("当前权威检索请求已失效，请重新触发劳动分析。", "warning");
+    }
+    if (actorOpenId !== pending.requesterOpenId) {
+      return buildLaborActionToast("只有劳动分析发起人可以确认权威检索。", "warning");
+    }
+    if (value.nonce !== pending.authority.nonce) {
+      return buildLaborActionToast("当前卡片已过期，请使用最新卡片或文本命令。", "warning");
+    }
+    const decision = parseAuthorityCardDecision(value, pending.authority.draft);
+    if (decision.kind === "unknown") {
+      return buildLaborActionToast("未识别的权威检索操作，请使用文本命令兜底。", "warning");
+    }
+    try {
+      await this.executeAuthorityDecision(pending, decision, {
+        messageId: openMessageId || pending.anchorMessageId,
+      });
+    } catch (error) {
+      return buildLaborActionToast(`权威检索失败：${error instanceof Error ? error.message : String(error)}`, "warning");
+    }
+    return buildLaborActionToast(decision.kind === "skip" ? "已跳过权威法规检索。" : "已开始权威法规检索。", "success");
   }
 
   /** 处理劳动模块自有命令。 */
@@ -207,7 +281,7 @@ export class LaborRuntimeModule implements RuntimeModule {
   private async startCollection(
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "senderOpenId">,
     title?: string,
-  ): Promise<void> {
+  ): Promise<PendingLaborInteraction> {
     this.clearRequesterInteractions(message.chatId, message.senderOpenId);
     const deliveryMode = message.chatType === "p2p" ? "p2p_reply" : "group_thread";
     const ready = await this.sendNotice(message, {
@@ -223,7 +297,7 @@ export class LaborRuntimeModule implements RuntimeModule {
       ].join("\n"),
     }, { replyToMessageId: message.messageId, replyInThread: deliveryMode === "group_thread" });
 
-    this.interactions.set({
+    const interaction: PendingLaborInteraction = {
       chatId: message.chatId,
       chatType: message.chatType,
       conversationKey: message.conversationKey,
@@ -232,10 +306,13 @@ export class LaborRuntimeModule implements RuntimeModule {
       anchorMessageId: ready.messageId,
       rootMessageId: message.messageId,
       deliveryMode,
+      stage: "collecting",
       title,
       notes: [],
       files: [],
-    });
+    };
+    this.interactions.set(interaction);
+    return interaction;
   }
 
   /** 在收集态中接收文件和补充说明。 */
@@ -358,8 +435,9 @@ export class LaborRuntimeModule implements RuntimeModule {
     pushProgress(progressState, "开始案件级汇总");
     await this.updateProcessingCard(pending.chatId, processing.messageId, progressState);
 
+    let result: LaborAnalyzeResult;
     try {
-      const result = await this.deps.service!.finalizeAnalysis({
+      result = await this.deps.service!.finalizeAnalysis({
         extractedMaterials,
         notes: pending.notes,
         materialCount: pending.files.length,
@@ -391,6 +469,7 @@ export class LaborRuntimeModule implements RuntimeModule {
           len: markdown.length,
         }, { replyToMessageId: message.messageId });
       }
+
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       await this.safeUpdateNotice(pending.chatId, processing.messageId, {
@@ -399,11 +478,162 @@ export class LaborRuntimeModule implements RuntimeModule {
         icon: "error_filled",
         message: detail,
       }, "labor analysis failed");
+      return;
     }
+
+    await this.sendAuthoritySearchPromptBestEffort(message, pending, result, processing.messageId);
   }
 
   private clearInteraction(conversationKey: string): void {
     this.interactions.delete(conversationKey);
+  }
+
+  private async sendAuthoritySearchPrompt(
+    message: Pick<IncomingChatMessage, "chatId" | "messageId" | "conversationKey" | "senderOpenId">,
+    original: PendingLaborInteraction,
+    result: LaborAnalyzeResult,
+    reportMessageId: string,
+  ): Promise<void> {
+    const draft = this.deps.service!.buildAuthoritySearchDraft(result);
+    const nonce = crypto.randomUUID();
+    const authorityPending: PendingLaborInteraction = {
+      ...original,
+      stage: "authority-confirmation",
+      expiresAt: Date.now() + this.featureConfig.ingest.pendingTtlMs,
+      authority: {
+        result,
+        draft,
+        reportMessageId,
+        nonce,
+      },
+      files: [],
+      notes: [],
+    };
+    this.interactions.set(authorityPending);
+    await this.deps.transport.sendPayload(message.chatId, buildLaborAuthoritySearchConfirmPayload({
+      conversationKey: authorityPending.conversationKey,
+      nonce,
+      mainQuery: draft.mainQuery,
+      alternatives: draft.alternatives,
+      reason: draft.reason,
+    }), {
+      event: "labor authority search prompt sent",
+      transcriptType: "outbound-final",
+      textPreview: "权威法规检索确认",
+      len: 8,
+    }, this.getDelivery(authorityPending));
+  }
+
+  private async sendAuthoritySearchPromptBestEffort(
+    message: Pick<IncomingChatMessage, "chatId" | "messageId" | "conversationKey" | "senderOpenId">,
+    original: PendingLaborInteraction,
+    result: LaborAnalyzeResult,
+    reportMessageId: string,
+  ): Promise<void> {
+    try {
+      await this.sendAuthoritySearchPrompt(message, original, result, reportMessageId);
+    } catch (error) {
+      this.deps.logger.log("labor/authority", "authority prompt skipped", {
+        conversationKey: original.conversationKey,
+        detail: error instanceof Error ? error.message : String(error),
+      }, "warn");
+    }
+  }
+
+  private async handleAuthorityConfirmation(message: IncomingChatMessage, pending: PendingLaborInteraction): Promise<void> {
+    if (message.senderOpenId !== pending.requesterOpenId) {
+      await this.sendNotice(message, {
+        title: "当前权威检索仅限发起人确认",
+        template: "yellow",
+        icon: "maybe_outlined",
+        message: "请由当前劳动分析发起人确认、编辑或跳过权威法规检索。",
+      }, this.getDelivery(pending));
+      return;
+    }
+    const authority = pending.authority;
+    if (!authority) {
+      this.clearInteraction(pending.conversationKey);
+      return;
+    }
+
+    const decision = parseAuthoritySearchDecision(message.plainText, authority.draft);
+    if (decision.kind === "unknown") {
+      await this.sendNotice(message, {
+        title: "等待确认检索词",
+        template: "yellow",
+        icon: "maybe_outlined",
+        message: [
+          "请回复以下任一方式：",
+          "- `确认检索词`：使用主查询",
+          "- `/检索词 1`：切换第 1 个备选关键词",
+          "- `/检索词 <自定义查询>`：完全覆盖检索词",
+          "- `/跳过权威检索`：不调用 pkulaw",
+        ].join("\n"),
+      }, this.getDelivery(pending));
+      return;
+    }
+
+    try {
+      await this.executeAuthorityDecision(pending, decision, {
+        messageId: message.messageId,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await this.sendNotice(message, {
+        title: "权威法规检索失败",
+        template: "yellow",
+        icon: "maybe_outlined",
+        message: `失败原因：${detail}\n确认态已保留，可重新回复确认、修改检索词或跳过。`,
+      }, this.getDelivery(pending));
+    }
+  }
+
+  private async executeAuthorityDecision(
+    pending: PendingLaborInteraction,
+    decision: { kind: "query"; query: string } | { kind: "skip" },
+    trigger: { messageId: string },
+  ): Promise<void> {
+    const authority = pending.authority;
+    if (!authority) {
+      this.clearInteraction(pending.conversationKey);
+      return;
+    }
+    if (decision.kind === "skip") {
+      await this.sendNotice({ chatId: pending.chatId, messageId: trigger.messageId }, {
+        title: "已跳过权威法规检索",
+        template: "grey",
+        icon: "info_outlined",
+        message: "原劳动分析报告保持不变；如需稍后补充，可重新发起劳动分析。",
+      }, this.getDelivery(pending));
+      this.clearInteraction(pending.conversationKey);
+      return;
+    }
+
+    const waiting = await this.sendNotice({ chatId: pending.chatId, messageId: trigger.messageId }, {
+      title: "正在检索权威法规",
+      template: "blue",
+      icon: "search_outlined",
+      message: `检索词：${decision.query}\n最多等待 5 秒，失败不会影响原劳动分析报告。`,
+    }, this.getDelivery(pending));
+
+    const appended = await this.deps.service!.appendAuthoritySearch(authority.result, {
+      query: decision.query,
+      turnId: trigger.messageId,
+      sessionId: pending.conversationKey,
+    });
+    await this.safeUpdateNotice(pending.chatId, waiting.messageId, {
+      title: "权威法规检索完成",
+      template: appended.search.status === "success" || appended.search.status === "cache-hit" ? "green" : "yellow",
+      icon: appended.search.status === "success" || appended.search.status === "cache-hit" ? "yes_outlined" : "maybe_outlined",
+      message: `状态：${formatAuthoritySearchStatus(appended.search.status)}\n结果数：${appended.search.items.length}`,
+    }, "labor authority search completed");
+    await this.deps.transport.sendPayload(pending.chatId, buildPostMarkdownPayload(appended.markdown), {
+      event: "labor authority result sent",
+      transcriptType: "outbound-final",
+      textPreview: createTextPreview(appended.markdown),
+      len: appended.markdown.length,
+    }, { replyToMessageId: authority.reportMessageId, replyInThread: pending.deliveryMode === "group_thread" });
+    this.clearInteraction(pending.conversationKey);
   }
 
   private clearRequesterInteractions(chatId: string, requesterOpenId: string): void {
@@ -412,6 +642,100 @@ export class LaborRuntimeModule implements RuntimeModule {
         this.clearInteraction(conversationKey);
       }
     }
+  }
+
+  private captureRecentMaterial(message: IncomingChatMessage): boolean {
+    if (message.messageType !== "file" || !this.featureConfig.enabled || !this.deps.service) {
+      return false;
+    }
+    if (!this.isSupportedRecentMaterial(message)) {
+      return false;
+    }
+    const key = this.getRecentMaterialKey(message);
+    const expiresBefore = Date.now() - this.featureConfig.ingest.pendingTtlMs;
+    const existing = (this.recentMaterials.get(key) ?? [])
+      .filter((item) => item.createdAt >= expiresBefore && item.messageId !== message.messageId);
+    existing.push({
+      chatId: message.chatId,
+      conversationKey: message.conversationKey,
+      requesterOpenId: message.senderOpenId,
+      messageId: message.messageId,
+      fileKey: message.file.fileKey,
+      fileName: message.file.fileName,
+      size: message.file.size,
+      createdAt: Date.now(),
+    });
+    this.recentMaterials.set(key, existing.slice(-MAX_RECENT_LABOR_MATERIALS));
+    return true;
+  }
+
+  private async handleRecentMaterialIntent(message: IncomingChatMessage): Promise<boolean> {
+    if (message.messageType !== "text" || !this.featureConfig.enabled || !this.deps.service) {
+      return false;
+    }
+    const materials = this.getRecentMaterials(message);
+    if (materials.length === 0) {
+      return false;
+    }
+    const detection = detectLaborRecentMaterialIntent(message.plainText);
+    if (!detection.matched) {
+      return false;
+    }
+    this.deps.logger.log("labor/runtime", "recent material labor analysis claimed", {
+      confidence: detection.confidence,
+      reasons: detection.reasons.join(","),
+      materialCount: materials.length,
+    });
+    const pending = await this.startCollection(message, extractLaborTitle(message.plainText));
+    for (const material of materials) {
+      pending.files.push({
+        messageId: material.messageId,
+        fileKey: material.fileKey,
+        fileName: material.fileName,
+        size: material.size,
+      });
+    }
+    const note = message.plainText.trim();
+    if (note) {
+      pending.notes.push(note);
+    }
+    this.clearRecentMaterials(message);
+    await this.finishCollection(message, pending);
+    return true;
+  }
+
+  private getRecentMaterials(message: Pick<IncomingChatMessage, "chatId" | "senderOpenId">): RecentLaborMaterial[] {
+    const key = this.getRecentMaterialKey(message);
+    const expiresBefore = Date.now() - this.featureConfig.ingest.pendingTtlMs;
+    const materials = (this.recentMaterials.get(key) ?? []).filter((item) => item.createdAt >= expiresBefore);
+    if (materials.length === 0) {
+      this.recentMaterials.delete(key);
+      return [];
+    }
+    this.recentMaterials.set(key, materials);
+    return materials;
+  }
+
+  private clearRecentMaterials(message: Pick<IncomingChatMessage, "chatId" | "senderOpenId">): void {
+    this.recentMaterials.delete(this.getRecentMaterialKey(message));
+  }
+
+  private getRecentMaterialKey(message: Pick<IncomingChatMessage, "chatId" | "senderOpenId">): string {
+    return `${message.chatId}:${message.senderOpenId}`;
+  }
+
+  private isSupportedRecentMaterial(message: IncomingFileMessage): boolean {
+    const extension = message.file.fileName.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? "";
+    if (!this.featureConfig.ingest.allowedExtensions.includes(extension)) {
+      return false;
+    }
+    if (typeof message.file.size !== "number") {
+      return true;
+    }
+    if (message.file.size <= 0) {
+      return false;
+    }
+    return message.file.size <= this.featureConfig.ingest.maxFileSizeMb * 1024 * 1024;
   }
 
   private findInteraction(message: IncomingChatMessage): PendingLaborInteraction | null {
@@ -574,7 +898,9 @@ export class LaborRuntimeModule implements RuntimeModule {
       title: "劳动分析已超时",
       template: "grey",
       iconToken: "time_outlined",
-      message: "长时间未继续补充材料，当前劳动分析模式已自动结束。",
+      message: pending.stage === "authority-confirmation"
+        ? "长时间未确认权威检索词，本次权威法规补充已自动结束；原劳动分析报告保持可用。"
+        : "长时间未继续补充材料，当前劳动分析模式已自动结束。",
       showMessageIcon: false,
     }, {
       event: "labor interaction expired",
@@ -597,6 +923,63 @@ function isLaborEndCommand(command: LaborCommand): boolean {
 function isLaborStartCommand(command: LaborCommand): boolean {
   return command.kind === "passthrough"
     && command.name.trim().toLowerCase() === "劳动分析";
+}
+
+type LaborRecentMaterialIntentResult = {
+  matched: boolean;
+  confidence: number;
+  reasons: string[];
+};
+
+function detectLaborRecentMaterialIntent(text: string): LaborRecentMaterialIntentResult {
+  const normalized = text.replace(/\s+/g, " ").trim().toLowerCase();
+  if (!normalized) {
+    return { matched: false, confidence: 0, reasons: [] };
+  }
+  if (/不要分析|先别分析|不用分析|不要生成|别生成|不要整理/.test(normalized)) {
+    return { matched: false, confidence: 0, reasons: ["negative-labor-intent"] };
+  }
+
+  const reasons: string[] = [];
+  let confidence = 0;
+  if (/劳动|仲裁|工资|加班|工伤|社保|解除|辞退|离职|赔偿|补偿|用人单位|员工/.test(normalized)) {
+    confidence += 0.3;
+    reasons.push("labor-domain");
+  }
+  if (/劳动分析|劳动争议|证据链|工作台|工作底稿|仲裁材料|案件材料|维权材料/.test(normalized)) {
+    confidence += 0.35;
+    reasons.push("labor-output");
+  }
+  if (/分析|生成|整理|梳理|做|输出|形成/.test(normalized)) {
+    confidence += 0.25;
+    reasons.push("analysis-action");
+  }
+  if (/刚才|这些|这几|上面|前面|文件|材料|证据|附件|截图|合同|通知|工资|考勤/.test(normalized)) {
+    confidence += 0.15;
+    reasons.push("material-reference");
+  }
+  if (/^劳动分析$/.test(normalized)) {
+    confidence += 0.65;
+    reasons.push("short-strong-intent");
+  }
+
+  const bounded = Math.min(1, Number(confidence.toFixed(2)));
+  return {
+    matched: bounded >= 0.65,
+    confidence: bounded,
+    reasons,
+  };
+}
+
+function extractLaborTitle(text: string): string | undefined {
+  const normalized = text
+    .replace(/^请|^帮我|^麻烦你?/, "")
+    .replace(/(做|生成|整理|梳理|输出|形成)?(劳动分析|劳动争议|证据链|工作台|工作底稿|仲裁材料|案件材料|维权材料)/g, "")
+    .replace(/(刚才|这些|这几|上面|前面|上传|文件|材料|证据|附件|截图)/g, "")
+    .replace(/[，。；、,.!?！？]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized || undefined;
 }
 
 function renderProcessingMessage(state: LaborProgressState): string {
@@ -646,6 +1029,81 @@ function applyLaborFinalizeProgress(state: LaborProgressState, step: string): vo
   }
   setLaborStep(state, "检索法律依据", "completed", "已完成");
   setLaborStep(state, "生成分析文档", "running", shortenProgress(normalized));
+}
+
+function parseAuthoritySearchDecision(text: string, draft: LaborAuthoritySearchDraft): { kind: "query"; query: string } | { kind: "skip" } | { kind: "unknown" } {
+  const normalized = text.trim();
+  if (!normalized) {
+    return { kind: "unknown" };
+  }
+  if (/^\/?跳过权威检索$/.test(normalized)) {
+    return { kind: "skip" };
+  }
+  if (/^确认检索词$|^\/?检索确认$/.test(normalized)) {
+    return { kind: "query", query: draft.mainQuery };
+  }
+  const custom = normalized.match(/^\/?检索词(?:\s+(.+))?$/);
+  if (custom) {
+    const value = (custom[1] ?? "").trim();
+    if (!value) {
+      return { kind: "query", query: draft.mainQuery };
+    }
+    const index = Number(value);
+    if (Number.isInteger(index) && index > 0 && index <= draft.alternatives.length) {
+      return { kind: "query", query: draft.alternatives[index - 1] ?? draft.mainQuery };
+    }
+    return { kind: "query", query: value };
+  }
+  return { kind: "unknown" };
+}
+
+function parseAuthorityCardDecision(value: Record<string, unknown>, draft: LaborAuthoritySearchDraft): { kind: "query"; query: string } | { kind: "skip" } | { kind: "unknown" } {
+  if (value.action === "skip") {
+    return { kind: "skip" };
+  }
+  if (value.action === "confirm") {
+    return { kind: "query", query: draft.mainQuery };
+  }
+  if (value.action === "alternative") {
+    const query = typeof value.query === "string" && value.query.trim() ? value.query.trim() : "";
+    if (query) {
+      return { kind: "query", query };
+    }
+    const index = typeof value.index === "number" ? value.index : Number(value.index);
+    if (Number.isInteger(index) && index > 0 && index <= draft.alternatives.length) {
+      return { kind: "query", query: draft.alternatives[index - 1] ?? draft.mainQuery };
+    }
+  }
+  if (value.action === "custom" && typeof value.query === "string" && value.query.trim()) {
+    return { kind: "query", query: value.query.trim() };
+  }
+  return { kind: "unknown" };
+}
+
+function buildLaborActionToast(content: string, type: "success" | "warning"): Record<string, unknown> {
+  return {
+    toast: {
+      type,
+      content,
+    },
+  };
+}
+
+function formatAuthoritySearchStatus(status: "success" | "cache-hit" | "disabled" | "timeout" | "error" | "empty"): string {
+  switch (status) {
+    case "success":
+      return "已检索";
+    case "cache-hit":
+      return "命中缓存";
+    case "disabled":
+      return "pkulaw 未启用";
+    case "timeout":
+      return "权威检索超时";
+    case "error":
+      return "权威检索不可用";
+    case "empty":
+      return "未检索到权威法规";
+  }
 }
 
 function formatLaborElapsed(elapsedMs: number): string {

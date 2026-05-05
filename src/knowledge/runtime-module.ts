@@ -23,7 +23,7 @@ import {
   type ToolUpdateView,
 } from "../feishu/shared-primitives.js";
 import { createTextPreview, type Logger, type TranscriptType } from "../logging/logger.js";
-import type { IncomingChatMessage } from "../runtime/app.js";
+import type { IncomingChatMessage, IncomingFileMessage } from "../runtime/app.js";
 import type { FeishuTransport } from "../runtime/feishu-transport.js";
 import {
   getActiveSession,
@@ -34,7 +34,7 @@ import {
 import type { SessionBindingRecord, SessionWindowRecord } from "../store/mappings.js";
 import { ActiveKnowledgeIngestStore, type ActiveKnowledgeIngestRecordMap } from "../store/active-ingests.js";
 import { routeIncomingText, type RoutedText } from "../bridge/router.js";
-import { detectKnowledgeWebIngest, detectLegalQuestion } from "./detector.js";
+import { detectKnowledgeMaterialIngestIntent, detectKnowledgeWebIngest, detectLegalQuestion } from "./detector.js";
 import {
   type KnowledgeBasePort,
   type KnowledgeIngestProgressStep,
@@ -84,7 +84,19 @@ type KnowledgeIngestSessionStats = {
   failures: Array<{ sourceFile: string; reason: string }>;
 };
 
+type RecentKnowledgeMaterial = {
+  chatId: string;
+  conversationKey: string;
+  requesterOpenId: string;
+  messageId: string;
+  fileKey: string;
+  fileName: string;
+  size?: number | undefined;
+  createdAt: number;
+};
+
 const KNOWLEDGE_INGEST_TEXT_PATTERN = /(^|[\s/])(?:kb-ingest-start|入库|导入|收录|加入知识库|添加到知识库|写入知识库|保存到知识库|放进知识库|同步到知识库)(?=$|\s)/i;
+const MAX_RECENT_KNOWLEDGE_MATERIALS = 10;
 
 type KnowledgeRuntimeModuleDeps = {
   config: AppConfig;
@@ -109,6 +121,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
   private readonly runningKnowledgeIngests = new Map<string, { requesterOpenId: string }>();
   private readonly knowledgeIngestQueues = new Map<string, KnowledgeIngestQueueState>();
   private readonly knowledgeIngestSessionStats = new Map<string, KnowledgeIngestSessionStats>();
+  private readonly recentKnowledgeMaterials = new Map<string, RecentKnowledgeMaterial[]>();
   private readonly timers = new Map<string, NodeJS.Timeout>();
 
   constructor(private readonly deps: KnowledgeRuntimeModuleDeps) {
@@ -139,6 +152,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       clearTimeout(timeout);
     }
     this.timers.clear();
+    this.recentKnowledgeMaterials.clear();
     this.deps.knowledge?.close();
   }
 
@@ -166,9 +180,17 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       return { claimed: false };
     }
 
+    if (this.captureRecentKnowledgeMaterial(message)) {
+      return { claimed: false };
+    }
+
     const backgroundKnowledgeIngest = this.getInteraction(message.conversationKey);
     if (backgroundKnowledgeIngest) {
       await this.restoreOrCreateNormalSessionForBackgroundIngest(message, backgroundKnowledgeIngest);
+    }
+
+    if (await this.handleRecentMaterialIngestIntent(message)) {
+      return { claimed: true };
     }
 
     const claimed = pendingInteraction?.kind === "file-await-instruction"
@@ -508,6 +530,41 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     await this.enqueueKnowledgeIngestInput(fileMessage, pending);
   }
 
+  private async startKnowledgeIngestFromRecentMaterials(
+    materials: RecentKnowledgeMaterial[],
+    message: IncomingChatMessage,
+  ): Promise<void> {
+    if (!this.deps.knowledge) {
+      await this.sendNotice(message, {
+        title: "知识库未启用",
+        template: "yellow",
+        icon: "maybe_outlined",
+        message: "当前未启用法律知识库，请联系部署者补充 knowledgeBase 配置。",
+      });
+      return;
+    }
+    const pending = await this.openKnowledgeIngestInteraction(message);
+    for (const material of materials) {
+      const fileMessage: IncomingChatMessage = {
+        ...message,
+        chatId: material.chatId,
+        conversationKey: material.conversationKey,
+        messageId: material.messageId,
+        rawContent: material.fileName,
+        plainText: material.fileName,
+        messageType: "file",
+        file: {
+          fileKey: material.fileKey,
+          fileName: material.fileName,
+          size: material.size,
+        },
+      };
+      await this.enqueueKnowledgeIngestInput(fileMessage, pending);
+    }
+    this.clearRecentKnowledgeMaterials(message);
+    await this.endKnowledgeIngestInteraction(message, pending, { replyToMessageId: message.messageId });
+  }
+
   private async openKnowledgeIngestInteraction(
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "threadKey" | "senderOpenId">,
   ): Promise<PendingKnowledgeIngestInteraction> {
@@ -628,6 +685,86 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       }, "warn");
       return false;
     }
+  }
+
+  private captureRecentKnowledgeMaterial(message: IncomingChatMessage): boolean {
+    if (message.messageType !== "file" || !this.deps.knowledge) {
+      return false;
+    }
+    if (!this.isSupportedRecentKnowledgeMaterial(message)) {
+      return false;
+    }
+    const key = this.getRecentKnowledgeMaterialKey(message);
+    const expiresBefore = Date.now() - this.deps.config.knowledgeBase.ingest.pendingTtlMs;
+    const existing = (this.recentKnowledgeMaterials.get(key) ?? [])
+      .filter((item) => item.createdAt >= expiresBefore && item.messageId !== message.messageId);
+    existing.push({
+      chatId: message.chatId,
+      conversationKey: message.conversationKey,
+      requesterOpenId: message.senderOpenId,
+      messageId: message.messageId,
+      fileKey: message.file.fileKey,
+      fileName: message.file.fileName,
+      size: message.file.size,
+      createdAt: Date.now(),
+    });
+    this.recentKnowledgeMaterials.set(key, existing.slice(-MAX_RECENT_KNOWLEDGE_MATERIALS));
+    return true;
+  }
+
+  private async handleRecentMaterialIngestIntent(message: IncomingChatMessage): Promise<boolean> {
+    if (message.messageType !== "text" || !this.deps.knowledge) {
+      return false;
+    }
+    const materials = this.getRecentKnowledgeMaterials(message);
+    if (materials.length === 0) {
+      return false;
+    }
+    const detection = detectKnowledgeMaterialIngestIntent(message.plainText);
+    if (!detection.matched) {
+      return false;
+    }
+    this.deps.logger.log("knowledge/ingest", "recent material ingest claimed", {
+      confidence: detection.confidence,
+      reasons: detection.reasons.join(","),
+      materialCount: materials.length,
+    });
+    await this.startKnowledgeIngestFromRecentMaterials(materials, message);
+    return true;
+  }
+
+  private getRecentKnowledgeMaterials(message: Pick<IncomingChatMessage, "chatId" | "senderOpenId">): RecentKnowledgeMaterial[] {
+    const key = this.getRecentKnowledgeMaterialKey(message);
+    const expiresBefore = Date.now() - this.deps.config.knowledgeBase.ingest.pendingTtlMs;
+    const materials = (this.recentKnowledgeMaterials.get(key) ?? []).filter((item) => item.createdAt >= expiresBefore);
+    if (materials.length === 0) {
+      this.recentKnowledgeMaterials.delete(key);
+      return [];
+    }
+    this.recentKnowledgeMaterials.set(key, materials);
+    return materials;
+  }
+
+  private clearRecentKnowledgeMaterials(message: Pick<IncomingChatMessage, "chatId" | "senderOpenId">): void {
+    this.recentKnowledgeMaterials.delete(this.getRecentKnowledgeMaterialKey(message));
+  }
+
+  private getRecentKnowledgeMaterialKey(message: Pick<IncomingChatMessage, "chatId" | "senderOpenId">): string {
+    return `${message.chatId}:${message.senderOpenId}`;
+  }
+
+  private isSupportedRecentKnowledgeMaterial(message: IncomingFileMessage): boolean {
+    const extension = message.file.fileName.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? "";
+    if (!this.deps.config.knowledgeBase.ingest.allowedExtensions.includes(extension)) {
+      return false;
+    }
+    if (typeof message.file.size !== "number") {
+      return true;
+    }
+    if (message.file.size <= 0) {
+      return false;
+    }
+    return message.file.size <= this.deps.config.knowledgeBase.ingest.maxFileSizeMb * 1024 * 1024;
   }
 
   private async enqueueKnowledgeIngestInput(message: IncomingChatMessage, pending: PendingKnowledgeIngestInteraction): Promise<boolean> {

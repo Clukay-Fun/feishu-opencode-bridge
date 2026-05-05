@@ -16,6 +16,7 @@ import type { KnowledgeBasePort } from "../knowledge/index.js";
 import type { Logger } from "../logging/logger.js";
 import type { OpenCodeClient } from "../opencode/client.js";
 import type { IncomingChatMessage } from "../runtime/app.js";
+import type { CostTracker } from "../runtime/cost-tracker.js";
 import type { FeishuTransport } from "../runtime/feishu-transport.js";
 import type { SessionBindingRecord, SessionWindowRecord } from "../store/mappings.js";
 import type { WhitelistStore } from "../store/whitelist.js";
@@ -39,6 +40,7 @@ export type RuntimeExtensionContext = {
   >;
   memory?: unknown;
   knowledge: KnowledgeBasePort | null;
+  costTracker?: Pick<CostTracker, "recordExternalCall"> | undefined;
   whitelist: Pick<WhitelistStore, "bind">;
   getSessionWindow(conversationKey: string, chatType?: string): SessionWindowRecord;
   saveSessionWindow(conversationKey: string, window: SessionWindowRecord): Promise<void>;

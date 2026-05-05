@@ -16,6 +16,12 @@ export type KnowledgeWebIngestDetectResult = {
   reasons: string[];
 };
 
+export type KnowledgeMaterialIngestDetectResult = {
+  matched: boolean;
+  confidence: number;
+  reasons: string[];
+};
+
 const LEGAL_KEYWORDS = [
   "法律",
   "律师",
@@ -62,6 +68,10 @@ const LEGAL_KEYWORDS = [
 ];
 
 const QUESTION_MARKERS = ["吗", "么", "如何", "怎么", "怎么办", "是否", "能否", "可以", "多久", "多长", "合法么"];
+const MATERIAL_INGEST_NEGATIVE_PATTERN = /不要入库|别入库|不用入库|不入库|先别入库|不要写入知识库|不要保存到知识库/;
+const MATERIAL_INGEST_TARGET_PATTERN = /知识库|知识|库/;
+const MATERIAL_INGEST_ACTION_PATTERN = /入库|导入|收录|收入|整理|保存|写入|同步|加入|添加|放进|放到|归档/;
+const MATERIAL_REFERENCE_PATTERN = /这些|这几|刚才|上面|前面|文件|材料|文档|附件|书|资料|pdf|docx|txt|md|图片/;
 
 /** 根据关键词与问句特征判断消息是否像法律咨询问题。 */
 export function detectLegalQuestion(text: string): KnowledgeAutoDetectResult {
@@ -124,6 +134,45 @@ export function detectKnowledgeWebIngest(
   return {
     matched: options.requireIngestIntent === false ? true : hasIngestIntent,
     url,
+    reasons,
+  };
+}
+
+/** 判断用户是否在要求把最近上传/引用的材料写入知识库。 */
+export function detectKnowledgeMaterialIngestIntent(text: string): KnowledgeMaterialIngestDetectResult {
+  const normalized = text.replace(/\s+/g, " ").trim().toLowerCase();
+  if (!normalized) {
+    return { matched: false, confidence: 0, reasons: [] };
+  }
+  if (MATERIAL_INGEST_NEGATIVE_PATTERN.test(normalized)) {
+    return { matched: false, confidence: 0, reasons: ["negative-ingest-intent"] };
+  }
+
+  const reasons: string[] = [];
+  let confidence = 0;
+  if (MATERIAL_INGEST_TARGET_PATTERN.test(normalized)) {
+    confidence += 0.35;
+    reasons.push("knowledge-target");
+  }
+  if (MATERIAL_INGEST_ACTION_PATTERN.test(normalized)) {
+    confidence += 0.35;
+    reasons.push("ingest-action");
+  }
+  if (MATERIAL_REFERENCE_PATTERN.test(normalized)) {
+    confidence += 0.2;
+    reasons.push("material-reference");
+  }
+
+  const strongShortIntent = /^(?:入库|收录|导入|收入知识库|整理入库|存入知识库|写入知识库)$/.test(normalized);
+  if (strongShortIntent) {
+    confidence += 0.4;
+    reasons.push("short-strong-intent");
+  }
+
+  const bounded = Math.min(1, Number(confidence.toFixed(2)));
+  return {
+    matched: bounded >= 0.7,
+    confidence: bounded,
     reasons,
   };
 }

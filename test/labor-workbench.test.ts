@@ -48,5 +48,23 @@ function createAggregate(): LaborAggregateResult {
     legalSupports: [
       { issue: "违法解除", rule: "需人工复核", relation: "关联解除合法性" },
     ],
+    keyIssues: ["解除是否合法", "赔偿金如何计算"],
+    claimBasis: [
+      {
+        claim: "违法解除赔偿金",
+        basis: "《中华人民共和国劳动合同法》第四十八条",
+        evidence: ["解除通知", "聊天记录"],
+        risk: "需核对解除理由",
+        reviewNote: "需律师复核规章制度民主程序",
+      },
+    ],
+    strategy: {
+      litigation: ["围绕解除理由和送达时间组织证据"],
+      mediation: ["以赔偿金区间作为谈判锚点"],
+      response: ["准备回应用人单位关于严重违纪的抗辩"],
+    },
+    draftDocuments: [
+      { type: "仲裁申请书", summary: "围绕违法解除赔偿金形成请求摘要" },
+    ],
   };
 }

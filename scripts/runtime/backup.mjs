@@ -16,6 +16,7 @@ import { createPortableEnv, resolveBridgeHome } from "./portable.mjs";
 const BACKUP_MANIFEST = "backup-manifest.json";
 const BACKUP_SCHEMA_VERSION = 1;
 const FIXED_BACKUP_TOP_LEVELS = ["config.json", "data", "logs", "extensions", "mappings.json"];
+const EXCLUDED_BACKUP_PATHS = new Set(["data/pkulaw-cache"]);
 
 export async function runBackupCli(args = process.argv.slice(2), options = {}) {
   const logger = options.logger ?? console;
@@ -143,6 +144,9 @@ async function collectBackupEntries(bridgeHome) {
 }
 
 async function collectPath(entries, bridgeHome, relativePath) {
+  if (shouldExcludeBackupPath(relativePath)) {
+    return;
+  }
   const absolutePath = safeJoin(bridgeHome, relativePath);
   let info;
   try {
@@ -163,6 +167,12 @@ async function collectPath(entries, bridgeHome, relativePath) {
       data: await readFile(absolutePath),
     });
   }
+}
+
+function shouldExcludeBackupPath(relativePath) {
+  const normalized = normalizeZipPath(relativePath);
+  return EXCLUDED_BACKUP_PATHS.has(normalized)
+    || [...EXCLUDED_BACKUP_PATHS].some((excluded) => normalized.startsWith(`${excluded}/`));
 }
 
 async function assertRestoreSafe(bridgeHome, force) {

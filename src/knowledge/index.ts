@@ -20,6 +20,7 @@ import {
   type KnowledgeParserUsed,
 } from "./parser.js";
 import type { KnowledgeBaseConfig } from "./config.js";
+import { exportKnowledgeObsidianNote } from "./obsidian-export.js";
 import {
   KnowledgeDb,
   type KnowledgeDocumentSummary,
@@ -700,10 +701,37 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
 
     this.db.clearExtractedChunks(document.id);
     this.db.updateDocumentStatus(document.id, "ingested");
+    const obsidianPath = await exportKnowledgeObsidianNote(this.config.obsidian ?? {
+      enabled: false,
+      baseDir: "Legal Knowledge",
+      enableWikiLinks: true,
+    }, {
+      sourceType: input.sourceType,
+      fileName: input.fileName,
+      checksum,
+      domain: "劳动争议",
+      tags: [...tagCounts.keys()],
+      entries: finalCandidates.map((item) => ({
+        question: item.question,
+        answer: item.answer,
+        tags: item.tags,
+        statute: item.statute,
+        pageSection: item.pageSection,
+      })),
+      sqliteDocumentId: document.id,
+      bitableUrl: resolveKnowledgeBitableViewUrl(this.config),
+    }).catch((error) => {
+      this.logger.log("knowledge", "obsidian export skipped", {
+        detail: error instanceof Error ? error.message : String(error),
+      }, "warn");
+      return null;
+    });
     await this.reportProgress(options, {
       step: "write",
       status: "completed",
-      detail: totalExtracted > 0 ? `已写入 ${writeCompleted} 条问答` : "没有可写入的问答",
+      detail: totalExtracted > 0
+        ? `已写入 ${writeCompleted} 条问答${obsidianPath ? "，已导出 Obsidian 笔记" : ""}`
+        : "没有可写入的问答",
     });
 
     return {

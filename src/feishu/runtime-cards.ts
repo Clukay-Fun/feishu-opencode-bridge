@@ -50,7 +50,9 @@ export type CostCommandCardView = {
     model: string;
     totalTokens: number;
     estimatedCostCny?: number | undefined;
-    source: "provider" | "estimated";
+    source: "provider" | "estimated" | "external-call";
+    tool?: string | undefined;
+    operation?: string | undefined;
   }>;
 };
 
@@ -165,7 +167,9 @@ export function buildCostCommandCardPayload(view: CostCommandCardView): FeishuPo
     ? "暂无本地成本记录"
     : view.recent.map((entry) => {
       const cost = entry.estimatedCostCny === undefined ? "" : ` · ≈¥${entry.estimatedCostCny.toFixed(4)}`;
-      const source = entry.source === "provider" ? "provider usage" : "估算";
+      const source = entry.source === "external-call"
+        ? `${entry.tool ?? entry.model}/${entry.operation ?? "call"}`
+        : (entry.source === "provider" ? "provider usage" : "估算");
       return `- ${escapeText(entry.provider)}/${escapeText(entry.model)} · ${entry.totalTokens} tokens${cost} · ${source}`;
     }).join("\n");
 
@@ -383,11 +387,13 @@ export function buildGuideCardPayload(view: GuideCardView): FeishuPostPayload {
         ], { bg: "blue-50", weight: 1 }),
       ]),
       buildDivider(),
-      buildGuideStepBlock("1", "合同起草", "复制 `examples/hero/contract-draft-prompt.txt` 的内容发给我。"),
-      buildGuideStepBlock("2", "合同录入", "上传 `examples/hero/labor-contract.txt`，再按合同助手提示处理。"),
-      buildGuideStepBlock("3", "知识库入库", "上传 `examples/hero/labor-law-faq.md`，再发送 `/kb-ingest-start`。"),
+      buildGuideStepBlock("1", "上传样例材料", "使用违法解除劳动合同样例材料，先不要上传真实案件。"),
+      buildGuideStepBlock("2", "启动 /劳动分析", "发送 `/劳动分析`，补充材料后发送 `/劳动分析结束`。"),
+      buildGuideStepBlock("3", "确认检索词", "按卡片确认或编辑检索词，再查询本地知识库 / pkulaw 权威源。"),
+      buildGuideStepBlock("4", "查看 Labor 输出", "重点看争议焦点、请求权基础、证据缺口、策略和文书草稿摘要。"),
+      buildGuideStepBlock("5", "查看 Harness 报告", "本地运行 `npm run labor:harness`，按终端输出路径打开报告。"),
       buildDivider(),
-      buildFooterTipBlock("常用命令：`/new` · `/sessions` · `/models` · `/help-file`。本地排查运行 `bridge doctor workspace`。", "efficiency_outlined", "green", "notation"),
+      buildFooterTipBlock("常用命令：`/new` · `/sessions` · `/models` · `/cost`。本地排查运行 `bridge doctor workspace` 和 `npm run labor:harness`。", "efficiency_outlined", "green", "notation"),
     ],
   });
 }
