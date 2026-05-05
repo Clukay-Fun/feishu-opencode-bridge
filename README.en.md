@@ -3,7 +3,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6)](https://www.typescriptlang.org/)
 [![Feishu](https://img.shields.io/badge/Feishu-Bridge-0F6FFF)](https://open.feishu.cn/)
-[![Tests](https://img.shields.io/badge/tests-571%20passing-success)](#%EF%B8%8F-development-commands)
+[![Tests](https://img.shields.io/badge/tests-596%20passing-success)](#%EF%B8%8F-development-commands)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 [中文](README.md) | **English**
@@ -17,16 +17,9 @@ Before sending real contracts or case materials, read [Privacy And Data Flow](do
 
 For sensitive cases, prefer a local model or private model gateway, keep `memory.enabled=false`, keep `knowledgeBase.parser.externalApiEnabled=false`, and avoid `logging.messagePolicy=full`.
 
-## 🎯 Why Use This
-
-**Why not just Claude / ChatGPT?** Generic chat tools do not provide Feishu-native session windows, process cards, permission confirmation, Base ledgers, batch material ingestion, or case-level state.
-
-**Why not a mature legal AI SaaS?** SaaS products fit standardized procurement. Bridge fits teams that already work in Feishu, can self-host, and want lower-cost customization plus clearer data-flow control.
-
-**Who is this not for?** Teams that do not use Feishu, do not want to run a local service, or require a vendor-backed compliance package should not treat this as an out-of-box SaaS.
-
 ## 📢 News
 
+- **2026-05-05** · `0.1.59` development update added the labor Legal Harness, PKULaw authority-search confirmation, recent-material knowledge ingestion, Obsidian export strategy, and refreshed the verification baseline to 71 test files / 596 tests
 - **2026-05-04** · `0.1.58` development update restored uploaded images as OpenCode `image_url` prompt parts while keeping local turn-file paths and extracted previews as fallbacks
 - **2026-05-04** · `0.1.57` development updates added contract-assistant natural-language skill routing, structured invoice extraction, Bitable field fallback, Feishu card-action troubleshooting docs, and refreshed the verification baseline to 69 test files / 571 tests
 - **2026-04-28** · External extensions entered a constrained loading phase: public `extension-api`, startup manifest/config normalization, and external RuntimeModule adaptation, while hot reload and direct bridge-internal imports remain unsupported
@@ -355,7 +348,7 @@ npm run dev
 npm run dev:once
 ```
 
-Current full verification baseline: **69 test files · 571 tests passing**
+Current full verification baseline: **71 test files · 596 tests passing**
 
 ## 📂 Project Layout
 

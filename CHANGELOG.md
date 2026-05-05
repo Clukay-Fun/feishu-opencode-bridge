@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.59 - 2026-05-05
+
+### Added
+- Added Legal Harness V1 helpers for labor citation checking, offline fixtures, and repeatable labor analysis validation.
+- Added PKULaw authority search support with labor follow-up confirmation cards and retry-safe pending interactions.
+- Added knowledge-base recent material ingestion, Obsidian note export, and lawyer-visible search strategy drafting.
+- Added umbrella and focused contract skills for contract routing, review, and revision workflows.
+
+### Changed
+- Recorded external authority calls in the runtime cost tracker and exposed the data through local runtime scripts.
+- Updated business skill routing guidance so uploaded files and local absolute paths become material context before execution.
+
+### Fixed
+- Kept completed labor analysis cards stable when authority-search prompt delivery fails.
+- Preserved authority confirmation state when follow-up authority lookup fails.
+- Avoided silent Obsidian note overwrite by adding document id and checksum information to exported note filenames.
+
 ## 0.1.58 - 2026-05-04
 
 ### Fixed
