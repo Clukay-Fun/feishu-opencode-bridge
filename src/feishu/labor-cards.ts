@@ -49,6 +49,21 @@ export type LaborAuthoritySearchCardView = {
   reason: string;
 };
 
+export type LaborAuthoritySearchResultCardView = {
+  title: string;
+  query: string;
+  status: string;
+  durationMs: number;
+  items: Array<{
+    title: string;
+    excerpt: string;
+    url?: string | undefined;
+    sourceUpdatedAt?: string | undefined;
+    timeliness?: string | undefined;
+  }>;
+  message?: string | undefined;
+};
+
 export function buildLaborAnalysisProgressPayload(view: LaborAnalysisProgressCardView): FeishuPostPayload {
   return buildLaborTemplatePayload(LABOR_ANALYSIS_PROGRESS_TEMPLATE_ID, view);
 }
@@ -67,6 +82,43 @@ export function buildLaborAuthoritySearchConfirmPayload(view: LaborAuthoritySear
       buildDivider(),
       buildAuthoritySearchActionBlock(view),
       buildFooterTipBlock("按钮不可用时，可回复 `确认检索词`、`/检索词 <自定义>` 或 `/跳过权威检索`。", "keyboard_outlined", "grey", "notation"),
+    ],
+  });
+}
+
+export function buildLaborAuthoritySearchRunningPayload(query: string): FeishuPostPayload {
+  return buildInteractivePayload({
+    title: "正在检索权威法规",
+    template: "blue",
+    iconToken: "search_outlined",
+    bodyElements: [
+      buildNoticeBodyBlock(`检索词：${query}\n最多等待 5 秒；失败不会影响原劳动分析报告。`, "search_outlined", "blue"),
+      buildFooterTipBlock("正在调用北大法宝 law-semantic，请稍候。", "time_outlined", "grey", "notation"),
+    ],
+  });
+}
+
+export function buildLaborAuthoritySearchResultPayload(view: LaborAuthoritySearchResultCardView): FeishuPostPayload {
+  const ok = view.items.length > 0;
+  return buildInteractivePayload({
+    title: ok ? "权威法规检索完成" : "权威法规检索未命中",
+    template: ok ? "green" : "yellow",
+    iconToken: ok ? "yes_outlined" : "maybe_outlined",
+    bodyElements: [
+      buildNoticeBodyBlock(
+        [
+          `案件：${view.title}`,
+          `检索词：${view.query || "未生成"}`,
+          `状态：${view.status}`,
+          `耗时：${view.durationMs}ms`,
+          view.message ? `提示：${view.message}` : "",
+        ].filter(Boolean).join("\n"),
+        ok ? "yes_outlined" : "maybe_outlined",
+        ok ? "green" : "orange",
+      ),
+      buildDivider(),
+      ...(ok ? buildAuthorityResultBlocks(view.items) : []),
+      buildFooterTipBlock("本区块只作为权威法规线索；不替换本地知识库结论，也未触发劳动分析二次生成。", "info_outlined", "grey", "notation"),
     ],
   });
 }
@@ -90,6 +142,19 @@ function buildLaborTemplatePayload(
       showMessageIcon: false,
     });
   }
+}
+
+function buildAuthorityResultBlocks(items: LaborAuthoritySearchResultCardView["items"]): Array<Record<string, unknown>> {
+  return items.slice(0, 5).flatMap((item, index) => [
+    buildNoticeBodyBlock([
+      `**${index + 1}. ${item.title}**`,
+      item.excerpt,
+      item.timeliness ? `时效性：${item.timeliness}` : "",
+      item.sourceUpdatedAt ? `更新时间：${item.sourceUpdatedAt}` : "",
+      item.url ? `来源：${item.url}` : "",
+    ].filter(Boolean).join("\n"), "doc-search_outlined", "blue"),
+    ...(index < Math.min(items.length, 5) - 1 ? [buildDivider()] : []),
+  ]);
 }
 
 function renderAuthoritySearchSummary(view: LaborAuthoritySearchCardView): string {

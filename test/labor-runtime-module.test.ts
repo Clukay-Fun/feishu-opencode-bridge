@@ -341,7 +341,7 @@ describe("LaborRuntimeModule", () => {
   });
 
   it("appends pkulaw authority results only after search term confirmation", async () => {
-    const { module, tempDir, sendPayload, appendAuthoritySearch } = await createModule();
+    const { module, tempDir, updatePayload, appendAuthoritySearch } = await createModule();
     try {
       const start = createTextMessage("/劳动分析 劳动争议演示");
       await module.handleMessage({ message: start, routed: routeIncomingText(start.plainText) });
@@ -357,8 +357,11 @@ describe("LaborRuntimeModule", () => {
       expect(appendAuthoritySearch).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
         query: "劳动争议 违法解除",
       }));
-      const payloadCalls = sendPayload.mock.calls as unknown as Array<[string, unknown]>;
-      expect(JSON.stringify(payloadCalls.at(-1)?.[1] ?? {})).toContain("权威法规补充");
+      const updatedPayloads = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
+      const finalUpdate = JSON.stringify(updatedPayloads.at(-1)?.[2] ?? {});
+      expect(finalUpdate).toContain("权威法规检索完成");
+      expect(finalUpdate).toContain("违法解除规则");
+      expect(finalUpdate).not.toContain("lark-table");
     } finally {
       await cleanupModule(module, tempDir);
     }
@@ -389,7 +392,7 @@ describe("LaborRuntimeModule", () => {
   });
 
   it("keeps authority confirmation pending when authority search fails", async () => {
-    const { module, tempDir, sendPayload, appendAuthoritySearch } = await createModule();
+    const { module, tempDir, sendPayload, updatePayload, appendAuthoritySearch } = await createModule();
     appendAuthoritySearch.mockRejectedValueOnce(new Error("pkulaw timeout"));
     try {
       const start = createTextMessage("/劳动分析 劳动争议演示");
@@ -410,6 +413,8 @@ describe("LaborRuntimeModule", () => {
       const payloadCalls = sendPayload.mock.calls as unknown as Array<[string, unknown]>;
       expect(JSON.stringify(payloadCalls.at(-1)?.[1] ?? {})).toContain("权威法规检索失败");
       expect(JSON.stringify(payloadCalls.at(-1)?.[1] ?? {})).toContain("pkulaw timeout");
+      const updatedPayloads = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
+      expect(JSON.stringify(updatedPayloads.at(-1)?.[2] ?? {})).toContain("补充权威法规检索");
     } finally {
       await cleanupModule(module, tempDir);
     }
@@ -447,7 +452,7 @@ describe("LaborRuntimeModule", () => {
   });
 
   it("handles authority search confirmation from card buttons", async () => {
-    const { module, tempDir, sendPayload, appendAuthoritySearch } = await createModule();
+    const { module, tempDir, updatePayload, appendAuthoritySearch } = await createModule();
     try {
       const start = createTextMessage("/劳动分析 劳动争议演示");
       await module.handleMessage({ message: start, routed: routeIncomingText(start.plainText) });
@@ -470,8 +475,10 @@ describe("LaborRuntimeModule", () => {
       expect(appendAuthoritySearch).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
         query: "劳动争议 赔偿金",
       }));
-      const payloadCalls = sendPayload.mock.calls as unknown as Array<[string, unknown]>;
-      expect(JSON.stringify(payloadCalls.at(-1)?.[1] ?? {})).toContain("权威法规补充");
+      const updatedPayloads = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
+      const finalUpdate = JSON.stringify(updatedPayloads.at(-1)?.[2] ?? {});
+      expect(finalUpdate).toContain("权威法规检索完成");
+      expect(finalUpdate).toContain("劳动合同法");
     } finally {
       await cleanupModule(module, tempDir);
     }
