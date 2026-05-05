@@ -40,6 +40,8 @@ Feishu Runtime
 
 - `contract-draft`：从用户需求和合同模板生成合同初稿。
 - `contract-extract`：从现有合同文件提取合同台账字段。
+- `contract-review`：审查已有合同并输出风险、缺失条款和修改建议。
+- `contract-revise`：基于已有合同或合同工作台状态修改、删改、补充和导出合同。
 - `invoice-recognize`：从发票文件识别发票字段并写入发票台账。
 - `case-manage`：创建或更新案件台账记录。
 - `reminder-service`：围绕合同、发票、案件日期生成提醒。
@@ -83,6 +85,7 @@ bridge runtime 拥有通用运行时机制。
 - 认领 `/劳动分析`、`/劳动分析结束` 等 labor 命令。
 - 管理 labor 自己的 pending interaction、TTL 和状态恢复。
 - 收集用户上传文件和补充说明。
+- 记录最近上传的劳动材料上下文；当用户随后明确要求“做劳动分析 / 生成劳动争议证据链 / 整理工作台”时，可直接复用这些材料启动分析。
 - 调用 `LaborSkillService`，并通过 labor card family 输出过程卡和结果卡。
 
 它不负责：
@@ -90,6 +93,8 @@ bridge runtime 拥有通用运行时机制。
 - 直接做材料解析和模型 prompt 组装。
 - 直接写合同、发票、案件台账。
 - 持久化其他模块的 pending state。
+
+自然语言入口只在劳动领域意图足够明确时触发。普通的“总结一下刚才文件”或“收入知识库”不会被 labor 接管，仍交给默认文件总结或 knowledge module。
 
 ### Skill 文件
 

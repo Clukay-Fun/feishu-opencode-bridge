@@ -153,6 +153,28 @@
   - shared logging and transcript behavior goes through `src/logging/logger.ts`
   - runtime and transport events should follow the observability event schema instead of inventing ad-hoc event names
 
+## Skill Runtime Guidance
+
+- Skill user experience should prefer `自然语言 + 材料上下文` over “先输入命令再上传文件”. A user may upload a file first, paste a local absolute path, or refer to the recent material in a later message; the runtime should decide whether a skill should act from the skill description, material context, and current user intent.
+- Slash commands remain deterministic overrides and compatibility entrypoints. They are useful when the model route is wrong, the user wants to force a branch, or a power user wants to skip ambiguity; they must not be the only way to invoke a file-driven business skill.
+- Do not hard-code a short phrase list such as “识别并上传” or “这张发票录一下” as the product contract. Phrase examples may appear in tests and docs, but routing should generalize through skill descriptions, declared capability metadata, and material signals.
+- Skill declarations under `.opencode/skills/<skill>/SKILL.md` and `references/*.txt` are the deployment skeleton for prompt/runtime behavior. Keep the repository skeleton and the installed `~/.opencode/skills/<skill>/` copy aligned when changing a built-in skill’s prompt contract.
+- Broad domains may have an umbrella skill plus focused sub-skills. For example, `contract` is the user-facing contract work domain, while `contract-draft`, `contract-extract`, `contract-review`, and `contract-revise` remain separate execution skills with different side effects and cards.
+- Extension `commands` in `extension.meta.ts` are for docs, conflict checks, future help surfaces, and forced entry. Business routing still belongs in the owning `RuntimeModule.handleMessage()` / service workflow, not in `src/runtime/app.ts`, `src/runtime/turn-executor.ts`, or `src/bridge/router.ts`.
+- File upload should create material context, not immediately force business execution. If the next user message clearly asks to process the material, the owning module may claim the turn; if intent is unclear, let the default OpenCode/file-summary path continue or ask a scoped clarification.
+- Natural-language routing may claim `file-await-instruction` only when confidence is high or a slash command explicitly forces the workflow. Low-confidence matches should not hijack generic document summaries, knowledge-base ingestion, or unrelated chat.
+- Natural-language skill activation must use the same visible card lifecycle as slash-command activation. When a user says things like “这张发票录一下” or “帮我提取合同信息”, the matching skill should show its own in-progress, confirmation, and result cards rather than silently running in plain text.
+- Local absolute paths can be treated as material context for the same workflows as uploaded files. The module should validate existence and supported file type before dispatching the skill.
+- Write-side-effect skills such as invoice ledger writes, contract table writes, case workbench updates, or document generation need explicit guardrails. Prefer confirmation cards or deterministic rejection when confidence is low, required fields are missing, or anti-signals indicate the file is not the expected material type.
+- For structured domains, prefer deterministic extraction before LLM repair. Use text/Markdown/OCR output to run schema-aware detectors, field parsers, confidence scoring, and anti-signal checks before asking the model to fill gaps.
+- LLM repair prompts must separate confirmed fields from missing fields. Confirmed fields are frozen, the model should return a diff/patch for missing values only, and the runtime should reject attempts to rewrite already confirmed fields.
+- Detector confidence must be explainable and testable. Prefer weighted signal hits, core-field coverage, negative signals, and fuzzy matching that tolerates OCR noise, rather than a single opaque threshold.
+- `document-pipeline` is shared framework capability. Business skills should consume shared parser/OCR outputs through common services such as evidence extraction instead of implementing their own OCR stack; provider order and parser credentials belong to shared config.
+- Default document parsing strategy: electronic PDF first uses local text-layer extraction; complex-layout PDF falls back to local Markdown parsing; scanned PDF uses external OCR/layout providers only when earlier stages do not extract useful text; images go directly to OCR.
+- Business-specific structured layers may start inside the owning module, for example `src/contract-assistant/invoice-structured.ts`. Split them into a separate shared module only after signal sets, thresholds, config shape, and write-entry boundaries are stable.
+- Knowledge-base flows and labor-dispute material generation keep their own module semantics. Contract-assistant skill routing must not hijack knowledge ingestion/query commands or labor-specific generation workflows unless those modules explicitly expose a shared routing contract.
+- New or changed skill routing must include fixtures and tests. Cover positive and negative samples, noisy OCR text, slash-command forced entry, natural language with recent uploaded material, natural language with local path, detector confidence, anti-signals, and prompt override loading.
+
 ## Feature Checklist
 
 - Automated coverage currently enforced by CI:

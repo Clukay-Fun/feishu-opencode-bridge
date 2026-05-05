@@ -537,14 +537,13 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     }
     if (intent.skill === "invoice-recognize" || intent.skill === "contract-extract") {
       if (!localPath) {
-        await this.sendNotice(message, {
-          title: intent.skill === "invoice-recognize" ? "请提供发票文件" : "请提供合同文件",
-          template: "blue",
-          icon: "file-link-docx_outlined",
-          message: intent.skill === "invoice-recognize"
+        await this.startPendingUpload(
+          message,
+          intent.skill,
+          intent.skill === "invoice-recognize"
             ? "我已识别到你想执行发票识别。请上传发票文件，或在同一句里提供本地文件路径；也可以用 `/识别发票` 强制进入发票识别。"
             : "我已识别到你想执行合同录入。请上传合同文件，或在同一句里提供本地文件路径；也可以用 `/合同录入` 强制进入合同录入。",
-        });
+        );
         return true;
       }
       const file = buildLocalContractFileInput(localPath);

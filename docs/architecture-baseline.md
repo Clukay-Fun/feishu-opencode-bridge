@@ -326,7 +326,7 @@ Feishu Transport
 领域能力拆分约定：
 
 - `labor-skill` 是劳动争议领域总入口，负责劳动案件主线 workflow 编排
-- `contract-draft`、`contract-extract`、`invoice-recognize`、`case-manage` 等保持独立专项能力，可被 labor 调用，但不并入 labor 私有状态
+- `contract-draft`、`contract-extract`、`contract-review`、`contract-revise`、`invoice-recognize`、`case-manage` 等保持独立专项能力，可被 labor 调用，但不并入 labor 私有状态
 - `evidence-extract`、`document-pipeline`、`timeline-build`、`workbench-generate` 和 `case-workflow` 属于 shared workflow，承载跨领域材料处理、时间线构建和工作台输出能力，不承担劳动案件策略判断
 - 详细边界见 [labor-skill-workflows.md](/Users/clukay/Program/feishu-opencode-bridge/docs/modules/labor-skill-workflows.md)
 

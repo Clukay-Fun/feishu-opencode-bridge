@@ -256,7 +256,7 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
   });
 
   it("uses skill intent routing to claim an uploaded invoice without fixed wording", async () => {
-    const { module, recognizeInvoice, classifyIntent, tempDir } = createModule(undefined, {
+    const { module, sendPayload, recognizeInvoice, classifyIntent, tempDir } = createModule(undefined, {
       classifyIntent: async () => ({
         skill: "invoice-recognize",
         confidence: 0.91,
@@ -289,6 +289,51 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
         messageId: "msg-file",
         fileName: "invoice.pdf",
       }));
+      const progressSerialized = JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {});
+      expect(progressSerialized).toContain("发票识别");
+      expect(progressSerialized).toContain("正在 OCR 识别发票内容");
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("starts upload card from natural invoice intent and then runs invoice progress card", async () => {
+    const { module, sendPayload, recognizeInvoice, classifyIntent, tempDir } = createModule(undefined, {
+      classifyIntent: async () => ({
+        skill: "invoice-recognize",
+        confidence: 0.9,
+        needsFile: true,
+        reason: "自然语言要求录入发票",
+      }),
+    });
+    try {
+      const request = createTextMessage("这张发票录一下");
+      const first = await module.handleMessage({
+        message: request,
+        routed: routeIncomingText(request.plainText),
+      });
+
+      expect(first).toEqual({ claimed: true });
+      expect(classifyIntent).toHaveBeenCalledWith(expect.objectContaining({
+        userText: "这张发票录一下",
+        hasRecentFile: false,
+      }));
+      expect(JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {})).toContain("等待上传发票文件");
+
+      const file = createFileMessage("invoice.pdf");
+      const second = await module.handleMessage({
+        message: file,
+        routed: null,
+        pendingInteraction: null,
+      });
+
+      expect(second).toEqual({ claimed: true });
+      expect(recognizeInvoice).toHaveBeenCalledWith(expect.objectContaining({
+        fileName: "invoice.pdf",
+      }));
+      const progressSerialized = JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {});
+      expect(progressSerialized).toContain("发票识别");
+      expect(progressSerialized).toContain("正在 OCR 识别发票内容");
     } finally {
       await cleanupModule(module, tempDir);
     }

@@ -1,6 +1,6 @@
 ---
 name: invoice-recognize
-description: 用户上传发票图片、照片或 PDF，需要识别完整发票字段、写入飞书多维表并返回确认卡片时，优先使用 /识别发票 或 /invoice-recognize。
+description: 用户上传发票图片、照片或 PDF，或提供发票本地路径，并用自然语言要求识别字段、录入发票台账或写入发票记录时，优先匹配 invoice-recognize；/识别发票 或 /invoice-recognize 仅作为强制入口。
 ---
 
 # Invoice Recognize
@@ -17,16 +17,33 @@ bridge 会优先读取 `~/.opencode/skills/invoice-recognize/references/runtime-
 
 OCR / 文档解析不由本 skill 私有实现。运行时通过 bridge 的 `document-pipeline` 共享入口复用 MinerU Agent、PaddleOCR-VL、tesseract、PDF 转 Markdown 等 provider。
 
+当前运行时支持 `Skill Intent Router + Material Context`：
+
+- 用户可以先上传发票，再用自然语言说明“识别 / 录入 / 写入发票台账”。
+- 用户也可以在同一句里给出本地文件路径并说明处理目标。
+- `/识别发票` / `/invoice-recognize` 保留为强制入口，可带本地路径，也可进入等待上传状态。
+- 自然语言触发和 slash command 触发必须进入同一套卡片生命周期：等待上传、发票识别进行中、写表中、完成或失败。
+- 如果用户只是要求总结图片或 PDF 内容，不应自动写入发票台账。
+
 ## 触发
 
-用户触发任一指令：
+自然语言可直接触发，例如：
+
+```text
+这张发票录一下
+把刚才的发票识别并写入发票台账
+把 /Users/me/invoices/demo.pdf 录入发票记录
+```
+
+强制入口：
 
 ```bash
 /识别发票
 /invoice-recognize
+/识别发票 /absolute/path/to/invoice.pdf
 ```
 
-然后附带 1 份发票文件。
+不带路径时，运行时会等待上传 1 份发票文件。
 
 支持场景：
 
