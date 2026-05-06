@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.60 - 2026-05-06
+
+### Added
+- Added Legal Harness card templates for review reports, authority coverage, findings, search confirmation, and grouped results.
+- Added a labor final-review chain with a dedicated `laborSkill.models.review` model slot and downgrade paths for missing, same-model, or failed review calls.
+- Added labor harness checks for review-report presence, model separation, source normalization, authority state, and human-review visibility.
+
+### Changed
+- Extended business card templates with an `actions` block for module-owned interactive button payloads.
+- Updated labor analysis completion cards to show final-review status.
+- Clarified batch skill behavior for case management and invoice recognition, reusing single-item execution with explicit batch summaries.
+
 ## 0.1.59 - 2026-05-05
 
 ### Added

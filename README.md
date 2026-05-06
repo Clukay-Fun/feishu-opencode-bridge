@@ -3,7 +3,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6)](https://www.typescriptlang.org/)
 [![Feishu](https://img.shields.io/badge/Feishu-Bridge-0F6FFF)](https://open.feishu.cn/)
-[![测试](https://img.shields.io/badge/tests-596%20passing-success)](#%EF%B8%8F-开发命令)
+[![测试](https://img.shields.io/badge/tests-622%20passing-success)](#%EF%B8%8F-开发命令)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **中文** | [英文版](README.en.md)
@@ -18,6 +18,8 @@
 敏感案件建议使用本地模型或私有模型网关，并保持 `memory.enabled=false`、`knowledgeBase.parser.externalApiEnabled=false`、`logging.messagePolicy=preview/hash/none`。
 
 ## 📢 项目动态
+
+**2026-05-06** · `0.1.60` 开发版新增 Legal Harness 卡片模板、劳动二审校验链路、模板 actions 区块，并补充批量案件/发票 skill 边界，当前验证基线更新为 72 个测试文件、622 个测试
 
 **2026-05-05** · `0.1.59` 开发版新增劳动 Legal Harness、北大法宝权威检索确认、知识库最近材料入库与 Obsidian 导出策略，当前验证基线更新为 71 个测试文件、596 个测试
 
@@ -424,7 +426,7 @@ npm run dev
 npm run dev:once
 ```
 
-当前完整验证基线：**71 test files · 596 tests passing**
+当前完整验证基线：**72 test files · 622 tests passing**
 
 ## 📂 项目目录
 

@@ -3,7 +3,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6)](https://www.typescriptlang.org/)
 [![Feishu](https://img.shields.io/badge/Feishu-Bridge-0F6FFF)](https://open.feishu.cn/)
-[![Tests](https://img.shields.io/badge/tests-596%20passing-success)](#%EF%B8%8F-development-commands)
+[![Tests](https://img.shields.io/badge/tests-622%20passing-success)](#%EF%B8%8F-development-commands)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 [中文](README.md) | **English**
@@ -19,6 +19,7 @@ For sensitive cases, prefer a local model or private model gateway, keep `memory
 
 ## 📢 News
 
+- **2026-05-06** · `0.1.60` development update added Legal Harness card templates, the labor final-review chain, template action blocks, and clarified batch case/invoice skill boundaries; verification baseline is now 72 test files / 622 tests
 - **2026-05-05** · `0.1.59` development update added the labor Legal Harness, PKULaw authority-search confirmation, recent-material knowledge ingestion, Obsidian export strategy, and refreshed the verification baseline to 71 test files / 596 tests
 - **2026-05-04** · `0.1.58` development update restored uploaded images as OpenCode `image_url` prompt parts while keeping local turn-file paths and extracted previews as fallbacks
 - **2026-05-04** · `0.1.57` development updates added contract-assistant natural-language skill routing, structured invoice extraction, Bitable field fallback, Feishu card-action troubleshooting docs, and refreshed the verification baseline to 69 test files / 571 tests
@@ -348,7 +349,7 @@ npm run dev
 npm run dev:once
 ```
 
-Current full verification baseline: **71 test files · 596 tests passing**
+Current full verification baseline: **72 test files · 622 tests passing**
 
 ## 📂 Project Layout
 
