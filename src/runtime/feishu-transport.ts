@@ -6,6 +6,7 @@
  */
 import { buildNoticeCardPayload, type FeishuPostPayload, type NoticeCardView } from "../feishu/shared-primitives.js";
 import { createTextPreview, type TranscriptType } from "../logging/logger.js";
+import type { BridgeOutputContext } from "./message-context.js";
 
 export type FeishuTransportLog = {
   event: string;
@@ -26,6 +27,7 @@ export interface FeishuTransport {
     payload: FeishuPostPayload,
     options: FeishuTransportLog,
     delivery?: FeishuTransportDelivery,
+    handoffSummary?: BridgeOutputContext | undefined,
   ): Promise<{ messageId: string }>;
   // Update an already-sent message payload in place.
   updatePayload(
@@ -33,6 +35,7 @@ export interface FeishuTransport {
     messageId: string,
     payload: FeishuPostPayload,
     options: FeishuTransportLog,
+    handoffSummary?: BridgeOutputContext | undefined,
   ): Promise<{ messageId: string }>;
   // Send a lightweight notice card without exposing card-construction details upstream.
   sendNotice(

@@ -21,6 +21,8 @@ export type BridgeTurn = {
   inboundMessageId: string;
   plainText: string;
   text: string;
+  rootId?: string | undefined;
+  parentId?: string | undefined;
   promptParts?: OpenCodePromptPart[] | undefined;
   model?: OpenCodeModelRef | undefined;
   // Runtime-owned session and message anchors created while the turn executes.

@@ -7,6 +7,7 @@
 import { type FeishuPostPayload, type OutputView, type ToolUpdateView } from "../feishu/shared-primitives.js";
 import { buildTurnStatusCardPayload, type TurnStatusCardView } from "../feishu/runtime-cards.js";
 import { createTextPreview, logEvent, type Logger, type TranscriptType } from "../logging/logger.js";
+import type { BridgeOutputContext } from "./message-context.js";
 import {
   appendProgressUpdate,
   formatDuration,
@@ -30,6 +31,7 @@ type OutboundPort = {
 
 type TurnCardState = {
   messageId: string;
+  chatId: string;
   status: string;
   sessionId: string;
   startedAt: number;
@@ -45,6 +47,15 @@ type StreamFlushState = {
   timer: NodeJS.Timeout | null;
 };
 
+type MessageContextRecorder = {
+  rememberBridgeOutput(input: {
+    messageId: string;
+    chatId: string;
+    summary?: string | undefined;
+    handoffSummary?: BridgeOutputContext | undefined;
+  }): void;
+};
+
 export class TurnCardManager {
   private readonly turnCards = new Map<string, TurnCardState>();
   private readonly streamFlushStates = new Map<string, StreamFlushState>();
@@ -53,6 +64,7 @@ export class TurnCardManager {
     private readonly outbound: OutboundPort,
     private readonly logger: Logger,
     private readonly replyInThread: boolean,
+    private readonly contextRecorder?: MessageContextRecorder | undefined,
   ) {}
 
   // #region 生命周期
@@ -75,6 +87,7 @@ export class TurnCardManager {
   async createTurnCard(chatId: string, turnId: string, sessionId: string, replyToMessageId: string): Promise<{ messageId: string } | null> {
     const state: TurnCardState = {
       messageId: "",
+      chatId,
       status: "处理中",
       sessionId,
       startedAt: Date.now(),
@@ -187,6 +200,21 @@ export class TurnCardManager {
         len: [...card.progressUpdates, ...card.toolUpdates.map((item) => item.view.label)].join("\n").length,
       });
       this.logger.logTranscript("outbound-process", { messageId: result.messageId }, prettyPrintPayload(payload));
+      if (card.output.text) {
+        this.contextRecorder?.rememberBridgeOutput({
+          messageId: result.messageId,
+          chatId: card.chatId,
+          summary: createTextPreview(card.output.text),
+          handoffSummary: {
+            kind: "opencode-final",
+            title: "OpenCode 回复",
+            summary: createTextPreview(card.output.text),
+            keyPoints: [createTextPreview(card.output.text)],
+            sourceMessageId: result.messageId,
+            createdAt: Date.now(),
+          },
+        });
+      }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       logEvent(this.logger, "feishu/reply", "transport.failed", {

@@ -5,6 +5,7 @@
  * - 提供模块执行时使用的上下文类型。
  * - 定义 ModuleManager 对模块编排层的最小接口。
  */
+import type { BridgeOutputContext } from "../runtime/message-context.js";
 import type { IncomingChatMessage } from "../runtime/app.js";
 import type { RoutedText } from "./router.js";
 import type { BridgeTurn } from "./turn.js";
@@ -21,11 +22,15 @@ export type RuntimeModuleMessageContext = {
   routed: RoutedText | null;
   window?: SessionWindowRecord | undefined;
   pendingInteraction?: PendingInteraction | null;
+  /** 从被引用消息解析出的 BridgeOutputContext 数组，可供业务模块续接上一条 Bridge 输出 */
+  messageContext?: BridgeOutputContext[] | undefined;
 };
 
 export type RuntimeModuleBeforeTurnContext = {
   turn: BridgeTurn & { sessionId: string };
   window: SessionWindowRecord;
+  /** 从被引用消息解析出的 BridgeOutputContext 数组，可供模块读取 */
+  messageContext?: BridgeOutputContext[] | undefined;
 };
 
 export type RuntimeModuleAfterTurnContext = {

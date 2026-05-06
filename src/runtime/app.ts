@@ -57,7 +57,7 @@ import { TurnCardManager } from "./turn-card-manager.js";
 import { TurnExecutor } from "./turn-executor.js";
 import { TurnOwnedResourceStore } from "./turn-owned-resources.js";
 import { SlidingWindowRateLimiter } from "./rate-limiter.js";
-import { BridgeMessageContextStore, prependBridgeMessageContext } from "./message-context.js";
+import { BridgeMessageContextStore, prependBridgeMessageContext, type BridgeOutputContext } from "./message-context.js";
 import { CostTracker } from "./cost-tracker.js";
 import {
   addSession,
@@ -185,7 +185,7 @@ export class BridgeApp {
   private readonly opencode: OpenCodePort;
   private readonly eventStream: OpenCodeEventStreamPort;
   private readonly permissionManager: PermissionManager;
-  private readonly messageContextStore = new BridgeMessageContextStore();
+  private readonly messageContextStore: BridgeMessageContextStore;
   private readonly turnCardManager: TurnCardManager;
   private readonly costTracker: CostTracker;
   private readonly turnOwnedResources: TurnOwnedResourceStore;
@@ -212,9 +212,12 @@ export class BridgeApp {
   ) {
     this.queues = new QueueRegistry(config.bridge.queueLimit, logger);
     this.mappings = new MappingStore(config.storage.dataDir, config.storage.mappingsFile, 200, logger);
+    this.messageContextStore = new BridgeMessageContextStore(config.storage.dataDir, logger);
     this.opencode = deps?.opencode ?? new OpenCodeClient(config.opencode.baseUrl);
     this.eventStream = deps?.eventStream ?? new OpenCodeEventStream(config.opencode.baseUrl, logger);
-    this.turnCardManager = new TurnCardManager(this.outbound, this.logger, this.config.feishu.behavior.replyInThread);
+    this.turnCardManager = new TurnCardManager(this.outbound, this.logger, this.config.feishu.behavior.replyInThread, {
+      rememberBridgeOutput: (input) => this.messageContextStore.rememberBridgeOutput(input),
+    });
     this.costTracker = new CostTracker(config.costs, config.storage.dataDir, logger);
     this.turnOwnedResources = new TurnOwnedResourceStore(this.logger);
     this.permissionManager = new PermissionManager({
@@ -234,8 +237,8 @@ export class BridgeApp {
       toCardContent: (payload) => this.toCardContent(payload),
     }, this.config.permissions?.defaultPolicy ?? "ask");
     const transport = createFeishuTransport({
-      sendPayload: async (chatId, payload, options, delivery) => await this.sendPayload(chatId, payload, options, delivery),
-      updatePayload: async (chatId, messageId, payload, options) => await this.updatePayload(chatId, messageId, payload, options),
+      sendPayload: async (chatId, payload, options, delivery, handoffSummary) => await this.sendPayload(chatId, payload, options, delivery, handoffSummary),
+      updatePayload: async (chatId, messageId, payload, options, handoffSummary) => await this.updatePayload(chatId, messageId, payload, options, handoffSummary),
     });
     const moduleAssembly = createRuntimeModules({
       config: this.config,
@@ -272,8 +275,9 @@ export class BridgeApp {
       clearTurnOwnedPendingInteraction: (conversationKey, turnId) => this.clearTurnOwnedPendingInteraction(conversationKey, turnId),
       cleanupTurnResources: async (turnId) => await this.turnOwnedResources.cleanupTurn(turnId),
       setPendingInteraction: (conversationKey, interaction) => this.setPendingInteraction(conversationKey, interaction),
-      sendPayload: async (chatId, payload, options, delivery) => await this.sendPayload(chatId, payload, options, delivery),
+      sendPayload: async (chatId, payload, options, delivery, handoffSummary) => this.sendPayload(chatId, payload, options, delivery, handoffSummary),
       costTracker: this.costTracker,
+      messageContextStore: this.messageContextStore,
     });
   }
 
@@ -283,6 +287,7 @@ export class BridgeApp {
    * 启动桥接应用，并完成映射恢复、模块装配和事件流订阅。
    */
   async start(): Promise<void> {
+    await this.messageContextStore.restore();
     this.sessionMap = await this.mappings.load();
     const health = await this.opencode.health();
     const project = await this.opencode.getCurrentProject();
@@ -385,6 +390,7 @@ export class BridgeApp {
       messageType: message.messageType,
     }, message.plainText);
     this.messageContextStore.rememberInbound(message);
+    const messageContext = this.messageContextStore.buildRuntimeContext(message);
 
     const routed = message.messageType === "file" || message.messageType === "image"
       ? null
@@ -407,6 +413,7 @@ export class BridgeApp {
       routed,
       window: this.getSessionWindow(message.conversationKey, message.chatType),
       pendingInteraction: pending ?? null,
+      messageContext,
     });
     if (moduleResult.claimed) {
       return;
@@ -503,6 +510,8 @@ export class BridgeApp {
       text: this.buildPromptTextWithMessageContext(message, toOpencodePromptText(message)),
       model: window.modelOverride,
       sessionId,
+      rootId: message.rootId,
+      parentId: message.parentId,
       logContext: this.buildTurnLogContext(message, turnId, sessionId),
     };
 
@@ -602,7 +611,7 @@ export class BridgeApp {
    * 处理桥接层命令，并把桥接自有命令与模块命令分流。
    */
   private async handleCommand(
-    message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "threadKey" | "senderOpenId">,
+    message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "threadKey" | "senderOpenId" | "rootId" | "parentId">,
     routed: Extract<RoutedText, { kind: "command" }>,
   ): Promise<void> {
     if (routed.command.kind === "passthrough") {
@@ -610,6 +619,7 @@ export class BridgeApp {
         message: message as IncomingChatMessage,
         routed,
         window: this.getSessionWindow(message.conversationKey, message.chatType),
+        messageContext: this.messageContextStore.buildRuntimeContext(message),
       });
       if (moduleResult.claimed) {
         return;
@@ -652,6 +662,7 @@ export class BridgeApp {
       message: message as IncomingChatMessage,
       routed,
       window: this.getSessionWindow(message.conversationKey, message.chatType),
+      messageContext: this.messageContextStore.buildRuntimeContext(message),
     });
   }
 
@@ -796,6 +807,8 @@ export class BridgeApp {
       promptParts: processed.promptParts,
       model: window.modelOverride,
       sessionId,
+      rootId: message.rootId,
+      parentId: message.parentId,
       logContext: this.buildTurnLogContext(message, turnId, sessionId),
     };
     const result = queue.enqueue(turn);
@@ -1555,6 +1568,7 @@ export class BridgeApp {
     payload: FeishuPostPayload,
     options: { event: string; transcriptType: TranscriptType; textPreview: string; len: number },
     delivery?: { replyToMessageId: string; replyInThread?: boolean },
+    handoffSummary?: BridgeOutputContext | undefined,
   ): Promise<{ messageId: string }> {
     const transportAction = delivery?.replyToMessageId
       ? "reply"
@@ -1580,6 +1594,7 @@ export class BridgeApp {
         chatId,
         replyToMessageId: delivery?.replyToMessageId,
         summary: options.textPreview,
+        handoffSummary: handoffSummary ?? buildDefaultBridgeOutputContext(options, result.messageId),
       });
       return result;
     } catch (error) {
@@ -1604,6 +1619,7 @@ export class BridgeApp {
     messageId: string,
     payload: FeishuPostPayload,
     options: { event: string; transcriptType: TranscriptType; textPreview: string; len: number },
+    handoffSummary?: BridgeOutputContext | undefined,
   ): Promise<{ messageId: string }> {
     try {
       const result = await this.outbound.updateMessage(messageId, payload);
@@ -1621,6 +1637,7 @@ export class BridgeApp {
         messageId: result.messageId,
         chatId,
         summary: options.textPreview,
+        handoffSummary: handoffSummary ?? buildDefaultBridgeOutputContext(options, result.messageId),
       });
       return result;
     } catch (error) {
@@ -1686,6 +1703,51 @@ function normalizeDownloadedResourceFileName(
   }
   const mimeExtension = extensionFromMimeType(mimeType);
   return mimeExtension ? `${downloadedFileName}${mimeExtension}` : downloadedFileName;
+}
+
+function buildDefaultBridgeOutputContext(
+  options: { event: string; transcriptType: TranscriptType; textPreview: string },
+  messageId: string,
+): BridgeOutputContext | undefined {
+  const summary = createTextPreview(options.textPreview);
+  if (!summary) {
+    return undefined;
+  }
+  const kind = inferBridgeOutputKind(options.event, options.transcriptType);
+  return {
+    kind,
+    title: inferBridgeOutputTitle(kind, options.event),
+    summary,
+    keyPoints: [summary],
+    sourceMessageId: messageId,
+    createdAt: Date.now(),
+  };
+}
+
+function inferBridgeOutputKind(event: string, transcriptType: TranscriptType): BridgeOutputContext["kind"] {
+  if (event.includes("labor")) return "labor-result";
+  if (event.includes("knowledge")) return "knowledge-result";
+  if (event.includes("contract") || event.includes("invoice") || event.includes("case")) return "contract-result";
+  if (event.includes("file")) return "file-result";
+  if (transcriptType === "outbound-final") return "opencode-final";
+  return "system-result";
+}
+
+function inferBridgeOutputTitle(kind: BridgeOutputContext["kind"], event: string): string {
+  switch (kind) {
+    case "labor-result":
+      return "劳动分析结果";
+    case "knowledge-result":
+      return "知识库结果";
+    case "contract-result":
+      return "合同/案件处理结果";
+    case "file-result":
+      return "文件处理结果";
+    case "opencode-final":
+      return "OpenCode 回复";
+    default:
+      return event || "Bridge 输出";
+  }
 }
 
 function buildUploadedResourcePromptParts(

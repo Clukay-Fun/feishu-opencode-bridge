@@ -5,6 +5,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TurnExecutor, type TurnExecutorContext } from "../src/runtime/turn-executor.js";
+import type { BridgeMessageContextStore } from "../src/runtime/message-context.js";
 
 describe("TurnExecutor text buffering", () => {
   afterEach(() => {
@@ -399,6 +400,11 @@ function createContext(): TurnExecutorContext {
     async sendPayload() {
       return { messageId: "om_reply_1" };
     },
+    messageContextStore: {
+      buildRuntimeContext() { return []; },
+      buildPromptBlock() { return null; },
+      rememberBridgeOutput() {},
+    } as unknown as BridgeMessageContextStore,
   };
 }
 

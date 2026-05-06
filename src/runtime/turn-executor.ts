@@ -18,6 +18,7 @@ import { type OpenCodeMessage, type OpenCodeSessionStatus } from "../opencode/cl
 import { formatCostSummary, type CostTracker } from "./cost-tracker.js";
 import { getEventSessionId, type OpenCodeEvent } from "../opencode/events.js";
 import { type SessionWindowRecord } from "../store/mappings.js";
+import { type BridgeMessageContextStore, type BridgeOutputContext } from "./message-context.js";
 import type { PendingInteraction } from "../bridge/state.js";
 import {
   buildBridgeSystemPrompt,
@@ -179,7 +180,9 @@ export type TurnExecutorContext = {
     payload: FeishuPostPayload,
     options: { event: string; transcriptType: TranscriptType; textPreview: string; len: number },
     delivery?: { replyToMessageId: string; replyInThread?: boolean },
+    handoffSummary?: BridgeOutputContext | undefined,
   ): Promise<{ messageId: string }>;
+  messageContextStore: BridgeMessageContextStore;
 };
 
 export class TurnExecutor {
@@ -336,9 +339,15 @@ export class TurnExecutor {
     const bridgeSystemPrompt = this.context.config.bridge.injectSystemState
       ? buildBridgeSystemPrompt(turn, this.context.getSessionWindow(turn.conversationKey, turn.chatType))
       : undefined;
+    const messageContext = this.context.messageContextStore.buildRuntimeContext({
+      messageId: turn.inboundMessageId,
+      rootId: turn.rootId,
+      parentId: turn.parentId,
+    });
     const moduleSystemBlocks = await this.context.moduleManager.collectBeforeTurnBlocks({
       turn,
       window: this.context.getSessionWindow(turn.conversationKey, turn.chatType),
+      messageContext,
     });
 
     return {
