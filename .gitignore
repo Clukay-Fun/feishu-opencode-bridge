@@ -16,6 +16,7 @@ active-knowledge-ingests.json
 knowledge-base.db
 tmp-knowledge-check.txt
 usage-ledger.jsonl
+message-context.json
 
 # Local tool state
 .DS_Store
