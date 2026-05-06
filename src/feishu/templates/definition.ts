@@ -17,7 +17,16 @@ export type BusinessCardBlock =
   | { kind: "stats"; labels: string[] }
   | { kind: "tagChart"; tagCounts: Record<string, number>; bitableUrl?: string | undefined; title?: string; linkLabel?: string }
   | { kind: "elapsed"; content: string }
-  | { kind: "divider" };
+  | { kind: "divider" }
+  | { kind: "actions"; buttons: ReadonlyArray<BusinessCardActionButton> };
+
+/** 模板运行时按钮定义，用于 search-confirm 等交互型卡片。 */
+export type BusinessCardActionButton = {
+  label: string;
+  type: "primary" | "default" | "danger";
+  value: Record<string, unknown>;
+  width?: "fill" | "default" | undefined;
+};
 
 export type BusinessCardSpec = {
   title: string;

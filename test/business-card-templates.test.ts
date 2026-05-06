@@ -14,6 +14,11 @@ describe("business card templates", () => {
     expect(listBusinessCardTemplates()).toEqual([
       "labor.analysis.progress",
       "labor.analysis.completed",
+      "harness.review-report",
+      "harness.authority-coverage",
+      "harness.findings",
+      "harness.search-confirm",
+      "harness.result-group",
     ]);
   });
 

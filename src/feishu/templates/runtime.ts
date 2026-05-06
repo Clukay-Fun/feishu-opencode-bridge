@@ -18,7 +18,7 @@ import {
   type FeishuPostPayload,
 } from "../shared-primitives.js";
 import { getBusinessCardTemplate } from "./registry.js";
-import type { BusinessCardBlock, BusinessCardSpec } from "./definition.js";
+import type { BusinessCardBlock, BusinessCardSpec, BusinessCardActionButton } from "./definition.js";
 export type { AnyBusinessCardTemplateDefinition, BusinessCardTemplateDefinition } from "./definition.js";
 
 export class BusinessCardTemplateValidationError extends Error {
@@ -36,25 +36,15 @@ export class BusinessCardTemplateValidationError extends Error {
 export function renderBusinessCard(
   templateId: string,
   input: unknown,
-  options: { onError?: "throw" | "fallback" } = {},
 ): FeishuPostPayload {
-  const onError = options.onError ?? "throw";
   const template = getBusinessCardTemplate(templateId);
   if (!template) {
-    const error = new Error(`Unknown business card template: ${templateId}`);
-    if (onError === "throw") {
-      throw error;
-    }
-    throw error;
+    throw new Error(`Unknown business card template: ${templateId}`);
   }
 
   const parsed = template.schema.safeParse(input);
   if (!parsed.success) {
-    const error = new BusinessCardTemplateValidationError(templateId, parsed.error);
-    if (onError === "throw") {
-      throw error;
-    }
-    throw error;
+    throw new BusinessCardTemplateValidationError(templateId, parsed.error);
   }
 
   return renderBusinessCardSpec(template.render(parsed.data));
@@ -85,7 +75,39 @@ function renderBusinessCardBlock(block: BusinessCardBlock): Array<Record<string,
       return [buildElapsedLine(block.content)];
     case "divider":
       return [buildDivider()];
+    case "actions":
+      return [renderActionsBlock(block.buttons)];
     default:
       return [];
   }
+}
+
+/** 将模板 actions 区块渲染为飞书 column_set + button 布局。 */
+function renderActionsBlock(buttons: ReadonlyArray<BusinessCardActionButton>): Record<string, unknown> {
+  return {
+    tag: "column_set",
+    flex_mode: "stretch",
+    horizontal_spacing: "8px",
+    horizontal_align: "left",
+    columns: buttons.map((button) => ({
+      tag: "column",
+      width: "auto",
+      elements: [
+        {
+          tag: "button",
+          text: {
+            tag: "plain_text",
+            content: button.label,
+          },
+          type: button.type,
+          width: button.width ?? "default",
+          size: "medium",
+          margin: "0px 0px 0px 0px",
+          value: button.value,
+        },
+      ],
+      vertical_align: "top",
+    })),
+    margin: "0px 0px 0px 0px",
+  };
 }

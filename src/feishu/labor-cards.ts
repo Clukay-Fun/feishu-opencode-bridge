@@ -39,6 +39,7 @@ export type LaborAnalysisCompletedCardView = {
   missingEvidenceViewUrl?: string | undefined;
   syncedEvidenceCount?: number | undefined;
   syncedGapCount?: number | undefined;
+  reviewStatus?: string | undefined;
 };
 
 export type LaborAuthoritySearchCardView = {
@@ -128,7 +129,7 @@ function buildLaborTemplatePayload(
   input: LaborAnalysisProgressCardView | LaborAnalysisCompletedCardView,
 ): FeishuPostPayload {
   try {
-    return renderBusinessCard(templateId, input, { onError: "throw" });
+    return renderBusinessCard(templateId, input);
   } catch (error) {
     console.warn("[feishu/card-template] labor template render failed", {
       templateId,

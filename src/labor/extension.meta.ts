@@ -6,6 +6,13 @@
  */
 import type { BuiltinExtensionMetaDefinition } from "../extensions/definition.js";
 import { laborAnalysisCompletedTemplate, laborAnalysisProgressTemplate } from "./card-templates.js";
+import {
+  harnessAuthorityCoverageTemplate,
+  harnessFindingsTemplate,
+  harnessResultGroupTemplate,
+  harnessReviewReportTemplate,
+  harnessSearchConfirmTemplate,
+} from "./harness-card-templates.js";
 import { laborSkillConfigDefinition } from "./config.js";
 
 export const laborSkillExtensionMeta = {
@@ -19,5 +26,10 @@ export const laborSkillExtensionMeta = {
   cardTemplates: [
     laborAnalysisProgressTemplate,
     laborAnalysisCompletedTemplate,
+    harnessReviewReportTemplate,
+    harnessAuthorityCoverageTemplate,
+    harnessFindingsTemplate,
+    harnessSearchConfirmTemplate,
+    harnessResultGroupTemplate,
   ],
 } as const satisfies BuiltinExtensionMetaDefinition;
