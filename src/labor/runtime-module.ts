@@ -33,6 +33,8 @@ import type {
   LaborAuthoritySearchDraft,
   LaborSkillService,
   LaborMaterialExtraction,
+  LaborReviewAuthorityContext,
+  LaborFinalReviewReport,
 } from "./index.js";
 
 type LaborRuntimeModuleDeps = {
@@ -459,7 +461,12 @@ export class LaborRuntimeModule implements RuntimeModule {
         },
       });
 
-      await this.updateCompletedCard(pending.chatId, processing.messageId, progressState, buildLaborCompletedView(result, progressState.totalFiles));
+      await this.updateCompletedCard(
+        pending.chatId,
+        processing.messageId,
+        progressState,
+        buildLaborCompletedView(result, progressState.totalFiles),
+      );
 
       if (!result.docUrl) {
         const markdown = [
@@ -622,7 +629,7 @@ export class LaborRuntimeModule implements RuntimeModule {
         message: "原劳动分析报告保持不变；如需稍后补充，可重新发起劳动分析。",
         showMessageIcon: false,
       }));
-      this.clearInteraction(pending.conversationKey);
+      await this.runReviewAndUpdateCompletedCard(pending, authority.result, { status: "skipped" });
       return;
     }
 
@@ -641,6 +648,31 @@ export class LaborRuntimeModule implements RuntimeModule {
       items: appended.search.items,
       message: "message" in appended.search ? appended.search.message : undefined,
     }), "labor authority result updated");
+    await this.runReviewAndUpdateCompletedCard(pending, authority.result, {
+      status: "completed",
+      searchResult: appended.search,
+    });
+  }
+
+  private async runReviewAndUpdateCompletedCard(
+    pending: PendingLaborInteraction,
+    result: LaborAnalyzeResult,
+    authorityContext: LaborReviewAuthorityContext,
+  ): Promise<void> {
+    try {
+      const { reviewReport, reviewSkippedReason } = await this.deps.service!.finalizeReviewOnly(result, authorityContext);
+      await this.deps.transport.updatePayload(pending.chatId, pending.authority?.reportMessageId ?? pending.anchorMessageId, buildLaborAnalysisCompletedPayload(buildLaborCompletedView(result, undefined, { reviewReport, reviewSkippedReason })), {
+        event: "labor completed card updated with review",
+        transcriptType: "outbound-final",
+        textPreview: "劳动分析完成（含二审）",
+        len: 0,
+      });
+    } catch (error) {
+      this.deps.logger.log("labor/authority", "post-decision review failed", {
+        conversationKey: pending.conversationKey,
+        detail: error instanceof Error ? error.message : String(error),
+      }, "warn");
+    }
     this.clearInteraction(pending.conversationKey);
   }
 
@@ -722,7 +754,7 @@ export class LaborRuntimeModule implements RuntimeModule {
       reasons: detection.reasons.join(","),
       materialCount: materials.length,
     });
-    const pending = await this.startCollection(message, extractLaborTitle(message.plainText));
+    const pending = await this.startCollection(message, undefined);
     for (const material of materials) {
       pending.files.push({
         messageId: material.messageId,
@@ -982,15 +1014,15 @@ function detectLaborRecentMaterialIntent(text: string): LaborRecentMaterialInten
     confidence += 0.3;
     reasons.push("labor-domain");
   }
-  if (/劳动分析|劳动争议|证据链|工作台|工作底稿|仲裁材料|案件材料|维权材料/.test(normalized)) {
+  if (/劳动分析|劳动争议|证据链|工作台|工作底稿|仲裁材料|案件材料|维权材料|证据清单/.test(normalized)) {
     confidence += 0.35;
     reasons.push("labor-output");
   }
-  if (/分析|生成|整理|梳理|做|输出|形成/.test(normalized)) {
+  if (/分析|生成|整理|梳理|做|输出|形成|编写|编制|制作|起草/.test(normalized)) {
     confidence += 0.25;
     reasons.push("analysis-action");
   }
-  if (/刚才|这些|这几|上面|前面|文件|材料|证据|附件|截图|合同|通知|工资|考勤/.test(normalized)) {
+  if (/刚才|这些|这几|上面|前面|文件|材料|证据|附件|截图/.test(normalized)) {
     confidence += 0.15;
     reasons.push("material-reference");
   }
@@ -1005,17 +1037,6 @@ function detectLaborRecentMaterialIntent(text: string): LaborRecentMaterialInten
     confidence: bounded,
     reasons,
   };
-}
-
-function extractLaborTitle(text: string): string | undefined {
-  const normalized = text
-    .replace(/^请|^帮我|^麻烦你?/, "")
-    .replace(/(做|生成|整理|梳理|输出|形成)?(劳动分析|劳动争议|证据链|工作台|工作底稿|仲裁材料|案件材料|维权材料)/g, "")
-    .replace(/(刚才|这些|这几|上面|前面|上传|文件|材料|证据|附件|截图)/g, "")
-    .replace(/[，。；、,.!?！？]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  return normalized || undefined;
 }
 
 function renderProcessingMessage(state: LaborProgressState): string {
@@ -1199,7 +1220,7 @@ function buildLaborCompletedView(result: {
   syncedGapCount: number;
   extractedMaterials: LaborMaterialExtraction[];
   aggregate: { evidenceRows: Array<unknown>; issues: Array<unknown> };
-}, totalFiles: number): LaborAnalysisCompletedCardView {
+}, totalFiles: number | undefined, review?: { reviewReport: LaborFinalReviewReport | null; reviewSkippedReason?: string | undefined }): LaborAnalysisCompletedCardView {
   const tagCounts: Record<string, number> = {};
   for (const material of result.extractedMaterials) {
     const key = material.materialType?.trim() || "其他";
@@ -1207,7 +1228,7 @@ function buildLaborCompletedView(result: {
   }
   return {
     title: result.title,
-    materialCount: totalFiles,
+    materialCount: totalFiles ?? result.extractedMaterials.length,
     evidenceCount: result.aggregate.evidenceRows.length,
     issueCount: result.aggregate.issues.length,
     tagCounts,
@@ -1217,5 +1238,33 @@ function buildLaborCompletedView(result: {
     missingEvidenceViewUrl: result.missingEvidenceViewUrl,
     syncedEvidenceCount: result.syncedEvidenceCount,
     syncedGapCount: result.syncedGapCount,
+    reviewStatus: formatReviewStatus(review?.reviewReport, review?.reviewSkippedReason),
   };
+}
+
+/** 将二审结果映射为完成卡片中的一行状态文本。 */
+function formatReviewStatus(
+  report: LaborFinalReviewReport | null | undefined,
+  skippedReason?: string | undefined,
+): string | undefined {
+  if (report) {
+    switch (report.status) {
+      case "pass":
+        return "二审通过";
+      case "needs_revision":
+        return `二审建议修改（${report.findings.length} 条发现）`;
+      case "needs_human_review":
+        return `二审需人工复核（${report.findings.filter((f) => f.severity === "high").length} 条高风险）`;
+    }
+  }
+  switch (skippedReason) {
+    case "review_skipped_no_config":
+      return "二审未配置";
+    case "review_skipped_same_as_analyze":
+      return "二审跳过（与一审同模型）";
+    case "review_call_failed":
+      return "二审调用失败";
+    default:
+      return undefined;
+  }
 }

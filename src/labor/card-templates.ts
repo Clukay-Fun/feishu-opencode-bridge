@@ -35,6 +35,7 @@ const LaborAnalysisCompletedCardViewSchema = z.object({
   missingEvidenceViewUrl: z.string().optional(),
   syncedEvidenceCount: z.number().optional(),
   syncedGapCount: z.number().optional(),
+  reviewStatus: z.string().optional(),
 });
 
 export const LABOR_ANALYSIS_PROGRESS_TEMPLATE_ID = "labor.analysis.progress";
@@ -70,6 +71,9 @@ export const laborAnalysisCompletedTemplate: BusinessCardTemplateDefinition<type
       blocks: [
         { kind: "title", content: `案件：**${escapeText(input.title)}**` },
         { kind: "stats", labels: [`材料 ${input.materialCount}`, `证据 ${input.evidenceCount}`, `焦点 ${input.issueCount}`] },
+        ...(input.reviewStatus
+          ? [{ kind: "quote" as const, content: `二审状态：${escapeText(input.reviewStatus)}` }]
+          : []),
         { kind: "tagChart", tagCounts: input.tagCounts, bitableUrl: input.docUrl, title: "材料占比", linkLabel: "打开分析文档" },
         ...(input.ledgerUrl
           ? [{ kind: "quote" as const, content: [

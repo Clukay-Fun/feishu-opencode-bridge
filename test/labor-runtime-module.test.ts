@@ -126,6 +126,17 @@ async function createModule(existingTempDir?: string) {
     aggregate: createAggregate(),
     warnings: [],
   }));
+  const finalizeReviewOnly = vi.fn(async () => ({
+    reviewReport: {
+      status: "needs_human_review" as const,
+      findings: [{ severity: "high" as const, type: "null_source", message: "缺少来源", source: { type: null } }],
+      unsupportedClaims: [],
+      authorityCoverage: [],
+      suggestedEdits: [],
+      warnings: [],
+    },
+    reviewSkippedReason: undefined,
+  }));
   const buildAuthoritySearchDraft = vi.fn(() => ({
     mainQuery: "劳动争议 违法解除",
     alternatives: ["劳动争议 赔偿金"],
@@ -160,6 +171,7 @@ async function createModule(existingTempDir?: string) {
     service: {
       extractMaterial,
       finalizeAnalysis,
+      finalizeReviewOnly,
       buildAuthoritySearchDraft,
       appendAuthoritySearch,
     } as never,
@@ -176,6 +188,7 @@ async function createModule(existingTempDir?: string) {
     updatePayload,
     extractMaterial,
     finalizeAnalysis,
+    finalizeReviewOnly,
     buildAuthoritySearchDraft,
     appendAuthoritySearch,
     logger,
@@ -210,7 +223,7 @@ describe("LaborRuntimeModule", () => {
   });
 
   it("collects files and notes silently, and only starts analysis after /劳动分析结束", async () => {
-    const { module, tempDir, sendPayload, updatePayload, extractMaterial, finalizeAnalysis } = await createModule();
+    const { module, tempDir, sendPayload, updatePayload, extractMaterial, finalizeAnalysis, finalizeReviewOnly } = await createModule();
     try {
       const start = createTextMessage("/劳动分析 劳动争议演示");
       const startResult = await module.handleMessage({
@@ -269,6 +282,7 @@ describe("LaborRuntimeModule", () => {
       expect(sendPayload).toHaveBeenCalledTimes(3);
       expect(extractMaterial).toHaveBeenCalledTimes(2);
       expect(finalizeAnalysis).toHaveBeenCalledTimes(1);
+      expect(finalizeReviewOnly).not.toHaveBeenCalled();
       expect(updatePayload).toHaveBeenCalled();
       const progressPayloads = sendPayload.mock.calls as unknown as Array<[string, unknown]>;
       const progressSerialized = JSON.stringify(progressPayloads[1]?.[1] ?? {});
@@ -340,8 +354,43 @@ describe("LaborRuntimeModule", () => {
     }
   });
 
-  it("appends pkulaw authority results only after search term confirmation", async () => {
-    const { module, tempDir, updatePayload, appendAuthoritySearch } = await createModule();
+  it("starts labor workflow from recent materials when asked for an evidence list Word", async () => {
+    const { module, tempDir, sendPayload, updatePayload, extractMaterial, finalizeAnalysis } = await createModule();
+    try {
+      const file = createFileMessage("劳动仲裁材料.pdf");
+      const fileResult = await module.handleMessage({
+        message: file,
+        routed: null,
+      });
+
+      expect(fileResult).toEqual({ claimed: false });
+
+      const trigger = createTextMessage("按照这个文档，生成一个证据清单 Word，序号、证据名称、证据类型、页码、证明目的。");
+      const triggerResult = await module.handleMessage({
+        message: trigger,
+        routed: routeIncomingText(trigger.plainText),
+      });
+
+      expect(triggerResult).toEqual({ claimed: true });
+      expect(extractMaterial).toHaveBeenCalledTimes(1);
+      expect(finalizeAnalysis).toHaveBeenCalledTimes(1);
+      const finalizeCalls = finalizeAnalysis.mock.calls as unknown as Array<[input: { materialCount: number; notes: string[]; preferredTitle?: string }]>;
+      expect(finalizeCalls[0]?.[0]).toEqual(expect.objectContaining({
+        materialCount: 1,
+        notes: [trigger.plainText],
+      }));
+      const payloadCalls = sendPayload.mock.calls as unknown as Array<[string, unknown]>;
+      expect(JSON.stringify(payloadCalls[0]?.[1] ?? {})).toContain("已进入劳动分析收集模式");
+      expect(JSON.stringify(payloadCalls[1]?.[1] ?? {})).toContain("劳动分析进行中");
+      const updatedPayloads = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
+      expect(JSON.stringify(updatedPayloads.at(-1)?.[2] ?? {})).toContain("劳动分析完成");
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("appends pkulaw authority results and runs review only after search term confirmation", async () => {
+    const { module, tempDir, updatePayload, appendAuthoritySearch, finalizeReviewOnly } = await createModule();
     try {
       const start = createTextMessage("/劳动分析 劳动争议演示");
       await module.handleMessage({ message: start, routed: routeIncomingText(start.plainText) });
@@ -350,6 +399,7 @@ describe("LaborRuntimeModule", () => {
       await module.handleMessage({ message: end, routed: routeIncomingText(end.plainText) });
 
       expect(appendAuthoritySearch).not.toHaveBeenCalled();
+      expect(finalizeReviewOnly).not.toHaveBeenCalled();
       const confirm = createTextMessage("确认检索词");
       await module.handleMessage({ message: confirm, routed: routeIncomingText(confirm.plainText) });
 
@@ -357,11 +407,18 @@ describe("LaborRuntimeModule", () => {
       expect(appendAuthoritySearch).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
         query: "劳动争议 违法解除",
       }));
+      expect(finalizeReviewOnly).toHaveBeenCalledTimes(1);
+      expect(finalizeReviewOnly).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+        status: "completed",
+        searchResult: expect.objectContaining({ query: "劳动争议 违法解除" }),
+      }));
       const updatedPayloads = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
-      const finalUpdate = JSON.stringify(updatedPayloads.at(-1)?.[2] ?? {});
-      expect(finalUpdate).toContain("权威法规检索完成");
-      expect(finalUpdate).toContain("违法解除规则");
-      expect(finalUpdate).not.toContain("lark-table");
+      const serializedUpdates = JSON.stringify(updatedPayloads.map((call) => call[2]));
+      expect(serializedUpdates).toContain("权威法规检索完成");
+      expect(serializedUpdates).toContain("违法解除规则");
+      expect(serializedUpdates).toContain("二审状态");
+      expect(serializedUpdates).toContain("二审需人工复核");
+      expect(serializedUpdates).not.toContain("lark-table");
     } finally {
       await cleanupModule(module, tempDir);
     }
@@ -392,7 +449,7 @@ describe("LaborRuntimeModule", () => {
   });
 
   it("keeps authority confirmation pending when authority search fails", async () => {
-    const { module, tempDir, sendPayload, updatePayload, appendAuthoritySearch } = await createModule();
+    const { module, tempDir, sendPayload, updatePayload, appendAuthoritySearch, finalizeReviewOnly } = await createModule();
     appendAuthoritySearch.mockRejectedValueOnce(new Error("pkulaw timeout"));
     try {
       const start = createTextMessage("/劳动分析 劳动争议演示");
@@ -415,13 +472,14 @@ describe("LaborRuntimeModule", () => {
       expect(JSON.stringify(payloadCalls.at(-1)?.[1] ?? {})).toContain("pkulaw timeout");
       const updatedPayloads = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
       expect(JSON.stringify(updatedPayloads.at(-1)?.[2] ?? {})).toContain("补充权威法规检索");
+      expect(finalizeReviewOnly).not.toHaveBeenCalled();
     } finally {
       await cleanupModule(module, tempDir);
     }
   });
 
   it("returns a retryable toast and keeps pending when authority card search fails", async () => {
-    const { module, tempDir, appendAuthoritySearch } = await createModule();
+    const { module, tempDir, appendAuthoritySearch, finalizeReviewOnly } = await createModule();
     appendAuthoritySearch.mockRejectedValueOnce(new Error("pkulaw down"));
     try {
       const start = createTextMessage("/劳动分析 劳动争议演示");
@@ -446,13 +504,14 @@ describe("LaborRuntimeModule", () => {
       expect(interactions.get(start.conversationKey)).toEqual(expect.objectContaining({
         authority: expect.anything(),
       }));
+      expect(finalizeReviewOnly).not.toHaveBeenCalled();
     } finally {
       await cleanupModule(module, tempDir);
     }
   });
 
   it("handles authority search confirmation from card buttons", async () => {
-    const { module, tempDir, updatePayload, appendAuthoritySearch } = await createModule();
+    const { module, tempDir, updatePayload, appendAuthoritySearch, finalizeReviewOnly } = await createModule();
     try {
       const start = createTextMessage("/劳动分析 劳动争议演示");
       await module.handleMessage({ message: start, routed: routeIncomingText(start.plainText) });
@@ -475,10 +534,15 @@ describe("LaborRuntimeModule", () => {
       expect(appendAuthoritySearch).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
         query: "劳动争议 赔偿金",
       }));
+      expect(finalizeReviewOnly).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+        status: "completed",
+        searchResult: expect.objectContaining({ query: "劳动争议 违法解除" }),
+      }));
       const updatedPayloads = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
-      const finalUpdate = JSON.stringify(updatedPayloads.at(-1)?.[2] ?? {});
-      expect(finalUpdate).toContain("权威法规检索完成");
-      expect(finalUpdate).toContain("劳动合同法");
+      const serializedUpdates = JSON.stringify(updatedPayloads.map((call) => call[2]));
+      expect(serializedUpdates).toContain("权威法规检索完成");
+      expect(serializedUpdates).toContain("劳动合同法");
+      expect(serializedUpdates).toContain("二审状态");
     } finally {
       await cleanupModule(module, tempDir);
     }
@@ -505,6 +569,9 @@ describe("LaborRuntimeModule", () => {
       await second.module.handleMessage({ message: createTextMessage("/劳动分析结束"), routed: routeIncomingText("/劳动分析结束") });
       await second.module.handleMessage({ message: createTextMessage("/跳过权威检索"), routed: routeIncomingText("/跳过权威检索") });
       expect(second.appendAuthoritySearch).not.toHaveBeenCalled();
+      expect(second.finalizeReviewOnly).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+        status: "skipped",
+      }));
     } finally {
       await cleanupModule(second.module, second.tempDir);
     }

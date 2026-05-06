@@ -12,12 +12,20 @@ const LaborSkillModelRefSchema = z.string()
   .trim()
   .regex(/^[^/\s]+\/[^/\s].+$/, "laborSkill.models.* 必须使用 <provider>/<model> 格式");
 
+export interface LaborSkillModels {
+  default?: string | undefined;
+  extract?: string | undefined;
+  analyze?: string | undefined;
+  review?: string | undefined;
+}
+
 const LaborSkillConfigSchema = z.object({
   enabled: z.boolean().default(false),
   models: z.object({
     default: LaborSkillModelRefSchema.optional(),
     extract: LaborSkillModelRefSchema.optional(),
     analyze: LaborSkillModelRefSchema.optional(),
+    review: LaborSkillModelRefSchema.optional(),
   }).default({}),
   ingest: z.object({
     allowedExtensions: z.array(z.string().min(1)).default([".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp", ".xls", ".xlsx", ".csv"]),
@@ -38,11 +46,7 @@ type LaborSkillParsedConfig = z.infer<typeof LaborSkillConfigSchema>;
 
 export type LaborSkillConfig = {
   enabled: boolean;
-  models: {
-    default?: string | undefined;
-    extract?: string | undefined;
-    analyze?: string | undefined;
-  };
+  models: LaborSkillModels;
   ingest: {
     allowedExtensions: string[];
     maxFileSizeMb: number;
@@ -82,6 +86,7 @@ function normalizeLaborSkillConfig(parsed: LaborSkillParsedConfig): LaborSkillCo
       default: parsed.models.default,
       extract: parsed.models.extract,
       analyze: parsed.models.analyze,
+      review: parsed.models.review,
     },
     ingest: {
       allowedExtensions: parsed.ingest.allowedExtensions.map((value) => value.trim().toLowerCase()),

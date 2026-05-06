@@ -19,6 +19,8 @@
   ],
   "expected": {
     "requiredSections": ["争议焦点", "请求权基础", "证据链", "证据缺口", "策略", "来源说明"],
-    "allowedCitations": ["《劳动合同法》第四十七条", "《劳动合同法》第四十八条"]
+    "allowedCitations": ["《劳动合同法》第四十七条", "《劳动合同法》第四十八条"],
+    "reviewReportRequired": true,
+    "reviewMustDifferFromAnalyze": true
   }
 }

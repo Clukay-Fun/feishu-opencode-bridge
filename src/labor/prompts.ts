@@ -78,3 +78,120 @@ export function buildLaborAggregatePrompt(materialsJson: string, notesText: stri
     `知识库支持：\n${legalSupportsJson}`,
   ].join("\n");
 }
+
+export function buildLaborReviewPrompt(result: {
+  title: string;
+  markdown: string;
+  aggregate: {
+    caseTitle: string;
+    disputeStage: string;
+    summary: string;
+    coreJudgment: string[];
+    issues: Array<{ issue: string; analysis: string; riskLevel?: string | undefined }>;
+    claimBasis: Array<{ claim: string; basis: string; evidence: string[]; risk?: string | undefined; reviewNote?: string | undefined }>;
+    legalSupports: Array<{ issue: string; rule: string; relation: string }>;
+    evidenceRows: Array<{ name: string; type?: string | undefined; proves: string; support?: string | undefined; strength?: string | undefined; risk?: string | undefined; remarks?: string | undefined }>;
+  };
+  extractedMaterials: Array<{ materialType: string; summary: string }>;
+}, authorityContext?: { status: "pending" | "skipped" | "completed"; searchResult?: { query: string; items: Array<{ title: string; excerpt: string }> } | undefined }): string {
+  const domain = result.aggregate;
+  const findings: string[] = [];
+  const authorityCoverage: Array<{ issue: string; status: "sufficient" | "partial" | "missing" | "skipped"; sourceType: string }> = [];
+  const unsupportedClaims: string[] = [];
+
+  for (const item of domain.claimBasis) {
+    if (!item.basis || item.basis.includes("需人工补核")) {
+      unsupportedClaims.push(item.claim);
+    }
+  }
+
+  for (const support of domain.legalSupports) {
+    if (!support.rule || support.rule.includes("需人工补核")) {
+      authorityCoverage.push({ issue: support.issue, status: "missing", sourceType: "local_kb" });
+    } else if (support.rule.includes("《") && support.rule.includes("条")) {
+      authorityCoverage.push({ issue: support.issue, status: "sufficient", sourceType: "local_kb" });
+    } else {
+      authorityCoverage.push({ issue: support.issue, status: "partial", sourceType: "local_kb" });
+    }
+  }
+
+  for (const issue of domain.issues) {
+    const hasLegalSupport = domain.legalSupports.some((s) => s.issue === issue.issue && !s.rule.includes("需人工补核"));
+    if (!hasLegalSupport && issue.riskLevel === "high") {
+      findings.push(`高风险争议焦点"${issue.issue}"缺少法律支撑依据`);
+    }
+  }
+
+  const authorityBlock = buildAuthorityContextBlock(authorityContext);
+
+  return [
+    "你是劳动争议案件二审审查助手。",
+    "你的职责是审查分析报告中的法律结论是否可支撑，法规引用是否合规，风险判断是否完整。",
+    "你只审查，不重写正文。",
+    "",
+    "输出字段：",
+    "- status: pass | needs_revision | needs_human_review",
+    "- findings: 数组，元素字段为 severity（low/medium/high）、type、message、relatedSection、source（对象，字段为 type 和 ref）",
+    "- unsupportedClaims: 字符串数组，列出缺少依据的请求项",
+    "- authorityCoverage: 数组，元素字段为 issue、status（sufficient/partial/missing/skipped）、source（对象，字段为 type 和 ref）",
+    "- suggestedEdits: 字符串数组，列出修改建议",
+    "- warnings: 数组，元素字段为 code、message",
+    "",
+    "审查规则：",
+    "1. source.type === null 必须触发 needs_human_review。",
+    "2. 法律结论优先要求 authority 或 local_kb + material 支撑，否则 needs_revision。",
+    "3. 用户跳过权威检索时，material 和 local_kb 都视为合法依据。",
+    "4. 白名单外法条、缺少最小来源字段的引用必须进入人工复核。",
+    "5. 法规引用最小字段：法规标题 + 条款号 + 来源类型。",
+    "6. 案例引用最小字段：案号 + 法院 + 裁判日期 + 来源类型。",
+    "",
+    authorityBlock,
+    "",
+    `案件标题：${domain.caseTitle}`,
+    `当前阶段：${domain.disputeStage}`,
+    "",
+    "## 分析报告正文",
+    result.markdown,
+    "",
+    "## 请求权基础",
+    ...domain.claimBasis.map((item) => `- ${item.claim}：依据 ${item.basis}，证据 ${item.evidence.join("、")}，风险 ${item.risk ?? "无"}`),
+    "",
+    "## 法律支撑覆盖",
+    ...domain.legalSupports.map((item) => `- ${item.issue}：${item.rule}（${item.relation}）`),
+    "",
+    "## 材料摘要",
+    ...result.extractedMaterials.map((item) => `- ${item.materialType}：${item.summary}`),
+    "",
+    "## 二审结论",
+    JSON.stringify({ findings, authorityCoverage, unsupportedClaims }),
+  ].join("\n");
+}
+
+/** 根据权威检索状态构建二审提示上下文。 */
+function buildAuthorityContextBlock(authorityContext?: { status: "pending" | "skipped" | "completed"; searchResult?: { query: string; items: Array<{ title: string; excerpt: string }> } | undefined }): string {
+  if (!authorityContext || authorityContext.status === "pending") {
+    return [
+      "## 权威检索状态",
+      "权威法规检索尚未执行。依据标准放宽为 material + local_kb；缺少 authority 来源不应直接判定 needs_revision，",
+      "但仍应在 authorityCoverage 中标记 status 为 missing 并在 warnings 中提示。",
+    ].join("\n");
+  }
+  if (authorityContext.status === "skipped") {
+    return [
+      "## 权威检索状态",
+      "用户已明确跳过权威法规检索（/跳过权威检索）。material 和 local_kb 均视为合法依据来源。",
+      "在 authorityCoverage 中，缺少 authority 来源的争议点应标记 status 为 skipped 而非 missing。",
+    ].join("\n");
+  }
+  const items = authorityContext.searchResult?.items ?? [];
+  const searchQuery = authorityContext.searchResult?.query ?? "未知";
+  return [
+    "## 权威检索状态",
+    `权威法规检索已完成，检索词：${searchQuery}，命中 ${items.length} 条。`,
+    "请交叉验证分析报告中的法律结论是否与权威检索结果一致。",
+    "",
+    "### 检索结果",
+    ...items.slice(0, 5).map((item, index) => `${index + 1}. ${item.title}：${item.excerpt}`),
+    items.length === 0 ? "未检索到权威法规。" : "",
+  ].filter(Boolean).join("\n");
+}

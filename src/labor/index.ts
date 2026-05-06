@@ -29,7 +29,7 @@ import { syncEvidenceLedger, type EvidenceLedgerResourcePort } from "../workflow
 import { generateCaseWorkflowWorkbench } from "../workflows/case-workflow.js";
 import { buildTimelineMermaid, escapeMermaidLabel } from "../workflows/timeline-build.js";
 import { checkLaborLegalCitations, formatCitationReviewText } from "./legal-citation.js";
-import { buildLaborAggregatePrompt, buildLaborMaterialExtractPrompt } from "./prompts.js";
+import { buildLaborAggregatePrompt, buildLaborMaterialExtractPrompt, buildLaborReviewPrompt } from "./prompts.js";
 
 type OpenCodePort = Pick<OpenCodeClient, "createSession" | "postMessageSync" | "deleteSession">;
 type LaborSkillResourcePort = EvidenceExtractResourcePort & EvidenceLedgerResourcePort;
@@ -98,6 +98,37 @@ export type LaborMaterialExtractResult = {
   fileName: string;
   extraction: LaborMaterialExtraction;
   cached: boolean;
+};
+
+export type SourceRef =
+  | { type: "material"; ref: string }
+  | { type: "local_kb"; ref: string }
+  | { type: "authority"; ref: string }
+  | { type: null; ref?: string };
+
+export interface LaborFinalReviewReport {
+  status: "pass" | "needs_revision" | "needs_human_review";
+  findings: Array<{
+    severity: "low" | "medium" | "high";
+    type: string;
+    message: string;
+    relatedSection?: string;
+    source: SourceRef;
+  }>;
+  unsupportedClaims: string[];
+  authorityCoverage: Array<{
+    issue: string;
+    status: "sufficient" | "partial" | "missing" | "skipped";
+    source: SourceRef;
+  }>;
+  suggestedEdits: string[];
+  warnings: Array<{ code: string; message: string }>;
+}
+
+/** 二审时提供的权威检索上下文，决定依据标准是否放宽。 */
+export type LaborReviewAuthorityContext = {
+  status: "pending" | "skipped" | "completed";
+  searchResult?: PkulawAuthoritySearchResult | undefined;
 };
 
 type LaborSkillCacheFile = {
@@ -322,6 +353,81 @@ export class LaborSkillService {
       aggregate: normalizedAggregate,
       warnings: input.warnings,
     };
+  }
+
+  // #endregion
+
+  // #region 二审链路
+
+  async finalizeAnalysisAndReview(
+    input: {
+      extractedMaterials: LaborMaterialExtraction[];
+      notes: string[];
+      materialCount: number;
+      warnings: string[];
+      preferredTitle?: string | undefined;
+    },
+    options?: {
+      onProgress?: ((step: string) => Promise<void> | void) | undefined;
+      authorityContext?: LaborReviewAuthorityContext | undefined;
+    },
+  ): Promise<{ result: LaborAnalyzeResult; reviewReport: LaborFinalReviewReport | null; reviewSkippedReason?: string }> {
+    const onProgress = options?.onProgress;
+    const result = await this.finalizeAnalysis(input, { onProgress });
+
+    const reviewOutcome = await this.finalizeReviewOnly(result, options?.authorityContext, {
+      onProgress: async (step) => await onProgress?.(`二审: ${step}`),
+    });
+    return { result, ...reviewOutcome };
+  }
+
+  /** 仅执行二审，不重复分析。供权威检索确认后二次调用。 */
+  async finalizeReviewOnly(
+    result: LaborAnalyzeResult,
+    authorityContext?: LaborReviewAuthorityContext | undefined,
+    options?: { onProgress?: ((step: string) => Promise<void> | void) | undefined },
+  ): Promise<{ reviewReport: LaborFinalReviewReport | null; reviewSkippedReason?: string }> {
+    const reviewModel = resolveModel(this.config, "review");
+    const analyzeModel = resolveModel(this.config, "analyze");
+
+    if (!reviewModel) {
+      return { reviewReport: null, reviewSkippedReason: "review_skipped_no_config" };
+    }
+    if (analyzeModel && reviewModel.providerID === analyzeModel.providerID && reviewModel.modelID === analyzeModel.modelID) {
+      return { reviewReport: null, reviewSkippedReason: "review_skipped_same_as_analyze" };
+    }
+
+    const effectiveContext = authorityContext ?? { status: "pending" as const };
+    try {
+      const reviewReport = await this.performFinalReview(result, effectiveContext, options);
+      return { reviewReport };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.log("labor-skill", "review call failed", { detail }, "warn");
+      return { reviewReport: null, reviewSkippedReason: "review_call_failed" };
+    }
+  }
+
+  private async performFinalReview(
+    result: LaborAnalyzeResult,
+    authorityContext: LaborReviewAuthorityContext,
+    options?: { onProgress?: ((step: string) => Promise<void> | void) | undefined },
+  ): Promise<LaborFinalReviewReport> {
+    await options?.onProgress?.("正在执行二审模型");
+    const prompt = buildLaborReviewPrompt(result, authorityContext);
+    const reviewModel = resolveModel(this.config, "review");
+    const session = await this.opencode.createSession("[bridge] labor-review");
+    try {
+      const response = await this.opencode.postMessageSync(session.id, buildPromptRequest(prompt, reviewModel));
+      const parsed = parseJsonObject(extractAssistantText(response));
+      return normalizeReviewReport(parsed);
+    } finally {
+      await this.opencode.deleteSession(session.id).catch((error) => {
+        this.logger.log("labor-skill", "delete review session failed", {
+          detail: error instanceof Error ? error.message : String(error),
+        }, "warn");
+      });
+    }
   }
 
   // #endregion
@@ -918,7 +1024,7 @@ function buildPromptRequest(prompt: string, model?: OpenCodeModelRef): OpenCodeP
     : { parts: [{ type: "text", text: prompt }] };
 }
 
-function resolveModel(config: LaborSkillConfig, step: "extract" | "analyze"): OpenCodeModelRef | undefined {
+function resolveModel(config: LaborSkillConfig, step: "extract" | "analyze" | "review"): OpenCodeModelRef | undefined {
   const normalized = (config.models[step] ?? config.models.default)?.trim();
   if (!normalized) {
     return undefined;
@@ -1064,6 +1170,86 @@ function omitUndefined<T extends Record<string, unknown>>(value: T): T {
     }
   }
   return next as T;
+}
+
+function normalizeReviewReport(value: Record<string, unknown>): LaborFinalReviewReport {
+  const rawStatus = readString(value, "status") ?? "needs_human_review";
+  const modelStatus: LaborFinalReviewReport["status"] =
+    rawStatus === "pass" || rawStatus === "needs_revision" ? rawStatus : "needs_human_review";
+
+  const rawFindings = readRecordArray(value, "findings");
+  const findings: LaborFinalReviewReport["findings"] = rawFindings.map((item): LaborFinalReviewReport["findings"][number] => {
+    const rawRelated: string | undefined = readString(item, "relatedSection");
+    return {
+      severity: normalizeSeverity(readString(item, "severity")),
+      type: readString(item, "type") ?? "unknown",
+      message: readString(item, "message") ?? "",
+      ...(rawRelated !== undefined ? { relatedSection: rawRelated } : {}),
+      source: normalizeSourceRef(item),
+    };
+  });
+
+  const authorityCoverage: LaborFinalReviewReport["authorityCoverage"] = readRecordArray(value, "authorityCoverage").map((item): LaborFinalReviewReport["authorityCoverage"][number] => ({
+    issue: readString(item, "issue") ?? "",
+    status: normalizeAuthorityStatus(readString(item, "status")),
+    source: normalizeSourceRef(item),
+  }));
+
+  const warnings: LaborFinalReviewReport["warnings"] = readRecordArray(value, "warnings").map((item): LaborFinalReviewReport["warnings"][number] => ({
+    code: readString(item, "code") ?? "unknown",
+    message: readString(item, "message") ?? "",
+  }));
+  const hasNullSource = findings.some((item) => item.source.type === null)
+    || authorityCoverage.some((item) => item.source.type === null);
+
+  return {
+    status: hasNullSource ? "needs_human_review" : modelStatus,
+    findings,
+    unsupportedClaims: readStringArray(value, "unsupportedClaims"),
+    authorityCoverage,
+    suggestedEdits: readStringArray(value, "suggestedEdits"),
+    warnings,
+  };
+}
+
+function normalizeSeverity(value: string | undefined): "low" | "medium" | "high" {
+  switch ((value ?? "").toLowerCase()) {
+    case "high":
+      return "high";
+    case "medium":
+      return "medium";
+    default:
+      return "low";
+  }
+}
+
+function normalizeAuthorityStatus(value: string | undefined): "sufficient" | "partial" | "missing" | "skipped" {
+  switch (value) {
+    case "sufficient":
+    case "partial":
+    case "missing":
+    case "skipped":
+      return value;
+    default:
+      return "missing";
+  }
+}
+
+/** type 白名单，不在此范围内的值归为 { type: null } 触发 needs_human_review。 */
+const VALID_SOURCE_TYPES = new Set<string>(["material", "local_kb", "authority"]);
+
+function normalizeSourceRef(item: Record<string, unknown>): SourceRef {
+  const rawSource = item["source"];
+  if (!rawSource || typeof rawSource !== "object") {
+    return { type: null };
+  }
+  const source = rawSource as Record<string, unknown>;
+  const typeValue = readString(source, "type");
+  const refValue = readString(source, "ref");
+  if (!typeValue || !VALID_SOURCE_TYPES.has(typeValue)) {
+    return { type: null, ...(refValue !== undefined ? { ref: refValue } : {}) } as SourceRef;
+  }
+  return { type: typeValue as "material" | "local_kb" | "authority", ...(refValue !== undefined ? { ref: refValue } : {}) } as SourceRef;
 }
 
 function buildLaborCacheKey(value: string | Buffer): string {
