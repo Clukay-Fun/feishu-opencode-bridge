@@ -5,7 +5,6 @@
  * - 管理材料上传态交互以及进度卡、结果卡更新。
  */
 import { DEFAULT_LABOR_SKILL_CONFIG, type AppConfig } from "../config/schema.js";
-import crypto from "node:crypto";
 import path from "node:path";
 import type { RuntimeModule, RuntimeModuleHandleResult, RuntimeModuleMessageContext } from "../bridge/module.js";
 import {
@@ -15,9 +14,6 @@ import {
 } from "../feishu/shared-primitives.js";
 import {
   buildLaborAnalysisCompletedPayload,
-  buildLaborAuthoritySearchResultPayload,
-  buildLaborAuthoritySearchRunningPayload,
-  buildLaborAuthoritySearchConfirmPayload,
   buildLaborAnalysisProgressPayload,
   type LaborAnalysisCompletedCardView,
   type LaborAnalysisProgressCardView,
@@ -30,7 +26,6 @@ import type { FeishuTransport } from "../runtime/feishu-transport.js";
 import { PersistedInteractionManager } from "../runtime/persisted-interaction-manager.js";
 import type {
   LaborAnalyzeResult,
-  LaborAuthoritySearchDraft,
   LaborSkillService,
   LaborMaterialExtraction,
   LaborReviewAuthorityContext,
@@ -48,7 +43,7 @@ type LaborRuntimeModuleDeps = {
 type LaborCommand = Extract<RoutedText, { kind: "command" }>["command"];
 
 type PendingLaborInteraction = {
-  stage?: "collecting" | "authority-confirmation" | undefined;
+  stage?: "collecting" | undefined;
   chatId: string;
   chatType: string;
   conversationKey: string;
@@ -65,13 +60,6 @@ type PendingLaborInteraction = {
     fileName: string;
     size?: number | undefined;
   }>;
-  authority?: {
-    result: LaborAnalyzeResult;
-    draft: LaborAuthoritySearchDraft;
-    reportMessageId: string;
-    promptMessageId: string;
-    nonce: string;
-  } | undefined;
 };
 
 type LaborProgressState = {
@@ -143,11 +131,6 @@ export class LaborRuntimeModule implements RuntimeModule {
     const pending = this.findInteraction(message);
 
     if (pending) {
-      if (pending.stage === "authority-confirmation") {
-        await this.handleAuthorityConfirmation(message, pending);
-        return { claimed: true };
-      }
-
       if (routed?.kind === "command" && isLaborEndCommand(routed.command)) {
         await this.finishCollection(message, pending);
         return { claimed: true };
@@ -196,37 +179,10 @@ export class LaborRuntimeModule implements RuntimeModule {
     openMessageId: string,
     value: Record<string, unknown>,
   ): Promise<Record<string, unknown> | null> {
-    if (value.kind !== "labor-authority-search") {
-      return null;
-    }
-    const conversationKey = typeof value.conversationKey === "string" ? value.conversationKey : "";
-    const pending = conversationKey ? this.interactions.get(conversationKey) : null;
-    if (!pending || pending.stage !== "authority-confirmation" || !pending.authority) {
-      return buildLaborActionToast("当前权威检索请求已失效，请重新触发劳动分析。", "warning");
-    }
-    if (actorOpenId !== pending.requesterOpenId) {
-      return buildLaborActionToast("只有劳动分析发起人可以确认权威检索。", "warning");
-    }
-    if (value.nonce !== pending.authority.nonce) {
-      return buildLaborActionToast("当前卡片已过期，请使用最新卡片或文本命令。", "warning");
-    }
-    const decision = parseAuthorityCardDecision(value, pending.authority.draft);
-    if (decision.kind === "unknown") {
-      return buildLaborActionToast("未识别的权威检索操作，请使用文本命令兜底。", "warning");
-    }
-    try {
-      await this.executeAuthorityDecision(pending, decision, {
-        messageId: openMessageId || pending.anchorMessageId,
-      });
-    } catch (error) {
-      await this.restoreAuthorityPromptCard(pending).catch((restoreError) => {
-        this.deps.logger.log("labor/authority", "authority prompt restore failed", {
-          detail: restoreError instanceof Error ? restoreError.message : String(restoreError),
-        }, "warn");
-      });
-      return buildLaborActionToast(`权威检索失败：${error instanceof Error ? error.message : String(error)}`, "warning");
-    }
-    return buildLaborActionToast(decision.kind === "skip" ? "已跳过权威法规检索。" : "已开始权威法规检索。", "success");
+    void actorOpenId;
+    void openMessageId;
+    void value;
+    return null;
   }
 
   /** 处理劳动模块自有命令。 */
@@ -496,176 +452,67 @@ export class LaborRuntimeModule implements RuntimeModule {
       return;
     }
 
-    await this.sendAuthoritySearchPromptBestEffort(message, pending, result, processing.messageId);
+    await this.runAuthoritySearchAndReview(pending, result, processing.messageId, progressState.totalFiles);
   }
 
   private clearInteraction(conversationKey: string): void {
     this.interactions.delete(conversationKey);
   }
 
-  private async sendAuthoritySearchPrompt(
-    message: Pick<IncomingChatMessage, "chatId" | "messageId" | "conversationKey" | "senderOpenId">,
-    original: PendingLaborInteraction,
+  private async runAuthoritySearchAndReview(
+    pending: PendingLaborInteraction,
     result: LaborAnalyzeResult,
     reportMessageId: string,
+    totalFiles: number,
   ): Promise<void> {
     const draft = this.deps.service!.buildAuthoritySearchDraft(result);
-    const nonce = crypto.randomUUID();
-    const payload = buildLaborAuthoritySearchConfirmPayload({
-      conversationKey: original.conversationKey,
-      nonce,
-      mainQuery: draft.mainQuery,
-      alternatives: draft.alternatives,
-      reason: draft.reason,
-    });
-    const sent = await this.deps.transport.sendPayload(message.chatId, payload, {
-      event: "labor authority search prompt sent",
-      transcriptType: "outbound-final",
-      textPreview: "权威法规检索确认",
-      len: 8,
-    }, this.getDelivery(original));
-
-    const authorityPending: PendingLaborInteraction = {
-      ...original,
-      stage: "authority-confirmation",
-      expiresAt: Date.now() + this.featureConfig.ingest.pendingTtlMs,
-      authority: {
-        result,
-        draft,
-        reportMessageId,
-        promptMessageId: sent.messageId,
-        nonce,
-      },
-      files: [],
-      notes: [],
-    };
-    this.interactions.set(authorityPending);
-  }
-
-  private async sendAuthoritySearchPromptBestEffort(
-    message: Pick<IncomingChatMessage, "chatId" | "messageId" | "conversationKey" | "senderOpenId">,
-    original: PendingLaborInteraction,
-    result: LaborAnalyzeResult,
-    reportMessageId: string,
-  ): Promise<void> {
+    let authorityContext: LaborReviewAuthorityContext = { status: "pending" };
     try {
-      await this.sendAuthoritySearchPrompt(message, original, result, reportMessageId);
+      const appended = await this.deps.service!.appendAuthoritySearch(result, {
+        query: draft.mainQuery,
+        turnId: reportMessageId,
+        sessionId: pending.conversationKey,
+      });
+      authorityContext = { status: "completed", searchResult: appended.search };
     } catch (error) {
-      this.deps.logger.log("labor/authority", "authority prompt skipped", {
-        conversationKey: original.conversationKey,
+      this.deps.logger.log("labor/authority", "background authority search failed", {
+        conversationKey: pending.conversationKey,
         detail: error instanceof Error ? error.message : String(error),
       }, "warn");
     }
-  }
 
-  private async handleAuthorityConfirmation(message: IncomingChatMessage, pending: PendingLaborInteraction): Promise<void> {
-    if (message.senderOpenId !== pending.requesterOpenId) {
-      await this.sendNotice(message, {
-        title: "当前权威检索仅限发起人确认",
-        template: "yellow",
-        icon: "maybe_outlined",
-        message: "请由当前劳动分析发起人确认、编辑或跳过权威法规检索。",
-      }, this.getDelivery(pending));
-      return;
-    }
-    const authority = pending.authority;
-    if (!authority) {
-      this.clearInteraction(pending.conversationKey);
-      return;
-    }
-
-    const decision = parseAuthoritySearchDecision(message.plainText, authority.draft);
-    if (decision.kind === "unknown") {
-      await this.sendNotice(message, {
-        title: "等待确认检索词",
-        template: "yellow",
-        icon: "maybe_outlined",
-        message: [
-          "请回复以下任一方式：",
-          "- `确认检索词`：使用主查询",
-          "- `/检索词 1`：切换第 1 个备选关键词",
-          "- `/检索词 <自定义查询>`：完全覆盖检索词",
-          "- `/跳过权威检索`：不调用 pkulaw",
-        ].join("\n"),
-      }, this.getDelivery(pending));
-      return;
-    }
-
-    try {
-      await this.executeAuthorityDecision(pending, decision, {
-        messageId: message.messageId,
-      });
-    } catch (error) {
-      await this.restoreAuthorityPromptCard(pending).catch((restoreError) => {
-        this.deps.logger.log("labor/authority", "authority prompt restore failed", {
-          detail: restoreError instanceof Error ? restoreError.message : String(restoreError),
-        }, "warn");
-      });
-      const detail = error instanceof Error ? error.message : String(error);
-      await this.sendNotice(message, {
-        title: "权威法规检索失败",
-        template: "yellow",
-        icon: "maybe_outlined",
-        message: `失败原因：${detail}\n确认态已保留，可重新回复确认、修改检索词或跳过。`,
-      }, this.getDelivery(pending));
-    }
-  }
-
-  private async executeAuthorityDecision(
-    pending: PendingLaborInteraction,
-    decision: { kind: "query"; query: string } | { kind: "skip" },
-    trigger: { messageId: string },
-  ): Promise<void> {
-    const authority = pending.authority;
-    if (!authority) {
-      this.clearInteraction(pending.conversationKey);
-      return;
-    }
-    if (decision.kind === "skip") {
-      await this.updateAuthorityPromptCard(pending, buildNoticeCardPayload({
-        title: "已跳过权威法规检索",
-        template: "grey",
-        iconToken: "info_outlined",
-        message: "原劳动分析报告保持不变；如需稍后补充，可重新发起劳动分析。",
-        showMessageIcon: false,
-      }));
-      await this.runReviewAndUpdateCompletedCard(pending, authority.result, { status: "skipped" });
-      return;
-    }
-
-    await this.updateAuthorityPromptCard(pending, buildLaborAuthoritySearchRunningPayload(decision.query));
-
-    const appended = await this.deps.service!.appendAuthoritySearch(authority.result, {
-      query: decision.query,
-      turnId: trigger.messageId,
-      sessionId: pending.conversationKey,
-    });
-    await this.updateAuthorityPromptCard(pending, buildLaborAuthoritySearchResultPayload({
-      title: authority.result.title,
-      query: appended.search.query,
-      status: formatAuthoritySearchStatus(appended.search.status),
-      durationMs: appended.search.durationMs,
-      items: appended.search.items,
-      message: "message" in appended.search ? appended.search.message : undefined,
-    }), "labor authority result updated");
-    await this.runReviewAndUpdateCompletedCard(pending, authority.result, {
-      status: "completed",
-      searchResult: appended.search,
-    });
+    await this.runReviewAndUpdateCompletedCard(pending, result, authorityContext, reportMessageId, totalFiles);
   }
 
   private async runReviewAndUpdateCompletedCard(
     pending: PendingLaborInteraction,
     result: LaborAnalyzeResult,
     authorityContext: LaborReviewAuthorityContext,
+    reportMessageIdOverride?: string | undefined,
+    totalFiles?: number | undefined,
   ): Promise<void> {
+    const reportMessageId = reportMessageIdOverride ?? pending.anchorMessageId;
+    const pendingReviewStatus = formatReviewPendingStatus(authorityContext);
+    await this.deps.transport.updatePayload(pending.chatId, reportMessageId, buildLaborAnalysisCompletedPayload(buildLaborCompletedView(result, totalFiles, { reviewStatusOverride: pendingReviewStatus })), {
+      event: "labor completed card review started",
+      transcriptType: "outbound-final",
+      textPreview: pendingReviewStatus,
+      len: pendingReviewStatus.length,
+    }).catch((error) => {
+      this.deps.logger.log("labor/authority", "review pending card update failed", {
+        conversationKey: pending.conversationKey,
+        detail: error instanceof Error ? error.message : String(error),
+      }, "warn");
+    });
+
     try {
       const { reviewReport, reviewSkippedReason } = await this.deps.service!.finalizeReviewOnly(result, authorityContext);
-      await this.deps.transport.updatePayload(pending.chatId, pending.authority?.reportMessageId ?? pending.anchorMessageId, buildLaborAnalysisCompletedPayload(buildLaborCompletedView(result, undefined, { reviewReport, reviewSkippedReason })), {
+      const finalReviewStatus = formatReviewStatus(reviewReport, reviewSkippedReason) ?? "二审状态：未返回审查结论";
+      await this.deps.transport.updatePayload(pending.chatId, reportMessageId, buildLaborAnalysisCompletedPayload(buildLaborCompletedView(result, totalFiles, { reviewReport, reviewSkippedReason })), {
         event: "labor completed card updated with review",
         transcriptType: "outbound-final",
-        textPreview: "劳动分析完成（含二审）",
-        len: 0,
+        textPreview: finalReviewStatus,
+        len: finalReviewStatus.length,
       });
     } catch (error) {
       this.deps.logger.log("labor/authority", "post-decision review failed", {
@@ -674,34 +521,6 @@ export class LaborRuntimeModule implements RuntimeModule {
       }, "warn");
     }
     this.clearInteraction(pending.conversationKey);
-  }
-
-  private async updateAuthorityPromptCard(
-    pending: PendingLaborInteraction,
-    payload: ReturnType<typeof buildLaborAuthoritySearchConfirmPayload>,
-    event = "labor authority prompt updated",
-  ): Promise<void> {
-    const messageId = pending.authority?.promptMessageId ?? pending.anchorMessageId;
-    await this.deps.transport.updatePayload(pending.chatId, messageId, payload, {
-      event,
-      transcriptType: "outbound-final",
-      textPreview: createTextPreview(JSON.stringify(payload)),
-      len: payload.content.length,
-    });
-  }
-
-  private async restoreAuthorityPromptCard(pending: PendingLaborInteraction): Promise<void> {
-    const authority = pending.authority;
-    if (!authority) {
-      return;
-    }
-    await this.updateAuthorityPromptCard(pending, buildLaborAuthoritySearchConfirmPayload({
-      conversationKey: pending.conversationKey,
-      nonce: authority.nonce,
-      mainQuery: authority.draft.mainQuery,
-      alternatives: authority.draft.alternatives,
-      reason: authority.draft.reason,
-    }), "labor authority prompt restored");
   }
 
   private clearRequesterInteractions(chatId: string, requesterOpenId: string): void {
@@ -966,9 +785,7 @@ export class LaborRuntimeModule implements RuntimeModule {
       title: "劳动分析已超时",
       template: "grey",
       iconToken: "time_outlined",
-      message: pending.stage === "authority-confirmation"
-        ? "长时间未确认权威检索词，本次权威法规补充已自动结束；原劳动分析报告保持可用。"
-        : "长时间未继续补充材料，当前劳动分析模式已自动结束。",
+      message: "长时间未继续补充材料，当前劳动分析模式已自动结束。",
       showMessageIcon: false,
     }, {
       event: "labor interaction expired",
@@ -1088,81 +905,6 @@ function applyLaborFinalizeProgress(state: LaborProgressState, step: string): vo
   setLaborStep(state, "生成分析文档", "running", shortenProgress(normalized));
 }
 
-function parseAuthoritySearchDecision(text: string, draft: LaborAuthoritySearchDraft): { kind: "query"; query: string } | { kind: "skip" } | { kind: "unknown" } {
-  const normalized = text.trim();
-  if (!normalized) {
-    return { kind: "unknown" };
-  }
-  if (/^\/?跳过权威检索$/.test(normalized)) {
-    return { kind: "skip" };
-  }
-  if (/^确认检索词$|^\/?检索确认$/.test(normalized)) {
-    return { kind: "query", query: draft.mainQuery };
-  }
-  const custom = normalized.match(/^\/?检索词(?:\s+(.+))?$/);
-  if (custom) {
-    const value = (custom[1] ?? "").trim();
-    if (!value) {
-      return { kind: "query", query: draft.mainQuery };
-    }
-    const index = Number(value);
-    if (Number.isInteger(index) && index > 0 && index <= draft.alternatives.length) {
-      return { kind: "query", query: draft.alternatives[index - 1] ?? draft.mainQuery };
-    }
-    return { kind: "query", query: value };
-  }
-  return { kind: "unknown" };
-}
-
-function parseAuthorityCardDecision(value: Record<string, unknown>, draft: LaborAuthoritySearchDraft): { kind: "query"; query: string } | { kind: "skip" } | { kind: "unknown" } {
-  if (value.action === "skip") {
-    return { kind: "skip" };
-  }
-  if (value.action === "confirm") {
-    return { kind: "query", query: draft.mainQuery };
-  }
-  if (value.action === "alternative") {
-    const query = typeof value.query === "string" && value.query.trim() ? value.query.trim() : "";
-    if (query) {
-      return { kind: "query", query };
-    }
-    const index = typeof value.index === "number" ? value.index : Number(value.index);
-    if (Number.isInteger(index) && index > 0 && index <= draft.alternatives.length) {
-      return { kind: "query", query: draft.alternatives[index - 1] ?? draft.mainQuery };
-    }
-  }
-  if (value.action === "custom" && typeof value.query === "string" && value.query.trim()) {
-    return { kind: "query", query: value.query.trim() };
-  }
-  return { kind: "unknown" };
-}
-
-function buildLaborActionToast(content: string, type: "success" | "warning"): Record<string, unknown> {
-  return {
-    toast: {
-      type,
-      content,
-    },
-  };
-}
-
-function formatAuthoritySearchStatus(status: "success" | "cache-hit" | "disabled" | "timeout" | "error" | "empty"): string {
-  switch (status) {
-    case "success":
-      return "已检索";
-    case "cache-hit":
-      return "命中缓存";
-    case "disabled":
-      return "pkulaw 未启用";
-    case "timeout":
-      return "权威检索超时";
-    case "error":
-      return "权威检索不可用";
-    case "empty":
-      return "未检索到权威法规";
-  }
-}
-
 function formatLaborElapsed(elapsedMs: number): string {
   const seconds = Math.max(1, Math.round(elapsedMs / 1000));
   if (seconds < 60) {
@@ -1220,7 +962,11 @@ function buildLaborCompletedView(result: {
   syncedGapCount: number;
   extractedMaterials: LaborMaterialExtraction[];
   aggregate: { evidenceRows: Array<unknown>; issues: Array<unknown> };
-}, totalFiles: number | undefined, review?: { reviewReport: LaborFinalReviewReport | null; reviewSkippedReason?: string | undefined }): LaborAnalysisCompletedCardView {
+}, totalFiles: number | undefined, review?: {
+  reviewReport?: LaborFinalReviewReport | null | undefined;
+  reviewSkippedReason?: string | undefined;
+  reviewStatusOverride?: string | undefined;
+}): LaborAnalysisCompletedCardView {
   const tagCounts: Record<string, number> = {};
   for (const material of result.extractedMaterials) {
     const key = material.materialType?.trim() || "其他";
@@ -1238,8 +984,14 @@ function buildLaborCompletedView(result: {
     missingEvidenceViewUrl: result.missingEvidenceViewUrl,
     syncedEvidenceCount: result.syncedEvidenceCount,
     syncedGapCount: result.syncedGapCount,
-    reviewStatus: formatReviewStatus(review?.reviewReport, review?.reviewSkippedReason),
+    reviewStatus: review?.reviewStatusOverride ?? formatReviewStatus(review?.reviewReport, review?.reviewSkippedReason),
   };
+}
+
+function formatReviewPendingStatus(authorityContext: LaborReviewAuthorityContext): string {
+  return authorityContext.status === "completed"
+    ? "二审模型审查中..."
+    : "二审模型审查中...（权威源未完成，按材料与本地知识库审查）";
 }
 
 /** 将二审结果映射为完成卡片中的一行状态文本。 */
@@ -1250,21 +1002,26 @@ function formatReviewStatus(
   if (report) {
     switch (report.status) {
       case "pass":
-        return "二审通过";
+        return "法条引用已完成独立校验｜二审状态：通过";
       case "needs_revision":
-        return `二审建议修改（${report.findings.length} 条发现）`;
+        return `法条引用已完成独立校验｜二审状态：建议修改（${report.findings.length} 条发现）`;
       case "needs_human_review":
-        return `二审需人工复核（${report.findings.filter((f) => f.severity === "high").length} 条高风险）`;
+        return `法条引用已完成独立校验，存在 ${countHumanReviewItems(report)} 项需人工复核｜二审状态：需人工复核`;
     }
   }
   switch (skippedReason) {
     case "review_skipped_no_config":
-      return "二审未配置";
+      return "法条引用待人工校验｜二审状态：未配置";
     case "review_skipped_same_as_analyze":
-      return "二审跳过（与一审同模型）";
+      return "法条引用待人工校验｜二审状态：跳过（与一审同模型）";
     case "review_call_failed":
-      return "二审调用失败";
+      return "法条引用待人工校验｜二审状态：调用失败";
     default:
       return undefined;
   }
+}
+
+function countHumanReviewItems(report: LaborFinalReviewReport): number {
+  const highFindings = report.findings.filter((finding) => finding.severity === "high").length;
+  return Math.max(highFindings, report.unsupportedClaims.length, report.findings.length, 1);
 }

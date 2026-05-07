@@ -1,18 +1,17 @@
 /**
  * 职责: 定义 Legal Harness V1 专用业务卡片的模板。
  * 关注点:
- * - 收口 reviewReport、authorityCoverage、findings、检索词确认、结果分组 5 张卡片的模板定义。
+ * - 收口 reviewReport、authorityCoverage、findings、结果分组 4 张卡片的模板定义。
  * - 为每张卡片提供稳定 ID、集中入口和 Zod 输入校验。
  */
 import { z } from "zod";
 
 import { escapeText } from "../feishu/shared-primitives.js";
-import type { BusinessCardBlock, BusinessCardTemplateDefinition, BusinessCardActionButton } from "../feishu/templates/definition.js";
+import type { BusinessCardBlock, BusinessCardTemplateDefinition } from "../feishu/templates/definition.js";
 
 export const HARNESS_REVIEW_REPORT_TEMPLATE_ID = "harness.review-report";
 export const HARNESS_AUTHORITY_COVERAGE_TEMPLATE_ID = "harness.authority-coverage";
 export const HARNESS_FINDINGS_TEMPLATE_ID = "harness.findings";
-export const HARNESS_SEARCH_CONFIRM_TEMPLATE_ID = "harness.search-confirm";
 export const HARNESS_RESULT_GROUP_TEMPLATE_ID = "harness.result-group";
 
 const HarnessReviewReportViewSchema = z.object({
@@ -54,14 +53,6 @@ const HarnessFindingsViewSchema = z.object({
     message: z.string(),
     relatedSection: z.string().optional(),
   })).optional(),
-});
-
-const HarnessSearchConfirmViewSchema = z.object({
-  conversationKey: z.string(),
-  nonce: z.string(),
-  mainQuery: z.string(),
-  alternatives: z.array(z.string()),
-  reason: z.string(),
 });
 
 const HarnessResultGroupViewSchema = z.object({
@@ -156,63 +147,6 @@ export const harnessFindingsTemplate: BusinessCardTemplateDefinition<typeof Harn
       template: highFindings.length > 0 ? "red" : "green",
       iconToken: highFindings.length > 0 ? "error-hollow_filled" : "yes_outlined",
       blocks,
-    };
-  },
-};
-
-export const harnessSearchConfirmTemplate: BusinessCardTemplateDefinition<typeof HarnessSearchConfirmViewSchema> = {
-  id: HARNESS_SEARCH_CONFIRM_TEMPLATE_ID,
-  schema: HarnessSearchConfirmViewSchema,
-  render(input) {
-    const alternativesText = input.alternatives.length > 0
-      ? `\n\n备选关键词：\n${input.alternatives.map((item, index) => `${index + 1}. ${item}`).join("\n")}`
-      : "";
-    const actionButtons: BusinessCardActionButton[] = [
-      {
-        label: "使用主查询",
-        type: "primary",
-        width: "fill",
-        value: {
-          kind: "harness-authority-search",
-          action: "confirm",
-          conversationKey: input.conversationKey,
-          nonce: input.nonce,
-        },
-      },
-      ...input.alternatives.slice(0, 2).map((query, index) => ({
-        label: `备选 ${index + 1}`,
-        type: "default" as const,
-        value: {
-          kind: "harness-authority-search",
-          action: "alternative",
-          conversationKey: input.conversationKey,
-          nonce: input.nonce,
-          index: index + 1,
-          query,
-        },
-      })),
-      {
-        label: "跳过",
-        type: "default",
-        value: {
-          kind: "harness-authority-search",
-          action: "skip",
-          conversationKey: input.conversationKey,
-          nonce: input.nonce,
-        },
-      },
-    ];
-    return {
-      title: "确认检索词",
-      template: "indigo",
-      iconToken: "search_outlined",
-      blocks: [
-        { kind: "title", content: "请确认权威法规检索词" },
-        { kind: "quote", content: `主查询：${escapeText(input.mainQuery)}\n\n生成依据：${escapeText(input.reason)}${alternativesText}` },
-        { kind: "divider" },
-        { kind: "actions", buttons: actionButtons },
-        { kind: "elapsed", content: "按钮不可用时，可回复 `确认检索词`、`/检索词 <自定义>` 或 `/跳过权威检索`。" },
-      ],
     };
   },
 };

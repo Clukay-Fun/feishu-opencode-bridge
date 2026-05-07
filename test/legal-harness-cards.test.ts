@@ -11,19 +11,16 @@ import {
   HARNESS_FINDINGS_TEMPLATE_ID,
   HARNESS_RESULT_GROUP_TEMPLATE_ID,
   HARNESS_REVIEW_REPORT_TEMPLATE_ID,
-  HARNESS_SEARCH_CONFIRM_TEMPLATE_ID,
   harnessAuthorityCoverageTemplate,
   harnessFindingsTemplate,
   harnessResultGroupTemplate,
   harnessReviewReportTemplate,
-  harnessSearchConfirmTemplate,
 } from "../src/labor/harness-card-templates.js";
 import {
   buildHarnessAuthorityCoveragePayload,
   buildHarnessFindingsPayload,
   buildHarnessResultGroupPayload,
   buildHarnessReviewReportPayload,
-  buildHarnessSearchConfirmPayload,
 } from "../src/feishu/harness-cards.js";
 
 describe("harness reviewReport card", () => {
@@ -152,44 +149,6 @@ describe("harness findings card", () => {
       findings: [{ severity: "critical" as never, type: "x", message: "y" }],
     });
     expect(result.success).toBe(false);
-  });
-});
-
-describe("harness searchConfirm card", () => {
-  const view = {
-    conversationKey: "chat-123-abc",
-    nonce: "nonce-456",
-    mainQuery: "劳动争议 违法解除 赔偿金",
-    alternatives: ["劳动争议 加班费 仲裁", "劳动争议 社保 补缴"],
-    reason: "根据劳动分析报告中的争议焦点生成",
-  };
-
-  it("has stable template ID", () => {
-    expect(harnessSearchConfirmTemplate.id).toBe(HARNESS_SEARCH_CONFIRM_TEMPLATE_ID);
-    expect(HARNESS_SEARCH_CONFIRM_TEMPLATE_ID).toBe("harness.search-confirm");
-  });
-
-  it("renders interactive card payload with CTA buttons", () => {
-    const payload = buildHarnessSearchConfirmPayload(view);
-    expect(payload.msg_type).toBe("interactive");
-    const content = JSON.parse(payload.content);
-    expect(content.header.title.content).toBe("确认检索词");
-    expect(content.header.template).toBe("indigo");
-    const bodyElements = content.body.elements;
-    const buttonColumn = bodyElements.find((el: Record<string, unknown>) => el.tag === "column_set");
-    expect(buttonColumn).toBeDefined();
-    const columns = buttonColumn?.columns as Array<Record<string, unknown>>;
-    expect(columns?.length).toBeGreaterThanOrEqual(1);
-  });
-
-  it("schema accepts valid search confirm input", () => {
-    const result = harnessSearchConfirmTemplate.schema.safeParse(view);
-    expect(result.success).toBe(true);
-  });
-
-  it("schema accepts empty alternatives", () => {
-    const result = harnessSearchConfirmTemplate.schema.safeParse({ ...view, alternatives: [] });
-    expect(result.success).toBe(true);
   });
 });
 

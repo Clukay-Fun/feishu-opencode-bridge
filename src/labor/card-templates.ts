@@ -72,7 +72,7 @@ export const laborAnalysisCompletedTemplate: BusinessCardTemplateDefinition<type
         { kind: "title", content: `案件：**${escapeText(input.title)}**` },
         { kind: "stats", labels: [`材料 ${input.materialCount}`, `证据 ${input.evidenceCount}`, `焦点 ${input.issueCount}`] },
         ...(input.reviewStatus
-          ? [{ kind: "quote" as const, content: `二审状态：${escapeText(input.reviewStatus)}` }]
+          ? [{ kind: "quote" as const, content: escapeText(input.reviewStatus) }]
           : []),
         { kind: "tagChart", tagCounts: input.tagCounts, bitableUrl: input.docUrl, title: "材料占比", linkLabel: "打开分析文档" },
         ...(input.ledgerUrl

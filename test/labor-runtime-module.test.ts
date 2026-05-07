@@ -279,10 +279,10 @@ describe("LaborRuntimeModule", () => {
       });
 
       expect(endResult).toEqual({ claimed: true });
-      expect(sendPayload).toHaveBeenCalledTimes(3);
+      expect(sendPayload).toHaveBeenCalledTimes(2);
       expect(extractMaterial).toHaveBeenCalledTimes(2);
       expect(finalizeAnalysis).toHaveBeenCalledTimes(1);
-      expect(finalizeReviewOnly).not.toHaveBeenCalled();
+      expect(finalizeReviewOnly).toHaveBeenCalledTimes(1);
       expect(updatePayload).toHaveBeenCalled();
       const progressPayloads = sendPayload.mock.calls as unknown as Array<[string, unknown]>;
       const progressSerialized = JSON.stringify(progressPayloads[1]?.[1] ?? {});
@@ -298,10 +298,9 @@ describe("LaborRuntimeModule", () => {
       expect(completedSerialized).toContain("打开总表");
       expect(completedSerialized).toContain("关键证据视图");
       expect(completedSerialized).toContain("缺口视图");
-      const authorityPrompt = JSON.stringify(progressPayloads[2]?.[1] ?? {});
-      expect(authorityPrompt).toContain("补充权威法规检索");
-      expect(authorityPrompt).toContain("kind");
-      expect(authorityPrompt).toContain("labor-authority-search");
+      const outboundPayloads = JSON.stringify(progressPayloads.map((call) => call[1]));
+      expect(outboundPayloads).not.toContain("补充权威法规检索");
+      expect(outboundPayloads).not.toContain("labor-authority-search");
     } finally {
       await cleanupModule(module, tempDir);
     }
@@ -389,7 +388,7 @@ describe("LaborRuntimeModule", () => {
     }
   });
 
-  it("appends pkulaw authority results and runs review only after search term confirmation", async () => {
+  it("runs authority search in the background and then reviews the completed workbench", async () => {
     const { module, tempDir, updatePayload, appendAuthoritySearch, finalizeReviewOnly } = await createModule();
     try {
       const start = createTextMessage("/劳动分析 劳动争议演示");
@@ -397,11 +396,6 @@ describe("LaborRuntimeModule", () => {
       await module.handleMessage({ message: createFileMessage("证据1.pdf"), routed: null });
       const end = createTextMessage("/劳动分析结束");
       await module.handleMessage({ message: end, routed: routeIncomingText(end.plainText) });
-
-      expect(appendAuthoritySearch).not.toHaveBeenCalled();
-      expect(finalizeReviewOnly).not.toHaveBeenCalled();
-      const confirm = createTextMessage("确认检索词");
-      await module.handleMessage({ message: confirm, routed: routeIncomingText(confirm.plainText) });
 
       expect(appendAuthoritySearch).toHaveBeenCalledTimes(1);
       expect(appendAuthoritySearch).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
@@ -414,25 +408,25 @@ describe("LaborRuntimeModule", () => {
       }));
       const updatedPayloads = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
       const serializedUpdates = JSON.stringify(updatedPayloads.map((call) => call[2]));
-      expect(serializedUpdates).toContain("权威法规检索完成");
-      expect(serializedUpdates).toContain("违法解除规则");
+      expect(serializedUpdates).toContain("二审模型审查中");
+      expect(serializedUpdates).toContain("法条引用已完成独立校验");
       expect(serializedUpdates).toContain("二审状态");
-      expect(serializedUpdates).toContain("二审需人工复核");
+      expect(serializedUpdates).toContain("需人工复核");
+      expect(serializedUpdates).not.toContain("补充权威法规检索");
+      expect(serializedUpdates).not.toContain("权威法规检索完成");
       expect(serializedUpdates).not.toContain("lark-table");
     } finally {
       await cleanupModule(module, tempDir);
     }
   });
 
-  it("does not mark completed labor analysis as failed when authority prompt sending fails", async () => {
-    const { module, tempDir, sendPayload, updatePayload, logger } = await createModule();
+  it("does not mark completed labor analysis as failed when background authority search fails", async () => {
+    const { module, tempDir, updatePayload, appendAuthoritySearch, finalizeReviewOnly, logger } = await createModule();
+    appendAuthoritySearch.mockRejectedValueOnce(new Error("pkulaw timeout"));
     try {
       const start = createTextMessage("/劳动分析 劳动争议演示");
       await module.handleMessage({ message: start, routed: routeIncomingText(start.plainText) });
       await module.handleMessage({ message: createFileMessage("证据1.pdf"), routed: null });
-      sendPayload
-        .mockResolvedValueOnce({ messageId: "out-processing" })
-        .mockRejectedValueOnce(new Error("card send failed"));
 
       await module.handleMessage({ message: createTextMessage("/劳动分析结束"), routed: routeIncomingText("/劳动分析结束") });
 
@@ -440,140 +434,34 @@ describe("LaborRuntimeModule", () => {
       const serializedUpdates = JSON.stringify(updatedPayloads.map((call) => call[2]));
       expect(serializedUpdates).toContain("劳动分析完成");
       expect(serializedUpdates).not.toContain("劳动分析失败");
-      expect(logger.log).toHaveBeenCalledWith("labor/authority", "authority prompt skipped", expect.objectContaining({
-        detail: "card send failed",
+      expect(finalizeReviewOnly).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+        status: "pending",
+      }));
+      expect(logger.log).toHaveBeenCalledWith("labor/authority", "background authority search failed", expect.objectContaining({
+        detail: "pkulaw timeout",
       }), "warn");
     } finally {
       await cleanupModule(module, tempDir);
     }
   });
 
-  it("keeps authority confirmation pending when authority search fails", async () => {
-    const { module, tempDir, sendPayload, updatePayload, appendAuthoritySearch, finalizeReviewOnly } = await createModule();
-    appendAuthoritySearch.mockRejectedValueOnce(new Error("pkulaw timeout"));
+  it("ignores stale authority card actions because labor authority search is now background-only", async () => {
+    const { module, tempDir } = await createModule();
     try {
       const start = createTextMessage("/劳动分析 劳动争议演示");
       await module.handleMessage({ message: start, routed: routeIncomingText(start.plainText) });
       await module.handleMessage({ message: createFileMessage("证据1.pdf"), routed: null });
       await module.handleMessage({ message: createTextMessage("/劳动分析结束"), routed: routeIncomingText("/劳动分析结束") });
-
-      const confirm = createTextMessage("确认检索词");
-      await module.handleMessage({ message: confirm, routed: routeIncomingText(confirm.plainText) });
-
-      const interactions = (module as unknown as {
-        interactions: { get(key: string): { stage?: string; authority?: unknown } | undefined };
-      }).interactions;
-      expect(interactions.get(start.conversationKey)).toEqual(expect.objectContaining({
-        stage: "authority-confirmation",
-        authority: expect.anything(),
-      }));
-      const payloadCalls = sendPayload.mock.calls as unknown as Array<[string, unknown]>;
-      expect(JSON.stringify(payloadCalls.at(-1)?.[1] ?? {})).toContain("权威法规检索失败");
-      expect(JSON.stringify(payloadCalls.at(-1)?.[1] ?? {})).toContain("pkulaw timeout");
-      const updatedPayloads = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
-      expect(JSON.stringify(updatedPayloads.at(-1)?.[2] ?? {})).toContain("补充权威法规检索");
-      expect(finalizeReviewOnly).not.toHaveBeenCalled();
-    } finally {
-      await cleanupModule(module, tempDir);
-    }
-  });
-
-  it("returns a retryable toast and keeps pending when authority card search fails", async () => {
-    const { module, tempDir, appendAuthoritySearch, finalizeReviewOnly } = await createModule();
-    appendAuthoritySearch.mockRejectedValueOnce(new Error("pkulaw down"));
-    try {
-      const start = createTextMessage("/劳动分析 劳动争议演示");
-      await module.handleMessage({ message: start, routed: routeIncomingText(start.plainText) });
-      await module.handleMessage({ message: createFileMessage("证据1.pdf"), routed: null });
-      await module.handleMessage({ message: createTextMessage("/劳动分析结束"), routed: routeIncomingText("/劳动分析结束") });
-      const interactions = (module as unknown as {
-        interactions: { get(key: string): { authority: { nonce: string } } | undefined };
-      }).interactions;
-      const nonce = interactions.get(start.conversationKey)?.authority.nonce;
 
       const response = await module.handleCardAction("ou_user", "om_card", {
         kind: "labor-authority-search",
         action: "confirm",
         conversationKey: start.conversationKey,
-        nonce,
       });
 
-      expect(response).toEqual(expect.objectContaining({
-        toast: expect.objectContaining({ type: "warning", content: expect.stringContaining("pkulaw down") }),
-      }));
-      expect(interactions.get(start.conversationKey)).toEqual(expect.objectContaining({
-        authority: expect.anything(),
-      }));
-      expect(finalizeReviewOnly).not.toHaveBeenCalled();
+      expect(response).toBeNull();
     } finally {
       await cleanupModule(module, tempDir);
-    }
-  });
-
-  it("handles authority search confirmation from card buttons", async () => {
-    const { module, tempDir, updatePayload, appendAuthoritySearch, finalizeReviewOnly } = await createModule();
-    try {
-      const start = createTextMessage("/劳动分析 劳动争议演示");
-      await module.handleMessage({ message: start, routed: routeIncomingText(start.plainText) });
-      await module.handleMessage({ message: createFileMessage("证据1.pdf"), routed: null });
-      await module.handleMessage({ message: createTextMessage("/劳动分析结束"), routed: routeIncomingText("/劳动分析结束") });
-      const interactions = (module as unknown as {
-        interactions: { get(key: string): { authority: { nonce: string } } | undefined };
-      }).interactions;
-      const nonce = interactions.get(start.conversationKey)?.authority.nonce;
-
-      const response = await module.handleCardAction("ou_user", "om_card", {
-        kind: "labor-authority-search",
-        action: "alternative",
-        conversationKey: start.conversationKey,
-        nonce,
-        index: 1,
-      });
-
-      expect(response).toEqual(expect.objectContaining({ toast: expect.objectContaining({ type: "success" }) }));
-      expect(appendAuthoritySearch).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-        query: "劳动争议 赔偿金",
-      }));
-      expect(finalizeReviewOnly).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-        status: "completed",
-        searchResult: expect.objectContaining({ query: "劳动争议 违法解除" }),
-      }));
-      const updatedPayloads = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
-      const serializedUpdates = JSON.stringify(updatedPayloads.map((call) => call[2]));
-      expect(serializedUpdates).toContain("权威法规检索完成");
-      expect(serializedUpdates).toContain("劳动合同法");
-      expect(serializedUpdates).toContain("二审状态");
-    } finally {
-      await cleanupModule(module, tempDir);
-    }
-  });
-
-  it("supports custom authority search terms and skip", async () => {
-    const first = await createModule();
-    try {
-      await first.module.handleMessage({ message: createTextMessage("/劳动分析"), routed: routeIncomingText("/劳动分析") });
-      await first.module.handleMessage({ message: createFileMessage("证据1.pdf"), routed: null });
-      await first.module.handleMessage({ message: createTextMessage("/劳动分析结束"), routed: routeIncomingText("/劳动分析结束") });
-      await first.module.handleMessage({ message: createTextMessage("/检索词 1"), routed: routeIncomingText("/检索词 1") });
-      expect(first.appendAuthoritySearch).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-        query: "劳动争议 赔偿金",
-      }));
-    } finally {
-      await cleanupModule(first.module, first.tempDir);
-    }
-
-    const second = await createModule();
-    try {
-      await second.module.handleMessage({ message: createTextMessage("/劳动分析"), routed: routeIncomingText("/劳动分析") });
-      await second.module.handleMessage({ message: createFileMessage("证据1.pdf"), routed: null });
-      await second.module.handleMessage({ message: createTextMessage("/劳动分析结束"), routed: routeIncomingText("/劳动分析结束") });
-      await second.module.handleMessage({ message: createTextMessage("/跳过权威检索"), routed: routeIncomingText("/跳过权威检索") });
-      expect(second.appendAuthoritySearch).not.toHaveBeenCalled();
-      expect(second.finalizeReviewOnly).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-        status: "skipped",
-      }));
-    } finally {
-      await cleanupModule(second.module, second.tempDir);
     }
   });
 

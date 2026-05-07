@@ -1,7 +1,7 @@
 /**
  * 职责: 构建 Legal Harness V1 专用飞书卡片。
  * 关注点:
- * - 输出二审报告卡、权威覆盖率卡、问题发现卡、检索词确认卡、结果分组卡。
+ * - 输出二审报告卡、权威覆盖率卡、问题发现卡、结果分组卡。
  * - 依赖：harness-card-templates.ts 模板定义，需模板 runtime 注册完成后方可预览。
  */
 import {
@@ -15,7 +15,6 @@ import {
   HARNESS_FINDINGS_TEMPLATE_ID,
   HARNESS_RESULT_GROUP_TEMPLATE_ID,
   HARNESS_REVIEW_REPORT_TEMPLATE_ID,
-  HARNESS_SEARCH_CONFIRM_TEMPLATE_ID,
 } from "../labor/harness-card-templates.js";
 
 export type HarnessReviewReportCardView = {
@@ -59,14 +58,6 @@ export type HarnessFindingsCardView = {
   }> | undefined;
 };
 
-export type HarnessSearchConfirmCardView = {
-  conversationKey: string;
-  nonce: string;
-  mainQuery: string;
-  alternatives: string[];
-  reason: string;
-};
-
 export type HarnessResultGroupCardView = {
   title: string;
   groups: Array<{
@@ -90,17 +81,13 @@ export function buildHarnessFindingsPayload(view: HarnessFindingsCardView): Feis
   return buildHarnessTemplatePayload(HARNESS_FINDINGS_TEMPLATE_ID, view);
 }
 
-export function buildHarnessSearchConfirmPayload(view: HarnessSearchConfirmCardView): FeishuPostPayload {
-  return buildHarnessTemplatePayload(HARNESS_SEARCH_CONFIRM_TEMPLATE_ID, view);
-}
-
 export function buildHarnessResultGroupPayload(view: HarnessResultGroupCardView): FeishuPostPayload {
   return buildHarnessTemplatePayload(HARNESS_RESULT_GROUP_TEMPLATE_ID, view);
 }
 
 function buildHarnessTemplatePayload(
-  templateId: typeof HARNESS_REVIEW_REPORT_TEMPLATE_ID | typeof HARNESS_AUTHORITY_COVERAGE_TEMPLATE_ID | typeof HARNESS_FINDINGS_TEMPLATE_ID | typeof HARNESS_SEARCH_CONFIRM_TEMPLATE_ID | typeof HARNESS_RESULT_GROUP_TEMPLATE_ID,
-  input: HarnessReviewReportCardView | HarnessAuthorityCoverageCardView | HarnessFindingsCardView | HarnessSearchConfirmCardView | HarnessResultGroupCardView,
+  templateId: typeof HARNESS_REVIEW_REPORT_TEMPLATE_ID | typeof HARNESS_AUTHORITY_COVERAGE_TEMPLATE_ID | typeof HARNESS_FINDINGS_TEMPLATE_ID | typeof HARNESS_RESULT_GROUP_TEMPLATE_ID,
+  input: HarnessReviewReportCardView | HarnessAuthorityCoverageCardView | HarnessFindingsCardView | HarnessResultGroupCardView,
 ): FeishuPostPayload {
   try {
     return renderBusinessCard(templateId, input);

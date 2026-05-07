@@ -17,7 +17,6 @@ describe("business card templates", () => {
       "harness.review-report",
       "harness.authority-coverage",
       "harness.findings",
-      "harness.search-confirm",
       "harness.result-group",
     ]);
   });

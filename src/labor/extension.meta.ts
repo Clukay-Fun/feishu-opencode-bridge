@@ -11,7 +11,6 @@ import {
   harnessFindingsTemplate,
   harnessResultGroupTemplate,
   harnessReviewReportTemplate,
-  harnessSearchConfirmTemplate,
 } from "./harness-card-templates.js";
 import { laborSkillConfigDefinition } from "./config.js";
 
@@ -29,7 +28,6 @@ export const laborSkillExtensionMeta = {
     harnessReviewReportTemplate,
     harnessAuthorityCoverageTemplate,
     harnessFindingsTemplate,
-    harnessSearchConfirmTemplate,
     harnessResultGroupTemplate,
   ],
 } as const satisfies BuiltinExtensionMetaDefinition;

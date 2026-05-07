@@ -93,11 +93,9 @@ export {
   buildHarnessFindingsPayload,
   buildHarnessResultGroupPayload,
   buildHarnessReviewReportPayload,
-  buildHarnessSearchConfirmPayload,
   type HarnessAuthorityCoverageCardView,
   type HarnessFindingsCardView,
   type HarnessResultGroupCardView,
   type HarnessReviewReportCardView,
-  type HarnessSearchConfirmCardView,
 } from "./harness-cards.js";
 //#endregion

@@ -179,7 +179,7 @@ function buildAuthorityContextBlock(authorityContext?: { status: "pending" | "sk
   if (authorityContext.status === "skipped") {
     return [
       "## 权威检索状态",
-      "用户已明确跳过权威法规检索（/跳过权威检索）。material 和 local_kb 均视为合法依据来源。",
+      "权威法规检索未执行或被产品流程跳过。material 和 local_kb 均视为合法依据来源。",
       "在 authorityCoverage 中，缺少 authority 来源的争议点应标记 status 为 skipped 而非 missing。",
     ].join("\n");
   }
