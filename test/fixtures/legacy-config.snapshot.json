@@ -171,7 +171,25 @@
       "pkulaw": {
         "enabled": false,
         "cliCommand": "pkulaw-mcp",
-        "transport": "auto"
+        "transport": "auto",
+        "skills": {
+          "lawSemantic": {
+            "tool": "law-semantic",
+            "operation": "search_article"
+          },
+          "lawRecognition": {
+            "tool": "law_recognition",
+            "operation": "law_recognition"
+          },
+          "citationValidator": {
+            "tool": "pku_citation_validator",
+            "operation": "adjust_provisions"
+          },
+          "caseNumberRecognition": {
+            "tool": "pkulaw-case-number-recognition",
+            "operation": "anhao_recognition"
+          }
+        }
       }
     },
     "parser": {

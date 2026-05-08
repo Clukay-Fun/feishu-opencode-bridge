@@ -579,6 +579,12 @@ describe("loadConfig memory settings", () => {
       enabled: true,
       cliCommand: "pkulaw-mcp",
       transport: "http",
+      skills: {
+        lawSemantic: { tool: "law-semantic", operation: "search_article" },
+        lawRecognition: { tool: "law_recognition", operation: "law_recognition" },
+        citationValidator: { tool: "pku_citation_validator", operation: "adjust_provisions" },
+        caseNumberRecognition: { tool: "pkulaw-case-number-recognition", operation: "anhao_recognition" },
+      },
     });
   });
 
