@@ -6,6 +6,7 @@
  */
 import type { ModuleManager } from "../bridge/module.js";
 import { ModuleManager as RuntimeModuleManager } from "../bridge/module.js";
+import { CaseWorkbenchRuntimeModule, type CaseWorkbenchLaborPort } from "../case-workbench/runtime-module.js";
 import type { AppConfig } from "../config/schema.js";
 import type { ExtensionDefinition } from "../extension-api/index.js";
 import { builtinExtensions } from "../extensions/builtin.js";
@@ -63,6 +64,7 @@ export function createRuntimeModules(options: {
 
   const moduleManager = new RuntimeModuleManager(options.logger);
   let knowledgeModule: KnowledgeRuntimeModule | null = null;
+  let laborPort: CaseWorkbenchLaborPort | null = null;
 
   for (const extension of builtinExtensions) {
     const module = extension.createModule({
@@ -90,6 +92,17 @@ export function createRuntimeModules(options: {
     if (resolvedModule.name === "knowledge") {
       knowledgeModule = resolvedModule as KnowledgeRuntimeModule;
     }
+    if (resolvedModule.name === "labor" && "startCaseWorkbenchCollection" in resolvedModule) {
+      laborPort = resolvedModule as unknown as CaseWorkbenchLaborPort;
+    }
+  }
+
+  if (laborPort) {
+    moduleManager.register(new CaseWorkbenchRuntimeModule({
+      logger: options.logger,
+      transport: options.transport,
+      labor: laborPort,
+    }));
   }
 
   for (const extension of options.externalExtensions ?? []) {

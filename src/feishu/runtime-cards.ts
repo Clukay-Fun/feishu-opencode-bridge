@@ -301,7 +301,7 @@ export function buildGuideCardPayload(view: GuideCardView): FeishuPostPayload {
     iconToken: "compass_outlined",
     bodyElements: [
       buildGuideStepBlock("1", "上传样例材料", "先使用样例材料验证流程，再处理真实案件。"),
-      buildGuideStepBlock("2", "启动劳动分析", "发送 `/劳动分析`，补充材料后发送 `/劳动分析结束`。"),
+      buildGuideStepBlock("2", "启动案件工作台", "发送 `/案件工作台`，上传材料后点击“完成上传，开始分析”，或发送 `/完成上传`。"),
       buildGuideStepBlock("3", "查看分析输出", "重点核对争议焦点、请求权基础、证据缺口、策略和文书草稿摘要。"),
       buildGuideStepBlock("4", "核对二审状态", "完成卡会显示法条引用校验、建议修改或需人工复核状态。"),
       buildDivider(),

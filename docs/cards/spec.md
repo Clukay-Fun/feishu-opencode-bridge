@@ -2,15 +2,31 @@
 
 > 本文件是工程 review source of truth，视觉 source of truth 是 `飞书卡片.pdf`。
 
+## 预览验收指令
+
+使用真实 builder 发送当前保留用户侧卡片预览：
+
+```bash
+npm run cards:preview
+```
+
+常用参数：
+- `--dry-run`：只列出会发送的卡片，不调用飞书。
+- `--list`：列出预览清单。
+- `--only <关键词>`：只发送匹配分组、名称或别名的卡片，例如 `--only 知识库`、`--only invoice`。
+- `--chat-id <oc_xxx>` / `--user-id <ou_xxx>`：覆盖发送目标。
+
+默认目标：读取当前 `lark-cli auth status` 的 `userOpenId`，用 bot 身份发送到该用户私聊。也可以通过 `LARK_CARD_PREVIEW_CHAT_ID` 或 `LARK_CARD_PREVIEW_USER_ID` 固定默认目标。
+
 ## 卡片分类
 
 ### 1. 知识库卡片（5 态）
 
 | 模板 ID | 卡片标题 | 模板色 | iconToken | 用途 |
 |---------|---------|--------|-----------|------|
-| `knowledge.ingest-ready` | 知识入库已开启 | indigo | `start_outlined` | 进入入库模式提示 |
+| `knowledge.ingest-ready` | 知识库入库开启 | blue | `loading_outlined` | 进入入库模式提示 |
 | `knowledge.ingest-queued` | 知识入库排队中 | orange | `clock_outlined` | 入库任务排队等待 |
-| `knowledge.ingest-processing` | 知识入库进行中 | indigo | `loading_outlined` | 入库处理中进度 |
+| `knowledge.ingest-processing` | 知识入库进行中 | blue | `loading_outlined` | 入库处理中进度 |
 | `knowledge.ingest-completed` | 知识入库完成 | green | `yes_filled` | 入库成功结果 |
 | `knowledge.ingest-failed` | 入库失败 | red | `error_filled` | 入库失败错误 |
 
@@ -43,9 +59,11 @@
 
 | 模板 ID | 卡片标题 | 模板色 | iconToken | 用途 |
 |---------|---------|--------|-----------|------|
-| `labor.analysis.progress` | 劳动分析进行中 | indigo | `start_outlined` | 分析进度 |
-| `labor.analysis.completed` | 劳动分析完成 | green | `yes_filled` | 一审完成（不含文档链接） |
-| `labor.review.completed` | 劳动分析二审通过/完成 | green/yellow | `yes_filled`/`warning_filled` | 二审完成（含文档链接+review信息） |
+| `labor.collection` | 材料收集中 | blue | `loading_outlined` | 劳动材料收集入口 |
+| `labor.analysis.progress` | 材料分析进行中 | blue | `loading_outlined` | 分析进度 |
+| `labor.analysis.completed` | 材料分析完成 | green | `yes_filled` | 一审完成（不含文档链接） |
+| `labor.review.progress` | 二次审查进行中 | blue | `loading_outlined` | 后台二审校验进度 |
+| `labor.review.completed` | 二次审查完成 | green/yellow | `yes_filled`/`warning_filled` | 二审完成（含文档链接+review信息） |
 
 **二审完成卡字段**：
 - `title`: 案件标题
@@ -78,12 +96,6 @@
 | `buildTurnStatusPayload` | 任务状态 | indigo | 处理中状态 |
 | `buildCallbackTestPayload` | 回调测试 | blue | 按钮回调测试 |
 
-**废弃卡片**：
-- `buildWhoCommandCardPayload` — 群聊绑定状态（/who 命令）
-- `buildLeaveCommandCardPayload` — 已解除绑定（/leave 命令）
-
----
-
 ### 5. 合同/发票卡片
 
 | 函数名 | 卡片标题 | 模板色 | 用途 |
@@ -91,8 +103,9 @@
 | `buildContractExtractPayload` | 合同信息提取 | green | 合同字段提取结果 |
 | `buildContractReviewPayload` | 合同审查报告 | indigo | 合同风险审查 |
 | `buildContractDraftPayload` | 合同起草 | indigo | 合同草稿生成 |
-| `buildInvoiceRecognizePayload` | 发票识别 | green | 发票字段识别 |
-| `buildCaseWorkbenchPayload` | 案件工作台 | indigo | 案件管理 |
+| `buildInvoiceRecognizeProgressPayload` | 发票识别 | blue | 发票字段识别进度，支持多文件展示字段 |
+| `buildInvoiceRecognizeCompletedPayload` | 发票识别完成 | green | 发票字段识别结果 |
+| `buildCaseWorkbenchPayload` | 案件工作台已开启 | blue | 案件工作台入口卡 |
 
 **停用说明**：
 - 提醒卡片与提醒入口本期完全停用，不保留用户侧卡片 fallback。
@@ -130,12 +143,6 @@ Harness 卡片不再作为用户侧独立卡片展示，仅用于离线回归脚
 - `WhoCommandCardView`
 - `LeaveCommandCardView`
 
-### 提醒
-- `buildReminderProgressPayload`
-- `buildTodayTodoPayload`
-- `buildCaseReminderAddCompletedPayload`
-- `ReminderListResult`
-
 ### Harness（用户侧）
 - `buildHarnessReviewReportPayload`
 - `buildHarnessAuthorityCoveragePayload`
@@ -152,4 +159,4 @@ Harness 卡片不再作为用户侧独立卡片展示，仅用于离线回归脚
 
 以下卡片已定义但尚未接入运行时发送路径，仅允许进入 mock preview/catalog。
 
-- 无（本期无新增 pending_integration 卡片）
+- 发票多文件展示字段：builder 已支持 `currentFile/completedFiles/failedFiles`，当前 runtime 仍按单文件识别调度。

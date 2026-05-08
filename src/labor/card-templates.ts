@@ -65,11 +65,11 @@ export const laborAnalysisProgressTemplate: BusinessCardTemplateDefinition<typeo
   schema: LaborAnalysisProgressCardViewSchema,
   render(input) {
     return {
-      title: "劳动分析进行中",
-      template: "indigo",
-      iconToken: "start_outlined",
+      title: "材料分析进行中",
+      template: "blue",
+      iconToken: "loading_outlined",
       blocks: [
-        { kind: "title", content: `处理文件：**${escapeText(input.sourceLabel)}**` },
+        { kind: "title", content: `当前处理：**${escapeText(input.sourceLabel)}**` },
         { kind: "steps", steps: input.steps },
         ...(input.progressText ? [{ kind: "quote" as const, content: escapeText(input.progressText) }] : []),
         { kind: "divider" },
@@ -84,7 +84,7 @@ export const laborAnalysisCompletedTemplate: BusinessCardTemplateDefinition<type
   schema: LaborAnalysisCompletedCardViewSchema,
   render(input) {
     return {
-      title: "劳动分析完成",
+      title: "材料分析完成",
       template: "green",
       iconToken: "yes_filled",
       blocks: [
@@ -113,7 +113,7 @@ export const laborReviewCompletedTemplate: BusinessCardTemplateDefinition<typeof
       typeof input.humanReviewCount === "number" ? `需人工复核 ${input.humanReviewCount} 项` : "",
     ].filter(Boolean).join("｜");
     return {
-      title: isPass ? "劳动分析二审通过" : "劳动分析二审完成",
+      title: isPass ? "二次审查完成" : "二次审查完成",
       template: isPass ? "green" : "yellow",
       iconToken: isPass ? "yes_filled" : "warning_filled",
       blocks: [

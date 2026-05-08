@@ -17,7 +17,7 @@ describe("builtin extension registry", () => {
     expect(builtinExtensionCommands).toEqual(expect.arrayContaining([
       expect.objectContaining({ extensionId: "knowledge-base", name: "法律咨询开始" }),
       expect.objectContaining({ extensionId: "contract-assistant", name: "合同起草开始" }),
-      expect.objectContaining({ extensionId: "labor-skill", name: "劳动分析" }),
+      expect.objectContaining({ extensionId: "labor-skill", name: "完成上传" }),
     ]));
 
     expect(routeIncomingText("/法律咨询开始")).toEqual({

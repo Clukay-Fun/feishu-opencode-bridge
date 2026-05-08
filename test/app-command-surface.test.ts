@@ -62,7 +62,8 @@ describe("BridgeApp command surface", () => {
     expect(ensureSession).not.toHaveBeenCalled();
     expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("快速上手");
     expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("上传样例材料");
-    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("/劳动分析");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("/案件工作台");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("/完成上传");
   });
 
   it("returns a callback demo card without creating an OpenCode session", async () => {

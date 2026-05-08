@@ -859,6 +859,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
   ): Promise<void> {
     const startedAt = Date.now();
     const progressState = createInvoiceRecognizeProgressState();
+    progressState.currentFile = getContractFileName(file);
     applyInvoiceRecognizeStep(progressState, 0);
     const processing = await this.deps.transport.sendPayload(message.chatId, buildInvoiceRecognizeProgressPayload(progressState), {
       event: "invoice recognize started",
@@ -868,6 +869,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     }, { replyToMessageId: message.messageId });
     try {
       const result = await this.deps.service!.recognizeInvoice(file);
+      progressState.completedFiles = [getContractFileName(file)];
       applyInvoiceRecognizeStep(progressState, 1);
       await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildInvoiceRecognizeProgressPayload(progressState), {
         event: "invoice recognize record write started",

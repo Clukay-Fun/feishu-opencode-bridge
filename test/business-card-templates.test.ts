@@ -30,7 +30,7 @@ describe("business card templates", () => {
     });
 
     const serialized = JSON.stringify(JSON.parse(payload.content));
-    expect(serialized).toContain("劳动分析进行中");
+    expect(serialized).toContain("材料分析进行中");
     expect(serialized).toContain("证据目录.pdf");
     expect(serialized).toContain("提取事实");
     expect(serialized).toContain("正在汇总争议焦点");

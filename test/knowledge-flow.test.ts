@@ -249,7 +249,7 @@ describe("knowledge base bridge flow", () => {
     ]);
     const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
     const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
-    expect(JSON.stringify(replyPayloads)).toContain("知识入库已开启");
+    expect(JSON.stringify(replyPayloads)).toContain("知识库入库开启");
     expect(JSON.stringify(replyPayloads)).toContain("已收到入库素材");
     expect(JSON.stringify(updatedPayloads)).toContain("知识入库完成");
     expect(JSON.stringify(updatedPayloads)).toContain("公司法实务.pdf 等 3 个素材");

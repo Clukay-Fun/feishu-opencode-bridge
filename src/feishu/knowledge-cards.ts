@@ -104,9 +104,9 @@ export function buildKnowledgeQueryEmptyPayload(view: KnowledgeQueryEmptyCardVie
 /** 构建“已进入知识入库模式”提示卡。 */
 export function buildKnowledgeIngestReadyPayload(): FeishuPostPayload {
   return buildInteractivePayload({
-    title: "知识入库已开启",
-    template: "indigo",
-    iconToken: "status-meeting_filled",
+    title: "知识库入库开启",
+    template: "blue",
+    iconToken: "loading_outlined",
     bodyElements: [
       buildGreyPanel([
         cardMarkdown("**支持格式** ：PDF / DOCX / TXT / MD / PNG / JPG / WEBP\n**模式** ：批量入库", "normal"),
@@ -191,8 +191,8 @@ export function buildKnowledgeIngestProcessingPayload(view: KnowledgeIngestProgr
   return buildInteractivePayload({
     title: "知识入库进行中",
     subtitle: `${completedCount}/${completedCount + failedCount + queuedCount + 1} 已完成`,
-    template: "indigo",
-    iconToken: "start_outlined",
+    template: "blue",
+    iconToken: "loading_outlined",
     bodyElements: [
       cardMarkdown("**当前处理**", "normal_v2"),
       buildKnowledgeIngestCurrentProcessingBlock(view),

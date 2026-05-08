@@ -159,13 +159,6 @@ function createModule(existingTempDir?: string, options?: {
           maxFileSizeMb: 20,
           pendingTtlMs: 60_000,
         },
-        reminder: {
-          enabled: false,
-          targetChatIds: [],
-          hour: 9,
-          minute: 0,
-          lookaheadDays: 7,
-        },
       },
     } as unknown as AppConfig,
     logger: { log: vi.fn() } as never,
@@ -480,18 +473,12 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
       const completedSerialized = JSON.stringify(updatePayload.mock.calls[0]?.[2] ?? {});
       const completedCard = JSON.parse((updatePayload.mock.calls[0]?.[2] as { content?: string })?.content ?? "{}");
       expect(processingSerialized).toContain("案件信息录入中");
-      expect(processingSerialized).toContain("正在解析案件信息");
       expect(processingSerialized).toContain("提取字段：进行中");
       expect(processingSerialized).toContain("写入案件管理表：等待中");
       expect(completedSerialized).toContain("案件已录入");
       expect(completedSerialized).toContain("张三 vs 北京XX科技有限公司");
       expect(completedSerialized).toContain("劳动争议｜劳动仲裁");
-      expect(completedSerialized).toContain("违法解除劳动合同争议");
-      expect(completedSerialized).toContain("刘达律师");
-      expect(completedSerialized).toContain("案件管理表");
-      expect(completedSerialized).toContain("rec_case_1");
-      expect(completedSerialized).toContain("开庭日 2026-04-18 09:30");
-      expect(completedSerialized).toContain("举证截止日 2026-04-17");
+      expect(completedSerialized).toContain("打开案件管理表");
       expect((completedCard.body?.elements ?? []).some((item: { tag?: string }) => item.tag === "column")).toBe(false);
     } finally {
       await cleanupModule(module, tempDir);
@@ -599,17 +586,12 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     expect(initialSerialized).not.toContain("正在填写表格");
     expect(finalSerialized).toContain("发票识别完成");
     expect(finalSerialized).not.toContain("正在 OCR 识别发票内容");
-    expect(finalSerialized).toContain("购买方信息");
     expect(finalSerialized).toContain("张三");
-    expect(finalSerialized).toContain("110101199001010011");
-    expect(finalSerialized).toContain("发票信息");
     expect(finalSerialized).toContain("032001900104");
     expect(finalSerialized).toContain("增值税普通发票");
     expect(finalSerialized).toContain("¥20,000.00");
     expect(finalSerialized).toContain("2026-04-10");
-    expect(finalSerialized).toContain("诉讼代理律师费");
     expect(finalSerialized).toContain("查看发票表");
-    expect(finalSerialized).toContain("耗时：");
   });
 
   it("falls back to request fields when case create response misses display fields", async () => {
@@ -630,10 +612,7 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     const completedSerialized = JSON.stringify(updatePayload.mock.calls.at(-1)?.[2] ?? {});
     expect(completedSerialized).toContain("张某某 vs 杭州XX科技有限公司");
     expect(completedSerialized).toContain("劳动仲裁｜仲裁阶段");
-    expect(completedSerialized).toContain("劳动争议");
-    expect(completedSerialized).toContain("杭州市西湖区劳动人事争议仲裁委员会");
-    expect(completedSerialized).toContain("刘达");
-    expect(completedSerialized).toContain("进行中");
+    expect(completedSerialized).toContain("打开案件管理表");
     expect(completedSerialized).not.toContain("委托人 vs 对方当事人");
   });
 

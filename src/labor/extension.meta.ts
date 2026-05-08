@@ -13,8 +13,7 @@ export const laborSkillExtensionMeta = {
   configKey: "laborSkill",
   configDefinition: laborSkillConfigDefinition,
   commands: [
-    { name: "劳动分析", aliases: ["labor-start"], owner: "business", description: "进入劳动分析材料收集模式" },
-    { name: "劳动分析结束", aliases: ["labor-end"], owner: "business", description: "结束收集并开始劳动分析" },
+    { name: "完成上传", owner: "business", description: "结束案件工作台材料收集并开始分析" },
   ],
   cardTemplates: [
     laborAnalysisProgressTemplate,

@@ -7,6 +7,10 @@
  */
 import {
   buildNoticeCardPayload,
+  buildInteractivePayload,
+  buildDivider,
+  buildGreyPanel,
+  cardMarkdown,
   type FeishuPostPayload,
   type ToolUpdateView,
 } from "./shared-primitives.js";
@@ -64,6 +68,47 @@ export type LaborFinalReviewCardView = {
   level: "info" | "warning" | "error" | "neutral";
 };
 
+export type LaborMaterialCollectionCardView = {
+  title?: string | undefined;
+  conversationKey?: string | undefined;
+};
+
+export function buildLaborMaterialCollectionPayload(view: LaborMaterialCollectionCardView = {}): FeishuPostPayload {
+  return buildInteractivePayload({
+    title: "材料收集中",
+    template: "blue",
+    iconToken: "loading_outlined",
+    bodyElements: [
+      cardMarkdown("请上传劳动相关材料，直接发送到聊天窗口即可。", "heading"),
+      buildGreyPanel([
+        cardMarkdown("**支持格式** ：PDF / DOCX / TXT / MD\n**模式** ：批量导入", "normal"),
+        ...(view.title ? [cardMarkdown(`**案件标题** ：${view.title}`, "normal")] : []),
+      ]),
+      buildDivider(),
+      ...(view.conversationKey
+        ? [buildCollectionFinishButton(view.conversationKey)]
+        : []),
+      cardMarkdown("上传完成后点击按钮，或发送 `/完成上传` 开始分析。", "notation"),
+    ],
+  });
+}
+
+function buildCollectionFinishButton(conversationKey: string): Record<string, unknown> {
+  return {
+    tag: "button",
+    text: { tag: "plain_text", content: "完成上传，开始分析" },
+    type: "primary",
+    width: "fill",
+    size: "medium",
+    icon: { tag: "standard_icon", token: "play_outlined" },
+    value: {
+      kind: "labor-collection-action",
+      action: "finish-upload",
+      conversationKey,
+    },
+  };
+}
+
 export function buildLaborAnalysisProgressPayload(view: LaborAnalysisProgressCardView): FeishuPostPayload {
   return buildLaborTemplatePayload(LABOR_ANALYSIS_PROGRESS_TEMPLATE_ID, view);
 }
@@ -77,6 +122,21 @@ export function buildLaborReviewCompletedPayload(view: LaborReviewCompletedCardV
 }
 
 export function buildLaborFinalReviewPayload(view: LaborFinalReviewCardView): FeishuPostPayload {
+  if (view.level === "info") {
+    return buildInteractivePayload({
+      title: "二次审查进行中",
+      template: "blue",
+      iconToken: "loading_outlined",
+      bodyElements: [
+        cardMarkdown(`案件：**${view.title}**`, "normal_v2"),
+        buildGreyPanel([
+          cardMarkdown("权威法规检索：已完成", "normal_v2", { icon: { token: "yes_outlined", color: "green" } }),
+          cardMarkdown("法条引用校验：进行中", "normal_v2", { icon: { token: "loading_outlined", color: "blue" } }),
+          cardMarkdown("请求权基础校验：等待中", "normal_v2", { icon: { token: "ellipse_outlined", color: "grey" } }),
+        ], { padding: "8px 8px 8px 8px" }),
+      ],
+    });
+  }
   return buildNoticeCardPayload({
     title: "劳动分析二审",
     level: view.level,

@@ -250,7 +250,8 @@ describe("buildPostPayload", () => {
     const serialized = JSON.stringify(content);
 
     expect(content.header.title.content).toBe("快速上手");
-    expect(serialized).toContain("/劳动分析");
+    expect(serialized).toContain("/案件工作台");
+    expect(serialized).toContain("/完成上传");
     expect(serialized).toContain("查看分析输出");
     expect(serialized).toContain("二审状态");
     expect(serialized).not.toContain("labor:harness");
@@ -351,7 +352,7 @@ describe("buildPostPayload", () => {
     const serialized = JSON.stringify(content);
 
     expect(content.header.title.content).toBe("案件信息录入中");
-    expect(serialized).toContain("正在解析案件信息");
+    expect(serialized).toContain("案件信息录入中");
     expect(serialized).toContain("劳动争议");
   });
 
@@ -609,12 +610,12 @@ describe("buildPostPayload", () => {
     const progressSerialized = JSON.stringify(JSON.parse(progressPayload.content));
     const completedSerialized = JSON.stringify(JSON.parse(completedPayload.content));
 
-    expect(progressSerialized).toContain("劳动分析进行中");
+    expect(progressSerialized).toContain("材料分析进行中");
     expect(progressSerialized).toContain("仲裁申请书.pdf");
     expect(progressSerialized).toContain("提取事实");
     expect(progressSerialized).toContain("当前进度");
     expect(progressSerialized).toContain("耗时：9s");
-    expect(completedSerialized).toContain("劳动分析完成");
+    expect(completedSerialized).toContain("材料分析完成");
     expect(completedSerialized).toContain("张三劳动争议案");
     expect(completedSerialized).toContain("材料 6");
     expect(completedSerialized).toContain("证据 12");

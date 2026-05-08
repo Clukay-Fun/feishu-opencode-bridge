@@ -17,6 +17,7 @@ import {
   buildLaborAnalysisCompletedPayload,
   buildLaborFinalReviewPayload,
   buildLaborAnalysisProgressPayload,
+  buildLaborMaterialCollectionPayload,
   buildLaborReviewCompletedPayload,
   type LaborAnalysisCompletedCardView,
   type LaborAnalysisProgressCardView,
@@ -134,7 +135,12 @@ export class LaborRuntimeModule implements RuntimeModule {
     const pending = this.findInteraction(message);
 
     if (pending) {
-      if (routed?.kind === "command" && isLaborEndCommand(routed.command)) {
+      if (routed?.kind === "command" && isLegacyLaborCommand(routed.command)) {
+        await this.sendLegacyMigrationNotice(message);
+        return { claimed: true };
+      }
+
+      if (routed?.kind === "command" && isLaborFinishCommand(routed.command)) {
         await this.finishCollection(message, pending);
         return { claimed: true };
       }
@@ -149,12 +155,12 @@ export class LaborRuntimeModule implements RuntimeModule {
         return { claimed: true };
       }
 
-      if (routed?.kind === "command" && isLaborStartCommand(routed.command)) {
+      if (routed?.kind === "command" && isCaseWorkbenchStartCommand(routed.command)) {
         await this.sendNotice(message, {
           title: "已有劳动分析正在收集",
           template: "yellow",
           icon: "maybe_outlined",
-          message: "请继续上传材料，或发送 `/劳动分析结束` 后再开始新的劳动分析。",
+          message: "请继续上传材料，或点击收集卡片上的“完成上传，开始分析”。",
         }, this.getDelivery(pending));
         return { claimed: true };
       }
@@ -182,10 +188,24 @@ export class LaborRuntimeModule implements RuntimeModule {
     openMessageId: string,
     value: Record<string, unknown>,
   ): Promise<Record<string, unknown> | null> {
-    void actorOpenId;
-    void openMessageId;
-    void value;
-    return null;
+    if (value.kind !== "labor-collection-action" || value.action !== "finish-upload") {
+      return null;
+    }
+    const conversationKey = typeof value.conversationKey === "string" ? value.conversationKey : "";
+    const pending = conversationKey ? this.interactions.get(conversationKey) : null;
+    if (!pending || pending.stage !== "collecting") {
+      return buildLaborActionToast("当前材料收集任务已失效，请重新打开案件工作台。", "warning");
+    }
+    if (actorOpenId !== pending.requesterOpenId) {
+      return buildLaborActionToast("只有任务发起人可以开始分析。", "warning");
+    }
+    await this.finishCollection({
+      chatId: pending.chatId,
+      messageId: openMessageId || pending.anchorMessageId,
+      conversationKey: pending.conversationKey,
+      senderOpenId: actorOpenId,
+    }, pending);
+    return buildLaborActionToast("已开始分析材料。", "success");
   }
 
   /** 处理劳动模块自有命令。 */
@@ -196,40 +216,32 @@ export class LaborRuntimeModule implements RuntimeModule {
     if (command.kind !== "passthrough") {
       return false;
     }
-    const normalized = command.name.trim().toLowerCase();
-    if (normalized === "labor-start" || normalized === "labor-end") {
-      await this.sendNotice(message, {
-        title: "命令已更新",
-        template: "yellow",
-        icon: "maybe_outlined",
-        message: normalized === "labor-start"
-          ? "劳动分析入口已从 `/labor-start` 迁移到 `/劳动分析`。"
-          : "劳动分析结束命令已从 `/labor-end` 迁移到 `/劳动分析结束`。",
-      });
+    if (isLegacyLaborCommand(command)) {
+      await this.sendLegacyMigrationNotice(message);
       return true;
     }
 
-    if (!["劳动分析", "劳动分析结束"].includes(normalized)) {
+    if (!isCaseWorkbenchStartCommand(command) && !isLaborFinishCommand(command)) {
       return false;
     }
 
-    if (normalized === "劳动分析") {
+    if (isCaseWorkbenchStartCommand(command)) {
       const title = command.arguments.join(" ").trim() || undefined;
-      await this.startFromEntry(message, title);
+      await this.startCaseWorkbenchCollection(message, title);
       return true;
     }
 
     await this.sendNotice(message, {
-      title: "当前没有进行中的劳动分析",
+      title: "当前没有进行中的材料收集",
       template: "grey",
       icon: "info_outlined",
-      message: "请先发送 `/劳动分析` 开始收集材料。",
+      message: "请先发送 `/案件工作台` 打开案件工作台，再上传材料。",
     });
     return true;
   }
 
-  /** 从入口命令启动劳动分析收集流程。 */
-  private async startFromEntry(
+  /** 供案件工作台入口启动劳动材料收集，收集状态仍由 labor 模块维护。 */
+  async startCaseWorkbenchCollection(
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "senderOpenId">,
     title?: string,
   ): Promise<void> {
@@ -246,6 +258,17 @@ export class LaborRuntimeModule implements RuntimeModule {
     await this.startCollection(message, title);
   }
 
+  private async sendLegacyMigrationNotice(
+    message: Pick<IncomingChatMessage, "chatId" | "messageId">,
+  ): Promise<void> {
+    await this.sendNotice(message, {
+      title: "劳动分析入口已更新",
+      template: "yellow",
+      icon: "maybe_outlined",
+      message: "该命令已并入 `/案件工作台`，请使用新入口；上传完成后点击卡片按钮或发送 `/完成上传`。",
+    });
+  }
+
   /** 创建新的劳动分析收集态交互。 */
   private async startCollection(
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "senderOpenId">,
@@ -253,17 +276,14 @@ export class LaborRuntimeModule implements RuntimeModule {
   ): Promise<PendingLaborInteraction> {
     this.clearRequesterInteractions(message.chatId, message.senderOpenId);
     const deliveryMode = message.chatType === "p2p" ? "p2p_reply" : "group_thread";
-    const ready = await this.sendNotice(message, {
-      title: "已进入劳动分析收集模式",
-      template: "blue",
-      icon: "upload_outlined",
-      message: [
-        `案件标题：${title ?? "未指定"}`,
-        "",
-        "现在可以连续上传一份或多份劳动相关材料，也可以持续发送补充背景说明。",
-        "收集阶段不会逐条弹出确认消息。",
-        "完成后发送 `/劳动分析结束`，再统一开始分析。",
-      ].join("\n"),
+    const ready = await this.deps.transport.sendPayload(message.chatId, buildLaborMaterialCollectionPayload({
+      title,
+      conversationKey: message.conversationKey,
+    }), {
+      event: "labor collection started",
+      transcriptType: "outbound-final",
+      textPreview: "材料收集中",
+      len: 5,
     }, { replyToMessageId: message.messageId, replyInThread: deliveryMode === "group_thread" });
 
     const interaction: PendingLaborInteraction = {
@@ -316,7 +336,7 @@ export class LaborRuntimeModule implements RuntimeModule {
         title: "只有发起人可以结束当前分析",
         template: "yellow",
         icon: "maybe_outlined",
-        message: "请由当前发起人发送 `/劳动分析结束`。",
+        message: "请由当前发起人点击“完成上传，开始分析”，或发送 `/完成上传`。",
       }, this.getDelivery(pending));
       return;
     }
@@ -793,14 +813,34 @@ export class LaborRuntimeModule implements RuntimeModule {
   // #endregion
 }
 
-function isLaborEndCommand(command: LaborCommand): boolean {
+function isLaborFinishCommand(command: LaborCommand): boolean {
   return command.kind === "passthrough"
-    && command.name.trim().toLowerCase() === "劳动分析结束";
+    && command.name.trim().toLowerCase() === "完成上传";
 }
 
-function isLaborStartCommand(command: LaborCommand): boolean {
+function isCaseWorkbenchStartCommand(command: LaborCommand): boolean {
   return command.kind === "passthrough"
-    && command.name.trim().toLowerCase() === "劳动分析";
+    && command.name.trim().toLowerCase() === "案件工作台";
+}
+
+function isLegacyLaborCommand(command: LaborCommand): boolean {
+  if (command.kind !== "passthrough") {
+    return false;
+  }
+  const normalized = command.name.trim().toLowerCase();
+  return normalized === "劳动分析"
+    || normalized === "劳动分析结束"
+    || normalized === "labor-start"
+    || normalized === "labor-end";
+}
+
+function buildLaborActionToast(content: string, type: "success" | "warning"): Record<string, unknown> {
+  return {
+    toast: {
+      type,
+      content,
+    },
+  };
 }
 
 type LaborRecentMaterialIntentResult = {
@@ -814,25 +854,25 @@ function detectLaborRecentMaterialIntent(text: string): LaborRecentMaterialInten
   if (!normalized) {
     return { matched: false, confidence: 0, reasons: [] };
   }
-  if (/不要分析|先别分析|不用分析|不要生成|别生成|不要整理/.test(normalized)) {
+  if (/(不要|不用|先别|取消).{0,8}(分析|生成|整理|工作台)/.test(normalized)) {
     return { matched: false, confidence: 0, reasons: ["negative-labor-intent"] };
   }
 
   const reasons: string[] = [];
   let confidence = 0;
-  if (/劳动|仲裁|工资|加班|工伤|社保|解除|辞退|离职|赔偿|补偿|用人单位|员工/.test(normalized)) {
+  if (/(劳动|仲裁|工资|社保|解除|辞退|离职|赔偿|补偿)/.test(normalized)) {
     confidence += 0.3;
     reasons.push("labor-domain");
   }
-  if (/劳动分析|劳动争议|证据链|工作台|工作底稿|仲裁材料|案件材料|维权材料|证据清单/.test(normalized)) {
+  if (/(劳动分析|劳动争议|证据链|工作台|证据清单)/.test(normalized)) {
     confidence += 0.35;
     reasons.push("labor-output");
   }
-  if (/分析|生成|整理|梳理|做|输出|形成|编写|编制|制作|起草/.test(normalized)) {
+  if (/(分析|生成|整理|梳理|输出|起草)/.test(normalized)) {
     confidence += 0.25;
     reasons.push("analysis-action");
   }
-  if (/刚才|这些|这几|上面|前面|文件|材料|证据|附件|截图/.test(normalized)) {
+  if (/(刚才|这些|这个|文件|材料|证据)/.test(normalized)) {
     confidence += 0.15;
     reasons.push("material-reference");
   }

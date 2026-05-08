@@ -26,28 +26,49 @@ export type ContractDraftProgressView = {
 };
 
 export type InvoiceRecognizeProgressView = {
+  currentFile?: string | undefined;
+  completedFiles?: readonly string[] | undefined;
+  failedFiles?: ReadonlyArray<{ fileName: string; reason?: string | undefined }> | undefined;
   steps: Array<{
     label: string;
     status: "pending" | "running" | "completed";
   }>;
 };
 
+export type CaseWorkbenchCardView = {
+  domains?: readonly string[] | undefined;
+  chatId?: string | undefined;
+  chatType?: string | undefined;
+  conversationKey?: string | undefined;
+  requesterOpenId?: string | undefined;
+};
+
 // #region 进度与结果卡
 
 /** 构建案件录入进行中卡。 */
 export function buildCaseCreateProcessingPayload(request: string): FeishuPostPayload {
+  const preview = parseCaseCreateRequestPreview(request);
+  const chips = [
+    preview.clientName ? `委托人：${preview.clientName}` : "",
+    preview.counterpartyName ? `对方当事人：${preview.counterpartyName}` : "",
+    preview.cause ? `案由：${preview.cause}` : "",
+    preview.stage ? `程序阶段：${preview.stage}` : "",
+    preview.court ? `审理法院：${preview.court}` : "",
+  ].filter(Boolean);
   return buildInteractiveCardPayload({
     title: "案件信息录入中",
     template: "blue",
     iconToken: "loading_outlined",
     headerPadding: "12px 8px 12px 8px",
     bodyElements: [
-      caseMarkdown("**正在解析案件信息**"),
-      caseColumnSet([
-        caseColumn([
-          caseMarkdown(escapeCardMarkdown(truncateCardText(request, 80))),
-        ], { bg: "blue-50", padding: "12px 12px 12px 12px", weight: 1 }),
-      ], { spacing: "12px", stretch: true }),
+      ...(chips.length > 0 ? [buildCaseChipRow(chips)] : [
+        caseMarkdown("**正在解析案件信息**"),
+        caseColumnSet([
+          caseColumn([
+            caseMarkdown(escapeCardMarkdown(truncateCardText(request, 80))),
+          ], { bg: "blue-50", padding: "12px 12px 12px 12px", weight: 1 }),
+        ], { spacing: "12px", stretch: true }),
+      ]),
       caseDivider(),
       caseColumnSet([
         caseColumn([
@@ -158,7 +179,6 @@ export function buildCaseCreateCompletedPayload(result: CaseCreateResult, record
   const stage = readCaseField(record, "程序阶段") ?? fallback.stage;
   const headline = `${clientName} vs ${counterpartyName}`;
   const tagLine = [type, stage].filter(Boolean).join("｜");
-  const chips = buildCaseDisplayItems(record, fallback);
 
   return buildInteractiveCardPayload({
     title: "案件已录入",
@@ -181,22 +201,25 @@ export function buildCaseCreateCompletedPayload(result: CaseCreateResult, record
         ]
         : []),
       caseDivider(),
-      caseMarkdown("**结构化信息**", { size: "normal" }),
-      buildCaseChipRow(chips.length > 0 ? chips : [result.summary]),
-      caseDivider(),
-      caseMarkdown(`[案件管理表](${recordUrl})`, { size: "normal_v2" }),
+      buildButton("打开案件管理表", "primary", { kind: "contract-case-action", action: "open-case-table", url: recordUrl }),
     ],
   });
 }
 
 /** 构建发票识别进度卡。 */
 export function buildInvoiceRecognizeProgressPayload(view: InvoiceRecognizeProgressView): FeishuPostPayload {
+  const completedFiles = view.completedFiles ?? [];
+  const failedFiles = view.failedFiles ?? [];
   return buildInteractiveCardPayload({
     title: "发票识别",
     template: "blue",
     iconToken: "group-card_outlined",
     headerPadding: "12px 12px 12px 12px",
     bodyElements: [
+      ...(view.currentFile ? [caseMarkdown(`正在识别：\`${escapeCardMarkdown(view.currentFile)}\``, {
+        size: "normal_v2",
+        icon: { token: "loading_outlined", color: "blue" },
+      })] : []),
       caseColumnSet([
         caseColumn(view.steps.map((step) => caseMarkdown(buildInvoiceStepText(step), {
           size: "normal",
@@ -207,6 +230,14 @@ export function buildInvoiceRecognizeProgressPayload(view: InvoiceRecognizeProgr
           weight: 1,
         }),
       ], { spacing: "8px", stretch: true }),
+      ...completedFiles.map((fileName) => caseMarkdown(`识别完成：\`${escapeCardMarkdown(fileName)}\``, {
+        size: "normal_v2",
+        icon: { token: "yes_outlined", color: "green" },
+      })),
+      ...failedFiles.map((item) => caseMarkdown(`识别错误：\`${escapeCardMarkdown(item.fileName)}\`${item.reason ? `，${escapeCardMarkdown(item.reason)}` : ""}`, {
+        size: "normal_v2",
+        icon: { token: "more-close_outlined", color: "red" },
+      })),
     ],
   });
 }
@@ -218,17 +249,11 @@ export function buildInvoiceRecognizeCompletedPayload(
 ): FeishuPostPayload {
   const payer = readCaseField(result.record, "购买方") ?? readCaseField(result.record, "付款方");
   const invoiceNo = readCaseField(result.record, "发票号");
+  const summaryBits = splitInvoiceSummary(result.summary);
+  const invoiceType = readCaseField(result.record, "发票类型") ?? summaryBits.invoiceType;
   const invoiceDate = readCaseField(result.record, "开票日期");
   const amount = readInvoiceAmount(result.record);
-  const summaryBits = splitInvoiceSummary(result.summary);
-  const buyerChips = [payer, summaryBits.identity].filter((item): item is string => Boolean(item));
-  const invoiceChips = [
-    invoiceNo,
-    summaryBits.invoiceType,
-    amount,
-    invoiceDate,
-    summaryBits.itemName,
-  ].filter((item): item is string => Boolean(item));
+  const fileName = readCaseField(result.record, "文件名") ?? "发票文件";
 
   return buildInteractiveCardPayload({
     title: "发票识别完成",
@@ -236,27 +261,66 @@ export function buildInvoiceRecognizeCompletedPayload(
     iconToken: "group-card_outlined",
     headerPadding: "12px 12px 12px 12px",
     bodyElements: [
-      ...(buyerChips.length > 0
-        ? [
-          caseMarkdown("购买方信息", { size: "normal_v2" }),
-          buildInvoiceChipGroup(buyerChips, false),
-        ]
-        : []),
-      ...(invoiceChips.length > 0
-        ? [
-          caseMarkdown("发票信息", { size: "normal_v2" }),
-          buildInvoiceChipGroup(invoiceChips, true),
-        ]
-        : []),
+      caseMarkdown(escapeCardMarkdown(fileName), { size: "normal_v2", icon: { token: "file-link-word_outlined", color: "green" } }),
       caseColumnSet([
         caseColumn([
-          caseMarkdown(`[查看发票表 →](${options.recordUrl})`, { size: "normal_v2" }),
-        ], { weight: 1, padding: "4px 4px 4px 4px" }),
-      ], { spacing: "8px" }),
+          caseMarkdown([
+            `**发票号：** ${escapeCardMarkdown(invoiceNo ?? "未识别")}`,
+            `**发票类型：** ${escapeCardMarkdown(invoiceType ?? "未识别")}`,
+            `**金额：** ${escapeCardMarkdown(amount ?? "未识别")}`,
+            `**开票时间：** ${escapeCardMarkdown(invoiceDate ?? "未识别")}`,
+            ...(payer ? [`**购买方：** ${escapeCardMarkdown(payer)}`] : []),
+          ].join("\n"), { size: "normal_v2" }),
+        ], { bg: "grey-50", padding: "8px 8px 8px 8px", weight: 1 }),
+      ], { spacing: "8px", stretch: true }),
       caseDivider(),
-      buildElapsedDiv(options.elapsedMs),
+      buildButton("查看发票表", "primary", { kind: "invoice-action", action: "open-invoice-table", url: options.recordUrl }),
     ],
   });
+}
+
+/** 构建案件工作台开启卡。 */
+export function buildCaseWorkbenchPayload(view: CaseWorkbenchCardView = {}): FeishuPostPayload {
+  const domains = view.domains ?? ["劳动法", "公司法"];
+  return buildInteractiveCardPayload({
+    title: "案件工作台已开启",
+    template: "blue",
+    iconToken: "file-link-word_outlined",
+    headerPadding: "12px 8px 12px 12px",
+    bodyElements: [
+      caseColumnSet([
+        caseColumn([caseMarkdown("请选择你需要分析的领域", { size: "normal_v2" })], { padding: "4px 4px 4px 4px" }),
+        caseColumn([{
+          tag: "select_static",
+          placeholder: { tag: "plain_text", content: "请选择" },
+          options: domains.map((domain, index) => ({
+            text: { tag: "plain_text", content: domain },
+            value: String(index + 1),
+            icon: { tag: "standard_icon", token: "signature_outlined" },
+          })),
+          type: "default",
+          width: "fill",
+          margin: "0px 0px 0px 0px",
+        }], { padding: "0px 0px 0px 0px" }),
+      ], { spacing: "12px", stretch: true }),
+      caseDivider(),
+      caseColumnSet([
+        caseButtonColumn("点击开始收集材料", "primary", buildCaseWorkbenchActionValue(view, "start-material-collection")),
+        caseButtonColumn("取消", "danger", buildCaseWorkbenchActionValue(view, "cancel")),
+      ], { spacing: "8px" }),
+    ],
+  });
+}
+
+function buildCaseWorkbenchActionValue(view: CaseWorkbenchCardView, action: "start-material-collection" | "cancel"): Record<string, unknown> {
+  return {
+    kind: "case-workbench-action",
+    action,
+    chatId: view.chatId,
+    chatType: view.chatType,
+    conversationKey: view.conversationKey,
+    requesterOpenId: view.requesterOpenId,
+  };
 }
 
 // #endregion
@@ -532,6 +596,34 @@ function caseColumn(
   };
 }
 
+function buildButton(label: string, type: "primary" | "default" | "danger", value: Record<string, unknown>): Record<string, unknown> {
+  return {
+    tag: "button",
+    text: {
+      tag: "plain_text",
+      content: label,
+    },
+    type,
+    width: "default",
+    size: "medium",
+    icon: {
+      tag: "standard_icon",
+      token: type === "danger" ? "close-bold_outlined" : "right-bold_outlined",
+    },
+    margin: "0px 0px 0px 0px",
+    value,
+  };
+}
+
+function caseButtonColumn(label: string, type: "primary" | "default" | "danger", value: Record<string, unknown>): Record<string, unknown> {
+  return {
+    tag: "column",
+    width: "auto",
+    elements: [buildButton(label, type, value)],
+    vertical_align: "top",
+  };
+}
+
 function buildCaseChipRow(values: string[]): Record<string, unknown> {
   const rows = chunkCaseChipValues(values, 5);
   return caseColumnSet([
@@ -547,59 +639,12 @@ function buildCaseChipRow(values: string[]): Record<string, unknown> {
   ], { spacing: "8px" });
 }
 
-function buildCaseDisplayItems(
-  record: Record<string, unknown>,
-  fallback: ReturnType<typeof parseCaseCreateRequestPreview>,
-): string[] {
-  const items = [
-    readCaseField(record, "委托人") ?? fallback.clientName,
-    readCaseField(record, "对方当事人") ?? fallback.counterpartyName,
-    readCaseField(record, "案由") ?? fallback.cause,
-    readCaseField(record, "审理法院") ?? fallback.court,
-    readCaseField(record, "主办律师") ?? readCaseField(record, "承办律师") ?? fallback.lawyer,
-    readCaseField(record, "案件状态") ?? fallback.status,
-    formatCaseDisplayItem("日期", readCaseDisplayField(record, "日期")),
-    formatCaseDisplayItem("开庭日", readCaseDisplayField(record, "开庭日")),
-    formatCaseDisplayItem("举证截止日", readCaseDisplayField(record, "举证截止日")),
-    formatCaseDisplayItem("待做事项", readCaseField(record, "待做事项")),
-  ];
-  return items.filter((item): item is string => Boolean(item));
-}
-
-function formatCaseDisplayItem(label: string, value: string | undefined): string | undefined {
-  return value ? `${label} ${value}` : undefined;
-}
-
-function readCaseDisplayField(record: Record<string, unknown>, field: string): string | undefined {
-  const value = record[field];
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return formatCaseDateTime(value, field === "开庭日");
-  }
-  return readCaseField(record, field);
-}
-
-function formatCaseDateTime(timestamp: number, includeTime: boolean): string {
-  const date = new Date(timestamp);
-  const pad = (value: number) => String(value).padStart(2, "0");
-  const formatted = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-  return includeTime ? `${formatted} ${pad(date.getHours())}:${pad(date.getMinutes())}` : formatted;
-}
-
 function chunkCaseChipValues(values: string[], size: number): string[][] {
   const chunks: string[][] = [];
   for (let index = 0; index < values.length; index += size) {
     chunks.push(values.slice(index, index + size));
   }
   return chunks;
-}
-
-function buildInvoiceChipGroup(values: string[], flow: boolean): Record<string, unknown> {
-  return caseColumnSet(values.map((value) => caseColumn([
-    caseMarkdown(escapeCardMarkdown(value), { size: "normal_v2" }),
-  ], {
-    bg: "grey-50",
-    padding: "4px 4px 4px 4px",
-  })), { spacing: "8px", flow });
 }
 
 function caseDivider(): Record<string, unknown> {
