@@ -8,11 +8,10 @@ import path from "node:path";
 
 import type {
   CaseCreateResult,
-  CaseReminderAddResult,
   ContractDraftProgressStage,
   InvoiceRecognizeResult,
 } from "../contract-assistant/index.js";
-import { buildNoticeCardPayload, type FeishuPostPayload } from "./shared-primitives.js";
+import { type FeishuPostPayload } from "./shared-primitives.js";
 
 export type ContractDraftProgressView = {
   title: string;
@@ -31,12 +30,6 @@ export type InvoiceRecognizeProgressView = {
     label: string;
     status: "pending" | "running" | "completed";
   }>;
-};
-
-export type ReminderListResult = {
-  contractLines: string[];
-  invoiceLines: string[];
-  caseLines: string[];
 };
 
 // #region 进度与结果卡
@@ -267,86 +260,6 @@ export function buildInvoiceRecognizeCompletedPayload(
 }
 
 // #endregion
-
-export function buildReminderProgressPayload(): FeishuPostPayload {
-  return buildInteractiveCardPayload({
-    title: "案件提醒",
-    template: "blue",
-    iconToken: "info_outlined",
-    headerPadding: "12px 12px 12px 12px",
-    bodyElements: [
-      caseColumnSet([
-        caseColumn([
-          caseMarkdown("已完成合同与发票台账扫描", {
-            size: "normal",
-            icon: { token: "yes_outlined", color: "green" },
-          }),
-          caseMarkdown("正在检索关联案件与待办事项…", {
-            size: "normal",
-            icon: { token: "loading_outlined", color: "blue" },
-          }),
-        ], {
-          bg: "grey-50",
-          padding: "8px 8px 8px 8px",
-          weight: 1,
-        }),
-      ], { spacing: "8px", stretch: true }),
-    ],
-  });
-}
-
-export function buildTodayTodoPayload(result: ReminderListResult): FeishuPostPayload {
-  const items = buildReminderItems(result);
-  return buildInteractiveCardPayload({
-    title: "今日待办",
-    template: "orange",
-    iconToken: "info_outlined",
-    headerPadding: "12px 12px 12px 12px",
-    bodyElements: [
-      ...(items.length > 0
-        ? items.map((item) => buildReminderTodoRow(item))
-        : [buildReminderTodoRow({
-          title: "暂无待办",
-          detail: "当前无需要提醒的事项",
-          due: "",
-          bg: "grey-50",
-        })]),
-      {
-        tag: "div",
-        text: {
-          tag: "plain_text",
-          content: "发送 /提醒 详情 查看全部 · /提醒 完成 1 标记完成",
-          text_size: "notation",
-          text_align: "left",
-          text_color: "grey",
-        },
-        icon: {
-          tag: "standard_icon",
-          token: "info_outlined",
-          color: "light_grey",
-        },
-      },
-    ],
-  });
-}
-
-export function buildCaseReminderAddCompletedPayload(result: CaseReminderAddResult, recordUrl: string): FeishuPostPayload {
-  const body = [
-    `案件：${result.matchedLabel}`,
-    `提醒：${result.reminderLabel} ${result.reminderDate}`,
-    result.todo ? `待做事项：${result.todo}` : undefined,
-    "已写入案件管理表。",
-    "",
-    `[查看案件记录](${recordUrl})`,
-    "发送 `/案件提醒` 可查看最近提醒。",
-  ].filter((line): line is string => typeof line === "string").join("\n");
-  return buildNoticeCardPayload({
-    title: "案件提醒已添加",
-    template: "green",
-    iconToken: "alarm-clock_outlined",
-    message: body,
-  });
-}
 
 export function createInvoiceRecognizeProgressState(): InvoiceRecognizeProgressView {
   return {
@@ -689,50 +602,6 @@ function buildInvoiceChipGroup(values: string[], flow: boolean): Record<string, 
   })), { spacing: "8px", flow });
 }
 
-function buildReminderTodoRow(item: { title: string; detail: string; due: string; bg: string }): Record<string, unknown> {
-  return {
-    tag: "column_set",
-    flex_mode: "stretch",
-    background_style: item.bg,
-    horizontal_spacing: "8px",
-    horizontal_align: "left",
-    columns: [
-      {
-        tag: "column",
-        width: "weighted",
-        elements: [
-          caseMarkdown(`**${escapeCardMarkdown(item.title)}**\n${escapeCardMarkdown(item.detail)}`, { size: "normal" }),
-        ],
-        padding: "8px 8px 8px 8px",
-        direction: "vertical",
-        horizontal_spacing: "8px",
-        vertical_spacing: "8px",
-        horizontal_align: "left",
-        vertical_align: "top",
-        margin: "0px 0px 0px 0px",
-        weight: 1,
-      },
-      ...(item.due
-        ? [{
-          tag: "column",
-          width: "auto",
-          elements: [
-            caseMarkdown(escapeCardMarkdown(item.due), { size: "normal" }),
-          ],
-          padding: "8px 8px 8px 8px",
-          direction: "vertical",
-          horizontal_spacing: "8px",
-          vertical_spacing: "8px",
-          horizontal_align: "center",
-          vertical_align: "center",
-          margin: "0px 0px 0px 0px",
-        }]
-        : []),
-    ],
-    margin: "0px 0px 0px 0px",
-  };
-}
-
 function caseDivider(): Record<string, unknown> {
   return {
     tag: "hr",
@@ -757,104 +626,6 @@ function buildElapsedDiv(elapsedMs: number): Record<string, unknown> {
     },
     margin: "0px 0px 0px 0px",
   };
-}
-
-function buildReminderItems(result: ReminderListResult): Array<{ title: string; detail: string; due: string; bg: string }> {
-  return [
-    ...result.caseLines.map(parseCaseReminderLine),
-    ...result.contractLines.map(parseContractReminderLine),
-    ...result.invoiceLines.map(parseInvoiceReminderLine),
-  ].slice(0, 8);
-}
-
-function parseCaseReminderLine(line: string): { title: string; detail: string; due: string; bg: string } {
-  const [caseLabel = "案件", rest = line] = line.split(/：(.+)/);
-  const status = matchFirst(rest, [/当前状态\s*([^；;]+)/]);
-  const todo = matchFirst(rest, [/待做事项\s*([^；;]+)/]);
-  const due = matchFirst(rest, [/(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?|\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)/]) ?? "";
-  const title = localizeReminderTitle(rest, todo);
-  const detailTail = rest
-    .replace(due, "")
-    .replace(/；?截止\s*[^；;]+/, "")
-    .replace(/；?当前状态\s*[^；;]+/, "")
-    .replace(/；?程序阶段\s*[^；;]+/, "")
-    .replace(/；?待做事项\s*[^；;]+/, "")
-    .replace(/^\S+\s*/, "")
-    .trim();
-  return {
-    title,
-    detail: [caseLabel.trim(), todo || detailTail || status].filter(Boolean).join(" · "),
-    due: formatReminderDue(due),
-    bg: reminderBackground(title),
-  };
-}
-
-function parseContractReminderLine(line: string): { title: string; detail: string; due: string; bg: string } {
-  const [name = "合同", rest = line] = line.split(/：(.+)/);
-  const due = matchFirst(rest, [/付款节点[：:]\s*([^；;]+)/]) ?? "";
-  return {
-    title: "合同付款",
-    detail: `${name.trim()} · ${rest.replace(/；?付款节点[：:]\s*[^；;]+/, "").trim()}`,
-    due: formatReminderDue(due),
-    bg: "wathet-50",
-  };
-}
-
-function parseInvoiceReminderLine(line: string): { title: string; detail: string; due: string; bg: string } {
-  const [contractNo = "发票记录", rest = line] = line.split(/：(.+)/);
-  const due = matchFirst(rest, [/开票日期\s*([^，,；;]+)/]) ?? "";
-  return {
-    title: "发票匹配",
-    detail: `${contractNo.trim()} · ${rest.replace(/，?开票日期\s*[^，,；;]+/, "").trim()}`,
-    due: formatReminderDue(due),
-    bg: "yellow-50",
-  };
-}
-
-function localizeReminderTitle(text: string, todo?: string): string {
-  if (text.includes("举证")) return "举证期限截止";
-  if (text.includes("开庭")) return "开庭提醒";
-  if (text.includes("上诉")) return "上诉期限截止";
-  if (text.includes("反诉")) return "反诉期限截止";
-  if (text.includes("管辖权异议")) return "管辖权异议期限截止";
-  if (text.includes("待做事项")) return classifyCaseTodoTitle(todo);
-  return "案件提醒";
-}
-
-function classifyCaseTodoTitle(todo: string | undefined): string {
-  if (!todo) {
-    return "案件待办";
-  }
-  if (/(证据|社保|工资流水|考勤|聊天记录|录音|证明|材料)/.test(todo)) {
-    return "证据补充";
-  }
-  if (/(申请书|起诉状|答辩状|代理词|文书|起草|准备仲裁申请书)/.test(todo)) {
-    return "文书准备";
-  }
-  if (/(沟通|联系|通知|协调|确认)/.test(todo)) {
-    return "沟通跟进";
-  }
-  if (/(开庭|庭审|出庭)/.test(todo)) {
-    return "开庭准备";
-  }
-  return "案件待办";
-}
-
-function reminderBackground(title: string): string {
-  if (title.includes("截止")) {
-    return "red-50";
-  }
-  if (title.includes("开庭")) {
-    return "yellow-50";
-  }
-  if (title.includes("合同付款")) {
-    return "wathet-50";
-  }
-  return "grey-50";
-}
-
-function formatReminderDue(value: string): string {
-  return value.trim();
 }
 
 function buildInvoiceStepText(step: InvoiceRecognizeProgressView["steps"][number]): string {

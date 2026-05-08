@@ -16,7 +16,7 @@ import {
   buildSessionTransitionCardPayload,
   buildStatusCommandCardPayload,
 } from "../feishu/runtime-cards.js";
-import { buildNoticeCardPayload, type FeishuPostPayload } from "../feishu/shared-primitives.js";
+import { buildNoticeCardPayload, resolveNoticeLevelFromTemplate, type FeishuPostPayload } from "../feishu/shared-primitives.js";
 import type { TranscriptType } from "../logging/logger.js";
 import type { OpenCodeMessage, OpenCodeProvidersResponse, OpenCodeSession, OpenCodeSessionStatus } from "../opencode/client.js";
 import type { SessionBindingRecord, SessionWindowModelOverride, SessionWindowRecord } from "../store/mappings.js";
@@ -1042,11 +1042,8 @@ export class CommandHandler {
   ): Promise<void> {
     await this.context.sendPayload(message.chatId, buildNoticeCardPayload({
       title: options.title,
-      template: options.template,
-      iconToken: options.icon,
+      level: resolveNoticeLevelFromTemplate(options.template),
       message: options.message,
-      messageIconToken: options.icon,
-      messageIconColor: options.template,
     }), {
       event: "final message sent",
       transcriptType: "outbound-final",

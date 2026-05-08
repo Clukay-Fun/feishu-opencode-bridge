@@ -55,7 +55,7 @@ describe("integration/queue-concurrency", () => {
 
     const replyPayloads = outbound.replyMessage.mock.calls.map((call) => call[1]);
     const repliesText = JSON.stringify(replyPayloads);
-    expect(repliesText).toContain("正在忙");
+    expect(repliesText).toContain("处理中");
 
     const updated = JSON.stringify(outbound.updateMessage.mock.calls.map((call) => call[1]));
     expect(updated.indexOf("第一条回复")).toBeLessThan(updated.indexOf("第二条回复"));

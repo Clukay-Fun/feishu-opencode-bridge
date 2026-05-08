@@ -6,7 +6,7 @@
  * - 将权限结果回传给 OpenCode。
  */
 import type { PendingPermissionInteraction } from "../bridge/state.js";
-import { buildNoticeCardPayload, type FeishuPostPayload } from "../feishu/shared-primitives.js";
+import { buildNoticeCardPayload, resolveNoticeLevelFromTemplate, type FeishuPostPayload } from "../feishu/shared-primitives.js";
 import { logEvent, type Logger, type TranscriptType } from "../logging/logger.js";
 import type { PermissionPolicy } from "../opencode/client.js";
 import type { PermissionCardActionValue } from "./app.js";
@@ -316,11 +316,8 @@ export class PermissionManager {
   ): FeishuPostPayload {
     return buildNoticeCardPayload({
       title,
-      template,
-      iconToken,
+      level: resolveNoticeLevelFromTemplate(template),
       message,
-      messageIconToken: iconToken,
-      messageIconColor: template,
     });
   }
 

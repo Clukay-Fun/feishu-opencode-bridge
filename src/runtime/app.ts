@@ -438,11 +438,8 @@ export class BridgeApp {
         const detail = error instanceof Error ? error.message : String(error);
         await this.sendPayload(message.chatId, buildNoticeCardPayload({
           title: "文件暂不支持",
-          template: "red",
-          iconToken: "error_filled",
+          level: "error",
           message: detail,
-          messageIconToken: "error_filled",
-          messageIconColor: "red",
           showMessageIcon: false,
         }), {
           event: "file rejected",
@@ -479,11 +476,8 @@ export class BridgeApp {
       const limit = this.costTracker.dailyLimitCny;
       await this.sendPayload(message.chatId, buildNoticeCardPayload({
         title: "已达到今日 AI 成本上限",
-        template: "orange",
-        iconToken: "wallet_outlined",
+        level: "warning",
         message: `今天的本地估算成本已达到上限${limit === undefined ? "" : `（¥${limit.toFixed(2)}）`}。\n普通对话已暂停，仍可使用 \`/cost\`、\`/status\`、\`/guide\` 查看状态。\n如需继续，请调整 config.json 的 \`costs.dailyLimitCny\` 后重启。`,
-        messageIconToken: "wallet_outlined",
-        messageIconColor: "orange",
       }), {
         event: "cost limit reached",
         transcriptType: "outbound-final",
@@ -692,11 +686,8 @@ export class BridgeApp {
     if (pending.kind === "permission") {
       await this.sendPayload(message.chatId, buildNoticeCardPayload({
         title: "信息提示",
-        template: "blue",
-        iconToken: "info_outlined",
+        level: "info",
         message: "当前有待确认的权限请求，请先点击卡片按钮或发送 `/allow once`、`/allow always`、`/deny`。",
-        messageIconToken: "info_outlined",
-        messageIconColor: "blue",
       }), {
         event: "final message sent",
         transcriptType: "outbound-final",
@@ -768,11 +759,8 @@ export class BridgeApp {
       await this.turnOwnedResources.cleanupTurn(turnId);
       await this.sendPayload(message.chatId, buildNoticeCardPayload({
         title: "文件读取失败",
-        template: "red",
-        iconToken: "error_filled",
+        level: "error",
         message: detail,
-        messageIconToken: "error_filled",
-        messageIconColor: "red",
         showMessageIcon: false,
       }), {
         event: "file instruction failed",

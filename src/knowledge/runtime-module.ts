@@ -12,13 +12,14 @@ import {
   buildKnowledgeIngestFailurePayload,
   buildKnowledgeIngestProcessingPayload,
   buildKnowledgeIngestReadyPayload,
-  buildKnowledgeIngestSessionFinalPayload,
+  buildKnowledgeIngestCompletedPayload,
   buildKnowledgeQueryEmptyPayload,
   buildKnowledgeQueryPayload,
 } from "../feishu/knowledge-cards.js";
 import {
   buildNoticeCardPayload,
   buildPostMarkdownPayload,
+  resolveNoticeLevelFromTemplate,
   type FeishuPostPayload,
   type ToolUpdateView,
 } from "../feishu/shared-primitives.js";
@@ -328,8 +329,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
           message.chatId,
           buildNoticeCardPayload({
             title: "知识检索进行中",
-            template: "indigo",
-            iconToken: "search_outlined",
+            level: "info",
             message: `正在检索知识库...\n\n**问题**\n${command.question}`,
           }),
           {
@@ -607,7 +607,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
   }
 
   private async handleKnowledgeQueryMessage(message: IncomingChatMessage): Promise<boolean> {
-    if (message.chatType === "p2p" || message.messageType === "file" || !this.deps.knowledge) {
+    if (message.messageType === "file" || !this.deps.knowledge) {
       return false;
     }
 
@@ -637,11 +637,8 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
         const detail = error instanceof Error ? error.message : String(error);
         await this.sendPayload(message.chatId, buildNoticeCardPayload({
           title: "知识检索失败",
-          template: "red",
-          iconToken: "error_filled",
-          message: detail,
-          messageIconToken: "error_filled",
-          messageIconColor: "red",
+          level: "error",
+        message: detail,
         }), {
           event: "knowledge query failed",
           transcriptType: "outbound-final",
@@ -825,8 +822,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     this.refreshKnowledgeIngestPending(pending.conversationKey, pending);
     const receipt = await this.sendPayload(message.chatId, buildNoticeCardPayload({
       title: "已收到入库素材",
-      template: "blue",
-      iconToken: itemInput.kind === "web" ? "global-link_outlined" : "file-link-docx_outlined",
+      level: "info",
       message: [
         `素材：${sourceLabel}`,
         "",
@@ -871,7 +867,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
                 if (!queue.batchMessageId) {
                   return;
                 }
-                await this.updateKnowledgeIngestProgress(currentItem.chatId, queue.batchMessageId, currentItem.progressState, update);
+                await this.updateKnowledgeIngestProgress(conversationKey, currentItem.chatId, queue.batchMessageId, currentItem.progressState, update);
               },
             });
             this.refreshKnowledgeIngestPending(conversationKey, pending);
@@ -887,7 +883,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
                 if (!queue.batchMessageId) {
                   return;
                 }
-                await this.updateKnowledgeIngestProgress(currentItem.chatId, queue.batchMessageId, currentItem.progressState, update);
+                await this.updateKnowledgeIngestProgress(conversationKey, currentItem.chatId, queue.batchMessageId, currentItem.progressState, update);
               },
             });
             this.refreshKnowledgeIngestPending(conversationKey, pending);
@@ -990,7 +986,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     if (stats.completedCount + stats.failedCount === 0) {
       return;
     }
-    const payload = buildKnowledgeIngestSessionFinalPayload({
+    const payload = buildKnowledgeIngestCompletedPayload({
       completedCount: stats.completedCount,
       failedCount: stats.failedCount,
       queuedCount: 0,
@@ -1073,11 +1069,8 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     if (pending.requesterOpenId !== message.senderOpenId) {
       await this.sendPayload(pending.chatId, buildNoticeCardPayload({
         title: "无法结束入库模式",
-        template: "yellow",
-        iconToken: "maybe_outlined",
+        level: "warning",
         message: "当前入库模式仅允许发起人结束。",
-        messageIconToken: "maybe_outlined",
-        messageIconColor: "yellow",
         showMessageIcon: false,
       }), {
         event: "knowledge ingest end rejected",
@@ -1102,11 +1095,8 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     }
     await this.sendPayload(pending.chatId, buildNoticeCardPayload({
       title: "已退出知识入库模式",
-      template: "green",
-      iconToken: "yes_filled",
+      level: "info",
       message: "后续文件消息将不再自动入库；如需继续入库，请发送 `/kb-ingest-start`。",
-      messageIconToken: "yes_filled",
-      messageIconColor: "green",
       showMessageIcon: false,
     }), {
       event: "knowledge ingest ended",
@@ -1164,11 +1154,8 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     await this.clearPending(conversationKey, current.chatType);
     await this.sendPayload(current.chatId, buildNoticeCardPayload({
       title: "入库任务已超时",
-      template: "yellow",
-      iconToken: "maybe_outlined",
+      level: "warning",
       message: "长时间未收到新的入库素材，已结束当前入库任务。需要继续时请重新发送 `/kb-ingest-start`。",
-      messageIconToken: "maybe_outlined",
-      messageIconColor: "yellow",
       showMessageIcon: false,
     }), {
       event: "knowledge ingest timed out",
@@ -1307,11 +1294,8 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       });
       await this.sendPayload(record.chatId, buildNoticeCardPayload({
         title: "入库任务已中断",
-        template: "yellow",
-        iconToken: "maybe_outlined",
+        level: "warning",
         message: "入库任务因服务重启中断，请重新发送 `/kb-ingest-start`。",
-        messageIconToken: "maybe_outlined",
-        messageIconColor: "yellow",
         showMessageIcon: false,
       }), {
         event: "knowledge ingest interrupted",
@@ -1334,13 +1318,14 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
   }
 
   private async updateKnowledgeIngestProgress(
+    conversationKey: string,
     chatId: string,
     messageId: string,
     state: KnowledgeIngestProgressState,
     update: KnowledgeIngestProgressUpdate,
   ): Promise<void> {
     applyKnowledgeIngestProgress(state, update);
-    const payload = buildKnowledgeIngestProcessingPayload(state);
+    const payload = buildKnowledgeIngestProcessingPayload(this.buildKnowledgeIngestProgressCardView(conversationKey, state));
     try {
       await this.updatePayload(chatId, messageId, payload, {
         event: "knowledge ingest progress updated",
@@ -1363,7 +1348,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     item: KnowledgeIngestQueueItem,
   ): Promise<void> {
     if (!queue.batchMessageId) {
-      const created = await this.sendPayload(item.chatId, buildKnowledgeIngestProcessingPayload(item.progressState), {
+      const created = await this.sendPayload(item.chatId, buildKnowledgeIngestProcessingPayload(this.buildKnowledgeIngestProgressCardView(pending.conversationKey, item.progressState)), {
         event: "knowledge ingest processing started",
         transcriptType: "outbound-final",
         textPreview: getKnowledgeIngestQueueItemLabel(item),
@@ -1373,7 +1358,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       return;
     }
     try {
-      await this.updatePayload(item.chatId, queue.batchMessageId, buildKnowledgeIngestProcessingPayload(item.progressState), {
+      await this.updatePayload(item.chatId, queue.batchMessageId, buildKnowledgeIngestProcessingPayload(this.buildKnowledgeIngestProgressCardView(pending.conversationKey, item.progressState)), {
         event: "knowledge ingest processing started",
         transcriptType: "outbound-final",
         textPreview: getKnowledgeIngestQueueItemLabel(item),
@@ -1386,6 +1371,31 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
         detail: error instanceof Error ? error.message : String(error),
       }, "warn");
     }
+  }
+
+  private buildKnowledgeIngestProgressCardView(
+    conversationKey: string,
+    state: KnowledgeIngestProgressState,
+  ): KnowledgeIngestProgressState & {
+    completedCount: number;
+    failedCount: number;
+    queuedLabels: string[];
+    completedItems: Array<{ sourceFile: string; extractedCount: number }>;
+    failedItems: Array<{ sourceFile: string; reason: string }>;
+  } {
+    const queue = this.knowledgeIngestQueues.get(conversationKey);
+    const stats = this.getKnowledgeIngestSessionStats(conversationKey);
+    return {
+      ...state,
+      completedCount: stats.completedCount,
+      failedCount: stats.failedCount,
+      queuedLabels: queue?.pending.map((item) => getKnowledgeIngestQueueItemLabel(item)) ?? [],
+      completedItems: stats.results.map((result) => ({
+        sourceFile: result.sourceFile,
+        extractedCount: result.extractedCount,
+      })),
+      failedItems: stats.failures,
+    };
   }
 
   private async sendNotice(
@@ -1402,19 +1412,8 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       replyToMessageId: message.messageId,
     }, {
       title: input.title,
-      template: input.template,
-      iconToken: input.icon,
+      level: resolveNoticeLevelFromTemplate(input.template),
       message: input.message,
-      messageIconToken: input.icon,
-      messageIconColor: input.template === "red"
-        ? "red"
-        : input.template === "green"
-          ? "green"
-          : input.template === "yellow"
-            ? "yellow"
-            : input.template === "indigo"
-              ? "indigo"
-              : "blue",
       showMessageIcon: false,
     }, {
       event: "final message sent",

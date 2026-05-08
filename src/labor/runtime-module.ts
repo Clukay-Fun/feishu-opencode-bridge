@@ -10,11 +10,14 @@ import type { RuntimeModule, RuntimeModuleHandleResult, RuntimeModuleMessageCont
 import {
   buildNoticeCardPayload,
   buildPostMarkdownPayload,
+  resolveNoticeLevelFromTemplate,
   type ToolUpdateView,
 } from "../feishu/shared-primitives.js";
 import {
   buildLaborAnalysisCompletedPayload,
+  buildLaborFinalReviewPayload,
   buildLaborAnalysisProgressPayload,
+  buildLaborReviewCompletedPayload,
   type LaborAnalysisCompletedCardView,
   type LaborAnalysisProgressCardView,
 } from "../feishu/labor-cards.js";
@@ -417,28 +420,15 @@ export class LaborRuntimeModule implements RuntimeModule {
         },
       });
 
-      await this.updateCompletedCard(
-        pending.chatId,
-        processing.messageId,
-        progressState,
-        buildLaborCompletedView(result, progressState.totalFiles),
-      );
+      await this.deps.transport.updatePayload(pending.chatId, processing.messageId, buildLaborAnalysisCompletedPayload(buildLaborCompletedView(result, progressState.totalFiles)), {
+        event: "labor first-pass analysis completed",
+        transcriptType: "outbound-final",
+        textPreview: createTextPreview(`${result.title}｜一审劳动分析完成`),
+        len: result.title.length,
+      });
 
       if (!result.docUrl) {
-        const markdown = [
-          `### ${result.title}`,
-          "",
-          "工作台文档创建失败，下面返回 Markdown 版本供直接查看。",
-          "",
-          result.markdown,
-        ].join("\n");
-
-        await this.deps.transport.sendPayload(pending.chatId, buildPostMarkdownPayload(markdown), {
-          event: "labor analysis result sent",
-          transcriptType: "outbound-final",
-          textPreview: createTextPreview(markdown),
-          len: markdown.length,
-        }, { replyToMessageId: message.messageId });
+        await this.sendLaborMarkdownFallback(message, pending, result);
       }
 
     } catch (error) {
@@ -452,7 +442,19 @@ export class LaborRuntimeModule implements RuntimeModule {
       return;
     }
 
-    await this.runAuthoritySearchAndReview(pending, result, processing.messageId, progressState.totalFiles);
+    const reviewCard = await this.deps.transport.sendPayload(pending.chatId, buildLaborFinalReviewPayload({
+      title: result.title,
+      statusText: "二审模型审查中...",
+      detail: "正在后台校验法条引用、请求权基础、证据支撑和高风险结论。",
+      level: "info",
+    }), {
+      event: "labor final review started",
+      transcriptType: "outbound-final",
+      textPreview: "劳动分析二审审查中",
+      len: 9,
+    }, this.getDelivery(pending));
+
+    await this.runAuthoritySearchAndReview(pending, result, reviewCard.messageId);
   }
 
   private clearInteraction(conversationKey: string): void {
@@ -462,18 +464,23 @@ export class LaborRuntimeModule implements RuntimeModule {
   private async runAuthoritySearchAndReview(
     pending: PendingLaborInteraction,
     result: LaborAnalyzeResult,
-    reportMessageId: string,
-    totalFiles: number,
+    reviewMessageId: string,
   ): Promise<void> {
     const draft = this.deps.service!.buildAuthoritySearchDraft(result);
     let authorityContext: LaborReviewAuthorityContext = { status: "pending" };
     try {
       const appended = await this.deps.service!.appendAuthoritySearch(result, {
         query: draft.mainQuery,
-        turnId: reportMessageId,
+        turnId: reviewMessageId,
         sessionId: pending.conversationKey,
       });
-      authorityContext = { status: "completed", searchResult: appended.search };
+      authorityContext = {
+        status: "completed",
+        searchResult: appended.search,
+        lawRecognition: appended.lawRecognition,
+        citationValidation: appended.citationValidation,
+        caseNumberRecognition: appended.caseNumberRecognition,
+      };
     } catch (error) {
       this.deps.logger.log("labor/authority", "background authority search failed", {
         conversationKey: pending.conversationKey,
@@ -481,35 +488,36 @@ export class LaborRuntimeModule implements RuntimeModule {
       }, "warn");
     }
 
-    await this.runReviewAndUpdateCompletedCard(pending, result, authorityContext, reportMessageId, totalFiles);
+    await this.runReviewAndUpdateCard(pending, result, authorityContext, reviewMessageId);
   }
 
-  private async runReviewAndUpdateCompletedCard(
+  private async runReviewAndUpdateCard(
     pending: PendingLaborInteraction,
     result: LaborAnalyzeResult,
     authorityContext: LaborReviewAuthorityContext,
-    reportMessageIdOverride?: string | undefined,
-    totalFiles?: number | undefined,
+    reviewMessageId: string,
   ): Promise<void> {
-    const reportMessageId = reportMessageIdOverride ?? pending.anchorMessageId;
-    const pendingReviewStatus = formatReviewPendingStatus(authorityContext);
-    await this.deps.transport.updatePayload(pending.chatId, reportMessageId, buildLaborAnalysisCompletedPayload(buildLaborCompletedView(result, totalFiles, { reviewStatusOverride: pendingReviewStatus })), {
-      event: "labor completed card review started",
-      transcriptType: "outbound-final",
-      textPreview: pendingReviewStatus,
-      len: pendingReviewStatus.length,
-    }).catch((error) => {
-      this.deps.logger.log("labor/authority", "review pending card update failed", {
-        conversationKey: pending.conversationKey,
-        detail: error instanceof Error ? error.message : String(error),
-      }, "warn");
-    });
-
     try {
       const { reviewReport, reviewSkippedReason } = await this.deps.service!.finalizeReviewOnly(result, authorityContext);
       const finalReviewStatus = formatReviewStatus(reviewReport, reviewSkippedReason) ?? "二审状态：未返回审查结论";
-      await this.deps.transport.updatePayload(pending.chatId, reportMessageId, buildLaborAnalysisCompletedPayload(buildLaborCompletedView(result, totalFiles, { reviewReport, reviewSkippedReason })), {
-        event: "labor completed card updated with review",
+      const completedView = buildLaborCompletedView(result, undefined, { reviewReport, reviewSkippedReason });
+      await this.deps.transport.updatePayload(pending.chatId, reviewMessageId, buildLaborReviewCompletedPayload({
+        title: completedView.title,
+        materialCount: completedView.materialCount,
+        evidenceCount: completedView.evidenceCount,
+        issueCount: completedView.issueCount,
+        tagCounts: completedView.tagCounts,
+        reviewStatus: finalReviewStatus,
+        findingsCount: reviewReport?.findings.length,
+        humanReviewCount: reviewReport ? countHumanReviewItems(reviewReport) : undefined,
+        docUrl: result.docUrl,
+        ledgerUrl: result.ledgerUrl,
+        keyEvidenceViewUrl: result.keyEvidenceViewUrl,
+        missingEvidenceViewUrl: result.missingEvidenceViewUrl,
+        syncedEvidenceCount: result.syncedEvidenceCount,
+        syncedGapCount: result.syncedGapCount,
+      }), {
+        event: "labor final review completed",
         transcriptType: "outbound-final",
         textPreview: finalReviewStatus,
         len: finalReviewStatus.length,
@@ -521,6 +529,27 @@ export class LaborRuntimeModule implements RuntimeModule {
       }, "warn");
     }
     this.clearInteraction(pending.conversationKey);
+  }
+
+  private async sendLaborMarkdownFallback(
+    triggerMessage: Pick<IncomingChatMessage, "messageId">,
+    pending: Pick<PendingLaborInteraction, "chatId">,
+    result: LaborAnalyzeResult,
+  ): Promise<void> {
+    const markdown = [
+      `### ${result.title}`,
+      "",
+      "工作台文档创建失败，下面返回 Markdown 版本供直接查看。",
+      "",
+      result.markdown,
+    ].join("\n");
+
+    await this.deps.transport.sendPayload(pending.chatId, buildPostMarkdownPayload(markdown), {
+      event: "labor analysis result sent",
+      transcriptType: "outbound-final",
+      textPreview: createTextPreview(markdown),
+      len: markdown.length,
+    }, { replyToMessageId: triggerMessage.messageId });
   }
 
   private clearRequesterInteractions(chatId: string, requesterOpenId: string): void {
@@ -684,39 +713,6 @@ export class LaborRuntimeModule implements RuntimeModule {
     }
   }
 
-  private async updateCompletedCard(
-    chatId: string,
-    messageId: string,
-    progressState: LaborProgressState,
-    view: LaborAnalysisCompletedCardView,
-  ): Promise<void> {
-    try {
-      await this.deps.transport.updatePayload(chatId, messageId, buildLaborAnalysisCompletedPayload(view), {
-        event: "labor analysis completed",
-        transcriptType: "outbound-final",
-        textPreview: createTextPreview(`${view.title}｜材料 ${view.materialCount}｜证据 ${view.evidenceCount}｜焦点 ${view.issueCount}`),
-        len: view.title.length,
-      });
-    } catch (error) {
-      const fallbackMessage = [
-        `案件标题：${view.title}`,
-        view.docUrl ? `[打开飞书文档](${view.docUrl})` : "飞书文档创建失败，已保留 Markdown 结果。",
-        `耗时：${formatLaborElapsed(Date.now() - progressState.startedAt)}`,
-      ].join("\n\n");
-      await this.safeUpdateNotice(chatId, messageId, {
-        title: "证据链分析已完成",
-        template: "green",
-        icon: "yes_outlined",
-        message: fallbackMessage,
-      }, "labor analysis completed");
-      this.deps.logger.log("feishu/reply", "labor completed card update failed", {
-        chatId,
-        messageId,
-        detail: error instanceof Error ? error.message : String(error),
-      }, "warn");
-    }
-  }
-
   private async safeUpdateNotice(
     chatId: string,
     messageId: string,
@@ -731,8 +727,7 @@ export class LaborRuntimeModule implements RuntimeModule {
     try {
       await this.deps.transport.updatePayload(chatId, messageId, buildNoticeCardPayload({
         title: options.title,
-        template: options.template,
-        iconToken: options.icon,
+        level: resolveNoticeLevelFromTemplate(options.template),
         message: options.message,
         showMessageIcon: false,
       }), {
@@ -765,8 +760,7 @@ export class LaborRuntimeModule implements RuntimeModule {
       replyToMessageId: delivery?.replyToMessageId ?? message.messageId,
     }, {
       title: options.title,
-      template: options.template,
-      iconToken: options.icon,
+      level: resolveNoticeLevelFromTemplate(options.template),
       message: options.message,
       showMessageIcon: false,
     }, {
@@ -783,8 +777,7 @@ export class LaborRuntimeModule implements RuntimeModule {
       replyToMessageId: pending.anchorMessageId,
     }, {
       title: "劳动分析已超时",
-      template: "grey",
-      iconToken: "time_outlined",
+      level: "neutral",
       message: "长时间未继续补充材料，当前劳动分析模式已自动结束。",
       showMessageIcon: false,
     }, {
@@ -905,16 +898,6 @@ function applyLaborFinalizeProgress(state: LaborProgressState, step: string): vo
   setLaborStep(state, "生成分析文档", "running", shortenProgress(normalized));
 }
 
-function formatLaborElapsed(elapsedMs: number): string {
-  const seconds = Math.max(1, Math.round(elapsedMs / 1000));
-  if (seconds < 60) {
-    return `${seconds}s`;
-  }
-  const minutes = Math.floor(seconds / 60);
-  const remain = seconds % 60;
-  return remain > 0 ? `${minutes} 分 ${remain} 秒` : `${minutes} 分`;
-}
-
 function pushProgress(state: LaborProgressState, line: string): void {
   const normalized = line.trim();
   if (!normalized) {
@@ -986,12 +969,6 @@ function buildLaborCompletedView(result: {
     syncedGapCount: result.syncedGapCount,
     reviewStatus: review?.reviewStatusOverride ?? formatReviewStatus(review?.reviewReport, review?.reviewSkippedReason),
   };
-}
-
-function formatReviewPendingStatus(authorityContext: LaborReviewAuthorityContext): string {
-  return authorityContext.status === "completed"
-    ? "二审模型审查中..."
-    : "二审模型审查中...（权威源未完成，按材料与本地知识库审查）";
 }
 
 /** 将二审结果映射为完成卡片中的一行状态文本。 */

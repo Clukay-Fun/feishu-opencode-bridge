@@ -5,11 +5,10 @@
  * - 复用共享卡片原语组织统计、步骤和引用信息。
  */
 import type { KnowledgeIngestResult, KnowledgeQueryResult } from "../knowledge/index.js";
+import { column, columnSet } from "./card-builder.js";
 import {
-  buildProgressStepElements,
   buildDivider,
   buildElapsedLine,
-  buildFooterTipBlock,
   buildGreyPanel,
   buildInteractivePayload,
   buildNoticeBodyBlock,
@@ -34,6 +33,11 @@ export type KnowledgeIngestProgressCardView = {
   steps: ReadonlyArray<ToolUpdateView>;
   startedAt?: number | undefined;
   elapsedMs?: number | undefined;
+  completedCount?: number | undefined;
+  failedCount?: number | undefined;
+  queuedLabels?: readonly string[] | undefined;
+  completedItems?: ReadonlyArray<{ sourceFile: string; extractedCount?: number | undefined }> | undefined;
+  failedItems?: ReadonlyArray<{ sourceFile: string; reason: string }> | undefined;
 };
 
 export type KnowledgeIngestQueuedCardView = {
@@ -49,7 +53,7 @@ export type KnowledgeIngestFailureCardView = {
   suggestion?: string | undefined;
 };
 
-export type KnowledgeIngestSessionSummaryView = {
+export type KnowledgeIngestCompletedCardView = {
   completedCount: number;
   failedCount: number;
   queuedCount: number;
@@ -66,9 +70,6 @@ export type KnowledgeIngestSessionSummaryView = {
 
 /** 构建知识查询命中结果卡。 */
 export function buildKnowledgeQueryPayload(view: KnowledgeQueryResult): FeishuPostPayload {
-  const footerTip = view.bitableUrl
-    ? `以上内容仅供参考，不构成法律意见。\n\n[查看知识库](${escapeText(view.bitableUrl)})`
-    : "以上内容仅供参考，不构成法律意见。";
   return buildInteractivePayload({
     title: "法律咨询",
     template: "indigo",
@@ -76,23 +77,8 @@ export function buildKnowledgeQueryPayload(view: KnowledgeQueryResult): FeishuPo
     bodyElements: [
       buildNoticeBodyBlock(`**问题**\n${escapeText(view.question)}`, "search_outlined", "indigo", { showIcon: false }),
       buildDivider(),
-      ...view.results.flatMap((result, index) => {
-        const sourceLabel = `${escapeText(result.sourceFile)}${result.pageSection ? ` · ${escapeText(result.pageSection)}` : ""}`;
-        const sourceRecordUrl = buildKnowledgeRecordUrl(view.bitableUrl, result.bitableRecordId);
-        const parts = [
-          `**答案 ${index + 1}**`,
-          escapeText(result.answer),
-          sourceRecordUrl
-            ? `📄 来源：[打开知识库记录｜${sourceLabel}](${escapeText(sourceRecordUrl)})`
-            : `📄 来源：${sourceLabel}`,
-          result.statute ? `📌 法条：${escapeText(result.statute)}` : "",
-        ].filter(Boolean).join("\n\n");
-        return index < view.results.length - 1
-          ? [buildNoticeBodyBlock(parts, "book_outlined", "blue", { showIcon: false }), buildDivider()]
-          : [buildNoticeBodyBlock(parts, "book_outlined", "blue", { showIcon: false })];
-      }),
-      buildDivider(),
-      buildFooterTipBlock(footerTip, "warning_outlined", "orange", "notation"),
+      ...view.results.flatMap((result, index) => buildKnowledgeQueryResultBlocks(view, result, index)),
+      ...(view.bitableUrl ? [buildDivider(), buildKnowledgeQueryActionBlock(view)] : []),
     ],
   });
 }
@@ -101,12 +87,12 @@ export function buildKnowledgeQueryPayload(view: KnowledgeQueryResult): FeishuPo
 export function buildKnowledgeQueryEmptyPayload(view: KnowledgeQueryEmptyCardView): FeishuPostPayload {
   return buildInteractivePayload({
     title: "法律咨询",
-    template: "wathet",
+    template: "grey",
     iconToken: "search_outlined",
     bodyElements: [
       buildNoticeBodyBlock(`未找到与“${escapeText(view.question)}”直接相关的知识条目。`, "info_outlined", "grey", { showIcon: false }),
       buildDivider(),
-      buildFooterTipBlock("以上内容仅供参考，不构成法律意见。", "warning_outlined", "orange", "notation"),
+      buildQuoteLine("以上内容仅供参考，不构成法律意见。"),
     ],
   });
 }
@@ -125,37 +111,17 @@ export function buildKnowledgeIngestReadyPayload(): FeishuPostPayload {
       buildGreyPanel([
         cardMarkdown("**支持格式** ：PDF / DOCX / TXT / MD / PNG / JPG / WEBP\n**模式** ：批量入库", "normal"),
       ]),
-      cardMarkdown("发送文件或 URL 即可入库\n", "normal"),
-      cardMarkdown("发送 `/kb-ingest-end` 结束本次任务", "normal_v2"),
-    ],
-  });
-}
-
-/** 构建知识入库会话摘要卡。 */
-export function buildKnowledgeIngestSessionPayload(view: KnowledgeIngestSessionSummaryView): FeishuPostPayload {
-  const bodyParts = [
-    `**已完成**\n${view.completedCount} 个素材`,
-    `**处理中**\n${view.currentLabel ? escapeText(view.currentLabel) : "无"}`,
-    `**排队中**\n${view.queuedCount} 个素材`,
-    `**总入库**\n${view.totalExtractedCount} 条问答`,
-  ];
-  if (view.failedCount > 0) {
-    bodyParts.push(`**失败**\n${view.failedCount} 个素材`);
-  }
-  return buildInteractivePayload({
-    title: "知识入库会话",
-    template: "blue",
-    iconToken: "upload_outlined",
-    bodyElements: [
-      buildNoticeBodyBlock(bodyParts.join("\n\n"), "upload_outlined", "blue", { showIcon: false }),
       buildDivider(),
-      buildFooterTipBlock("发送文件或网页链接继续入库；发送 `/kb-ingest-end` 结束。", "info_outlined", "grey", "notation"),
+      buildGreyPanel([
+        cardMarkdown("发送文件或 URL 即可入库", "normal"),
+        cardMarkdown("发送 `/kb-ingest-end` 结束本次任务", "notation"),
+      ]),
     ],
   });
 }
 
-/** 构建知识入库会话最终汇总卡。 */
-export function buildKnowledgeIngestSessionFinalPayload(view: KnowledgeIngestSessionSummaryView): FeishuPostPayload {
+/** 构建知识入库完成卡。 */
+export function buildKnowledgeIngestCompletedPayload(view: KnowledgeIngestCompletedCardView): FeishuPostPayload {
   const results = view.results ?? [];
   const failures = view.failures ?? [];
   const tagCounts = summarizeKnowledgeIngestTagCounts(results);
@@ -163,6 +129,9 @@ export function buildKnowledgeIngestSessionFinalPayload(view: KnowledgeIngestSes
   const sourceLabel = resolveKnowledgeIngestFinalSourceLabel(results, failures);
   const bodyElements = buildKnowledgeIngestCompletionBodyElements({
     sourceLabel,
+    materialCount: results.length + failures.length,
+    successCount: view.completedCount,
+    failedCount: view.failedCount,
     extractedCount: view.totalExtractedCount,
     rawExtractedCount,
     dedupedCount: view.totalDedupedCount,
@@ -171,30 +140,6 @@ export function buildKnowledgeIngestSessionFinalPayload(view: KnowledgeIngestSes
     elapsedMs: view.elapsedMs,
   });
 
-  return buildInteractivePayload({
-    title: "知识入库完成",
-    template: "green",
-    iconToken: "yes_filled",
-    bodyElements,
-  });
-}
-
-/** 构建单个素材入库完成卡。 */
-export function buildKnowledgeIngestPayload(view: KnowledgeIngestResult): FeishuPostPayload {
-  const rawExtractedCount = view.rawExtractedCount ?? view.extractedCount;
-  const dedupedCount = view.dedupedCount ?? Math.max(0, rawExtractedCount - view.extractedCount);
-  const bodyElements = buildKnowledgeIngestCompletionBodyElements({
-    sourceLabel: view.sourceFile,
-    extractedCount: view.extractedCount,
-    rawExtractedCount,
-    dedupedCount,
-    tagCounts: view.tagCounts,
-    bitableUrl: view.bitableUrl,
-    elapsedMs: view.durationMs,
-  });
-  if (view.warning) {
-    bodyElements.push(buildQuoteLine(escapeText(view.warning)));
-  }
   return buildInteractivePayload({
     title: "知识入库完成",
     template: "green",
@@ -240,14 +185,31 @@ export function buildKnowledgeIngestFailurePayload(view: KnowledgeIngestFailureC
 
 /** 构建入库处理中卡。 */
 export function buildKnowledgeIngestProcessingPayload(view: KnowledgeIngestProgressCardView): FeishuPostPayload {
-  const stepElements = view.steps.flatMap((step) => buildProgressStepElements(step));
+  const completedCount = view.completedCount ?? view.completedItems?.length ?? 0;
+  const failedCount = view.failedCount ?? view.failedItems?.length ?? 0;
+  const queuedCount = view.queuedLabels?.length ?? 0;
   return buildInteractivePayload({
     title: "知识入库进行中",
+    subtitle: `${completedCount}/${completedCount + failedCount + queuedCount + 1} 已完成`,
     template: "indigo",
     iconToken: "start_outlined",
     bodyElements: [
-      buildTitleLine(`处理文件：**${escapeText(view.sourceLabel)}**`),
-      ...stepElements,
+      cardMarkdown("**当前处理**", "normal_v2"),
+      buildKnowledgeIngestCurrentProcessingBlock(view),
+      ...(queuedCount > 0
+        ? [
+          cardMarkdown("**排队中**", "normal_v2"),
+          ...view.queuedLabels!.map((label) => buildKnowledgeIngestMaterialRow(label, "排队中", "queued")),
+        ]
+        : []),
+      ...(completedCount > 0
+        ? [
+          buildDivider(),
+          cardMarkdown("**已完成**", "normal_v2"),
+          ...buildKnowledgeIngestCompletedRows(view.completedItems ?? []),
+        ]
+        : []),
+      ...buildKnowledgeIngestFailureRows(view.failedItems ?? []),
       buildDivider(),
       buildElapsedLine(resolveElapsedText(view)),
     ],
@@ -255,6 +217,128 @@ export function buildKnowledgeIngestProcessingPayload(view: KnowledgeIngestProgr
 }
 
 // #endregion
+
+function buildKnowledgeQueryResultBlocks(
+  view: KnowledgeQueryResult,
+  result: KnowledgeQueryResult["results"][number],
+  index: number,
+): Array<Record<string, unknown>> {
+  const sourceLabel = `${escapeText(result.sourceFile)}${result.pageSection ? ` · ${escapeText(result.pageSection)}` : ""}`;
+  const sourceRecordUrl = buildKnowledgeRecordUrl(view.bitableUrl, result.bitableRecordId);
+  const sourceText = sourceRecordUrl
+    ? `📄 来源：[打开知识库记录｜${sourceLabel}](${escapeText(sourceRecordUrl)})`
+    : `📄 来源：${sourceLabel}`;
+  const quoteLines = [
+    sourceText,
+    result.statute ? `🏛 法条：${escapeText(result.statute)}` : "",
+    "以上内容仅供参考，不构成法律意见。",
+  ].filter(Boolean);
+  return [
+    buildNoticeBodyBlock(`**答案 ${index + 1}**\n${escapeText(result.answer)}`, "book_outlined", "blue", { showIcon: false }),
+    buildQuoteLine(quoteLines.join("\n")),
+    ...(index < view.results.length - 1 ? [buildDivider()] : []),
+  ];
+}
+
+function buildKnowledgeQueryActionBlock(view?: Pick<KnowledgeQueryResult, "bitableUrl">): Record<string, unknown> {
+  const buttons = [
+    ...(view?.bitableUrl ? [buildKnowledgeActionButton("查看知识库", "default", {
+      kind: "knowledge-query-action",
+      action: "open-knowledge-base",
+      url: view.bitableUrl,
+    })] : []),
+  ];
+  return {
+    tag: "column_set",
+    flex_mode: "stretch",
+    horizontal_spacing: "8px",
+    horizontal_align: "left",
+    columns: buttons.map((button) => ({
+      tag: "column",
+      width: "auto",
+      elements: [button],
+      vertical_align: "top",
+    })),
+    margin: "0px 0px 0px 0px",
+  };
+}
+
+function buildKnowledgeActionButton(
+  label: string,
+  type: "primary" | "default",
+  value: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    tag: "button",
+    text: {
+      tag: "plain_text",
+      content: label,
+    },
+    type,
+    width: type === "primary" ? "fill" : "default",
+    size: "medium",
+    margin: "0px 0px 0px 0px",
+    value,
+  };
+}
+
+function buildKnowledgeIngestCurrentProcessingBlock(view: KnowledgeIngestProgressCardView): Record<string, unknown> {
+  return {
+    ...buildGreyPanel([
+      cardMarkdown(`处理文件：**${escapeText(view.sourceLabel)}**`, "heading"),
+      ...view.steps.map((step) => cardMarkdown(formatKnowledgeIngestStepLine(step), "normal_v2")),
+    ]),
+    background_style: "blue-50",
+  };
+}
+
+function formatKnowledgeIngestStepLine(step: ToolUpdateView): string {
+  const label = step.status === "error" && step.label === "写入知识库" ? "写入失败" : step.label;
+  const detail = step.status === "error" ? `${step.detail}（发送 /retry 重试）` : step.detail;
+  const prefix = step.status === "completed"
+    ? "✓"
+    : step.status === "running"
+      ? "⟳"
+      : step.status === "error"
+        ? "×"
+        : "○";
+  return `${prefix} ${escapeText(label)}：${escapeText(detail)}`;
+}
+
+function buildKnowledgeIngestMaterialRow(
+  sourceLabel: string,
+  statusText: string,
+  status: "running" | "queued" | "completed" | "failed",
+): Record<string, unknown> {
+  const bg = status === "running" ? "blue-50" : status === "failed" ? "red-50" : "grey-50";
+  const marker = status === "completed" ? "✓" : status === "failed" ? "×" : status === "running" ? "⟳" : "○";
+  return columnSet([
+    column([
+      cardMarkdown(`${marker} **${escapeText(sourceLabel)}**`, "normal_v2"),
+    ], { bg, weight: 2 }),
+    column([
+      cardMarkdown(escapeText(statusText), "normal_v2"),
+    ], { bg, weight: 1 }),
+  ]);
+}
+
+function buildKnowledgeIngestCompletedRows(
+  results: ReadonlyArray<{ sourceFile: string; extractedCount?: number | undefined }>,
+): Array<Record<string, unknown>> {
+  return results.map((result) => buildKnowledgeIngestMaterialRow(
+    result.sourceFile,
+    `入库 ${result.extractedCount ?? 0} 条`,
+    "completed",
+  ));
+}
+
+function buildKnowledgeIngestFailureRows(failures: ReadonlyArray<{ sourceFile: string; reason: string }>): Array<Record<string, unknown>> {
+  return failures.map((failure) => buildKnowledgeIngestMaterialRow(
+    failure.sourceFile,
+    "解析失败",
+    "failed",
+  ));
+}
 
 function summarizeKnowledgeIngestTagCounts(results: KnowledgeIngestResult[]): Record<string, number> {
   const counts = new Map<string, number>();
@@ -271,6 +355,9 @@ function summarizeKnowledgeIngestTagCounts(results: KnowledgeIngestResult[]): Re
 
 function buildKnowledgeIngestCompletionBodyElements(input: {
   sourceLabel: string;
+  materialCount: number;
+  successCount: number;
+  failedCount: number;
   extractedCount: number;
   rawExtractedCount: number;
   dedupedCount: number;
@@ -279,20 +366,26 @@ function buildKnowledgeIngestCompletionBodyElements(input: {
   elapsedMs?: number | undefined;
 }): Array<Record<string, unknown>> {
   return [
-    buildTitleLine(`文件：**${escapeText(input.sourceLabel)}**`),
     buildStatsRow([
-      `入库 ${input.extractedCount}`,
-      `提取 ${input.rawExtractedCount}`,
-      `去重 ${input.dedupedCount}`,
+      `素材 ${input.materialCount}`,
+      `成功 ${input.successCount}`,
+      `失败 ${input.failedCount}`,
+      `总入库 ${input.extractedCount}`,
     ]),
     buildTagChartSection(input.tagCounts, input.bitableUrl),
+    buildDivider(),
+    buildKnowledgeIngestMaterialRow(
+      input.sourceLabel,
+      `入库 ${input.extractedCount} · 提取 ${input.rawExtractedCount} · 去重 ${input.dedupedCount}`,
+      input.failedCount > 0 ? "failed" : "completed",
+    ),
     ...(input.elapsedMs ? [buildElapsedLine(`耗时：${formatDurationMs(input.elapsedMs)}`)] : []),
   ];
 }
 
 function summarizeKnowledgeIngestRawExtractedCount(
   results: KnowledgeIngestResult[],
-  fallback: Pick<KnowledgeIngestSessionSummaryView, "totalExtractedCount" | "totalDedupedCount">,
+  fallback: Pick<KnowledgeIngestCompletedCardView, "totalExtractedCount" | "totalDedupedCount">,
 ): number {
   if (results.length === 0) {
     return fallback.totalExtractedCount + fallback.totalDedupedCount;

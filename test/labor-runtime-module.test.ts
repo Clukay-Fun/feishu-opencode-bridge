@@ -279,7 +279,7 @@ describe("LaborRuntimeModule", () => {
       });
 
       expect(endResult).toEqual({ claimed: true });
-      expect(sendPayload).toHaveBeenCalledTimes(2);
+      expect(sendPayload).toHaveBeenCalledTimes(3);
       expect(extractMaterial).toHaveBeenCalledTimes(2);
       expect(finalizeAnalysis).toHaveBeenCalledTimes(1);
       expect(finalizeReviewOnly).toHaveBeenCalledTimes(1);
@@ -288,17 +288,14 @@ describe("LaborRuntimeModule", () => {
       const progressSerialized = JSON.stringify(progressPayloads[1]?.[1] ?? {});
       expect(progressSerialized).toContain("劳动分析进行中");
       const updatedPayloads = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
-      const completedSerialized = JSON.stringify(updatedPayloads.at(-1)?.[2] ?? {});
+      const completedSerialized = JSON.stringify(updatedPayloads.find((call) => JSON.stringify(call[2]).includes("劳动分析完成"))?.[2] ?? {});
       expect(completedSerialized).toContain("劳动分析完成");
       expect(completedSerialized).toContain("材料 2");
       expect(completedSerialized).toContain("证据 1");
       expect(completedSerialized).toContain("焦点 1");
       expect(completedSerialized).toContain("材料占比");
-      expect(completedSerialized).toContain("打开分析文档");
-      expect(completedSerialized).toContain("打开总表");
-      expect(completedSerialized).toContain("关键证据视图");
-      expect(completedSerialized).toContain("缺口视图");
       const outboundPayloads = JSON.stringify(progressPayloads.map((call) => call[1]));
+      expect(outboundPayloads).toContain("二审模型审查中");
       expect(outboundPayloads).not.toContain("补充权威法规检索");
       expect(outboundPayloads).not.toContain("labor-authority-search");
     } finally {
@@ -346,8 +343,9 @@ describe("LaborRuntimeModule", () => {
       expect(JSON.stringify(payloadCalls[0]?.[1] ?? {})).toContain("已进入劳动分析收集模式");
       expect(JSON.stringify(payloadCalls[1]?.[1] ?? {})).toContain("劳动分析进行中");
       const updatedPayloads = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
-      expect(JSON.stringify(updatedPayloads.at(-1)?.[2] ?? {})).toContain("劳动分析完成");
-      expect(JSON.stringify(updatedPayloads.at(-1)?.[2] ?? {})).toContain("材料 2");
+      const completedSerialized = JSON.stringify(updatedPayloads.find((call) => JSON.stringify(call[2]).includes("劳动分析完成"))?.[2] ?? {});
+      expect(completedSerialized).toContain("劳动分析完成");
+      expect(completedSerialized).toContain("材料 2");
     } finally {
       await cleanupModule(module, tempDir);
     }
@@ -382,14 +380,14 @@ describe("LaborRuntimeModule", () => {
       expect(JSON.stringify(payloadCalls[0]?.[1] ?? {})).toContain("已进入劳动分析收集模式");
       expect(JSON.stringify(payloadCalls[1]?.[1] ?? {})).toContain("劳动分析进行中");
       const updatedPayloads = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
-      expect(JSON.stringify(updatedPayloads.at(-1)?.[2] ?? {})).toContain("劳动分析完成");
+      expect(JSON.stringify(updatedPayloads.find((call) => JSON.stringify(call[2]).includes("劳动分析完成"))?.[2] ?? {})).toContain("劳动分析完成");
     } finally {
       await cleanupModule(module, tempDir);
     }
   });
 
   it("runs authority search in the background and then reviews the completed workbench", async () => {
-    const { module, tempDir, updatePayload, appendAuthoritySearch, finalizeReviewOnly } = await createModule();
+    const { module, tempDir, sendPayload, updatePayload, appendAuthoritySearch, finalizeReviewOnly } = await createModule();
     try {
       const start = createTextMessage("/劳动分析 劳动争议演示");
       await module.handleMessage({ message: start, routed: routeIncomingText(start.plainText) });
@@ -408,7 +406,10 @@ describe("LaborRuntimeModule", () => {
       }));
       const updatedPayloads = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
       const serializedUpdates = JSON.stringify(updatedPayloads.map((call) => call[2]));
-      expect(serializedUpdates).toContain("二审模型审查中");
+      const sentPayloads = sendPayload.mock.calls as unknown as Array<[string, unknown]>;
+      const serializedSends = JSON.stringify(sentPayloads.map((call) => call[1]));
+      expect(serializedUpdates).toContain("劳动分析完成");
+      expect(serializedSends).toContain("二审模型审查中");
       expect(serializedUpdates).toContain("法条引用已完成独立校验");
       expect(serializedUpdates).toContain("二审状态");
       expect(serializedUpdates).toContain("需人工复核");

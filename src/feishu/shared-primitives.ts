@@ -25,13 +25,13 @@ export type OutputView = {
   commands: readonly string[];
 };
 
+export type NoticeLevel = "info" | "warning" | "error" | "neutral" | "permission";
+export type LegacyNoticeTemplate = "blue" | "green" | "red" | "wathet" | "grey" | "orange" | "yellow" | "purple" | "indigo";
+
 export type NoticeCardView = {
   title: string;
-  template: "blue" | "green" | "red" | "wathet" | "grey" | "orange" | "yellow" | "purple" | "indigo";
-  iconToken: string;
+  level: NoticeLevel;
   message: string;
-  messageIconToken?: string;
-  messageIconColor?: string;
   showMessageIcon?: boolean;
 };
 
@@ -79,19 +79,59 @@ export function buildPostPayload(title: string, text: string): FeishuPostPayload
 
 /** 构建统一样式的提示卡片。 */
 export function buildNoticeCardPayload(view: NoticeCardView): FeishuPostPayload {
+  const style = resolveNoticeStyle(view.level);
   return buildInteractivePayload({
     title: view.title,
-    template: view.template,
-    iconToken: view.iconToken,
+    template: style.template,
+    iconToken: style.iconToken,
     bodyElements: [
       buildNoticeBodyBlock(
         view.message,
-        view.messageIconToken,
-        view.messageIconColor,
-        { showIcon: view.showMessageIcon ?? false },
+        style.iconToken,
+        style.iconColor,
+        { showIcon: false },
       ),
     ],
   });
+}
+
+function resolveNoticeStyle(level: NoticeLevel): {
+  template: "blue" | "yellow" | "red" | "grey" | "purple";
+  iconToken: string;
+  iconColor: "blue" | "orange" | "red" | "grey" | "purple";
+} {
+  switch (level) {
+    case "info":
+      return { template: "blue", iconToken: "info_outlined", iconColor: "blue" };
+    case "warning":
+      return { template: "yellow", iconToken: "maybe_outlined", iconColor: "orange" };
+    case "error":
+      return { template: "red", iconToken: "error-hollow_filled", iconColor: "red" };
+    case "neutral":
+      return { template: "grey", iconToken: "info_outlined", iconColor: "grey" };
+    case "permission":
+      return { template: "purple", iconToken: "lock_filled", iconColor: "purple" };
+  }
+}
+
+/** 兼容旧调用点的颜色到语义映射；新增代码应直接传 NoticeLevel。 */
+export function resolveNoticeLevelFromTemplate(template: LegacyNoticeTemplate): NoticeLevel {
+  switch (template) {
+    case "red":
+      return "error";
+    case "yellow":
+    case "orange":
+      return "warning";
+    case "grey":
+      return "neutral";
+    case "purple":
+      return "permission";
+    case "blue":
+    case "green":
+    case "wathet":
+    case "indigo":
+      return "info";
+  }
 }
 
 /** 将统一 payload 还原为 interactive card content。 */
@@ -102,6 +142,7 @@ export function toInteractiveCardContent(payload: FeishuPostPayload): Record<str
 /** 构建通用 interactive 卡片载荷。 */
 export function buildInteractivePayload(options: {
   title: string;
+  subtitle?: string;
   template: "blue" | "green" | "red" | "wathet" | "grey" | "orange" | "yellow" | "purple" | "indigo";
   iconToken: string;
   bodyElements: Array<Record<string, unknown>>;
@@ -124,7 +165,7 @@ export function buildInteractivePayload(options: {
       },
       header: {
         padding: "12px 12px 12px 12px",
-        subtitle: { tag: "plain_text", content: "" },
+        subtitle: { tag: "plain_text", content: options.subtitle ?? "" },
         template: options.template,
         title: { tag: "plain_text", content: options.title },
         icon: {

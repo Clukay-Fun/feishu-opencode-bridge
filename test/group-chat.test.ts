@@ -769,7 +769,7 @@ describe("group chat support", () => {
     }));
   });
 
-  it("allows /who for unbound users without mention", async () => {
+  it("does not allow removed /who command to bypass group binding", async () => {
     const handler = vi.fn(async () => {});
     const logger = { log() {} };
     const whitelist = {
@@ -795,7 +795,7 @@ describe("group chat support", () => {
       },
     });
 
-    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).not.toHaveBeenCalled();
     expect(whitelist.bind).not.toHaveBeenCalled();
   });
 

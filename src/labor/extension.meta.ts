@@ -5,13 +5,7 @@
  * - 保持卡片模板注册不加载劳动分析 service 或 RuntimeModule。
  */
 import type { BuiltinExtensionMetaDefinition } from "../extensions/definition.js";
-import { laborAnalysisCompletedTemplate, laborAnalysisProgressTemplate } from "./card-templates.js";
-import {
-  harnessAuthorityCoverageTemplate,
-  harnessFindingsTemplate,
-  harnessResultGroupTemplate,
-  harnessReviewReportTemplate,
-} from "./harness-card-templates.js";
+import { laborAnalysisCompletedTemplate, laborAnalysisProgressTemplate, laborReviewCompletedTemplate } from "./card-templates.js";
 import { laborSkillConfigDefinition } from "./config.js";
 
 export const laborSkillExtensionMeta = {
@@ -25,9 +19,6 @@ export const laborSkillExtensionMeta = {
   cardTemplates: [
     laborAnalysisProgressTemplate,
     laborAnalysisCompletedTemplate,
-    harnessReviewReportTemplate,
-    harnessAuthorityCoverageTemplate,
-    harnessFindingsTemplate,
-    harnessResultGroupTemplate,
+    laborReviewCompletedTemplate,
   ],
 } as const satisfies BuiltinExtensionMetaDefinition;

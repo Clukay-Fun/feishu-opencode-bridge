@@ -60,8 +60,9 @@ describe("BridgeApp command surface", () => {
     });
 
     expect(ensureSession).not.toHaveBeenCalled();
-    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("60 秒新手引导");
-    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("bridge doctor workspace");
+    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("快速上手");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("上传样例材料");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("/劳动分析");
   });
 
   it("returns a callback demo card without creating an OpenCode session", async () => {
@@ -390,7 +391,6 @@ describe("BridgeApp command surface", () => {
       sourceConversationKey: "oc_p2p_1",
       entry: expect.objectContaining({ sessionId: "ses_threaded", label: "劳动争议分析" }),
     }));
-    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("当前会话");
     expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("已切换到新会话");
     expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("创建话题");
   });
@@ -692,7 +692,7 @@ describe("BridgeApp command surface", () => {
     expect(text).toContain("隐藏会话 #2");
     expect(text).toContain("ses_2");
     expect(text).toContain("s_hidden");
-    expect(text).toContain("已隐藏");
+    expect(text).toContain("已归档");
   });
 
   it("renders /models openai as an interactive provider card", async () => {

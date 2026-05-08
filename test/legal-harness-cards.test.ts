@@ -1,8 +1,8 @@
 /**
  * 职责: 覆盖 Legal Harness V1 业务卡片的渲染与数据校验。
  * 关注点:
- * - 断言每张卡片的稳定 ID、核心状态字段、关键 CTA 和统计块。
- * - 不依赖飞书 API，仅校验模板渲染与 schema 校验。
+ * - 断言每张离线模板的稳定 ID 与 schema 校验。
+ * - Harness 不再作为用户侧飞书卡片注册，本测试不再渲染用户卡片。
  */
 import { describe, expect, it } from "vitest";
 
@@ -16,12 +16,6 @@ import {
   harnessResultGroupTemplate,
   harnessReviewReportTemplate,
 } from "../src/labor/harness-card-templates.js";
-import {
-  buildHarnessAuthorityCoveragePayload,
-  buildHarnessFindingsPayload,
-  buildHarnessResultGroupPayload,
-  buildHarnessReviewReportPayload,
-} from "../src/feishu/harness-cards.js";
 
 describe("harness reviewReport card", () => {
   const view = {
@@ -39,14 +33,6 @@ describe("harness reviewReport card", () => {
   it("has stable template ID", () => {
     expect(harnessReviewReportTemplate.id).toBe(HARNESS_REVIEW_REPORT_TEMPLATE_ID);
     expect(HARNESS_REVIEW_REPORT_TEMPLATE_ID).toBe("harness.review-report");
-  });
-
-  it("renders card payload with status fields", () => {
-    const payload = buildHarnessReviewReportPayload(view);
-    expect(payload.msg_type).toBe("interactive");
-    const content = JSON.parse(payload.content);
-    expect(content.header.title.content).toBe("二审报告");
-    expect(content.header.template).toBe("yellow");
   });
 
   it("schema accepts valid input", () => {
@@ -80,27 +66,6 @@ describe("harness authorityCoverage card", () => {
     expect(HARNESS_AUTHORITY_COVERAGE_TEMPLATE_ID).toBe("harness.authority-coverage");
   });
 
-  it("renders card payload with coverage stats", () => {
-    const payload = buildHarnessAuthorityCoveragePayload(view);
-    expect(payload.msg_type).toBe("interactive");
-    const content = JSON.parse(payload.content);
-    expect(content.header.title.content).toBe("权威检索覆盖率");
-  });
-
-  it("renders skipped-only coverage without NaN", () => {
-    const payload = buildHarnessAuthorityCoveragePayload({
-      title: "跳过权威检索案件",
-      items: [{ issue: "违法解除", status: "skipped" as const }],
-      sufficientCount: 0,
-      partialCount: 0,
-      missingCount: 0,
-      skippedCount: 1,
-    });
-
-    expect(JSON.stringify(JSON.parse(payload.content))).toContain("覆盖率 0%");
-    expect(JSON.stringify(JSON.parse(payload.content))).not.toContain("NaN");
-  });
-
   it("schema accepts valid authority status values", () => {
     const result = harnessAuthorityCoverageTemplate.schema.safeParse(view);
     expect(result.success).toBe(true);
@@ -128,14 +93,6 @@ describe("harness findings card", () => {
   it("has stable template ID", () => {
     expect(harnessFindingsTemplate.id).toBe(HARNESS_FINDINGS_TEMPLATE_ID);
     expect(HARNESS_FINDINGS_TEMPLATE_ID).toBe("harness.findings");
-  });
-
-  it("renders card payload with findings count", () => {
-    const payload = buildHarnessFindingsPayload(view);
-    expect(payload.msg_type).toBe("interactive");
-    const content = JSON.parse(payload.content);
-    expect(content.header.title.content).toBe("问题发现列表");
-    expect(content.header.template).toBe("red");
   });
 
   it("schema accepts valid severity values", () => {
@@ -166,14 +123,6 @@ describe("harness resultGroup card", () => {
   it("has stable template ID", () => {
     expect(harnessResultGroupTemplate.id).toBe(HARNESS_RESULT_GROUP_TEMPLATE_ID);
     expect(HARNESS_RESULT_GROUP_TEMPLATE_ID).toBe("harness.result-group");
-  });
-
-  it("renders card payload with group stats", () => {
-    const payload = buildHarnessResultGroupPayload(view);
-    expect(payload.msg_type).toBe("interactive");
-    const content = JSON.parse(payload.content);
-    expect(content.header.title.content).toBe("结果分组");
-    expect(content.header.template).toBe("blue");
   });
 
   it("schema accepts valid group input", () => {

@@ -6,19 +6,17 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildCaseCreateProcessingPayload,
+  buildKnowledgeIngestCompletedPayload,
   buildKnowledgeIngestFailurePayload,
   buildKnowledgeIngestProcessingPayload,
-  buildKnowledgeIngestPayload,
   buildKnowledgeIngestQueuedPayload,
-  buildKnowledgeIngestSessionFinalPayload,
-  buildKnowledgeIngestSessionPayload,
   buildKnowledgeQueryEmptyPayload,
   buildKnowledgeQueryPayload,
   buildGuideCardPayload,
   buildLaborAnalysisCompletedPayload,
   buildLaborAnalysisProgressPayload,
+  buildModelListCardPayload,
   buildNoticeCardPayload,
-  buildLeaveCommandCardPayload,
   buildPostMarkdownPayload,
   buildPostPayload,
   buildPermissionRequestCardPayload,
@@ -26,8 +24,8 @@ import {
   buildSessionTransitionCardPayload,
   buildStatusCommandCardPayload,
   buildTurnStatusCardPayload,
-  buildWhoCommandCardPayload,
 } from "../src/feishu/formatter.js";
+import { buildButtonCallbackTestCardPayload } from "../src/feishu/runtime-cards.js";
 import { buildAssistantMarkdownPayload } from "../src/feishu/shared-primitives.js";
 
 describe("buildPostPayload", () => {
@@ -98,7 +96,7 @@ describe("buildPostPayload", () => {
     });
     const content = JSON.parse(payload.content) as any;
     const serialized = JSON.stringify(content);
-    expect(content.header.title.content).toBe("正在忙");
+    expect(content.header.title.content).toBe("处理中");
     expect(serialized).toContain("读取文件");
     expect(serialized).toContain("package.json");
     expect(serialized).toContain("执行命令");
@@ -234,11 +232,16 @@ describe("buildPostPayload", () => {
     expect(content.header.title.content).toBe("会话状态");
     expect(content.header.template).toBe("wathet");
     expect(content.body.elements[0].columns[0].elements[0].content).toBe("**当前会话**");
-    expect(content.body.elements[0].columns[0].elements[1].columns[0].elements[0].content).toContain("ses_2988a201effeCaZpLXXjarY0pM");
-    expect(content.body.elements[1].columns[0].elements[1].columns).toHaveLength(6);
+    expect(content.body.elements[0].columns[0].elements[1].columns[0].elements[0].content).toBe("**能不能获取舆论新闻**");
+    expect(content.body.elements[0].columns[0].elements[1].columns[0].elements[1].content).toContain("ses_2988a201effeCaZpLXXjarY0pM");
+    expect(content.body.elements[1].columns[0].elements[1].columns).toHaveLength(4);
     expect(content.body.elements[1].columns[0].elements[1].columns[0].elements[0].content).toBe("connected");
     expect(content.body.elements[1].columns[0].elements[1].columns[2].elements[0].content).toBe("知识库模式");
-    expect(content.body.elements[3].columns[0].elements[0].content).toContain("`/sessions` 查看全部");
+    expect(content.body.elements[1].columns[0].elements[2].columns).toHaveLength(2);
+    expect(content.body.elements[1].columns[0].elements[2].columns[0].elements[0].content).toBe("排队 0");
+    expect(content.body.elements[3].columns[0].elements[0].text.content).toBe("查看全部会话");
+    expect(content.body.elements[3].columns[1].elements[0].value.command).toBe("/new");
+    expect(content.body.elements).toHaveLength(4);
   });
 
   it("renders a guide card with reproducible hero actions", () => {
@@ -246,12 +249,33 @@ describe("buildPostPayload", () => {
     const content = JSON.parse(payload.content) as any;
     const serialized = JSON.stringify(content);
 
-    expect(content.header.title.content).toBe("60 秒新手引导");
+    expect(content.header.title.content).toBe("快速上手");
     expect(serialized).toContain("/劳动分析");
-    expect(serialized).toContain("后台完成");
+    expect(serialized).toContain("查看分析输出");
     expect(serialized).toContain("二审状态");
-    expect(serialized).toContain("labor:harness");
-    expect(serialized).toContain("bridge doctor workspace");
+    expect(serialized).not.toContain("labor:harness");
+    expect(serialized).not.toContain("当前窗口");
+  });
+
+  it("renders a model list card with current model in header", () => {
+    const payload = buildModelListCardPayload({
+      currentModelLabel: "openai/gpt-5.4-mini",
+      providers: [{
+        id: "openai",
+        name: "OpenAI",
+        models: [
+          { id: "openai/gpt-5.4-mini", current: true },
+          { id: "openai/gpt-5.2" },
+        ],
+      }],
+      footer: "发送 `/model reset` 恢复默认模型",
+    });
+    const content = JSON.parse(payload.content) as any;
+    const serialized = JSON.stringify(content);
+    expect(content.header.subtitle.content).toBe("当前：openai/gpt-5.4-mini");
+    expect(serialized).toContain("gpt-5.4-mini");
+    expect(serialized).toContain("/model use openai/gpt-5.4-mini");
+    expect(serialized).toContain("/model reset");
   });
 
   it("renders a non-empty sessions command card", () => {
@@ -267,8 +291,11 @@ describe("buildPostPayload", () => {
     expect(content.header.title.content).toBe("会话列表");
     expect(content.body.elements[0].columns[0].background_style).toBe("wathet-100");
     expect(content.body.elements[0].columns[0].elements[0].columns[1].elements[0].content).toBe("**开一个新闻获取的话题**");
+    expect(content.body.elements[1].columns[0].elements[0].columns[2].elements[0].text.content).toBe("切换");
+    expect(content.body.elements[1].columns[0].elements[0].columns[2].elements[0].value.command).toBe("/switch 2");
     expect(content.body.elements[2].columns[0].background_style).toBe("grey-50");
     expect(content.body.elements[2].columns[0].elements[0].columns[1].elements[0].content).toBe("~~代码审查~~");
+    expect(content.body.elements[2].columns[0].elements[0].columns[2].elements[0].content).toBe("已归档");
   });
 
   it("renders an empty sessions command card", () => {
@@ -279,7 +306,9 @@ describe("buildPostPayload", () => {
     });
     const content = JSON.parse(payload.content) as any;
     expect(content.body.elements[0].columns[0].elements[0].content).toBe("暂无会话");
-    expect(content.body.elements[2].columns[0].elements[0].content).toContain("`/new`");
+    expect(content.body.elements[2].columns[0].elements[0].text.content).toBe("新建会话");
+    expect(content.body.elements[3].columns[0].elements[0].content).toBe("创建第一个会话");
+    expect(content.body.elements[3].columns[0].elements[0].text_size).toBe("notation");
   });
 
   it("renders a session transition command card", () => {
@@ -292,8 +321,9 @@ describe("buildPostPayload", () => {
     });
     const content = JSON.parse(payload.content) as any;
     expect(content.header.title.content).toBe("已切换会话");
-    expect(content.body.elements[0].columns[1].elements[0].content).toBe("~~帮我写个单测~~");
-    expect(content.body.elements[1].columns[1].elements[0].content).toBe("**开一个新闻获取的话题**");
+    expect(content.body.elements[0].columns[0].background_style).toBe("green-50");
+    expect(content.body.elements[0].columns[0].elements[0].content).toBe("~~帮我写个单测~~ → **开一个新闻获取的话题**");
+    expect(content.body.elements[2].columns[0].elements[0].text.content).toBe("切回上一个");
     expect(content.body.elements[3].columns[0].elements[0].content).toContain("共 8 条消息");
   });
 
@@ -309,35 +339,10 @@ describe("buildPostPayload", () => {
       footer: "可基于这条回复创建话题，在线程里继续",
     });
     const content = JSON.parse(payload.content) as any;
-    expect(content.body.elements[0].background_style).toBe("green-50");
-    expect(content.body.elements[0].columns[0].width).toBe("84px");
-    expect(content.body.elements[0].columns[1].elements[0].content).toBe("**日常聊天**");
-    expect(content.body.elements[1].background_style).toBe("grey-50");
-    expect(content.body.elements[1].columns[0].width).toBe("84px");
-  });
-
-  it("renders a bound who command card", () => {
-    const payload = buildWhoCommandCardPayload({ boundCount: 2, isBound: true });
-    const content = JSON.parse(payload.content) as any;
-    expect(content.header.title.content).toBe("群聊绑定状态");
-    expect(content.body.elements[0].columns[1].elements[0].content).toBe("**2 人**");
-    expect(content.body.elements[1].columns[1].elements[0].content).toBe("**已绑定**");
-    expect(content.body.elements[3].columns[0].elements[0].content).toContain("`/leave`");
-  });
-
-  it("renders an unbound who command card", () => {
-    const payload = buildWhoCommandCardPayload({ boundCount: 0, isBound: false });
-    const content = JSON.parse(payload.content) as any;
-    expect(content.body.elements[0].columns[1].elements[0].content).toBe("**0 人**");
-    expect(content.body.elements[1].columns[1].elements[0].content).toBe("**未绑定**");
-    expect(content.body.elements[3].columns[0].elements[0].content).toContain("@bot");
-  });
-
-  it("renders a successful leave card", () => {
-    const payload = buildLeaveCommandCardPayload({ unbound: true });
-    const content = JSON.parse(payload.content) as any;
-    expect(content.header.title.content).toBe("已解除绑定");
-    expect(content.body.elements[0].columns[0].elements[0].content).toContain("后续消息不再响应");
+    expect(content.body.elements[0].columns[0].background_style).toBe("grey-50");
+    expect(content.body.elements[0].columns[0].elements[0].content).toBe("**日常聊天** → **发票识别**");
+    expect(content.body.elements[2].columns[0].elements[0].text.content).toBe("切回上一个");
+    expect(content.body.elements[3].columns[0].elements[0].content).toBe("发送消息继续当前会话");
   });
 
   it("re-exports contract family payload builders through formatter compat surface", () => {
@@ -350,21 +355,11 @@ describe("buildPostPayload", () => {
     expect(serialized).toContain("劳动争议");
   });
 
-  it("renders an idempotent leave card", () => {
-    const payload = buildLeaveCommandCardPayload({ unbound: false });
-    const content = JSON.parse(payload.content) as any;
-    expect(content.header.title.content).toBe("无需解除绑定");
-    expect(content.body.elements[0].columns[0].elements[0].content).toContain("尚未绑定");
-  });
-
   it("renders a notice card", () => {
     const payload = buildNoticeCardPayload({
       title: "提醒",
-      template: "yellow",
-      iconToken: "maybe_outlined",
+      level: "warning",
       message: "会话列表已过期，请重新发送 `/sessions`",
-      messageIconToken: "maybe_outlined",
-      messageIconColor: "yellow",
     });
     const content = JSON.parse(payload.content) as any;
     expect(content.header.title.content).toBe("提醒");
@@ -407,13 +402,29 @@ describe("buildPostPayload", () => {
     });
     const content = JSON.parse(payload.content) as any;
     expect(content.header.title.content).toBe("权限请求");
+    expect(content.header.subtitle.content).toBe("120s 后自动拒绝");
     expect(content.header.template).toBe("purple");
     expect(content.body.elements[0].columns[0].elements[1].columns[0].elements[0].content).toContain("rm -rf dist/");
+    expect(content.body.elements[0].columns[0].elements[1].columns[0].elements[0].content).toContain("$ ");
     expect(content.body.elements[2].tag).toBe("column_set");
     expect(content.body.elements[2].columns[0].elements[0].text.content).toBe("/allow once · 仅此一次");
-    expect(content.body.elements[2].columns[1].elements[0].value.policy).toBe("deny");
-    expect(content.body.elements[2].columns[1].elements[0].confirm.text.content).toContain("确认拒绝当前权限请求");
-    expect(content.body.elements[3].columns[0].elements[0].content).toContain("120s 后自动拒绝");
+    expect(content.body.elements[3].columns[0].elements[0].value.policy).toBe("deny");
+    expect(content.body.elements[3].columns[0].elements[0].confirm.text.content).toContain("确认拒绝当前权限请求");
+    expect(content.body.elements[4].columns[0].elements[0].content).toContain("/allow once");
+  });
+
+  it("renders a button callback test card with key-value diagnostics", () => {
+    const payload = buildButtonCallbackTestCardPayload({
+      nonce: "nonce_demo",
+      callbackPath: "/webhook/card",
+    });
+    const content = JSON.parse(payload.content) as any;
+    const serialized = JSON.stringify(content);
+    expect(content.header.title.content).toBe("按钮回调测试");
+    expect(serialized).toContain("回调路径");
+    expect(serialized).toContain("/webhook/card");
+    expect(serialized).toContain("测试 nonce");
+    expect(serialized).toContain("nonce_demo");
   });
 
   it("renders a knowledge query card with sources and disclaimer", () => {
@@ -446,7 +457,8 @@ describe("buildPostPayload", () => {
     expect(serialized).toContain("https://example.com/base/app?table=tbl");
     expect(content.body.elements[0].columns[0].elements[0].icon).toBeUndefined();
     expect(content.body.elements[2].columns[0].elements[0].icon).toBeUndefined();
-    expect(serialized).toContain("warning_outlined");
+    expect(serialized).not.toContain("继续追问");
+    expect(serialized).toContain("🏛 法条：《劳动合同法》第 19 条");
   });
 
   it("falls back to plain source text when the knowledge view url is not a base table", () => {
@@ -478,44 +490,6 @@ describe("buildPostPayload", () => {
     expect(serialized).toContain("员工试用期最长多久");
   });
 
-  it("renders a knowledge ingest result card", () => {
-    const payload = buildKnowledgeIngestPayload({
-      sourceFile: "劳动合同法实务指南.pdf",
-      rawExtractedCount: 16,
-      dedupedCount: 4,
-      extractedCount: 12,
-      tagCounts: {
-        劳动: 8,
-        合同: 4,
-        解除: 3,
-        赔偿: 2,
-        程序: 2,
-        证据: 2,
-        调岗: 2,
-        培训: 2,
-        仲裁: 1,
-        诉讼: 1,
-        免责声明: 1,
-      },
-      durationMs: 12_000,
-      bitableUrl: "https://example.com/base/app?table=tbl",
-    });
-    const content = JSON.parse(payload.content) as any;
-    const serialized = JSON.stringify(content);
-    expect(serialized).toContain("知识入库完成");
-    expect(serialized).toContain("劳动合同法实务指南.pdf");
-    expect(serialized).toContain("入库 12");
-    expect(serialized).toContain("提取 16");
-    expect(serialized).toContain("去重 4");
-    expect(serialized).toContain("标签占比");
-    expect(serialized).toContain("\"tag\":\"劳动\"");
-    expect(serialized).toContain("查看知识库");
-    expect(serialized).toContain("耗时：12s");
-    expect(content.header.icon.token).toBe("yes_filled");
-    expect(content.body.elements[0].columns[0].elements[0].icon).toBeUndefined();
-    expect(serialized).not.toContain("link_outlined");
-  });
-
   it("renders a knowledge ingest processing card", () => {
     const payload = buildKnowledgeIngestProcessingPayload({
       sourceLabel: "劳动合同.txt",
@@ -530,13 +504,12 @@ describe("buildPostPayload", () => {
     expect(serialized).toContain("知识入库进行中");
     expect(serialized).toContain("处理文件");
     expect(serialized).toContain("读取内容");
-    expect(serialized).toContain("进行中...");
-    expect(serialized).toContain("当前进度");
+    expect(serialized).toContain("正在下载并解析文件");
+    expect(serialized).toContain("当前处理");
     expect(serialized).toContain("提取问答");
-    expect(serialized).toContain("等待中");
-    expect(serialized).toContain("loading_outlined");
-    expect(serialized).toContain("time_outlined");
-    expect(content.body.elements[0].columns[0].elements[0].icon).toBeUndefined();
+    expect(serialized).toContain("等待开始");
+    expect(serialized).toContain("0/1 已完成");
+    expect(content.body.elements[1].columns[0].elements[0].content).toContain("处理文件");
     expect(serialized).toContain("耗时");
   });
 
@@ -552,7 +525,7 @@ describe("buildPostPayload", () => {
     expect(serialized).toContain("写入失败");
     expect(serialized).toContain("Bitable 限流");
     expect(serialized).toContain("/retry");
-    expect(serialized).toContain("more-close_outlined");
+    expect(serialized).toContain("写入失败");
   });
 
   it("renders knowledge ingest queued and failure cards", () => {
@@ -578,16 +551,8 @@ describe("buildPostPayload", () => {
     expect(failureSerialized).toContain("请检查文件是否损坏或重新上传");
   });
 
-  it("renders knowledge ingest session summary and final cards", () => {
-    const sessionPayload = buildKnowledgeIngestSessionPayload({
-      completedCount: 3,
-      failedCount: 0,
-      queuedCount: 1,
-      currentLabel: "劳动合同法释义.pdf",
-      totalExtractedCount: 127,
-      totalDedupedCount: 38,
-    });
-    const finalPayload = buildKnowledgeIngestSessionFinalPayload({
+  it("renders knowledge ingest completed card", () => {
+    const finalPayload = buildKnowledgeIngestCompletedPayload({
       completedCount: 1,
       failedCount: 0,
       queuedCount: 0,
@@ -605,13 +570,7 @@ describe("buildPostPayload", () => {
       }],
     });
 
-    const sessionSerialized = JSON.stringify(JSON.parse(sessionPayload.content));
     const finalSerialized = JSON.stringify(JSON.parse(finalPayload.content));
-    expect(sessionSerialized).toContain("知识入库会话");
-    expect(sessionSerialized).toContain("已完成");
-    expect(sessionSerialized).toContain("劳动合同法释义.pdf");
-    expect(sessionSerialized).toContain("排队中");
-    expect(sessionSerialized).toContain("总入库");
     expect(finalSerialized).toContain("知识入库完成");
     expect(finalSerialized).toContain("劳动合同法实务指南.pdf");
     expect(finalSerialized).toContain("入库 12");
@@ -660,17 +619,13 @@ describe("buildPostPayload", () => {
     expect(completedSerialized).toContain("材料 6");
     expect(completedSerialized).toContain("证据 12");
     expect(completedSerialized).toContain("焦点 3");
-    expect(completedSerialized).toContain("打开分析文档");
-    expect(completedSerialized).toContain("打开总表");
-    expect(completedSerialized).toContain("关键证据视图");
-    expect(completedSerialized).toContain("缺口视图");
+    expect(completedSerialized).toContain("材料占比");
   });
 
   it("renders a notice card without body icon when disabled", () => {
     const payload = buildNoticeCardPayload({
       title: "知识入库失败",
-      template: "red",
-      iconToken: "error_filled",
+      level: "error",
       message: "Feishu createBitableRecord failed: SingleSelectFieldConvFail",
       showMessageIcon: false,
     });
@@ -681,11 +636,8 @@ describe("buildPostPayload", () => {
   it("renders a notice card without body icon by default", () => {
     const payload = buildNoticeCardPayload({
       title: "提示",
-      template: "blue",
-      iconToken: "info_outlined",
+      level: "info",
       message: "这是一个默认提示卡片。",
-      messageIconToken: "info_outlined",
-      messageIconColor: "blue",
     });
     const content = JSON.parse(payload.content) as any;
     expect(content.body.elements[0].columns[0].elements[0].icon).toBeUndefined();

@@ -15,7 +15,7 @@ import type { ChatWhitelist } from "../src/store/whitelist.js";
 import { FakeOpenCodeClient, FakeOpenCodeEventStream } from "./integration/fakes.js";
 
 describe("knowledge base bridge flow", () => {
-  it("routes private legal questions through a normal OpenCode turn instead of bridge-side auto detection", async () => {
+  it("routes private high-confidence legal questions to the knowledge card when results exist", async () => {
     const outbound = createOutbound();
     const eventStream = new FakeOpenCodeEventStream();
     const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "这是普通 OpenCode 回复。" });
@@ -50,11 +50,45 @@ describe("knowledge base bridge flow", () => {
 
     await app.handleIncomingMessage(createTextMessage("劳动合同试用期最长多久？"));
 
+    expect(knowledgeQuery).toHaveBeenCalledWith("劳动合同试用期最长多久？");
+    const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+    const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+    expect(JSON.stringify(replyPayloads)).toContain("法律咨询");
+    expect(JSON.stringify(replyPayloads)).toContain("试用期最长不超过六个月");
+    expect(JSON.stringify(updatedPayloads)).not.toContain("这是普通 OpenCode 回复。");
+  });
+
+  it("falls back to a normal private OpenCode turn when auto knowledge lookup has no results", async () => {
+    const outbound = createOutbound();
+    const eventStream = new FakeOpenCodeEventStream();
+    const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "这是普通 OpenCode 回复。" });
+    const knowledgeQuery = vi.fn(async (question: string) => ({
+      question,
+      results: [],
+    }));
+    const app = new BridgeApp(baseConfig({ autoDetect: true }), outbound, logger(), createWhitelist(), {
+      knowledge: {
+        query: knowledgeQuery,
+        async ingestFile() {
+          throw new Error("not used");
+        },
+        async syncMirror() {},
+        close() {},
+      },
+      opencode,
+      eventStream,
+      memory: null,
+    });
+
+    await app.handleIncomingMessage(createTextMessage("劳动合同试用期最长多久？"));
+
     await vi.waitFor(() => {
       const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
       expect(JSON.stringify(updatedPayloads)).toContain("这是普通 OpenCode 回复。");
     });
-    expect(knowledgeQuery).not.toHaveBeenCalled();
+    expect(knowledgeQuery).toHaveBeenCalledWith("劳动合同试用期最长多久？");
+    const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+    expect(JSON.stringify(replyPayloads)).not.toContain("法律咨询");
   });
 
   it("routes /kb-query through bridge-side knowledge lookup in private chat", async () => {
@@ -374,7 +408,7 @@ describe("knowledge base bridge flow", () => {
     expect(localPath).toContain("bridge-turn-file-");
     await expect(readFile(localPath, "utf8")).rejects.toThrow();
     const updatePayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
-    expect(JSON.stringify(updatePayloads)).toContain("出了点问题");
+    expect(JSON.stringify(updatePayloads)).toContain("执行失败");
   });
 
   it("rejects unsupported file types before entering the normal file flow", async () => {

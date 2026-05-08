@@ -10,7 +10,7 @@ import path from "node:path";
 import type { RuntimeModule, RuntimeModuleHandleResult, RuntimeModuleMessageContext } from "../bridge/module.js";
 import { routeIncomingText } from "../bridge/router.js";
 import type { PendingFileInstructionInteraction } from "../bridge/state.js";
-import { buildNoticeCardPayload } from "../feishu/shared-primitives.js";
+import { buildNoticeCardPayload, resolveNoticeLevelFromTemplate } from "../feishu/shared-primitives.js";
 import {
   applyContractDraftProgress,
   applyInvoiceRecognizeStep,
@@ -736,8 +736,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       await this.applyWorkbenchResult(message, pending, userInput, result);
       await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同起草已处理",
-        template: "green",
-        iconToken: "yes_outlined",
+        level: "info",
         message: result.message,
       }), {
         event: "contract workbench processed",
@@ -749,8 +748,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       const detail = error instanceof Error ? error.message : String(error);
       await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同起草处理失败",
-        template: "red",
-        iconToken: "error_filled",
+        level: "error",
         message: detail,
       }), {
         event: "contract workbench failed",
@@ -803,8 +801,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     } catch (error) {
       await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同起草失败",
-        template: "red",
-        iconToken: "error_filled",
+        level: "error",
         message: error instanceof Error ? error.message : String(error),
       }), {
         event: "contract draft failed",
@@ -834,8 +831,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       ].join("\n");
       await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同录入完成",
-        template: "green",
-        iconToken: "yes_outlined",
+        level: "info",
         message: summary,
       }), {
         event: "contract extract completed",
@@ -846,8 +842,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     } catch (error) {
       await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同录入失败",
-        template: "red",
-        iconToken: "error_filled",
+        level: "error",
         message: error instanceof Error ? error.message : String(error),
       }), {
         event: "contract extract failed",
@@ -896,8 +891,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     } catch (error) {
       await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "发票识别失败",
-        template: "red",
-        iconToken: "error_filled",
+        level: "error",
         message: error instanceof Error ? error.message : String(error),
       }), {
         event: "invoice recognize failed",
@@ -931,8 +925,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     } catch (error) {
       await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "案件录入失败",
-        template: "red",
-        iconToken: "error_filled",
+        level: "error",
         message: error instanceof Error ? error.message : String(error),
       }), {
         event: "case create failed",
@@ -958,8 +951,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       const summary = `匹配案件：${result.matchedLabel}`;
       await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "案件更新完成",
-        template: "green",
-        iconToken: "yes_outlined",
+        level: "info",
         message: summary,
       }), {
         event: "case update completed",
@@ -970,8 +962,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     } catch (error) {
       await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "案件更新失败",
-        template: "red",
-        iconToken: "error_filled",
+        level: "error",
         message: error instanceof Error ? error.message : String(error),
       }), {
         event: "case update failed",
@@ -1037,8 +1028,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       await this.updateWorkbenchAnchor(updated);
       await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同已载入工作会话",
-        template: "green",
-        iconToken: "yes_outlined",
+        level: "info",
         message: summary,
       }), {
         event: "contract workbench init from text",
@@ -1050,8 +1040,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       const detail = error instanceof Error ? error.message : String(error);
       await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同初始化失败",
-        template: "red",
-        iconToken: "error_filled",
+        level: "error",
         message: detail,
       }), {
         event: "contract workbench init from text failed",
@@ -1094,8 +1083,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       await this.updateWorkbenchAnchor(updated);
       await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同已载入工作会话",
-        template: "green",
-        iconToken: "yes_outlined",
+        level: "info",
         message: summary,
       }), {
         event: "contract workbench init from file",
@@ -1107,8 +1095,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       const detail = error instanceof Error ? error.message : String(error);
       await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
         title: "合同初始化失败",
-        template: "red",
-        iconToken: "error_filled",
+        level: "error",
         message: detail,
       }), {
         event: "contract workbench init from file failed",
@@ -1174,8 +1161,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         const summary = `Word 草稿已导出：${wordPath}`;
         await this.deps.transport.updatePayload(message.chatId, exportProcessing.messageId, buildNoticeCardPayload({
           title: "Word 导出完成",
-          template: "green",
-          iconToken: "yes_outlined",
+          level: "info",
           message: summary,
         }), {
           event: "contract workbench export completed",
@@ -1187,8 +1173,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         const detail = error instanceof Error ? error.message : String(error);
         await this.deps.transport.updatePayload(message.chatId, exportProcessing.messageId, buildNoticeCardPayload({
           title: "Word 导出失败",
-          template: "red",
-          iconToken: "error_filled",
+          level: "error",
           message: detail,
         }), {
           event: "contract workbench export failed",
@@ -1242,8 +1227,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
   private async updateWorkbenchAnchor(pending: PendingWorkbenchInteraction): Promise<void> {
     await this.deps.transport.updatePayload(pending.chatId, pending.anchorMessageId, buildNoticeCardPayload({
       title: "合同起草会话",
-      template: "blue",
-      iconToken: "edit_outlined",
+      level: "info",
       message: renderWorkbenchSummaryMessage(pending.state),
     }), {
       event: "contract workbench summary updated",
@@ -1280,8 +1264,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     try {
       await this.deps.transport.sendPayload(pending.chatId, buildNoticeCardPayload({
         title: "任务已超时",
-        template: "grey",
-        iconToken: "time_outlined",
+        level: "neutral",
         message: pending.kind === "contract-draft-onboard"
           ? "长时间未收到新的填写内容，当前合同起草引导已自动结束。重新发送 `/起草合同 引导` 即可继续。"
           : pending.kind === "contract-workbench"
@@ -1357,8 +1340,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       replyToMessageId: message.messageId,
     }, {
       title: options.title,
-      template: options.template,
-      iconToken: options.icon,
+      level: resolveNoticeLevelFromTemplate(options.template),
       message: options.message,
     }, {
       event: "contract assistant notice sent",

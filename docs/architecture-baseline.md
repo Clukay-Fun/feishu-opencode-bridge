@@ -1,6 +1,6 @@
 # 架构基线
 
-> 最后更新：2026-05-03
+> 最后更新：2026-05-08
 >
 > 这份文档定义了 post-demo 阶段的架构基线。
 > 如果它与 demo 导向的说明冲突，以这份文档的代码组织规则为准。
@@ -575,6 +575,7 @@ contract assistant 和 labor 目前都维护了相似模式：
 - `BusinessCardBlock.kind` 统一使用小写驼峰命名，例如 `tagChart`、`stepList`、`elapsed`；不要在不同 PR 中混用短横线、下划线或同义别名
 - 交互型业务模板可通过 `actions` block 渲染按钮，但按钮 value 只能携带模块自有 action payload；不得把模板 runtime 扩展成通用业务路由器
 - `src/feishu/formatter.ts` 的导出面变更必须同步 formatter export snapshot；如果某个业务能力改为后台自动执行，不应继续保留仅供旧确认卡使用的导出
+- 用户侧卡片以 `docs/cards/spec.md` 为当前样式真值；群聊 `/who`、`/leave` 与提醒类卡片停用时，必须同步删除调用面、formatter export、测试断言和用户侧 guide 提及，避免保留孤儿卡片入口
 
 建议方向：
 

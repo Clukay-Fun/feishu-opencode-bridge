@@ -130,14 +130,14 @@ describe("routeIncomingText", () => {
     });
   });
 
-  it("routes group whitelist commands", () => {
+  it("treats removed group whitelist commands as passthrough", () => {
     expect(routeIncomingText("/who")).toEqual({
       kind: "command",
-      command: { kind: "who" },
+      command: { kind: "passthrough", name: "who", arguments: [] },
     });
     expect(routeIncomingText("/leave")).toEqual({
       kind: "command",
-      command: { kind: "leave" },
+      command: { kind: "passthrough", name: "leave", arguments: [] },
     });
   });
 
@@ -241,11 +241,11 @@ describe("routeIncomingText", () => {
   it("routes slash commands with a visible mention prefix", () => {
     expect(routeIncomingText("@机器人 /who")).toEqual({
       kind: "command",
-      command: { kind: "who" },
+      command: { kind: "passthrough", name: "who", arguments: [] },
     });
     expect(routeIncomingText("@OpenCode /who")).toEqual({
       kind: "command",
-      command: { kind: "who" },
+      command: { kind: "passthrough", name: "who", arguments: [] },
     });
     expect(routeIncomingText("@Open Code /status")).toEqual({
       kind: "command",
