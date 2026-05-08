@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.1.61 - 2026-05-09
+
+### Added
+- Added the case workbench entry module with `/案件工作台` and high-confidence natural-language routing into labor material collection.
+- Added deterministic statute-reference matching for knowledge queries before embedding and rerank.
+- Added a configurable Jina-compatible knowledge rerank provider and local recall harness coverage.
+- Added `npm run cards:preview` for rendering Feishu card preview payloads during card design work.
+
+### Changed
+- Updated labor analysis to separate first-pass completion from final review completion cards.
+- Refined user-facing card layouts for runtime, knowledge, labor, contract, case, and invoice workflows.
+- Updated README command surfaces and card documentation around retired `/who`, `/leave`, and reminder entries.
+
 ## 0.1.60 - 2026-05-06
 
 ### Added

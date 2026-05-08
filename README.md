@@ -3,7 +3,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6)](https://www.typescriptlang.org/)
 [![Feishu](https://img.shields.io/badge/Feishu-Bridge-0F6FFF)](https://open.feishu.cn/)
-[![测试](https://img.shields.io/badge/tests-622%20passing-success)](#%EF%B8%8F-开发命令)
+[![测试](https://img.shields.io/badge/tests-618%20passing-success)](#%EF%B8%8F-开发命令)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **中文** | [英文版](README.en.md)
@@ -18,6 +18,8 @@
 敏感案件建议使用本地模型或私有模型网关，并保持 `memory.enabled=false`、`knowledgeBase.parser.externalApiEnabled=false`、`logging.messagePolicy=preview/hash/none`。
 
 ## 📢 项目动态
+
+**2026-05-09** · `0.1.61` 开发版新增案件工作台统一入口、知识库法条精确召回与 Jina-compatible 重排配置，继续收口用户侧卡片规范和劳动二审展示，当前验证基线为 75 个测试文件、618 个测试
 
 **2026-05-06** · `0.1.60` 开发版新增 Legal Harness 卡片模板、劳动二审校验链路、模板 actions 区块，并补充批量案件/发票 skill 边界，当前验证基线更新为 72 个测试文件、622 个测试
 
@@ -280,7 +282,7 @@ npm run doctor
 
 `/合同起草开始` · `/案件录入 <案件信息>` — 合同助手
 
-`/劳动分析` — 劳动争议分析
+`/案件工作台` · `/完成上传` — 案件工作台材料收集与分析
 
 <details>
 <summary>展开全部命令</summary>
@@ -302,12 +304,6 @@ npm run doctor
 `/abort`：中止当前任务
 
 `/models`、`/models <provider>`：查看模型列表
-
-### 群聊协作
-
-`/who`：查看当前群绑定状态
-
-`/leave`：解除当前用户的群聊绑定
 
 ### 权限确认
 
@@ -343,17 +339,11 @@ npm run doctor
 
 `/案件更新 <更新内容>`
 
-`/案件待办`
+### 案件工作台
 
-`/案件提醒`
+`/案件工作台`
 
-`/添加案件提醒 <提醒内容>`
-
-### 劳动分析
-
-`/劳动分析`
-
-`/劳动分析结束`
+`/完成上传`
 
 未被 bridge 接管的 slash 命令会透传给 OpenCode，例如 `/model use ...`、`/model reset`、`/review`、`/init`。
 
