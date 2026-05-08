@@ -136,11 +136,22 @@ const KnowledgeBaseObsidianSchema = z.object({
 
 const PkulawTransportSchema = z.enum(["auto", "stdio", "http"]);
 
+const PkulawSkillBindingSchema = z.object({
+  tool: z.string().min(1),
+  operation: z.string().min(1),
+});
+
 const KnowledgeBaseAuthoritySourcesSchema = z.object({
   pkulaw: z.object({
     enabled: z.boolean().default(false),
     cliCommand: z.string().min(1).default("pkulaw-mcp"),
     transport: PkulawTransportSchema.default("auto"),
+    skills: z.object({
+      lawSemantic: PkulawSkillBindingSchema.default({ tool: "law-semantic", operation: "search_article" }),
+      lawRecognition: PkulawSkillBindingSchema.default({ tool: "law_recognition", operation: "law_recognition" }),
+      citationValidator: PkulawSkillBindingSchema.default({ tool: "pku_citation_validator", operation: "adjust_provisions" }),
+      caseNumberRecognition: PkulawSkillBindingSchema.default({ tool: "pkulaw-case-number-recognition", operation: "anhao_recognition" }),
+    }).default({}),
   }).default({}),
 }).default({});
 
@@ -248,6 +259,12 @@ export type KnowledgeBaseConfig = {
       enabled: boolean;
       cliCommand: string;
       transport: "auto" | "stdio" | "http";
+      skills: {
+        lawSemantic: { tool: string; operation: string };
+        lawRecognition: { tool: string; operation: string };
+        citationValidator: { tool: string; operation: string };
+        caseNumberRecognition: { tool: string; operation: string };
+      };
     };
   } | undefined;
 };
@@ -416,6 +433,12 @@ function normalizeKnowledgeBaseConfig(
         enabled: parsed.authoritySources.pkulaw.enabled,
         cliCommand: parsed.authoritySources.pkulaw.cliCommand,
         transport: parsed.authoritySources.pkulaw.transport,
+        skills: {
+          lawSemantic: parsed.authoritySources.pkulaw.skills.lawSemantic,
+          lawRecognition: parsed.authoritySources.pkulaw.skills.lawRecognition,
+          citationValidator: parsed.authoritySources.pkulaw.skills.citationValidator,
+          caseNumberRecognition: parsed.authoritySources.pkulaw.skills.caseNumberRecognition,
+        },
       },
     },
   };

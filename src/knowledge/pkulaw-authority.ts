@@ -1,7 +1,7 @@
 /**
- * 职责: 适配北大法宝 law-semantic 权威法规检索。
+ * 职责: 适配北大法宝 MCP 后台权威源。
  * 关注点:
- * - 通过本机 pkulaw-mcp CLI 调用权威源，不在日志或缓存中保存 token。
+ * - 通过本机 pkulaw-mcp CLI 调用法条检索、法条校验、法条溯源和案号溯源，不在日志或缓存中保存 token。
  * - 使用可重建文件缓存保护劳动分析主流程的延迟与稳定性。
  * - 将超时、认证失败、空结果统一降级为可展示状态。
  */
@@ -17,8 +17,12 @@ import type { CostTracker } from "../runtime/cost-tracker.js";
 import { redactEvidenceText } from "../runtime/sanitize.js";
 
 const execFileAsync = promisify(execFile);
-const LAW_SEMANTIC_TOOL = "law-semantic";
-const LAW_SEMANTIC_OPERATION = "search_article";
+const DEFAULT_SKILLS = {
+  lawSemantic: { tool: "law-semantic", operation: "search_article" },
+  lawRecognition: { tool: "law_recognition", operation: "law_recognition" },
+  citationValidator: { tool: "pku_citation_validator", operation: "adjust_provisions" },
+  caseNumberRecognition: { tool: "pkulaw-case-number-recognition", operation: "anhao_recognition" },
+} as const;
 const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -45,19 +49,76 @@ export type PkulawAuthoritySearchResult =
     message: string;
   };
 
+export type PkulawToolStatus = PkulawAuthoritySearchResult["status"];
+
+export type PkulawLawRecognitionItem = {
+  text: string;
+  original: string;
+  fulltext?: string | undefined;
+  source?: string | undefined;
+};
+
+export type PkulawCitationValidationInput = {
+  userlaw?: Array<{ title: string; article_number: string }> | undefined;
+  answerlaw?: Array<{ title: string; article_number: string; text?: string | undefined }> | undefined;
+  prompt?: string | undefined;
+};
+
+export type PkulawCitationValidationItem = {
+  title: string;
+  articleNumber: string;
+  originalText: string;
+  url?: string | undefined;
+  issueDate?: string | undefined;
+  implementDate?: string | undefined;
+  gid?: string | undefined;
+  lib?: string | undefined;
+  kuanNumber?: string | undefined;
+};
+
+export type PkulawCaseNumberItem = {
+  text: string;
+  start?: number | undefined;
+  end?: number | undefined;
+  gid?: string | undefined;
+  caseFlag?: string | undefined;
+  court?: string | undefined;
+  title?: string | undefined;
+  lastInstanceDate?: string | undefined;
+  url?: string | undefined;
+};
+
+export type PkulawToolResult<T> =
+  | {
+    status: "success" | "cache-hit";
+    input: string;
+    items: T[];
+    durationMs: number;
+  }
+  | {
+    status: "disabled" | "timeout" | "error" | "empty";
+    input: string;
+    items: T[];
+    durationMs: number;
+    message: string;
+  };
+
 type PkulawCacheFile = {
   schemaVersion: 1;
-  toolName: typeof LAW_SEMANTIC_TOOL;
-  operation: typeof LAW_SEMANTIC_OPERATION;
+  toolName: string;
+  operation: string;
   createdAt: string;
   expiresAt: string;
-  items: PkulawAuthorityItem[];
+  items: unknown[];
 };
+
+type PkulawSkillBindings = NonNullable<KnowledgeBaseConfig["authoritySources"]>["pkulaw"]["skills"];
 
 export class PkulawAuthorityService {
   private readonly cacheDir: string;
   private readonly enabled: boolean;
   private readonly cliCommand: string;
+  private readonly skills: PkulawSkillBindings;
 
   constructor(
     config: KnowledgeBaseConfig,
@@ -69,6 +130,7 @@ export class PkulawAuthorityService {
     const pkulaw = config.authoritySources?.pkulaw;
     this.enabled = pkulaw?.enabled === true;
     this.cliCommand = pkulaw?.cliCommand ?? "pkulaw-mcp";
+    this.skills = pkulaw?.skills ?? DEFAULT_SKILLS;
     this.cacheDir = path.join(dataDir, "pkulaw-cache");
   }
 
@@ -86,13 +148,14 @@ export class PkulawAuthorityService {
       return this.fail("empty", query, startedAt, "未生成可用权威检索词。");
     }
 
-    const cacheKey = buildPkulawCacheKey(query);
+    const skill = this.skills.lawSemantic;
+    const cacheKey = buildPkulawCacheKey(skill.tool, skill.operation, query);
     const cached = await this.readCache(cacheKey);
     if (cached) {
       return {
         status: "cache-hit",
         query,
-        items: cached.items,
+        items: normalizePkulawItems(cached.items),
         durationMs: Date.now() - startedAt,
       };
     }
@@ -100,7 +163,7 @@ export class PkulawAuthorityService {
     try {
       const { stdout, stderr } = await execFileAsync(
         this.cliCommand,
-        [LAW_SEMANTIC_TOOL, LAW_SEMANTIC_OPERATION, "--text", query, "--json"],
+        [skill.tool, skill.operation, "--text", query, "--json"],
         {
           timeout: this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
           maxBuffer: 1024 * 1024,
@@ -113,13 +176,13 @@ export class PkulawAuthorityService {
         }, "warn");
         return this.fail("empty", query, startedAt, "未检索到权威法规。");
       }
-      await this.writeCache(cacheKey, items);
+      await this.writeCache(cacheKey, skill.tool, skill.operation, items);
       await this.costTracker?.recordExternalCall({
         turnId: input.turnId,
         sessionId: input.sessionId,
         provider: "pkulaw",
-        tool: LAW_SEMANTIC_TOOL,
-        operation: LAW_SEMANTIC_OPERATION,
+        tool: skill.tool,
+        operation: skill.operation,
         durationMs: Date.now() - startedAt,
       });
       return {
@@ -139,6 +202,169 @@ export class PkulawAuthorityService {
     }
   }
 
+  async recognizeLawReferences(input: {
+    text: string;
+    turnId: string;
+    sessionId: string;
+  }): Promise<PkulawToolResult<PkulawLawRecognitionItem>> {
+    return await this.callTextTool({
+      kind: "law-recognition",
+      binding: this.skills.lawRecognition,
+      text: input.text,
+      turnId: input.turnId,
+      sessionId: input.sessionId,
+      emptyMessage: "未识别到法规名称或条款。",
+      normalize: normalizeLawRecognitionItems,
+    });
+  }
+
+  async validateCitations(input: {
+    param: PkulawCitationValidationInput;
+    turnId: string;
+    sessionId: string;
+  }): Promise<PkulawToolResult<PkulawCitationValidationItem>> {
+    const payload = JSON.stringify(input.param);
+    return await this.callJsonParamTool({
+      kind: "citation-validator",
+      binding: this.skills.citationValidator,
+      payload,
+      turnId: input.turnId,
+      sessionId: input.sessionId,
+      emptyMessage: "未返回可校验法条。",
+      normalize: normalizeCitationValidationItems,
+    });
+  }
+
+  async recognizeCaseNumbers(input: {
+    text: string;
+    turnId: string;
+    sessionId: string;
+  }): Promise<PkulawToolResult<PkulawCaseNumberItem>> {
+    return await this.callTextTool({
+      kind: "case-number-recognition",
+      binding: this.skills.caseNumberRecognition,
+      text: input.text,
+      turnId: input.turnId,
+      sessionId: input.sessionId,
+      emptyMessage: "未识别到可溯源案号。",
+      normalize: normalizeCaseNumberItems,
+    });
+  }
+
+  private async callTextTool<T>(input: {
+    kind: string;
+    binding: { tool: string; operation: string };
+    text: string;
+    turnId: string;
+    sessionId: string;
+    emptyMessage: string;
+    normalize: (value: unknown) => T[];
+  }): Promise<PkulawToolResult<T>> {
+    const text = input.text.trim();
+    return await this.callTool({
+      kind: input.kind,
+      binding: input.binding,
+      inputText: text,
+      args: ["--text", text, "--json"],
+      turnId: input.turnId,
+      sessionId: input.sessionId,
+      emptyMessage: input.emptyMessage,
+      normalize: input.normalize,
+    });
+  }
+
+  private async callJsonParamTool<T>(input: {
+    kind: string;
+    binding: { tool: string; operation: string };
+    payload: string;
+    turnId: string;
+    sessionId: string;
+    emptyMessage: string;
+    normalize: (value: unknown) => T[];
+  }): Promise<PkulawToolResult<T>> {
+    return await this.callTool({
+      kind: input.kind,
+      binding: input.binding,
+      inputText: input.payload,
+      args: ["--param", input.payload, "--json"],
+      turnId: input.turnId,
+      sessionId: input.sessionId,
+      emptyMessage: input.emptyMessage,
+      normalize: input.normalize,
+    });
+  }
+
+  private async callTool<T>(input: {
+    kind: string;
+    binding: { tool: string; operation: string };
+    inputText: string;
+    args: string[];
+    turnId: string;
+    sessionId: string;
+    emptyMessage: string;
+    normalize: (value: unknown) => T[];
+  }): Promise<PkulawToolResult<T>> {
+    const startedAt = Date.now();
+    if (!this.enabled) {
+      return this.toolFail("disabled", input.inputText, startedAt, "pkulaw 未启用。");
+    }
+    if (!input.inputText.trim()) {
+      return this.toolFail("empty", input.inputText, startedAt, input.emptyMessage);
+    }
+
+    const cacheKey = buildPkulawCacheKey(input.binding.tool, input.binding.operation, input.inputText);
+    const cached = await this.readCache(cacheKey);
+    if (cached) {
+      return {
+        status: "cache-hit",
+        input: input.inputText,
+        items: input.normalize(cached.items),
+        durationMs: Date.now() - startedAt,
+      };
+    }
+
+    try {
+      const { stdout, stderr } = await execFileAsync(
+        this.cliCommand,
+        [input.binding.tool, input.binding.operation, ...input.args],
+        {
+          timeout: this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          maxBuffer: 2 * 1024 * 1024,
+        },
+      );
+      const items = input.normalize(parsePkulawJson(stdout));
+      if (items.length === 0) {
+        this.logger.log("knowledge/pkulaw", `${input.kind} returned empty result`, {
+          stderrPreview: redactEvidenceText(stderr.slice(0, 160)),
+        }, "warn");
+        return this.toolFail("empty", input.inputText, startedAt, input.emptyMessage);
+      }
+      await this.writeCache(cacheKey, input.binding.tool, input.binding.operation, items);
+      await this.costTracker?.recordExternalCall({
+        turnId: input.turnId,
+        sessionId: input.sessionId,
+        provider: "pkulaw",
+        tool: input.binding.tool,
+        operation: input.binding.operation,
+        durationMs: Date.now() - startedAt,
+      });
+      return {
+        status: "success",
+        input: input.inputText,
+        items,
+        durationMs: Date.now() - startedAt,
+      };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      const status = /timed out|timeout|SIGTERM/i.test(detail) ? "timeout" : "error";
+      this.logger.log("knowledge/pkulaw", `${input.kind} downgraded`, {
+        status,
+        detail: redactEvidenceText(detail.slice(0, 240)),
+      }, status === "timeout" ? "warn" : "error");
+      return this.toolFail(status, input.inputText, startedAt, status === "timeout" ? "北大法宝调用超时。" : "北大法宝调用不可用。");
+    }
+  }
+
   private fail(
     status: "disabled" | "timeout" | "error" | "empty",
     query: string,
@@ -148,6 +374,21 @@ export class PkulawAuthorityService {
     return {
       status,
       query,
+      items: [],
+      durationMs: Date.now() - startedAt,
+      message,
+    };
+  }
+
+  private toolFail<T>(
+    status: "disabled" | "timeout" | "error" | "empty",
+    input: string,
+    startedAt: number,
+    message: string,
+  ): PkulawToolResult<T> {
+    return {
+      status,
+      input,
       items: [],
       durationMs: Date.now() - startedAt,
       message,
@@ -170,12 +411,12 @@ export class PkulawAuthorityService {
     }
   }
 
-  private async writeCache(cacheKey: string, items: PkulawAuthorityItem[]): Promise<void> {
+  private async writeCache(cacheKey: string, toolName: string, operation: string, items: unknown[]): Promise<void> {
     const now = Date.now();
     const payload: PkulawCacheFile = {
       schemaVersion: 1,
-      toolName: LAW_SEMANTIC_TOOL,
-      operation: LAW_SEMANTIC_OPERATION,
+      toolName,
+      operation,
       createdAt: new Date(now).toISOString(),
       expiresAt: new Date(now + (this.options.ttlMs ?? DEFAULT_TTL_MS)).toISOString(),
       items,
@@ -185,8 +426,8 @@ export class PkulawAuthorityService {
   }
 }
 
-function buildPkulawCacheKey(query: string): string {
-  return crypto.createHash("sha256").update(`${LAW_SEMANTIC_TOOL}\n${query}`).digest("hex");
+function buildPkulawCacheKey(toolName: string, operation: string, input: string): string {
+  return crypto.createHash("sha256").update(`${toolName}\n${operation}\n${input}`).digest("hex");
 }
 
 function parsePkulawJson(stdout: string): unknown {
@@ -221,9 +462,74 @@ function normalizePkulawItems(value: unknown): PkulawAuthorityItem[] {
     }));
 }
 
+function normalizeLawRecognitionItems(value: unknown): PkulawLawRecognitionItem[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    .map((item) => ({
+      text: redactEvidenceText(readString(item, "text") ?? ""),
+      original: redactEvidenceText(readString(item, "original") ?? readString(item, "text") ?? ""),
+      fulltext: redactEvidenceText((readString(item, "fulltext") ?? "").slice(0, 1200)) || undefined,
+      source: readString(item, "source"),
+    }))
+    .filter((item) => item.text || item.original || item.fulltext)
+    .slice(0, 10);
+}
+
+function normalizeCitationValidationItems(value: unknown): PkulawCitationValidationItem[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    .map((item) => ({
+      title: redactEvidenceText(readString(item, "title") ?? ""),
+      articleNumber: readString(item, "article_number") ?? readString(item, "articleNumber") ?? "",
+      originalText: redactEvidenceText((readString(item, "original_text") ?? readString(item, "originalText") ?? "").slice(0, 1200)),
+      url: readString(item, "url"),
+      issueDate: readString(item, "issue_date") ?? readString(item, "issueDate"),
+      implementDate: readString(item, "implement_date") ?? readString(item, "implementDate"),
+      gid: readString(item, "gid"),
+      lib: readString(item, "lib"),
+      kuanNumber: readString(item, "kuan_number") ?? readString(item, "kuanNumber"),
+    }))
+    .filter((item) => item.title || item.originalText)
+    .slice(0, 10);
+}
+
+function normalizeCaseNumberItems(value: unknown): PkulawCaseNumberItem[] {
+  const rows: unknown[] = Array.isArray(value)
+    ? value
+    : value && typeof value === "object" && !Array.isArray(value) && Array.isArray((value as Record<string, unknown>)["anhaoname"])
+      ? (value as Record<string, unknown>)["anhaoname"] as unknown[]
+      : [];
+  return rows
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    .map((item) => ({
+      text: redactEvidenceText(readString(item, "text") ?? readString(item, "caseFlag") ?? ""),
+      start: readNumber(item, "start"),
+      end: readNumber(item, "end"),
+      gid: readString(item, "gid"),
+      caseFlag: redactEvidenceText(readString(item, "caseFlag") ?? ""),
+      court: redactEvidenceText(readString(item, "court") ?? ""),
+      title: redactEvidenceText(readString(item, "title") ?? ""),
+      lastInstanceDate: readString(item, "lastInstanceDate"),
+      url: readString(item, "url"),
+    }))
+    .filter((item) => item.text || item.caseFlag || item.title)
+    .slice(0, 10);
+}
+
 function readString(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readNumber(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function readDictionaryText(record: Record<string, unknown>, key: string): string | undefined {

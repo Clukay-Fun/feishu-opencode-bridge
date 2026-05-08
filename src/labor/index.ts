@@ -15,6 +15,11 @@ import type {
   PkulawAuthorityItem,
   PkulawAuthoritySearchResult,
   PkulawAuthorityService,
+  PkulawCaseNumberItem,
+  PkulawCitationValidationInput,
+  PkulawCitationValidationItem,
+  PkulawLawRecognitionItem,
+  PkulawToolResult,
 } from "../knowledge/pkulaw-authority.js";
 import type { Logger } from "../logging/logger.js";
 import type { OpenCodeClient, OpenCodeModelRef, OpenCodePromptRequest } from "../opencode/client.js";
@@ -92,6 +97,9 @@ export type LaborAuthoritySearchDraft = {
 export type LaborAuthorityAppendResult = {
   markdown: string;
   search: PkulawAuthoritySearchResult;
+  lawRecognition?: PkulawToolResult<PkulawLawRecognitionItem> | undefined;
+  citationValidation?: PkulawToolResult<PkulawCitationValidationItem> | undefined;
+  caseNumberRecognition?: PkulawToolResult<PkulawCaseNumberItem> | undefined;
 };
 
 export type LaborMaterialExtractResult = {
@@ -129,6 +137,9 @@ export interface LaborFinalReviewReport {
 export type LaborReviewAuthorityContext = {
   status: "pending" | "skipped" | "completed";
   searchResult?: PkulawAuthoritySearchResult | undefined;
+  lawRecognition?: PkulawToolResult<PkulawLawRecognitionItem> | undefined;
+  citationValidation?: PkulawToolResult<PkulawCitationValidationItem> | undefined;
+  caseNumberRecognition?: PkulawToolResult<PkulawCaseNumberItem> | undefined;
 };
 
 type LaborSkillCacheFile = {
@@ -148,7 +159,7 @@ export class LaborSkillService {
     private readonly opencode: OpenCodePort,
     private readonly logger: Logger,
     private readonly knowledge: KnowledgeBasePort | null,
-    private readonly authority: Pick<PkulawAuthorityService, "searchLawSemantic"> | null = null,
+    private readonly authority: Pick<PkulawAuthorityService, "searchLawSemantic" | "recognizeLawReferences" | "validateCitations" | "recognizeCaseNumbers"> | null = null,
     parserOptions?: DocumentParserOptions | undefined,
   ) {
     this.evidenceExtractor = new EvidenceExtractService(resources, opencode, logger, parserOptions);
@@ -185,17 +196,46 @@ export class LaborSkillService {
       sessionId: string;
     },
   ): Promise<LaborAuthorityAppendResult> {
-    const search = this.authority
-      ? await this.authority.searchLawSemantic(input)
-      : {
-        status: "disabled" as const,
-        query: input.query,
-        items: [],
-        durationMs: 0,
-        message: "pkulaw 未启用。",
-      };
+    const disabledSearch = {
+      status: "disabled" as const,
+      query: input.query,
+      items: [],
+      durationMs: 0,
+      message: "pkulaw 未启用。",
+    };
+    const disabledToolResult = {
+      status: "disabled" as const,
+      input: result.markdown,
+      items: [],
+      durationMs: 0,
+      message: "pkulaw 未启用。",
+    };
+    const citationParam = buildPkulawCitationValidationParam(result);
+    const [search, lawRecognition, citationValidation, caseNumberRecognition] = this.authority
+      ? await Promise.all([
+        this.authority.searchLawSemantic(input),
+        this.authority.recognizeLawReferences({
+          text: result.markdown,
+          turnId: input.turnId,
+          sessionId: input.sessionId,
+        }),
+        this.authority.validateCitations({
+          param: citationParam,
+          turnId: input.turnId,
+          sessionId: input.sessionId,
+        }),
+        this.authority.recognizeCaseNumbers({
+          text: result.markdown,
+          turnId: input.turnId,
+          sessionId: input.sessionId,
+        }),
+      ])
+      : [disabledSearch, disabledToolResult, disabledToolResult, disabledToolResult];
     return {
       search,
+      lawRecognition,
+      citationValidation,
+      caseNumberRecognition,
       markdown: renderPkulawAuthorityAppendMarkdown(result.title, search),
     };
   }
@@ -1022,6 +1062,50 @@ function buildPromptRequest(prompt: string, model?: OpenCodeModelRef): OpenCodeP
   return model
     ? { model, parts: [{ type: "text", text: prompt }] }
     : { parts: [{ type: "text", text: prompt }] };
+}
+
+function buildPkulawCitationValidationParam(result: LaborAnalyzeResult): PkulawCitationValidationInput {
+  const legalTextBlocks = [
+    ...result.aggregate.legalSupports.flatMap((item) => [item.rule, item.relation]),
+    ...result.aggregate.claimBasis.flatMap((item) => [item.basis, item.reviewNote ?? ""]),
+    result.markdown,
+  ].filter((item) => item.trim().length > 0);
+  const seen = new Set<string>();
+  const answerlaw: NonNullable<PkulawCitationValidationInput["answerlaw"]> = [];
+  for (const block of legalTextBlocks) {
+    for (const ref of extractLawArticleRefs(block)) {
+      const key = `${ref.title}#${ref.article_number}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      answerlaw.push({
+        ...ref,
+        text: block.slice(0, 500),
+      });
+    }
+  }
+  return {
+    answerlaw: answerlaw.slice(0, 12),
+    prompt: [
+      result.aggregate.caseTitle,
+      result.aggregate.summary,
+      ...result.aggregate.keyIssues.slice(0, 5),
+    ].filter(Boolean).join("\n").slice(0, 1200),
+  };
+}
+
+function extractLawArticleRefs(text: string): Array<{ title: string; article_number: string }> {
+  const refs: Array<{ title: string; article_number: string }> = [];
+  const pattern = /《([^》]{2,80})》\s*第?\s*([一二三四五六七八九十百千万零〇\d]+)\s*条/g;
+  for (const match of text.matchAll(pattern)) {
+    const title = match[1]?.trim();
+    const article = match[2]?.trim();
+    if (title && article) {
+      refs.push({ title, article_number: article });
+    }
+  }
+  return refs;
 }
 
 function resolveModel(config: LaborSkillConfig, step: "extract" | "analyze" | "review"): OpenCodeModelRef | undefined {

@@ -93,7 +93,7 @@ export function buildLaborReviewPrompt(result: {
     evidenceRows: Array<{ name: string; type?: string | undefined; proves: string; support?: string | undefined; strength?: string | undefined; risk?: string | undefined; remarks?: string | undefined }>;
   };
   extractedMaterials: Array<{ materialType: string; summary: string }>;
-}, authorityContext?: { status: "pending" | "skipped" | "completed"; searchResult?: { query: string; items: Array<{ title: string; excerpt: string }> } | undefined }): string {
+}, authorityContext?: LaborReviewPromptAuthorityContext): string {
   const domain = result.aggregate;
   const findings: string[] = [];
   const authorityCoverage: Array<{ issue: string; status: "sufficient" | "partial" | "missing" | "skipped"; sourceType: string }> = [];
@@ -167,8 +167,16 @@ export function buildLaborReviewPrompt(result: {
   ].join("\n");
 }
 
+type LaborReviewPromptAuthorityContext = {
+  status: "pending" | "skipped" | "completed";
+  searchResult?: { query: string; items: Array<{ title: string; excerpt: string }> } | undefined;
+  lawRecognition?: { status: string; items: Array<{ text: string; original: string; fulltext?: string | undefined; source?: string | undefined }> } | undefined;
+  citationValidation?: { status: string; items: Array<{ title: string; articleNumber: string; originalText: string; url?: string | undefined; issueDate?: string | undefined; implementDate?: string | undefined }> } | undefined;
+  caseNumberRecognition?: { status: string; items: Array<{ text: string; caseFlag?: string | undefined; court?: string | undefined; title?: string | undefined; lastInstanceDate?: string | undefined; url?: string | undefined }> } | undefined;
+};
+
 /** 根据权威检索状态构建二审提示上下文。 */
-function buildAuthorityContextBlock(authorityContext?: { status: "pending" | "skipped" | "completed"; searchResult?: { query: string; items: Array<{ title: string; excerpt: string }> } | undefined }): string {
+function buildAuthorityContextBlock(authorityContext?: LaborReviewPromptAuthorityContext): string {
   if (!authorityContext || authorityContext.status === "pending") {
     return [
       "## 权威检索状态",
@@ -185,13 +193,45 @@ function buildAuthorityContextBlock(authorityContext?: { status: "pending" | "sk
   }
   const items = authorityContext.searchResult?.items ?? [];
   const searchQuery = authorityContext.searchResult?.query ?? "未知";
+  const lawItems = authorityContext.lawRecognition?.items ?? [];
+  const citationItems = authorityContext.citationValidation?.items ?? [];
+  const caseItems = authorityContext.caseNumberRecognition?.items ?? [];
   return [
     "## 权威检索状态",
-    `权威法规检索已完成，检索词：${searchQuery}，命中 ${items.length} 条。`,
-    "请交叉验证分析报告中的法律结论是否与权威检索结果一致。",
+    `北大法宝后台源已执行：语义法规检索 ${items.length} 条，法条识别 ${lawItems.length} 条，法条校验 ${citationItems.length} 条，案号溯源 ${caseItems.length} 条。`,
+    "请交叉验证分析报告中的法律结论、法条原文、案号来源和案例引用是否与后台源一致。",
     "",
-    "### 检索结果",
+    "### 语义法规检索",
+    `检索词：${searchQuery}`,
     ...items.slice(0, 5).map((item, index) => `${index + 1}. ${item.title}：${item.excerpt}`),
     items.length === 0 ? "未检索到权威法规。" : "",
+    "",
+    "### 法条识别与溯源",
+    ...lawItems.slice(0, 8).map((item, index) => [
+      `${index + 1}. 原文命中：${item.text}`,
+      `   标准名称：${item.original}`,
+      item.fulltext ? `   法条原文：${item.fulltext}` : "",
+      item.source ? `   来源：${item.source}` : "",
+    ].filter(Boolean).join("\n")),
+    lawItems.length === 0 ? "未识别到法规名称或条款。" : "",
+    "",
+    "### 修正生成幻觉-法条",
+    ...citationItems.slice(0, 8).map((item, index) => [
+      `${index + 1}. ${item.title} 第 ${item.articleNumber} 条`,
+      `   权威原文：${item.originalText}`,
+      item.implementDate ? `   实施日期：${item.implementDate}` : "",
+      item.url ? `   来源：${item.url}` : "",
+    ].filter(Boolean).join("\n")),
+    citationItems.length === 0 ? "未返回可校验法条。" : "",
+    "",
+    "### 案号识别与溯源",
+    ...caseItems.slice(0, 8).map((item, index) => [
+      `${index + 1}. ${item.caseFlag || item.text}`,
+      item.court ? `   法院：${item.court}` : "",
+      item.title ? `   案件：${item.title}` : "",
+      item.lastInstanceDate ? `   裁判日期：${item.lastInstanceDate}` : "",
+      item.url ? `   来源：${item.url}` : "",
+    ].filter(Boolean).join("\n")),
+    caseItems.length === 0 ? "未识别到可溯源案号。" : "",
   ].filter(Boolean).join("\n");
 }
