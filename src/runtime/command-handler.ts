@@ -9,14 +9,12 @@ import type { PendingInteraction, PendingPermissionInteraction, PendingSessionSe
 import type { RoutedText } from "../bridge/router.js";
 import {
   buildButtonCallbackTestCardPayload,
-  buildLeaveCommandCardPayload,
   buildGuideCardPayload,
   buildCostCommandCardPayload,
   buildModelListCardPayload,
   buildSessionListCardPayload,
   buildSessionTransitionCardPayload,
   buildStatusCommandCardPayload,
-  buildWhoCommandCardPayload,
 } from "../feishu/runtime-cards.js";
 import { buildNoticeCardPayload, type FeishuPostPayload } from "../feishu/shared-primitives.js";
 import type { TranscriptType } from "../logging/logger.js";
@@ -146,8 +144,6 @@ const BRIDGE_OWNED_COMMAND_KINDS = new Set<Extract<RoutedText, { kind: "command"
   "models",
   "model-use",
   "model-reset",
-  "leave",
-  "who",
   "sessions",
   "sessions-all",
   "sessions-select",
@@ -821,25 +817,6 @@ export class CommandHandler {
       this.context.clearPendingInteraction(message.conversationKey, false);
       const current = getActiveSession(nextWindow);
       await this.context.sendPayload(message.chatId, buildSessionTransitionCardPayload({ title: "已彻底删除会话", iconToken: "close-bold_outlined", previousLabel: targetSession?.label ?? pending.title ?? null, currentLabel: current?.label ?? "当前窗口已无会话", footer: current ? "已从当前窗口和 OpenCode 中删除" : "已从当前窗口和 OpenCode 中删除，发送 `/new` 创建新会话" }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "已彻底删除会话", len: 7 }, { replyToMessageId: message.messageId });
-      return;
-    }
-
-    if (command.kind === "who") {
-      if (message.chatType !== "group" && message.chatType !== "topic_group") {
-        await this.context.sendMarkdown(message.chatId, "该命令仅支持群聊使用", message.messageId);
-        return;
-      }
-      await this.context.sendPayload(message.chatId, buildWhoCommandCardPayload({ boundCount: this.context.whitelist.count(message.chatId), isBound: this.context.whitelist.isBound(message.chatId, message.senderOpenId) }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "群聊绑定状态", len: 6 }, { replyToMessageId: message.messageId });
-      return;
-    }
-
-    if (command.kind === "leave") {
-      if (message.chatType !== "group" && message.chatType !== "topic_group") {
-        await this.context.sendMarkdown(message.chatId, "该命令仅支持群聊使用", message.messageId);
-        return;
-      }
-      const unbound = await this.context.whitelist.unbind(message.chatId, message.senderOpenId);
-      await this.context.sendPayload(message.chatId, buildLeaveCommandCardPayload({ unbound }), { event: "final message sent", transcriptType: "outbound-final", textPreview: unbound ? "已解除绑定" : "无需解除绑定", len: unbound ? 5 : 6 }, { replyToMessageId: message.messageId });
       return;
     }
 

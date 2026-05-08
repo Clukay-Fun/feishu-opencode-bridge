@@ -191,13 +191,10 @@ export class FeishuWsClient {
     const routed = routeIncomingText(incoming.plainText);
     const isBound = incoming.chatType !== "p2p" && this.whitelist.isBound(incoming.chatId, incoming.senderOpenId);
     const isSlashCommand = routed.kind === "command";
-    const allowsUnauthedGroupCommand = isSlashCommand && (
-      routed.command.kind === "who" || routed.command.kind === "leave"
-    );
 
     if (incoming.chatType !== "p2p" && this.options.requireBotMentionInGroup) {
       if (isSlashCommand) {
-        if (!mentionMatched && !isBound && !allowsUnauthedGroupCommand) {
+        if (!mentionMatched && !isBound) {
           this.logger.log("feishu/ws", "message skipped", {
             reason: hasAnyMention ? "group-mention-mismatch" : "not-whitelisted",
             chatId: incoming.chatId,
@@ -361,8 +358,7 @@ async function inspectIncomingMessageForDispatch(
   const isBound = whitelist.isBound(parsed.incoming.chatId, parsed.incoming.senderOpenId);
 
   if (routed.kind === "command") {
-    const allowsUnauthedGroupCommand = routed.command.kind === "who" || routed.command.kind === "leave";
-    if (hasBotMention || isBound || allowsUnauthedGroupCommand) {
+    if (hasBotMention || isBound) {
       return {
         ...parsed,
         fields: {

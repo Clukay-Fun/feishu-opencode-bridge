@@ -19,8 +19,6 @@ export type RoutedText =
       | { kind: "model-reset" }
       | { kind: "guide" }
       | { kind: "button-test" }
-      | { kind: "leave" }
-      | { kind: "who" }
       | { kind: "knowledge-query"; question: string; explicit?: boolean | undefined }
       | { kind: "knowledge-ingest" }
       | { kind: "knowledge-ingest-end" }
@@ -97,14 +95,6 @@ export function routeIncomingText(text: string): RoutedText {
 
   if ((rawCommand === "button-test" || rawCommand === "callback-test") && args.length === 0) {
     return { kind: "command", command: { kind: "button-test" } };
-  }
-
-  if (rawCommand === "leave" && args.length === 0) {
-    return { kind: "command", command: { kind: "leave" } };
-  }
-
-  if (rawCommand === "who" && args.length === 0) {
-    return { kind: "command", command: { kind: "who" } };
   }
 
   if ((rawCommand === "知识入库" || rawCommand === "kb-ingest" || rawCommand === "kb-ingest-start") && args.length === 0) {
