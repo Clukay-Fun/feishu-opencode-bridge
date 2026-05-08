@@ -10,6 +10,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 
 import { cosineSimilarity } from "../memory/embedding-retriever.js";
+import { normalizeLawName, toChineseArticleNumber, type StatuteReference } from "./statute-ref.js";
 
 export type KnowledgeDocumentRecord = {
   id: number;
@@ -45,6 +46,8 @@ export type KnowledgeEntryRecord = {
 
 export type KnowledgeEntryCandidate = KnowledgeEntryRecord & {
   score: number;
+  source?: "exact_article" | "embedding" | "keyword" | undefined;
+  reranked?: boolean | undefined;
 };
 
 export type KnowledgeExtractChunkRecord = {
@@ -457,18 +460,17 @@ export class KnowledgeDb {
     `).all({ model }) as KnowledgeEntryRow[];
 
     return rows
-      .map((row) => {
+      .flatMap((row): KnowledgeEntryCandidate[] => {
         const record = toEntryRecord(row);
         if (!record.embedding) {
-          return null;
+          return [];
         }
         const score = cosineSimilarity(queryEmbedding, record.embedding);
         if (!Number.isFinite(score)) {
-          return null;
+          return [];
         }
-        return { ...record, score };
+        return [{ ...record, score, source: "embedding" as const, reranked: false }];
       })
-      .filter((record): record is KnowledgeEntryCandidate => record !== null)
       .sort((left, right) => right.score - left.score)
       .slice(0, limit);
   }
@@ -494,7 +496,39 @@ export class KnowledgeDb {
     return rows.map((row) => ({
       ...toEntryRecord(row),
       score: Number.isFinite(row.score) ? 1 / (1 + Math.max(0, row.score)) : 0,
+      source: "keyword",
+      reranked: false,
     }));
+  }
+
+  // Deterministically match explicit statute references before semantic retrieval.
+  searchByStatuteReferences(refs: StatuteReference[], limit: number): KnowledgeEntryCandidate[] {
+    if (refs.length === 0) {
+      return [];
+    }
+    const rows = this.db.prepare(`
+      SELECT *
+      FROM knowledge_entries
+      ORDER BY created_at DESC, id DESC
+    `).all() as KnowledgeEntryRow[];
+
+    const records = rows.map((row) => toEntryRecord(row));
+    const selected = new Map<number, KnowledgeEntryCandidate>();
+    for (const ref of refs) {
+      const matches = records
+        .map((record) => scoreStatuteReferenceMatch(record, ref))
+        .filter((candidate): candidate is KnowledgeEntryCandidate => candidate !== null)
+        .sort((left, right) => right.score - left.score || right.createdAt - left.createdAt || right.id - left.id);
+      for (const match of matches) {
+        if (!selected.has(match.id)) {
+          selected.set(match.id, match);
+        }
+        if (selected.size >= limit) {
+          return [...selected.values()];
+        }
+      }
+    }
+    return [...selected.values()];
   }
 
   // List every stored entry, primarily for diagnostics or export paths.
@@ -635,6 +669,43 @@ function toEntryRecord(row: KnowledgeEntryRow): KnowledgeEntryRecord {
     embedding: parseNumericArray(row.embedding_json),
     createdAt: row.created_at,
   };
+}
+
+function scoreStatuteReferenceMatch(record: KnowledgeEntryRecord, ref: StatuteReference): KnowledgeEntryCandidate | null {
+  const articleArabic = `第${ref.articleNumber}条`;
+  const articleChinese = `第${toChineseArticleNumber(ref.articleNumber)}条`;
+  const lawName = normalizeLawName(ref.lawName);
+  const fields = [
+    { value: record.statute, weight: 1 },
+    { value: `${record.question}\n${record.answer}`, weight: 0.82 },
+    { value: `${record.pageSection ?? ""}\n${record.sourceFile}`, weight: 0.64 },
+  ];
+
+  for (const field of fields) {
+    const normalized = normalizeSearchableText(field.value);
+    if (!normalized) {
+      continue;
+    }
+    if (!normalized.includes(articleArabic) && !normalized.includes(articleChinese)) {
+      continue;
+    }
+    if (lawName && !normalized.includes(lawName)) {
+      continue;
+    }
+    return {
+      ...record,
+      score: field.weight,
+      source: "exact_article",
+      reranked: false,
+    };
+  }
+  return null;
+}
+
+function normalizeSearchableText(value: string | undefined): string {
+  return value
+    ? value.replace(/[《》\s]/g, "").replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0))
+    : "";
 }
 
 function toDocumentRecord(row: KnowledgeDocumentRow): KnowledgeDocumentRecord {

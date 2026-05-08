@@ -112,6 +112,13 @@
         "finalTopN": 3,
         "keywordFallbackLimit": 10
       },
+      "rerank": {
+        "provider": "llm",
+        "endpoint": "http://127.0.0.1:8001",
+        "model": "BAAI/bge-reranker-v2-m3",
+        "topN": 3,
+        "timeoutMs": 5000
+      },
       "storage": {
         "sqlitePath": "./data/knowledge-base.db",
         "bitable": {

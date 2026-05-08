@@ -27,6 +27,8 @@ import {
   type KnowledgeEntryCandidate,
   type KnowledgeEntryRecord,
 } from "./db.js";
+import { rerankWithConfiguredProvider } from "./rerank-provider.js";
+import { parseStatuteReferences } from "./statute-ref.js";
 
 export type { KnowledgeDocumentSummary, KnowledgeEntryRecord } from "./db.js";
 
@@ -200,6 +202,18 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
 
   /** 查询知识库，并返回重排后的候选结果。 */
   async query(question: string): Promise<KnowledgeQueryResult> {
+    const statuteRefs = parseStatuteReferences(question);
+    if (statuteRefs.length > 0) {
+      const exactMatches = this.db.searchByStatuteReferences(statuteRefs, this.config.query.finalTopN);
+      if (exactMatches.length > 0) {
+        return {
+          question,
+          results: exactMatches,
+          bitableUrl: resolveKnowledgeBitableViewUrl(this.config),
+        };
+      }
+    }
+
     let embeddingMatches: KnowledgeEntryCandidate[] = [];
     try {
       const queryEmbedding = await this.embeddingClient.embed(question);
@@ -1010,6 +1024,17 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
       return candidates;
     }
 
+    try {
+      const providerResult = await rerankWithConfiguredProvider(this.config, question, candidates);
+      if (providerResult.usedProvider) {
+        return providerResult.candidates;
+      }
+    } catch (error) {
+      this.logger.log("knowledge/query", "configured rerank provider failed, falling back to llm", {
+        detail: error instanceof Error ? error.message : String(error),
+      }, "warn");
+    }
+
     const session = await this.opencode.createSession("[bridge] knowledge-rerank");
     try {
       const response = await this.opencode.postMessageSync(session.id, buildKnowledgePromptRequest(
@@ -1045,6 +1070,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
         .map((candidate) => ({
           ...candidate,
           score: rankedIds.get(candidate.id)?.score ?? candidate.score,
+          reranked: true,
         }))
         .sort((left, right) => {
           const leftRank = rankedIds.get(left.id)?.order ?? Number.MAX_SAFE_INTEGER;

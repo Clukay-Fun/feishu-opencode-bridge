@@ -27,6 +27,14 @@ const KnowledgeBaseQuerySchema = z.object({
   keywordFallbackLimit: z.number().int().positive().default(10),
 }).default({});
 
+const KnowledgeBaseRerankSchema = z.object({
+  provider: z.enum(["llm", "jina-compatible"]).default("llm"),
+  endpoint: z.string().url().optional(),
+  model: z.string().min(1).default("BAAI/bge-reranker-v2-m3"),
+  topN: z.number().int().positive().default(3),
+  timeoutMs: z.number().int().positive().default(5_000),
+}).default({});
+
 const KnowledgeBaseStorageSchema = z.object({
   sqlitePath: z.string().min(1).optional(),
   bitable: z.object({
@@ -159,6 +167,7 @@ const KnowledgeBaseConfigSchema = z.object({
   enabled: z.boolean().default(false),
   autoDetect: KnowledgeBaseAutoDetectSchema,
   query: KnowledgeBaseQuerySchema,
+  rerank: KnowledgeBaseRerankSchema,
   storage: KnowledgeBaseStorageSchema,
   embeddingProvider: EmbeddingProviderSchema.optional(),
   models: KnowledgeBaseModelsSchema,
@@ -181,6 +190,13 @@ export type KnowledgeBaseConfig = {
     finalTopN: number;
     keywordFallbackLimit: number;
   };
+  rerank?: {
+    provider: "llm" | "jina-compatible";
+    endpoint?: string | undefined;
+    model: string;
+    topN: number;
+    timeoutMs: number;
+  } | undefined;
   storage: {
     sqlitePath: string;
     bitable: {
@@ -343,6 +359,13 @@ function normalizeKnowledgeBaseConfig(
       topK: parsed.query.topK,
       finalTopN: parsed.query.finalTopN,
       keywordFallbackLimit: parsed.query.keywordFallbackLimit,
+    },
+    rerank: {
+      provider: parsed.rerank.provider,
+      endpoint: parsed.rerank.endpoint,
+      model: parsed.rerank.model,
+      topN: parsed.rerank.topN,
+      timeoutMs: parsed.rerank.timeoutMs,
     },
     storage: {
       sqlitePath: context.resolveRelative(

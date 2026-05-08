@@ -418,6 +418,13 @@ describe("loadConfig memory settings", () => {
       extract: undefined,
       rerank: undefined,
     });
+    expect(config.knowledgeBase.rerank).toEqual({
+      provider: "llm",
+      endpoint: undefined,
+      model: "BAAI/bge-reranker-v2-m3",
+      topN: 3,
+      timeoutMs: 5000,
+    });
     expect(config.knowledgeBase.ingest.maxExtractChunks).toBe(30);
     expect(config.knowledgeBase.ingest.maxExtractQas).toBe(500);
     expect(config.knowledgeBase.ingest.allowedExtensions).toEqual([".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp"]);
@@ -484,6 +491,47 @@ describe("loadConfig memory settings", () => {
       webRead: undefined,
       extract: "minimax-cn-coding-plan/MiniMax-M2.7",
       rerank: undefined,
+    });
+  });
+
+  it("loads knowledge base rerank provider config", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({
+      ...baseConfig(),
+      embeddings: {
+        provider: {
+          baseUrl: "https://api.openai.com/v1/",
+          apiKey: "sk-test",
+          model: "text-embedding-3-small",
+        },
+      },
+      knowledgeBase: {
+        enabled: true,
+        storage: {
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+          },
+        },
+        rerank: {
+          provider: "jina-compatible",
+          endpoint: "https://rerank.example.com/",
+          model: "BAAI/bge-reranker-v2-m3",
+          topN: 5,
+          timeoutMs: 3000,
+        },
+      },
+    }), "utf8");
+
+    const config = await loadConfig(configPath);
+
+    expect(config.knowledgeBase.rerank).toEqual({
+      provider: "jina-compatible",
+      endpoint: "https://rerank.example.com/",
+      model: "BAAI/bge-reranker-v2-m3",
+      topN: 5,
+      timeoutMs: 3000,
     });
   });
 

@@ -1037,6 +1037,274 @@ describe("KnowledgeBaseService", () => {
     service.close();
   });
 
+  it("returns exact statute matches before embedding and rerank", async () => {
+    const fetchSpy = stubEmbeddingFetchCounter();
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-"));
+    tempDirs.push(dir);
+    const createdSessions: string[] = [];
+    const service = new KnowledgeBaseService(
+      {
+        enabled: true,
+        autoDetect: { enabled: false, minConfidence: 0.75 },
+        query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
+        storage: {
+          sqlitePath: join(dir, "knowledge.db"),
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+            documentTableId: undefined,
+          },
+        },
+        embeddingProvider: {
+          baseUrl: new URL("https://example.com/v1/"),
+          apiKey: "token",
+          model: "text-embedding",
+        },
+        models: {},
+        ingest: {
+          allowedExtensions: [".txt"],
+          maxFileSizeMb: 20,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+        },
+      },
+      {
+        async downloadMessageResource() {
+          throw new Error("not used");
+        },
+        async createBitableRecord() {
+          throw new Error("not used");
+        },
+        async listBitableRecords() {
+          return [
+            {
+              recordId: "rec_1",
+              fields: {
+                问题: "试用期可以约定多久？",
+                答案: "《劳动合同法》第十九条规定，试用期应当与劳动合同期限匹配。",
+                标签: ["劳动"],
+                法条: "《劳动合同法》第 19 条",
+                源文件: "劳动合同法条文.md",
+                "页码/章节": "第十九条",
+              },
+            },
+            {
+              recordId: "rec_2",
+              fields: {
+                问题: "违法解除赔偿金怎么计算？",
+                答案: "赔偿金通常按经济补偿标准的二倍计算。",
+                标签: ["劳动"],
+                法条: "《劳动合同法》第 87 条",
+                源文件: "劳动合同法条文.md",
+                "页码/章节": "第八十七条",
+              },
+            },
+          ];
+        },
+      },
+      {
+        async createSession(title: string) {
+          createdSessions.push(title);
+          return { id: `ses_${createdSessions.length}`, title };
+        },
+        async deleteSession() {
+          return true;
+        },
+        async postMessageSync() {
+          throw new Error("exact statute query should not use llm rerank");
+        },
+      },
+      logger(),
+    );
+
+    await service.syncMirror();
+    fetchSpy.mockClear();
+    const result = await service.query("劳动合同法第十九条");
+
+    expect(result.results[0]?.statute).toBe("《劳动合同法》第 19 条");
+    expect(result.results[0]?.source).toBe("exact_article");
+    expect(result.results[0]?.reranked).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(createdSessions).not.toContain("[bridge] knowledge-rerank");
+    service.close();
+  });
+
+  it("falls back to article markers in answer and page section when statute is empty", async () => {
+    stubEmbeddingFetchCounter();
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-"));
+    tempDirs.push(dir);
+    const service = new KnowledgeBaseService(
+      {
+        enabled: true,
+        autoDetect: { enabled: false, minConfidence: 0.75 },
+        query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
+        storage: {
+          sqlitePath: join(dir, "knowledge.db"),
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+            documentTableId: undefined,
+          },
+        },
+        embeddingProvider: {
+          baseUrl: new URL("https://example.com/v1/"),
+          apiKey: "token",
+          model: "text-embedding",
+        },
+        models: {},
+        ingest: {
+          allowedExtensions: [".txt"],
+          maxFileSizeMb: 20,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+        },
+      },
+      {
+        async downloadMessageResource() {
+          throw new Error("not used");
+        },
+        async createBitableRecord() {
+          throw new Error("not used");
+        },
+        async listBitableRecords() {
+          return [{
+            recordId: "rec_1",
+            fields: {
+              问题: "试用期条款有哪些限制？",
+              答案: "劳动合同法第十九条要求试用期期限与合同期限匹配。",
+              标签: ["劳动"],
+              法条: "",
+              源文件: "劳动合同法问答.md",
+              "页码/章节": "第十九条解读",
+            },
+          }];
+        },
+      },
+      createOpenCodeStub(),
+      logger(),
+    );
+
+    await service.syncMirror();
+    const result = await service.query("劳动合同法第19条");
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]?.source).toBe("exact_article");
+    expect(result.results[0]?.answer).toContain("第十九条");
+    service.close();
+  });
+
+  it("uses jina-compatible rerank provider before falling back to llm rerank", async () => {
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/rerank")) {
+        return new Response(JSON.stringify({
+          results: [
+            { index: 1, relevance_score: 0.95 },
+            { index: 0, relevance_score: 0.7 },
+          ],
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({
+        data: [{ embedding: [1, 0, 0, 0] }],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchSpy as typeof fetch);
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-"));
+    tempDirs.push(dir);
+    const service = new KnowledgeBaseService(
+      {
+        enabled: true,
+        autoDetect: { enabled: false, minConfidence: 0.75 },
+        query: { topK: 10, finalTopN: 2, keywordFallbackLimit: 10 },
+        rerank: {
+          provider: "jina-compatible",
+          endpoint: "https://rerank.example.com/",
+          model: "BAAI/bge-reranker-v2-m3",
+          topN: 2,
+          timeoutMs: 5_000,
+        },
+        storage: {
+          sqlitePath: join(dir, "knowledge.db"),
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+            documentTableId: undefined,
+          },
+        },
+        embeddingProvider: {
+          baseUrl: new URL("https://example.com/v1/"),
+          apiKey: "token",
+          model: "text-embedding",
+        },
+        models: {},
+        ingest: {
+          allowedExtensions: [".txt"],
+          maxFileSizeMb: 20,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+        },
+      },
+      {
+        async downloadMessageResource() {
+          throw new Error("not used");
+        },
+        async createBitableRecord() {
+          throw new Error("not used");
+        },
+        async listBitableRecords() {
+          return [
+            {
+              recordId: "rec_1",
+              fields: {
+                问题: "违法解除劳动合同怎么赔？",
+                答案: "一般问题答案。",
+                标签: ["劳动"],
+                源文件: "劳动问答.md",
+                embedding: JSON.stringify([1, 0, 0, 0]),
+              },
+            },
+            {
+              recordId: "rec_2",
+              fields: {
+                问题: "违法解除劳动合同赔偿金怎么计算？",
+                答案: "赔偿金通常按经济补偿标准二倍计算。",
+                标签: ["劳动"],
+                源文件: "劳动问答.md",
+                embedding: JSON.stringify([1, 0, 0, 0]),
+              },
+            },
+          ];
+        },
+      },
+      {
+        async createSession() {
+          throw new Error("configured rerank provider should avoid llm rerank");
+        },
+        async deleteSession() {
+          return true;
+        },
+        async postMessageSync() {
+          throw new Error("configured rerank provider should avoid llm rerank");
+        },
+      },
+      logger(),
+    );
+
+    await service.syncMirror();
+    const result = await service.query("违法解除赔偿金怎么计算？");
+
+    expect(result.results[0]?.reranked).toBe(true);
+    expect(result.results[0]?.score).toBe(0.95);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      new URL("rerank", "https://rerank.example.com/"),
+      expect.objectContaining({ method: "POST" }),
+    );
+    service.close();
+  });
+
   it("does not fail keyword fallback for slash-heavy questions", async () => {
     stubEmbeddingFetch();
     const dir = mkdtempSync(join(tmpdir(), "knowledge-"));
