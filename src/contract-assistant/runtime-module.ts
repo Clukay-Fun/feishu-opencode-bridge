@@ -16,18 +16,14 @@ import {
   applyInvoiceRecognizeStep,
   buildCaseCreateCompletedPayload,
   buildCaseCreateProcessingPayload,
-  buildCaseReminderAddCompletedPayload,
   buildContractDraftCompletedPayload,
   buildContractDraftProgressPayload,
   buildInvoiceRecognizeCompletedPayload,
   buildInvoiceRecognizeProgressPayload,
-  buildReminderProgressPayload,
-  buildTodayTodoPayload,
   completeContractDraftProgress,
   completeInvoiceRecognizeProgress,
   createContractDraftProgressState,
   createInvoiceRecognizeProgressState,
-  type ReminderListResult,
 } from "../feishu/contract-cards.js";
 import { createTextPreview, type Logger } from "../logging/logger.js";
 import type { IncomingChatMessage, IncomingFileMessage } from "../runtime/app.js";
@@ -128,8 +124,6 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
   readonly priority = 30;
 
   private readonly interactions: PersistedInteractionManager<PendingInteraction>;
-  private reminderTimer: NodeJS.Timeout | null = null;
-  private lastReminderSlot = "";
   private readonly featureConfig: ContractAssistantConfig;
 
   constructor(private readonly deps: ContractAssistantRuntimeModuleDeps) {
@@ -148,25 +142,14 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
 
   // #region 生命周期与入口
 
-  /** 恢复交互状态，并按需启动提醒轮询。 */
+  /** 恢复交互状态。 */
   async start(): Promise<void> {
     await this.interactions.restore();
-    if (!this.featureConfig.enabled || !this.featureConfig.reminder.enabled || !this.deps.service) {
-      return;
-    }
-    this.reminderTimer = setInterval(() => {
-      void this.tickReminders();
-    }, 60_000);
-    await this.tickReminders();
   }
 
-  /** 停止状态管理器与提醒轮询。 */
+  /** 停止状态管理器。 */
   async stop(): Promise<void> {
     await this.interactions.stop();
-    if (this.reminderTimer) {
-      clearInterval(this.reminderTimer);
-      this.reminderTimer = null;
-    }
   }
 
   /** 处理合同助手命令、上传态交互和工作台对话。 */
@@ -349,10 +332,6 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       "case-update",
       "案件待办",
       "case-todos",
-      "案件提醒",
-      "case-reminders",
-      "添加案件提醒",
-      "case-reminder-add",
       "案件更新待办",
       "case-update-todos",
     ].includes(normalized)) {
@@ -440,33 +419,6 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
 
     if (normalized === "案件待办" || normalized === "case-todos") {
       await this.handleCaseTodos(message, command.arguments.join(" ").trim());
-      return true;
-    }
-
-    if (normalized === "案件提醒" || normalized === "case-reminders") {
-      await this.handleCaseReminders(message, command.arguments.join(" ").trim());
-      return true;
-    }
-
-    if (
-      normalized === "添加案件提醒"
-      || normalized === "case-reminder-add"
-    ) {
-      const request = command.arguments.join(" ").trim();
-      if (!request) {
-        await this.sendNotice(message, {
-          title: "请补充提醒内容",
-          template: "blue",
-          icon: "alarm-clock_outlined",
-          message: [
-            "示例：`/添加案件提醒 举证截止日 2026-04-18 待做事项 补充工资流水证据`",
-            "也可以指定案件：`/添加案件提醒 张某某 开庭日 2026-04-18 09:30 待做事项 准备开庭材料`",
-            "不指定案件时，默认更新最近新增案件。",
-          ].join("\n"),
-        });
-        return true;
-      }
-      await this.handleCaseReminderAdd(message, request);
       return true;
     }
 
@@ -1057,82 +1009,6 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     }
   }
 
-  private async handleCaseReminders(
-    message: Pick<IncomingChatMessage, "chatId" | "messageId">,
-    query: string,
-  ): Promise<void> {
-    const processing = await this.deps.transport.sendPayload(message.chatId, buildReminderProgressPayload(), {
-      event: "case reminder progress sent",
-      transcriptType: "outbound-final",
-      textPreview: "案件提醒",
-      len: 4,
-    }, { replyToMessageId: message.messageId });
-    try {
-      const result = await this.deps.service!.listCaseReminders(query, this.featureConfig.reminder.lookaheadDays);
-      const reminderResult: ReminderListResult = {
-        contractLines: [],
-        invoiceLines: [],
-        caseLines: result.lines,
-      };
-      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildTodayTodoPayload(reminderResult), {
-        event: "case reminder sent",
-        transcriptType: "outbound-final",
-        textPreview: createTextPreview(renderReminderPlainText(reminderResult)),
-        len: renderReminderPlainText(reminderResult).length,
-      });
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
-        title: "案件提醒查询失败",
-        template: "red",
-        iconToken: "error_filled",
-        message: detail,
-      }), {
-        event: "case reminder failed",
-        transcriptType: "outbound-final",
-        textPreview: detail,
-        len: detail.length,
-      });
-    }
-  }
-
-  private async handleCaseReminderAdd(
-    message: Pick<IncomingChatMessage, "chatId" | "messageId">,
-    request: string,
-  ): Promise<void> {
-    const processing = await this.sendNotice(message, {
-      title: "案件提醒添加中",
-      template: "blue",
-      icon: "alarm-clock_outlined",
-      message: "正在定位案件，并写入案件管理表的提醒字段。",
-    });
-    try {
-      const result = await this.deps.service!.addCaseReminder(request);
-      const recordUrl = buildBitableRecordUrl(this.featureConfig.storage.baseToken, this.featureConfig.storage.caseTableId, result.recordId);
-      const payload = buildCaseReminderAddCompletedPayload(result, recordUrl);
-      const preview = `案件提醒已添加：${result.matchedLabel} ${result.reminderLabel} ${result.reminderDate}`;
-      await this.deps.transport.updatePayload(message.chatId, processing.messageId, payload, {
-        event: "case reminder add completed",
-        transcriptType: "outbound-final",
-        textPreview: createTextPreview(preview),
-        len: preview.length,
-      });
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildNoticeCardPayload({
-        title: "案件提醒添加失败",
-        template: "red",
-        iconToken: "error_filled",
-        message: detail,
-      }), {
-        event: "case reminder add failed",
-        transcriptType: "outbound-final",
-        textPreview: detail,
-        len: detail.length,
-      });
-    }
-  }
-
   private async initializeWorkbenchFromText(
     message: Pick<IncomingChatMessage, "chatId" | "messageId" | "conversationKey">,
     pending: PendingWorkbenchInteraction,
@@ -1465,45 +1341,6 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       icon: "maybe_outlined",
       message: "当前在合同起草会话中，仅处理合同相关操作；如需其他内容请新开话题。",
     });
-  }
-
-  private async tickReminders(): Promise<void> {
-    const now = new Date();
-    const hour = now.getHours();
-    const minute = now.getMinutes();
-    if (hour !== this.featureConfig.reminder.hour || minute !== this.featureConfig.reminder.minute) {
-      return;
-    }
-    const slot = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}-${hour}-${minute}`;
-    if (slot === this.lastReminderSlot) {
-      return;
-    }
-    this.lastReminderSlot = slot;
-    try {
-      const processingMessages = await Promise.all(this.featureConfig.reminder.targetChatIds.map(async (chatId) => ({
-        chatId,
-        ...(await this.deps.transport.sendPayload(chatId, buildReminderProgressPayload(), {
-          event: "contract assistant reminder progress sent",
-          transcriptType: "outbound-final",
-          textPreview: "案件提醒",
-          len: 4,
-        })),
-      })));
-      const result = await this.deps.service!.listReminderItems(this.featureConfig.reminder.lookaheadDays);
-      const payload = buildTodayTodoPayload(result);
-      for (const item of processingMessages) {
-        await this.deps.transport.updatePayload(item.chatId, item.messageId, payload, {
-          event: "contract assistant reminder sent",
-          transcriptType: "outbound-final",
-          textPreview: createTextPreview(renderReminderPlainText(result)),
-          len: renderReminderPlainText(result).length,
-        });
-      }
-    } catch (error) {
-      this.deps.logger.log("contract-assistant/reminder", "send reminder failed", {
-        detail: error instanceof Error ? error.message : String(error),
-      }, "warn");
-    }
   }
 
   private async sendNotice(
@@ -1956,14 +1793,6 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
   }
 
   // #endregion
-}
-
-function renderReminderPlainText(result: ReminderListResult): string {
-  return [
-    ...result.caseLines,
-    ...result.contractLines,
-    ...result.invoiceLines,
-  ].join("\n") || "当前无需要提醒的事项";
 }
 
 function pickTemplate(answer: string, templates: string[]): string | undefined {

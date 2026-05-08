@@ -20,7 +20,5 @@ export const contractAssistantExtensionMeta = {
     { name: "案件录入", aliases: ["case-manage"], owner: "business", description: "新增案件管理记录" },
     { name: "案件更新", aliases: ["case-update"], owner: "business", description: "更新案件管理记录" },
     { name: "案件待办", aliases: ["case-todos"], owner: "business", description: "查询案件待办" },
-    { name: "案件提醒", aliases: ["case-reminders"], owner: "business", description: "查询案件提醒" },
-    { name: "添加案件提醒", aliases: ["case-reminder-add"], owner: "business", description: "新增案件提醒" },
   ],
 } as const satisfies BuiltinExtensionMetaDefinition;

@@ -661,49 +661,6 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     expect(completedSerialized).not.toContain("委托人 vs 对方当事人");
   });
 
-  it("renders reminder progress and today todo cards", async () => {
-    const { module, sendPayload, updatePayload, listReminderItems } = createModule();
-    const now = new Date();
-    const moduleAny = module as any;
-    moduleAny.featureConfig.reminder.targetChatIds = ["chat-reminder"];
-    moduleAny.featureConfig.reminder.hour = now.getHours();
-    moduleAny.featureConfig.reminder.minute = now.getMinutes();
-
-    await moduleAny.tickReminders();
-
-    expect(listReminderItems).toHaveBeenCalledTimes(1);
-    const progressSerialized = JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {});
-    const todoSerialized = JSON.stringify(updatePayload.mock.calls.at(-1)?.[2] ?? {});
-    expect(progressSerialized).toContain("案件提醒");
-    expect(progressSerialized).toContain("正在检索关联案件与待办事项");
-    expect(todoSerialized).toContain("今日待办");
-    expect(todoSerialized).toContain("举证期限截止");
-    expect(todoSerialized).toContain("开庭提醒");
-    expect(todoSerialized).toContain("合同付款");
-    expect(todoSerialized).toContain("证据补充");
-    expect(todoSerialized).toContain("2026-04-25");
-    expect(todoSerialized).toContain("发送 /提醒 详情 查看全部");
-  });
-
-  it("adds a case reminder with a direct command", async () => {
-    const { module, sendPayload, updatePayload, addCaseReminder } = createModule();
-    const request = "/添加案件提醒 举证截止日 2026-04-18 待做事项 补充工资流水证据";
-    const result = await module.handleMessage({
-      message: createTextMessage(request),
-      routed: routeIncomingText(request),
-    });
-
-    expect(result).toEqual({ claimed: true });
-    expect(addCaseReminder).toHaveBeenCalledWith("举证截止日 2026-04-18 待做事项 补充工资流水证据");
-    expect(JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {})).toContain("案件提醒添加中");
-    const completedSerialized = JSON.stringify(updatePayload.mock.calls.at(-1)?.[2] ?? {});
-    expect(completedSerialized).toContain("案件提醒已添加");
-    expect(completedSerialized).toContain("张某某 vs 杭州XX科技有限公司");
-    expect(completedSerialized).toContain("举证截止日 2026-04-18");
-    expect(completedSerialized).toContain("补充工资流水证据");
-    expect(completedSerialized).toContain("发送 `/案件提醒`");
-  });
-
   it("shows short Word path and hides doc link in direct draft completion card", async () => {
     const { module, updatePayload } = createModule();
     const message = createTextMessage("/起草合同 甲方（委托人）：张三，身份证号：110101199001010011，住址：北京市朝阳区建国路88号，联系电话：13800000000。甲方因与相关单位发生劳动争议，现委托乙方作为其代理人，代理处理劳动仲裁相关事宜。双方经协商一致，确认本次代理事项为劳动仲裁，代理费用为人民币20,000元（大写：贰万元整）。");
