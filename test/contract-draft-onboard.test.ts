@@ -139,26 +139,6 @@ function createModule(existingTempDir?: string, options?: {
     needsFile: false,
     reason: "",
   })));
-  const listReminderItems = vi.fn(async () => ({
-    contractLines: ["委托代理合同：未收款 ¥10000，未开票 ¥0；付款节点：04-20"],
-    invoiceLines: [],
-    caseLines: [
-      "张三劳动争议案：举证截止日 2026-04-17；当前状态 进行中；待做事项 需补充工资流水证据",
-      "张三劳动争议案：开庭日 2026-04-18 09:30；当前状态 进行中；待做事项 需补充工资流水证据",
-      "张三劳动争议案：待做事项 社保缴纳记录待获取；截止 2026-04-25；当前状态 进行中",
-    ],
-  }));
-  const addCaseReminder = vi.fn(async (request: string) => ({
-    matchedLabel: "张某某 vs 杭州XX科技有限公司 劳动争议",
-    recordId: "rec_case_1",
-    reminderLabel: request.includes("开庭") ? "开庭日" : "举证截止日",
-    reminderDate: request.includes("09:30") ? "2026-04-18 09:30" : "2026-04-18",
-    todo: "补充工资流水证据",
-    fields: {
-      举证截止日: new Date(2026, 3, 18).getTime(),
-      待做事项: "补充工资流水证据",
-    },
-  }));
   const module = new ContractAssistantRuntimeModule({
     config: {
       storage: {
@@ -196,8 +176,6 @@ function createModule(existingTempDir?: string, options?: {
       extractContract,
       recognizeInvoice,
       classifyIntent,
-      listReminderItems,
-      addCaseReminder,
     } as never,
     transport: createFeishuTransport({
       sendPayload: sendPayload as never,
@@ -215,8 +193,6 @@ function createModule(existingTempDir?: string, options?: {
     extractContract,
     recognizeInvoice,
     classifyIntent,
-    listReminderItems,
-    addCaseReminder,
   };
 }
 
