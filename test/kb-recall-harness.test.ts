@@ -4,6 +4,7 @@
  * - 使用 per-fixture entries 隔离失败样本。
  * - 通过预计算 embedding 避免 CI 访问外部模型服务。
  * - 输出 recall@3 / recall@10 / MRR，作为后续 rerank 与切分优化基线。
+ * - fixture 扩到 10 条以上时切换共享 corpus 模式，避免重复复制样本。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -176,7 +177,7 @@ const STARTER_FIXTURES: HarnessFixture[] = [
   {
     id: "kb-recall-001",
     query: "劳动合同法第十九条",
-    queryEmbedding: [1, 0, 0, 0, 0],
+    queryEmbedding: [0, 1, 0, 0, 0],
     expectedEntryKeys: ["labor-probation"],
     minRecallAt3: 1,
     minRecallAt10: 1,

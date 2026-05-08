@@ -206,6 +206,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     if (statuteRefs.length > 0) {
       const exactMatches = this.db.searchByStatuteReferences(statuteRefs, this.config.query.finalTopN);
       if (exactMatches.length > 0) {
+        // V1: exact 命中即返回；V2 可考虑注入 hybrid 候选后统一 rerank。
         return {
           question,
           results: exactMatches,

@@ -24,7 +24,7 @@ describe("BridgeApp permission card actions", () => {
     );
 
     expect(replyPermission).toHaveBeenCalledWith(interaction.sessionId, interaction.permissionId, "once", false);
-    expect(JSON.stringify(card)).toContain("当前权限请求已确认，可继续执行");
+    expect(JSON.stringify(card)).toContain("已授权");
     expect((app as unknown as { pendingInteractions: Map<string, unknown> }).pendingInteractions.has(interaction.conversationKey)).toBe(false);
   });
 
@@ -42,7 +42,7 @@ describe("BridgeApp permission card actions", () => {
     );
 
     expect(replyPermission).toHaveBeenCalledWith(interaction.sessionId, interaction.permissionId, "always", true);
-    expect(JSON.stringify(card)).toContain("后续同类权限将自动允许");
+    expect(JSON.stringify(card)).toContain("已授权");
     expect((app as unknown as { pendingInteractions: Map<string, unknown> }).pendingInteractions.has(interaction.conversationKey)).toBe(false);
   });
 
@@ -60,7 +60,7 @@ describe("BridgeApp permission card actions", () => {
     );
 
     expect(replyPermission).toHaveBeenCalledWith(interaction.sessionId, interaction.permissionId, "reject", false);
-    expect(JSON.stringify(card)).toContain("当前权限请求已拒绝");
+    expect(JSON.stringify(card)).toContain("已拒绝");
     expect((app as unknown as { pendingInteractions: Map<string, unknown> }).pendingInteractions.has(interaction.conversationKey)).toBe(false);
   });
 
@@ -119,7 +119,7 @@ describe("BridgeApp permission card actions", () => {
     );
 
     expect(replyPermission).not.toHaveBeenCalled();
-    expect(JSON.stringify(card)).toContain("当前权限请求已拒绝");
+    expect(JSON.stringify(card)).toContain("已拒绝");
   });
 
   it("accepts a valid card action when Feishu omits open_message_id", async () => {
@@ -136,7 +136,7 @@ describe("BridgeApp permission card actions", () => {
     );
 
     expect(replyPermission).toHaveBeenCalledWith(interaction.sessionId, interaction.permissionId, "once", false);
-    expect(JSON.stringify(card)).toContain("当前权限请求已确认，可继续执行");
+    expect(JSON.stringify(card)).toContain("已授权");
   });
 
   it("does not auto-timeout while a button click is being processed", async () => {
@@ -164,7 +164,7 @@ describe("BridgeApp permission card actions", () => {
     const card = await actionPromise;
 
     expect(replyPermission).toHaveBeenCalledTimes(1);
-    expect(JSON.stringify(card)).toContain("当前权限请求已确认，可继续执行");
+    expect(JSON.stringify(card)).toContain("已授权");
     expect(getReplyPayloads(outbound)).toHaveLength(0);
   });
 
@@ -190,8 +190,8 @@ describe("BridgeApp permission card actions", () => {
     const firstCard = await first;
     const third = await app.handlePermissionCardAction(interaction.requesterOpenId, interaction.permissionMessageId ?? "", value);
 
-    expect(JSON.stringify(firstCard)).toContain("当前权限请求已确认，可继续执行");
-    expect(JSON.stringify(third)).toContain("当前权限请求已确认，可继续执行");
+    expect(JSON.stringify(firstCard)).toContain("已授权");
+    expect(JSON.stringify(third)).toContain("已授权");
     expect(replyPermission).toHaveBeenCalledTimes(1);
   });
 
@@ -233,7 +233,7 @@ describe("BridgeApp permission card actions", () => {
 
     expect(replyPermission).toHaveBeenCalledTimes(1);
     expect(interaction.resolution).toBe("once");
-    expect(JSON.stringify(card)).toContain("当前权限请求已确认，可继续执行");
+    expect(JSON.stringify(card)).toContain("已授权");
   });
 
   it("keeps text /allow once fallback working", async () => {
@@ -249,7 +249,7 @@ describe("BridgeApp permission card actions", () => {
     });
 
     expect(replyPermission).toHaveBeenCalledWith(interaction.sessionId, interaction.permissionId, "once", false);
-    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("当前权限请求已确认，可继续执行");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("授权成功，已执行");
   });
 
   it("keeps text /allow always fallback working", async () => {
@@ -265,7 +265,7 @@ describe("BridgeApp permission card actions", () => {
     });
 
     expect(replyPermission).toHaveBeenCalledWith(interaction.sessionId, interaction.permissionId, "always", true);
-    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("后续同类权限将自动允许");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("授权成功，已执行");
   });
 
   it("keeps text /deny fallback working", async () => {
@@ -281,7 +281,7 @@ describe("BridgeApp permission card actions", () => {
     });
 
     expect(replyPermission).toHaveBeenCalledWith(interaction.sessionId, interaction.permissionId, "reject", false);
-    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("当前权限请求已拒绝");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("拒绝执行");
   });
 });
 

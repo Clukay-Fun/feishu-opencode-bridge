@@ -141,9 +141,9 @@ describe("knowledge base bridge flow", () => {
     const ingestFile = vi.fn(async (_file, options?: KnowledgeIngestOptions) => {
       await options?.onProgress?.({ step: "read", status: "running", detail: "正在下载并解析文件" });
       await options?.onProgress?.({ step: "read", status: "completed", detail: "已提取 1 段正文" });
-      await options?.onProgress?.({ step: "extract", status: "running", detail: "正在提取问答（1/1）" });
+      await options?.onProgress?.({ step: "extract", status: "running", detail: "提取关键信息：进行中" });
       await options?.onProgress?.({ step: "extract", status: "completed", detail: "已提取 4 条问答" });
-      await options?.onProgress?.({ step: "write", status: "running", detail: "正在写入知识库（2/4）" });
+      await options?.onProgress?.({ step: "write", status: "running", detail: "生成结果：等待中" });
       await options?.onProgress?.({ step: "write", status: "completed", detail: "已写入 4 条问答" });
       return {
         sourceFile: "劳动合同.txt",
@@ -196,8 +196,8 @@ describe("knowledge base bridge flow", () => {
     const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
     expect(JSON.stringify(replyPayloads)).toContain("已收到入库素材");
     expect(JSON.stringify(updatedPayloads)).toContain("知识入库进行中");
-    expect(JSON.stringify(updatedPayloads)).toContain("正在提取问答（1/1）");
-    expect(JSON.stringify(updatedPayloads)).toContain("正在写入知识库（2/4）");
+    expect(JSON.stringify(updatedPayloads)).toContain("提取关键信息：进行中");
+    expect(JSON.stringify(updatedPayloads)).toContain("生成结果：等待中");
     expect(JSON.stringify(updatedPayloads)).toContain("知识入库完成");
     expect(JSON.stringify(updatedPayloads)).toContain("提取 12");
     expect(JSON.stringify(updatedPayloads)).toContain("去重 4");
@@ -249,10 +249,10 @@ describe("knowledge base bridge flow", () => {
     ]);
     const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
     const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
-    expect(JSON.stringify(replyPayloads)).toContain("知识库入库开启");
+    expect(JSON.stringify(replyPayloads)).toContain("知识入库已开启");
     expect(JSON.stringify(replyPayloads)).toContain("已收到入库素材");
     expect(JSON.stringify(updatedPayloads)).toContain("知识入库完成");
-    expect(JSON.stringify(updatedPayloads)).toContain("公司法实务.pdf 等 3 个素材");
+    expect(JSON.stringify(updatedPayloads)).toContain("公司法实务.pdf");
     expect(JSON.stringify(updatedPayloads)).toContain("入库 6");
     expect(JSON.stringify(updatedPayloads)).toContain("公司法实务.pdf");
     expect(JSON.stringify(updatedPayloads)).toContain("合同法案例.pdf");

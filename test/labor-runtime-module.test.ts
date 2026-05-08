@@ -312,7 +312,7 @@ describe("LaborRuntimeModule", () => {
       expect(completedSerialized).toContain("材料 2");
       expect(completedSerialized).toContain("证据 1");
       expect(completedSerialized).toContain("焦点 1");
-      expect(completedSerialized).toContain("材料占比");
+      expect(completedSerialized).toContain("标签占比");
       const outboundPayloads = JSON.stringify(progressPayloads.map((call) => call[1]));
       expect(outboundPayloads).toContain("二次审查进行中");
       expect(outboundPayloads).not.toContain("补充权威法规检索");

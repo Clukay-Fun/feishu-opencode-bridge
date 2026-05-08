@@ -81,7 +81,9 @@ describe("CaseWorkbenchRuntimeModule", () => {
     const calls = sendPayload.mock.calls as unknown as Array<[string, unknown]>;
     const payload = JSON.stringify(calls[0]?.[1] ?? {});
     expect(payload).toContain("案件工作台已开启");
-    expect(payload).toContain("劳动争议分析");
+    expect(payload).toContain("请选择你需要分析的领域");
+    expect(payload).toContain("劳动法");
+    expect(payload).toContain("公司法");
   });
 
   it("does not hijack low-confidence document requests", async () => {

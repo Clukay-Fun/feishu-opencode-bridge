@@ -7,13 +7,10 @@
  */
 import {
   buildNoticeCardPayload,
-  buildInteractivePayload,
-  buildDivider,
-  buildGreyPanel,
-  cardMarkdown,
   type FeishuPostPayload,
   type ToolUpdateView,
 } from "./shared-primitives.js";
+import { buildDesignerCardPayload, setDesignerButtonValue } from "./designer-card-renderer.js";
 import { renderBusinessCard } from "./templates/runtime.js";
 import {
   LABOR_ANALYSIS_COMPLETED_TEMPLATE_ID,
@@ -74,68 +71,42 @@ export type LaborMaterialCollectionCardView = {
 };
 
 export function buildLaborMaterialCollectionPayload(view: LaborMaterialCollectionCardView = {}): FeishuPostPayload {
-  return buildInteractivePayload({
-    title: "材料收集中",
-    template: "blue",
-    iconToken: "loading_outlined",
-    bodyElements: [
-      cardMarkdown("请上传劳动相关材料，直接发送到聊天窗口即可。", "heading"),
-      buildGreyPanel([
-        cardMarkdown("**支持格式** ：PDF / DOCX / TXT / MD\n**模式** ：批量导入", "normal"),
-        ...(view.title ? [cardMarkdown(`**案件标题** ：${view.title}`, "normal")] : []),
-      ]),
-      buildDivider(),
-      ...(view.conversationKey
-        ? [buildCollectionFinishButton(view.conversationKey)]
-        : []),
-      cardMarkdown("上传完成后点击按钮，或发送 `/完成上传` 开始分析。", "notation"),
-    ],
-  });
-}
-
-function buildCollectionFinishButton(conversationKey: string): Record<string, unknown> {
-  return {
-    tag: "button",
-    text: { tag: "plain_text", content: "完成上传，开始分析" },
-    type: "primary",
-    width: "fill",
-    size: "medium",
-    icon: { tag: "standard_icon", token: "play_outlined" },
-    value: {
-      kind: "labor-collection-action",
-      action: "finish-upload",
-      conversationKey,
-    },
-  };
+  void view;
+  return buildDesignerCardPayload("材料收集中");
 }
 
 export function buildLaborAnalysisProgressPayload(view: LaborAnalysisProgressCardView): FeishuPostPayload {
-  return buildLaborTemplatePayload(LABOR_ANALYSIS_PROGRESS_TEMPLATE_ID, view);
+  return buildValidatedLaborDesignerPayload(LABOR_ANALYSIS_PROGRESS_TEMPLATE_ID, view, () => buildDesignerCardPayload("材料分析进行中", [
+    { from: "解除通知.pdf", to: view.sourceLabel },
+    { from: "耗时 1m", to: view.elapsedMs ? `耗时 ${Math.round(view.elapsedMs / 1000)}s` : "处理中" },
+  ]));
 }
 
 export function buildLaborAnalysisCompletedPayload(view: LaborAnalysisCompletedCardView): FeishuPostPayload {
-  return buildLaborTemplatePayload(LABOR_ANALYSIS_COMPLETED_TEMPLATE_ID, view);
+  return buildValidatedLaborDesignerPayload(LABOR_ANALYSIS_COMPLETED_TEMPLATE_ID, view, () => buildDesignerCardPayload("材料分析完成", [
+    { from: "张三违法解除劳动合同争议", to: view.title },
+    { from: "材料 5", to: `材料 ${view.materialCount}` },
+    { from: "证据 12", to: `证据 ${view.evidenceCount}` },
+    { from: "焦点 4", to: `焦点 ${view.issueCount}` },
+  ]));
 }
 
 export function buildLaborReviewCompletedPayload(view: LaborReviewCompletedCardView): FeishuPostPayload {
-  return buildLaborTemplatePayload(LABOR_REVIEW_COMPLETED_TEMPLATE_ID, view);
+  return buildValidatedLaborDesignerPayload(LABOR_REVIEW_COMPLETED_TEMPLATE_ID, view, () => buildDesignerCardPayload("二次审查完成", [
+    { from: "张三违法解除劳动合同争议", to: view.title },
+    { from: "高风险问题（1项）", to: `高风险问题（${view.humanReviewCount ?? 0}项）` },
+    { from: "中风险问题（1项）", to: `中风险问题（${view.findingsCount ?? 0}项）` },
+    { from: "工资基数缺少来源", to: view.reviewStatus },
+  ], (card) => {
+    setDesignerButtonValue(card, "打开分析文档", { kind: "labor-review-action", action: "open-analysis-doc", url: view.docUrl });
+  }));
 }
 
 export function buildLaborFinalReviewPayload(view: LaborFinalReviewCardView): FeishuPostPayload {
   if (view.level === "info") {
-    return buildInteractivePayload({
-      title: "二次审查进行中",
-      template: "blue",
-      iconToken: "loading_outlined",
-      bodyElements: [
-        cardMarkdown(`案件：**${view.title}**`, "normal_v2"),
-        buildGreyPanel([
-          cardMarkdown("权威法规检索：已完成", "normal_v2", { icon: { token: "yes_outlined", color: "green" } }),
-          cardMarkdown("法条引用校验：进行中", "normal_v2", { icon: { token: "loading_outlined", color: "blue" } }),
-          cardMarkdown("请求权基础校验：等待中", "normal_v2", { icon: { token: "ellipse_outlined", color: "grey" } }),
-        ], { padding: "8px 8px 8px 8px" }),
-      ],
-    });
+    return buildDesignerCardPayload("二次审查进行中", [
+      { from: "张三违法解除劳动合同争议", to: view.title },
+    ]);
   }
   return buildNoticeCardPayload({
     title: "劳动分析二审",
@@ -149,12 +120,15 @@ export function buildLaborFinalReviewPayload(view: LaborFinalReviewCardView): Fe
   });
 }
 
-function buildLaborTemplatePayload(
+function buildValidatedLaborDesignerPayload(
   templateId: typeof LABOR_ANALYSIS_PROGRESS_TEMPLATE_ID | typeof LABOR_ANALYSIS_COMPLETED_TEMPLATE_ID | typeof LABOR_REVIEW_COMPLETED_TEMPLATE_ID,
   input: LaborAnalysisProgressCardView | LaborAnalysisCompletedCardView | LaborReviewCompletedCardView,
+  renderDesignerCard: () => FeishuPostPayload,
 ): FeishuPostPayload {
   try {
-    return renderBusinessCard(templateId, input);
+    // 设计器模板只负责视觉；zod schema 仍由模板运行时校验，保护业务输入契约。
+    renderBusinessCard(templateId, input);
+    return renderDesignerCard();
   } catch (error) {
     console.warn("[feishu/card-template] labor template render failed", {
       templateId,

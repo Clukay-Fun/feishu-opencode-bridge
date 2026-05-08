@@ -47,7 +47,7 @@ describe("integration/permission-flow", () => {
     expect(actionValue.policy).toBe("once");
 
     const cardResult = await app.handlePermissionCardAction("ou_123", permissionCard.messageId, actionValue);
-    expect(JSON.stringify(cardResult)).toContain("当前权限请求已确认，可继续执行");
+    expect(JSON.stringify(cardResult)).toContain("已授权");
 
     await run;
 

@@ -6,6 +6,7 @@
  * - 将权限结果回传给 OpenCode。
  */
 import type { PendingPermissionInteraction } from "../bridge/state.js";
+import { buildDesignerCardPayload } from "../feishu/designer-card-renderer.js";
 import { buildNoticeCardPayload, resolveNoticeLevelFromTemplate, type FeishuPostPayload } from "../feishu/shared-primitives.js";
 import { logEvent, type Logger, type TranscriptType } from "../logging/logger.js";
 import type { PermissionPolicy } from "../opencode/client.js";
@@ -153,11 +154,11 @@ export class PermissionManager {
   /** 根据处理结果构建最终提示卡片。 */
   buildResolutionPayload(resolution: PermissionResolution): FeishuPostPayload {
     if (resolution === "once") {
-      return this.buildNoticePayload("信息提示", "green", "yes_outlined", "当前权限请求已确认，可继续执行。");
+      return buildDesignerCardPayload("已授权");
     }
 
     if (resolution === "always") {
-      return this.buildNoticePayload("信息提示", "green", "yes_outlined", "当前权限请求已确认，后续同类权限将自动允许。");
+      return buildDesignerCardPayload("已授权");
     }
 
     if (resolution === "timeout") {
@@ -168,7 +169,7 @@ export class PermissionManager {
       return this.buildNoticePayload("提醒", "yellow", "maybe_outlined", "OpenCode 已不再等待该权限请求，请重新触发操作。");
     }
 
-    return this.buildNoticePayload("错误", "red", "more-close_outlined", "当前权限请求已拒绝。");
+    return buildDesignerCardPayload("拒绝授权");
   }
 
   /** 将权限结果回传给 OpenCode，并同步本地状态。 */

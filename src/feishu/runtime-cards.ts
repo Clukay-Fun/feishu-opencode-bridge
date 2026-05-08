@@ -5,6 +5,7 @@
  * - 为桥接层的过程消息与系统通知提供一致的 UI 结构。
  */
 import { column, columnSet, markdown, standardIcon } from "./card-builder.js";
+import { buildDesignerCardPayload, setDesignerButtonValue } from "./designer-card-renderer.js";
 import {
   buildDivider,
   buildFooterTipBlock,
@@ -249,47 +250,39 @@ function buildSessionReviewBlock(review: NonNullable<SessionTransitionCardView["
 
 /** 构建模型列表卡。 */
 export function buildModelListCardPayload(view: ModelListCardView): FeishuPostPayload {
-  return buildInteractivePayload({
-    title: "可用模型",
-    subtitle: `当前：${view.currentModelLabel}`,
-    template: "indigo",
-    iconToken: "ai-common_colorful",
-    bodyElements: [
-      ...view.providers.flatMap((provider, index) => {
-        const elements: Array<Record<string, unknown>> = [
-          buildModelProviderBlock(provider),
-        ];
-        if (index < view.providers.length - 1) {
-          elements.push(buildDivider());
-        }
-        return elements;
-      }),
-      buildDivider(),
-      {
-        tag: "markdown",
-        content: view.footer,
-        text_align: "left",
-        text_size: "notation",
-        margin: "0px 0px 0px 0px",
-      },
-    ],
-  });
+  const firstProvider = view.providers[0];
+  const secondProvider = view.providers[1];
+  return buildDesignerCardPayload("可用模型", [
+    { from: "OpenAI", to: firstProvider?.name ?? "OpenAI" },
+    { from: "gpt-5.4", to: firstProvider?.models[0]?.id ?? view.currentModelLabel },
+    { from: "OpenCode Zen", to: secondProvider?.name ?? "OpenCode Zen" },
+    { from: "MiniMax-M2.7", to: secondProvider?.models[0]?.id ?? "MiniMax-M2.7" },
+    { from: "发送 `/model use <provider>/model` 切换模型。", to: view.footer },
+  ]);
 }
 
 /** 构建权限请求卡。 */
 export function buildPermissionRequestCardPayload(view: PermissionRequestCardView): FeishuPostPayload {
-  return buildInteractivePayload({
-    title: "权限请求",
-    subtitle: `${view.expiresInSeconds}s 后自动拒绝`,
-    template: "purple",
-    iconToken: "lock_filled",
-    bodyElements: [
-      buildPermissionRequestBlock(view.permissionName),
-      buildDivider(),
-      ...buildPermissionActionBlocks(view.buttons),
-      buildFooterTipBlock("也可发送 `/allow once`、`/allow always` 或 `/deny` 处理。", "keyboard_outlined", "grey", "notation"),
-    ],
+  return buildDesignerCardPayload("权限请求", [
+    { from: "npm run build", to: view.permissionName },
+  ], (card) => {
+    for (const button of view.buttons) {
+      setDesignerButtonValue(card, resolvePermissionDesignerButtonLabel(button.label), button.value);
+    }
   });
+}
+
+function resolvePermissionDesignerButtonLabel(label: string): string {
+  if (label.includes("once") || label.includes("仅此一次") || label.includes("允许一次")) {
+    return "允许一次";
+  }
+  if (label.includes("always") || label.includes("始终允许")) {
+    return "始终允许";
+  }
+  if (label.includes("deny") || label.includes("拒绝")) {
+    return "拒绝";
+  }
+  return label;
 }
 
 /** 构建 `/guide` 新手引导卡。 */
@@ -391,23 +384,6 @@ function buildTurnBodyElements(
   return elements;
 }
 
-function buildPermissionRequestBlock(permissionName: string): Record<string, unknown> {
-  return columnSet([
-    column([
-      markdown("OpenCode 想执行："),
-      columnSet([
-        {
-          tag: "column",
-          width: "weighted",
-          elements: [markdown(`\`\`\`\n$ ${escapeText(permissionName)}\n\`\`\``)],
-          vertical_align: "top",
-          weight: 1,
-        },
-      ]),
-    ], { weight: 1 }),
-  ]);
-}
-
 function buildGuideStepBlock(index: string, title: string, detail: string): Record<string, unknown> {
   return columnSet([
     column([
@@ -427,96 +403,6 @@ function buildGuideCommandTagsBlock(): Record<string, unknown> {
       buildStatusChip("/cost", "grey-50"),
     ]),
     flex_mode: "flow",
-  };
-}
-
-function buildModelProviderBlock(provider: ModelListCardView["providers"][number]): Record<string, unknown> {
-  return {
-    ...columnSet([
-      {
-        ...column([
-          markdown(`${escapeText(provider.name)} 模型`, { size: "normal" }),
-          {
-            ...columnSet(provider.models.map((model) => buildModelChip(model))),
-            flex_mode: "flow",
-          },
-          markdown(`切换示例：\`/model use ${escapeText(buildModelSwitchId(provider, provider.models[0]?.id ?? "<model>"))}\``, { size: "notation" }),
-        ], { weight: 1 }),
-        vertical_spacing: "4px",
-      },
-    ]),
-    flex_mode: "stretch",
-    horizontal_spacing: "12px",
-  };
-}
-
-function buildModelChip(model: ModelListCardView["providers"][number]["models"][number]): Record<string, unknown> {
-  const label = model.id.includes("/") ? (model.id.split("/").at(-1) ?? model.id) : model.id;
-  const highlighted = model.current;
-  return {
-    ...column([
-      markdown(
-        model.current
-          ? `**${escapeText(label)}**`
-          : escapeText(label),
-        { size: "notation" },
-      ),
-    ], highlighted ? { bg: "purple-50" } : undefined),
-    padding: "4px 4px 4px 4px",
-  };
-}
-
-function buildModelSwitchId(provider: ModelListCardView["providers"][number], modelId: string): string {
-  return modelId.includes("/") ? modelId : `${provider.id}/${modelId}`;
-}
-
-function buildPermissionActionBlocks(buttons: PermissionActionButton[]): Array<Record<string, unknown>> {
-  const allowButtons = buttons.filter((button) => button.type !== "danger");
-  const dangerButtons = buttons.filter((button) => button.type === "danger");
-  return [
-    ...(allowButtons.length > 0 ? [buildPermissionActionBlock(allowButtons)] : []),
-    ...(dangerButtons.length > 0 ? [buildPermissionActionBlock(dangerButtons)] : []),
-  ];
-}
-
-function buildPermissionActionBlock(buttons: PermissionActionButton[]): Record<string, unknown> {
-  return {
-    tag: "column_set",
-    flex_mode: "stretch",
-    horizontal_spacing: "8px",
-    horizontal_align: "left",
-    columns: buttons.map((button) => ({
-      tag: "column",
-      width: "auto",
-      elements: [
-        {
-          tag: "button",
-          text: {
-            tag: "plain_text",
-            content: button.label,
-          },
-          type: button.type,
-          width: button.type === "primary" ? "fill" : "default",
-          size: "medium",
-          margin: "0px 0px 0px 0px",
-          value: button.value,
-          confirm: button.type === "danger"
-            ? {
-              title: {
-                tag: "plain_text",
-                content: "确认操作",
-              },
-              text: {
-                tag: "plain_text",
-                content: "确认拒绝当前权限请求？",
-              },
-            }
-            : undefined,
-        },
-      ],
-      vertical_align: "top",
-    })),
-    margin: "0px 0px 0px 0px",
   };
 }
 

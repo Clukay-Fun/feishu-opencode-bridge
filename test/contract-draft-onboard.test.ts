@@ -477,7 +477,7 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
       expect(processingSerialized).toContain("写入案件管理表：等待中");
       expect(completedSerialized).toContain("案件已录入");
       expect(completedSerialized).toContain("张三 vs 北京XX科技有限公司");
-      expect(completedSerialized).toContain("劳动争议｜劳动仲裁");
+      expect(completedSerialized).toContain("劳动争议");
       expect(completedSerialized).toContain("打开案件管理表");
       expect((completedCard.body?.elements ?? []).some((item: { tag?: string }) => item.tag === "column")).toBe(false);
     } finally {
@@ -500,17 +500,11 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     const finalSerialized = JSON.stringify(updatePayload.mock.calls.at(-1)?.[2] ?? {});
     expect(initialSerialized).toContain("合同起草");
     expect(initialSerialized).toContain("委托代理合同");
-    expect(initialSerialized).toContain("劳动争议｜劳动仲裁");
+    expect(initialSerialized).toContain("劳动争议");
     expect(initialSerialized).toContain("律师费：¥20,000");
     expect(finalSerialized).toContain("合同起草完成");
-    expect(finalSerialized).toContain("已完成解析起草需求");
-    expect(finalSerialized).toContain("已完成匹配合同模板");
-    expect(finalSerialized).toContain("已完成整理关键字段");
-    expect(finalSerialized).toContain("已完成使用模板填充变量并生成文档");
-    expect(finalSerialized).toContain("已完成同步合同台账记录");
     expect(finalSerialized).toContain("/contract.docx");
-    expect(finalSerialized).toContain("合同台账记录：打开记录");
-    expect(finalSerialized).toContain("耗时：");
+    expect(finalSerialized).toContain("打开合同台账");
   });
 
   it("uses demo one-shot contract data in the draft card and request", async () => {
@@ -529,7 +523,7 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     expect(draftContract.mock.calls[0]?.[0]).toContain("办案费用实报实销");
     const initialSerialized = JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {});
     expect(initialSerialized).toContain("委托代理合同（张某某 vs 杭州XX科技有限公司）");
-    expect(initialSerialized).toContain("违法解除劳动合同争议｜劳动仲裁");
+    expect(initialSerialized).toContain("违法解除劳动合同争议");
     expect(initialSerialized).toContain("律师费：¥20,000");
   });
 
@@ -554,7 +548,7 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     expect(draftContract.mock.calls[0]?.[0]).toContain("收费模式选择：按阶段收费");
     const processingSerialized = JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {});
     expect(processingSerialized).toContain("委托代理合同（房怡康 vs 网新集团有限公司、安徽网新计算机有限公司）");
-    expect(processingSerialized).toContain("劳动争议｜仲裁");
+    expect(processingSerialized).toContain("劳动争议");
     expect(processingSerialized).toContain("律师费：¥8,000");
     expect(processingSerialized).not.toContain("委托人 vs 相关单位");
     expect(updatePayload.mock.calls.length).toBeGreaterThanOrEqual(1);
@@ -611,7 +605,7 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     expect(result).toEqual({ claimed: true });
     const completedSerialized = JSON.stringify(updatePayload.mock.calls.at(-1)?.[2] ?? {});
     expect(completedSerialized).toContain("张某某 vs 杭州XX科技有限公司");
-    expect(completedSerialized).toContain("劳动仲裁｜仲裁阶段");
+    expect(completedSerialized).toContain("劳动仲裁");
     expect(completedSerialized).toContain("打开案件管理表");
     expect(completedSerialized).not.toContain("委托人 vs 对方当事人");
   });

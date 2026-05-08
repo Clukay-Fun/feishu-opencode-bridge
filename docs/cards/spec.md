@@ -24,7 +24,7 @@ npm run cards:preview
 
 | 模板 ID | 卡片标题 | 模板色 | iconToken | 用途 |
 |---------|---------|--------|-----------|------|
-| `knowledge.ingest-ready` | 知识库入库开启 | blue | `loading_outlined` | 进入入库模式提示 |
+| `knowledge.ingest-ready` | 知识入库已开启 | blue | `loading_outlined` | 进入入库模式提示 |
 | `knowledge.ingest-queued` | 知识入库排队中 | orange | `clock_outlined` | 入库任务排队等待 |
 | `knowledge.ingest-processing` | 知识入库进行中 | blue | `loading_outlined` | 入库处理中进度 |
 | `knowledge.ingest-completed` | 知识入库完成 | green | `yes_filled` | 入库成功结果 |

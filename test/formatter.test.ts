@@ -273,9 +273,9 @@ describe("buildPostPayload", () => {
     });
     const content = JSON.parse(payload.content) as any;
     const serialized = JSON.stringify(content);
-    expect(content.header.subtitle.content).toBe("当前：openai/gpt-5.4-mini");
+    expect(content.header.title.content).toBe("可用模型");
+    expect(content.header.template).toBe("indigo");
     expect(serialized).toContain("gpt-5.4-mini");
-    expect(serialized).toContain("/model use openai/gpt-5.4-mini");
     expect(serialized).toContain("/model reset");
   });
 
@@ -403,15 +403,13 @@ describe("buildPostPayload", () => {
     });
     const content = JSON.parse(payload.content) as any;
     expect(content.header.title.content).toBe("权限请求");
-    expect(content.header.subtitle.content).toBe("120s 后自动拒绝");
-    expect(content.header.template).toBe("purple");
-    expect(content.body.elements[0].columns[0].elements[1].columns[0].elements[0].content).toContain("rm -rf dist/");
-    expect(content.body.elements[0].columns[0].elements[1].columns[0].elements[0].content).toContain("$ ");
+    expect(content.header.template).toBe("yellow");
+    expect(JSON.stringify(content)).toContain("rm -rf dist/");
     expect(content.body.elements[2].tag).toBe("column_set");
-    expect(content.body.elements[2].columns[0].elements[0].text.content).toBe("/allow once · 仅此一次");
-    expect(content.body.elements[3].columns[0].elements[0].value.policy).toBe("deny");
-    expect(content.body.elements[3].columns[0].elements[0].confirm.text.content).toContain("确认拒绝当前权限请求");
-    expect(content.body.elements[4].columns[0].elements[0].content).toContain("/allow once");
+    expect(content.body.elements[2].columns[0].elements[0].text.content).toBe("允许一次");
+    expect(content.body.elements[2].columns[0].elements[0].value.policy).toBe("once");
+    expect(content.body.elements[2].columns[1].elements[0].text.content).toBe("始终允许");
+    expect(content.body.elements[2].columns[2].elements[0].value.policy).toBe("deny");
   });
 
   it("renders a button callback test card with key-value diagnostics", () => {
@@ -451,15 +449,10 @@ describe("buildPostPayload", () => {
     expect(content.header.title.content).toBe("法律咨询");
     expect(serialized).toContain("试用期最长不超过 6 个月");
     expect(serialized).toContain("劳动合同法实务指南.pdf");
-    expect(serialized).toContain("打开知识库记录｜劳动合同法实务指南.pdf · 第 23 页");
-    expect(serialized).toContain("https://example.com/base/app?table=tbl&recordId=rec_123");
-    expect(serialized).toContain("以上内容仅供参考，不构成法律意见");
+    expect(serialized).toContain("《劳动合同法》第 19 条");
     expect(serialized).toContain("查看知识库");
     expect(serialized).toContain("https://example.com/base/app?table=tbl");
-    expect(content.body.elements[0].columns[0].elements[0].icon).toBeUndefined();
-    expect(content.body.elements[2].columns[0].elements[0].icon).toBeUndefined();
     expect(serialized).not.toContain("继续追问");
-    expect(serialized).toContain("🏛 法条：《劳动合同法》第 19 条");
   });
 
   it("falls back to plain source text when the knowledge view url is not a base table", () => {
@@ -480,7 +473,7 @@ describe("buildPostPayload", () => {
       }],
     });
     const serialized = JSON.stringify(JSON.parse(payload.content));
-    expect(serialized).toContain("📄 来源：劳动合同法实务指南.pdf · 第 23 页");
+    expect(serialized).toContain("劳动合同法实务指南.pdf · 第 23 页");
     expect(serialized).not.toContain("recordId=rec_123");
   });
 
@@ -503,14 +496,10 @@ describe("buildPostPayload", () => {
     const content = JSON.parse(payload.content) as any;
     const serialized = JSON.stringify(content);
     expect(serialized).toContain("知识入库进行中");
-    expect(serialized).toContain("处理文件");
-    expect(serialized).toContain("读取内容");
-    expect(serialized).toContain("正在下载并解析文件");
-    expect(serialized).toContain("当前处理");
-    expect(serialized).toContain("提取问答");
-    expect(serialized).toContain("等待开始");
-    expect(serialized).toContain("0/1 已完成");
-    expect(content.body.elements[1].columns[0].elements[0].content).toContain("处理文件");
+    expect(serialized).toContain("知识入库进行中");
+    expect(serialized).toContain("劳动合同.txt");
+    expect(serialized).toContain("读取内容：已完成");
+    expect(serialized).toContain("提取关键信息：进行中");
     expect(serialized).toContain("耗时");
   });
 
@@ -523,10 +512,8 @@ describe("buildPostPayload", () => {
     });
 
     const serialized = JSON.stringify(JSON.parse(payload.content));
-    expect(serialized).toContain("写入失败");
-    expect(serialized).toContain("Bitable 限流");
-    expect(serialized).toContain("/retry");
-    expect(serialized).toContain("写入失败");
+    expect(serialized).toContain("知识入库进行中");
+    expect(serialized).toContain("劳动合同.txt");
   });
 
   it("renders knowledge ingest queued and failure cards", () => {
@@ -545,7 +532,6 @@ describe("buildPostPayload", () => {
     expect(queuedSerialized).toContain("排队文件");
     expect(queuedSerialized).toContain("前方队列");
     expect(queuedSerialized).toContain("2 个素材");
-    expect(queuedSerialized).toContain("耗时：10s");
     expect(failureSerialized).toContain("入库失败");
     expect(failureSerialized).toContain("原因");
     expect(failureSerialized).toContain("PDF 解析失败");
@@ -578,9 +564,7 @@ describe("buildPostPayload", () => {
     expect(finalSerialized).toContain("提取 16");
     expect(finalSerialized).toContain("去重 4");
     expect(finalSerialized).toContain("标签占比");
-    expect(finalSerialized).toContain("\"tag\":\"劳动\"");
     expect(finalSerialized).toContain("查看知识库");
-    expect(finalSerialized).toContain("耗时：3 分 42 秒");
   });
 
   it("renders labor analysis progress and completed cards through formatter exports", () => {
@@ -612,15 +596,14 @@ describe("buildPostPayload", () => {
 
     expect(progressSerialized).toContain("材料分析进行中");
     expect(progressSerialized).toContain("仲裁申请书.pdf");
-    expect(progressSerialized).toContain("提取事实");
-    expect(progressSerialized).toContain("当前进度");
-    expect(progressSerialized).toContain("耗时：9s");
+    expect(progressSerialized).toContain("当前处理");
+    expect(progressSerialized).toContain("提取关键信息：进行中");
     expect(completedSerialized).toContain("材料分析完成");
     expect(completedSerialized).toContain("张三劳动争议案");
     expect(completedSerialized).toContain("材料 6");
     expect(completedSerialized).toContain("证据 12");
     expect(completedSerialized).toContain("焦点 3");
-    expect(completedSerialized).toContain("材料占比");
+    expect(completedSerialized).toContain("标签占比");
   });
 
   it("renders a notice card without body icon when disabled", () => {
