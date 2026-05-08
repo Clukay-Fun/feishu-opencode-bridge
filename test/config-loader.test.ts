@@ -681,13 +681,6 @@ describe("loadConfig memory settings", () => {
         maxFileSizeMb: 20,
         pendingTtlMs: 600000,
       },
-      reminder: {
-        enabled: false,
-        targetChatIds: [],
-        hour: 9,
-        minute: 0,
-        lookaheadDays: 7,
-      },
     });
   });
 

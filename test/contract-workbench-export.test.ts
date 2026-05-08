@@ -30,13 +30,6 @@ describe("ContractAssistantService exportWorkbenchWord", () => {
             maxFileSizeMb: 20,
             pendingTtlMs: 60_000,
           },
-          reminder: {
-            enabled: false,
-            targetChatIds: [],
-            hour: 9,
-            minute: 0,
-            lookaheadDays: 7,
-          },
         },
         tempDir,
         {

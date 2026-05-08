@@ -111,13 +111,6 @@ async function createModule() {
           maxFileSizeMb: 20,
           pendingTtlMs: 60_000,
         },
-        reminder: {
-          enabled: false,
-          targetChatIds: [],
-          hour: 9,
-          minute: 0,
-          lookaheadDays: 7,
-        },
       },
     } as unknown as AppConfig,
     logger: { log: vi.fn() } as never,

@@ -33,13 +33,6 @@ const ContractAssistantConfigSchema = z.object({
     maxFileSizeMb: z.number().positive().default(20),
     pendingTtlMs: z.number().int().positive().default(600_000),
   }).default({}),
-  reminder: z.object({
-    enabled: z.boolean().default(false),
-    targetChatIds: z.array(z.string().min(1)).default([]),
-    hour: z.number().int().min(0).max(23).default(9),
-    minute: z.number().int().min(0).max(59).default(0),
-    lookaheadDays: z.number().int().positive().default(7),
-  }).default({}),
 }).default({});
 
 type ContractAssistantParsedConfig = z.infer<typeof ContractAssistantConfigSchema>;
@@ -65,13 +58,6 @@ export type ContractAssistantConfig = {
     maxFileSizeMb: number;
     pendingTtlMs: number;
   };
-  reminder: {
-    enabled: boolean;
-    targetChatIds: string[];
-    hour: number;
-    minute: number;
-    lookaheadDays: number;
-  };
 };
 
 export const DEFAULT_CONTRACT_ASSISTANT_CONFIG: ContractAssistantConfig = {
@@ -88,13 +74,6 @@ export const DEFAULT_CONTRACT_ASSISTANT_CONFIG: ContractAssistantConfig = {
     invoiceAllowedExtensions: [".pdf", ".png", ".jpg", ".jpeg", ".txt", ".md"],
     maxFileSizeMb: 20,
     pendingTtlMs: 600_000,
-  },
-  reminder: {
-    enabled: false,
-    targetChatIds: [],
-    hour: 9,
-    minute: 0,
-    lookaheadDays: 7,
   },
 };
 
@@ -160,13 +139,6 @@ function normalizeContractAssistantConfig(parsed: ContractAssistantParsedConfig)
       invoiceAllowedExtensions: parsed.ingest.invoiceAllowedExtensions.map((value) => value.trim().toLowerCase()),
       maxFileSizeMb: parsed.ingest.maxFileSizeMb,
       pendingTtlMs: parsed.ingest.pendingTtlMs,
-    },
-    reminder: {
-      enabled: parsed.reminder.enabled,
-      targetChatIds: parsed.reminder.targetChatIds,
-      hour: parsed.reminder.hour,
-      minute: parsed.reminder.minute,
-      lookaheadDays: parsed.reminder.lookaheadDays,
     },
   };
 }
