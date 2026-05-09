@@ -853,7 +853,7 @@ export class CommandHandler {
         "- `分析这个 PDF 的内容`",
         "- `识别这张图片中的文字`",
         "",
-        "批量入库请发送 `/kb-ingest-start` 后重新上传文件。",
+        "批量入库请发送 `/知识入库` 后重新上传文件。",
       ].join("\n");
       await this.context.sendMarkdown(message.chatId, helpText, message.messageId);
       return;

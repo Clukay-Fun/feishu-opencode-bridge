@@ -599,7 +599,7 @@ describe("knowledge base bridge flow", () => {
     expect(outboundTexts[0]).toContain("命令已更新");
     expect(outboundTexts[0]).toContain("`/legal-query-start`");
     expect(outboundTexts[1]).toContain("命令已更新");
-    expect(outboundTexts[1]).toContain("`/kb-query <问题>`");
+    expect(outboundTexts[1]).toContain("`/法律咨询 <问题>`");
     expect(outboundTexts[2]).toContain("命令已更新");
     expect(outboundTexts[2]).toContain("`/legal-query-end`");
     expect(JSON.stringify(allPayloads)).toContain("这是普通 OpenCode 回复");

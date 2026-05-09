@@ -1,19 +1,48 @@
 # 法律知识库方案
 
-> 注：当前命令面已更新。英文兼容别名 `/legal-query*` 已退役；群聊连续检索使用 `/法律咨询开始` / `/法律咨询结束`，单次显式检索使用 `/kb-query <问题>`，私聊直接提问即可。
+> 注：当前命令面已更新。英文兼容别名 `/legal-query*` 已退役；群聊连续检索使用 `/法律咨询开始` / `/法律咨询结束`，单次显式检索使用 `/法律咨询 <问题>`，私聊直接提问即可。批量入库推荐 `/知识入库` / `/知识入库结束`，`/kb-ingest-start` / `/kb-ingest-end` 仅作为兼容入口保留。
 
 ## 定位
 
 面向法律从业者的通用法律知识库系统，支持：
 
 - 批量导入法律文档（PDF/Word/TXT/MD），AI 自动提取问答对
-- 用户提问时，基于 embedding 语义检索 + AI 重排序，返回多条带来源引用的答案
+- 用户提问时，优先处理明确法条引用，再基于 embedding 语义检索、可选 Jina-compatible rerank 或 AI 重排序，返回多条带来源引用的答案
+- 类型化知识条目：`article`、`case_digest`、`practice_note`、`case_reflow`
+- 基础脱敏层：手机号、身份证、邮箱、银行卡、统一社会信用代码等规则命中可被标记或替换
 - URL 网页内容入库（通过 OpenCode 辅助读取网页并整理成 Markdown）
 - 通过 `/法律咨询开始` 进入知识库模式，后续直接提问，无需每条消息都输入命令
 
 实现为 bridge 内建知识库子系统（`src/knowledge/`）。
-`/kb-ingest-start`、`/kb-ingest-end`、`/kb-query` 是 framework 级入口，仍由 core router 解析。
+`/知识入库`、`/知识入库结束`、`/kb-query` 是 framework 级入口，仍由 core router 解析。
 `/法律咨询开始`、`/法律咨询结束`、`/法律咨询 <问题>` 属于知识库扩展命令，由 knowledge RuntimeModule 基于 passthrough 认领。
+
+## 0.2.0 类型化条目
+
+知识库底层仍兼容原有 Q&A 字段，但从 `0.2.0` 开始，每条 entry 可以携带类型化元数据。
+
+| 类型 | 用途 | 默认置信度 | 是否默认需复核 |
+| ---- | ---- | ---------- | -------------- |
+| `article` | 法律法规、司法解释、正式规范条文 | 1.0 | 否 |
+| `case_digest` | 裁判案例摘要、指导案例、类案摘要 | 0.9 | 否 |
+| `case_reflow` | 从案件工作台回流的结构化经验 | 0.8 | 是 |
+| `practice_note` | 实务笔记、办案经验、内部说明 | 0.7 | 是 |
+
+新增元数据包括 `confidence`、`reviewRequired`、`effectiveStatus`、`dedupKey` 和 `fieldsJson`。
+
+`case_reflow` 条目会派生兼容的 `question` / `answer` 字段，确保旧检索路径立即可用，同时通过 `dedupKey` 避免同类案件经验重复堆积。
+
+## 召回顺序
+
+```text
+用户问题
+  -> 解析明确法条引用
+  -> 命中 article / 条文内容则直接返回
+  -> embedding 召回
+  -> keyword fallback
+  -> 可选 Jina-compatible rerank
+  -> 否则回退 OpenCode LLM rerank
+```
 
 ## 模型与供应商分工
 
@@ -87,7 +116,7 @@ bridge 读写 Bitable 使用的是 `config.json` 中 `feishu.appId` / `feishu.ap
 ### 触发方式
 
 ```
-@bot /kb-ingest-start
+@bot /知识入库
 ```
 
 随后连续上传 PDF / DOCX / TXT / MD / PNG / JPG / WEBP 文件，或发送带 URL 和明确入库意图的自然语言，例如：
@@ -108,7 +137,7 @@ bridge 读写 Bitable 使用的是 `config.json` 中 `feishu.appId` / `feishu.ap
 URL 入库路径：bridge 创建一次 OpenCode 短生命周期 session，使用 `models.webRead` 指定的模型读取网页并整理成 Markdown，再交给知识库入库管线。结束入库时发送：
 
 ```
-@bot /kb-ingest-end
+@bot /知识入库结束
 ```
 
 ### 流程
@@ -324,10 +353,13 @@ URL 入库路径：bridge 创建一次 OpenCode 短生命周期 session，使用
 
 ```
 src/knowledge/
-├── index.ts      # KnowledgeBaseService 主类：入库、查询、去重、模型调度
-├── parser.ts     # 文档解析 + 分块（PDF/DOCX/TXT/MD）
-├── db.ts         # SQLite 存储：文档表、条目表、FTS5 全文索引、embedding 检索
-└── detector.ts   # 法律问题自动识别：关键词匹配 + 问句特征 + 法条引用检测
+├── index.ts       # KnowledgeBaseService 主类：入库、查询、去重、模型调度
+├── parser.ts      # 文档解析 + 分块（PDF/DOCX/TXT/MD）
+├── db.ts          # SQLite 存储：文档表、条目表、FTS5、embedding、类型化元数据
+├── entry-types.ts # typed entry / case_reflow / dedup key 契约
+├── redaction.ts   # 规则层脱敏扫描与替换
+├── statute-ref.ts # 法条引用解析与中文条号归一
+└── detector.ts    # 法律问题自动识别：关键词匹配 + 问句特征 + 法条引用检测
 ```
 
 ### Bridge 分流
@@ -335,10 +367,10 @@ src/knowledge/
 ```text
 文本消息
   │
-  ├── /kb-ingest-start
+  ├── /知识入库
   │     └── 当前窗口进入知识入库模式，连续接收同发送者文件消息 / URL 消息
   │
-  ├── /kb-ingest-end
+  ├── /知识入库结束
   │     └── 当前窗口退出知识入库模式
   │
   ├── /法律咨询开始
@@ -366,7 +398,7 @@ src/knowledge/
 SQLite 表结构：
 
 - `knowledge_documents`：文档元信息（文件名、checksum、来源类型、状态）
-- `knowledge_entries`：问答条目（question、answer、tags、statute、embedding、源文件、页码）
+- `knowledge_entries`：问答条目（question、answer、tags、statute、embedding、源文件、页码、entry_type、confidence、review_required、effective_status、dedup_key、fields_json）
 - `knowledge_entries_fts`：FTS5 虚拟表，对 question/answer/statute/source_file/page_section 建索引
 
 ### 文档解析
@@ -443,7 +475,7 @@ SQLite 表结构：
 
 入库任务运行时，bridge 对同一窗口的其他消息采用"占线"策略：
 
-- **允许**结束命令：`/kb-ingest-end`
+- **允许**结束命令：`/知识入库结束`
 - **允许**切换命令：`/法律咨询开始`
 - **其他普通文本**：不参与普通对话，直接提示"当前正在入库处理中"
 
@@ -451,7 +483,7 @@ SQLite 表结构：
 
 ```
 当前正在处理知识入库任务。
-发送 /kb-ingest-end 可退出入库模式。
+发送 /知识入库结束 可退出入库模式。
 如需切换到法律查询，请发送 /法律咨询开始。
 普通对话请等待当前入库完成后再发送。
 ```
@@ -475,7 +507,7 @@ SQLite 表结构：
 ```
 bridge = 控制面 + 查询面
   - 飞书消息接入、模式切换
-  - 命令入口（/kb-ingest-start, /kb-query 等由 core router 解析；/法律咨询* 由 knowledge module 认领）
+  - 命令入口（/知识入库、/知识入库结束、/kb-query 等由 core router 解析；/法律咨询* 由 knowledge module 认领）
   - 本地 SQLite 检索
   - 查询结果卡片、入库进度卡片
 

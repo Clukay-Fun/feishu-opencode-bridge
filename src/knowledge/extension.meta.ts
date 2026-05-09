@@ -14,7 +14,7 @@ export const knowledgeBaseExtensionMeta = {
   commands: [
     { name: "kb-query", aliases: ["法律咨询"], owner: "framework", description: "查询知识库或法律咨询知识模式" },
     { name: "kb-ingest-start", aliases: ["知识入库", "kb-ingest"], owner: "framework", description: "进入知识库材料入库模式" },
-    { name: "kb-ingest-end", owner: "framework", description: "退出知识库材料入库模式" },
+    { name: "kb-ingest-end", aliases: ["知识入库结束"], owner: "framework", description: "退出知识库材料入库模式" },
     { name: "法律咨询开始", owner: "business", description: "进入群聊法律咨询知识库模式" },
     { name: "法律咨询结束", owner: "business", description: "退出群聊法律咨询知识库模式" },
   ],

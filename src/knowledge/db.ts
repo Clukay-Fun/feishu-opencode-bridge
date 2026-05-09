@@ -10,6 +10,11 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 
 import { cosineSimilarity } from "../memory/embedding-retriever.js";
+import {
+  DEFAULT_ENTRY_CONFIDENCE,
+  DEFAULT_ENTRY_REVIEW_REQUIRED,
+  type KnowledgeEntryType,
+} from "./entry-types.js";
 import { normalizeLawName, toChineseArticleNumber, type StatuteReference } from "./statute-ref.js";
 
 export type KnowledgeDocumentRecord = {
@@ -42,6 +47,13 @@ export type KnowledgeEntryRecord = {
   embeddingModel?: string | undefined;
   embedding?: number[] | undefined;
   createdAt: number;
+  entryType?: KnowledgeEntryType | undefined;
+  confidence?: number | undefined;
+  reviewRequired?: boolean | undefined;
+  migrated?: boolean | undefined;
+  effectiveStatus?: string | undefined;
+  dedupKey?: string | undefined;
+  fieldsJson?: string | undefined;
 };
 
 export type KnowledgeEntryCandidate = KnowledgeEntryRecord & {
@@ -73,6 +85,13 @@ type KnowledgeEntryRow = {
   embedding_model: string | null;
   embedding_json: string | null;
   created_at: number;
+  entry_type: string | null;
+  confidence: number | null;
+  review_required: number | null;
+  migrated: number | null;
+  effective_status: string | null;
+  dedup_key: string | null;
+  fields_json: string | null;
 };
 
 type KnowledgeDocumentRow = {
@@ -184,8 +203,16 @@ export class KnowledgeDb {
     bitableRecordId?: string | undefined;
     embedding?: number[] | undefined;
     embeddingModel?: string | undefined;
+    entryType?: KnowledgeEntryType | undefined;
+    confidence?: number | undefined;
+    reviewRequired?: boolean | undefined;
+    migrated?: boolean | undefined;
+    effectiveStatus?: string | undefined;
+    dedupKey?: string | undefined;
+    fieldsJson?: string | undefined;
   }): number {
     const now = Date.now();
+    const metadata = normalizeEntryMetadata(input);
     this.db.prepare(`
       INSERT INTO knowledge_entries (
         document_id,
@@ -198,7 +225,14 @@ export class KnowledgeDb {
         bitable_record_id,
         embedding_model,
         embedding_json,
-        created_at
+        created_at,
+        entry_type,
+        confidence,
+        review_required,
+        migrated,
+        effective_status,
+        dedup_key,
+        fields_json
       )
       VALUES (
         @documentId,
@@ -211,7 +245,14 @@ export class KnowledgeDb {
         @bitableRecordId,
         @embeddingModel,
         @embeddingJson,
-        @createdAt
+        @createdAt,
+        @entryType,
+        @confidence,
+        @reviewRequired,
+        @migrated,
+        @effectiveStatus,
+        @dedupKey,
+        @fieldsJson
       )
       ON CONFLICT(document_id, question, answer, COALESCE(page_section, '')) DO UPDATE SET
         tags_json = excluded.tags_json,
@@ -219,7 +260,14 @@ export class KnowledgeDb {
         source_file = excluded.source_file,
         bitable_record_id = COALESCE(excluded.bitable_record_id, knowledge_entries.bitable_record_id),
         embedding_model = COALESCE(excluded.embedding_model, knowledge_entries.embedding_model),
-        embedding_json = COALESCE(excluded.embedding_json, knowledge_entries.embedding_json)
+        embedding_json = COALESCE(excluded.embedding_json, knowledge_entries.embedding_json),
+        entry_type = COALESCE(excluded.entry_type, knowledge_entries.entry_type),
+        confidence = COALESCE(excluded.confidence, knowledge_entries.confidence),
+        review_required = COALESCE(excluded.review_required, knowledge_entries.review_required),
+        migrated = excluded.migrated,
+        effective_status = COALESCE(excluded.effective_status, knowledge_entries.effective_status),
+        dedup_key = COALESCE(excluded.dedup_key, knowledge_entries.dedup_key),
+        fields_json = COALESCE(excluded.fields_json, knowledge_entries.fields_json)
     `).run({
       documentId: input.documentId,
       question: input.question,
@@ -232,6 +280,13 @@ export class KnowledgeDb {
       embeddingModel: input.embeddingModel ?? null,
       embeddingJson: input.embedding ? JSON.stringify(input.embedding) : null,
       createdAt: now,
+      entryType: metadata.entryType,
+      confidence: metadata.confidence,
+      reviewRequired: metadata.reviewRequired ? 1 : 0,
+      migrated: metadata.migrated ? 1 : 0,
+      effectiveStatus: metadata.effectiveStatus,
+      dedupKey: input.dedupKey ?? null,
+      fieldsJson: input.fieldsJson ?? null,
     });
 
     const row = this.db.prepare(`
@@ -249,6 +304,14 @@ export class KnowledgeDb {
     }) as { id: number };
 
     return row.id;
+  }
+
+  /** 通过 dedupKey 查找已有条目 */
+  findByDedupKey(dedupKey: string): KnowledgeEntryRecord | undefined {
+    const row = this.db.prepare(`
+      SELECT * FROM knowledge_entries WHERE dedup_key = @dedupKey LIMIT 1
+    `).get({ dedupKey }) as KnowledgeEntryRow | undefined;
+    return row ? toEntryRecord(row) : undefined;
   }
 
   // Mark a document's ingestion lifecycle status.
@@ -604,6 +667,13 @@ export class KnowledgeDb {
         embedding_model TEXT,
         embedding_json TEXT,
         created_at INTEGER NOT NULL,
+        entry_type TEXT DEFAULT 'practice_note',
+        confidence REAL DEFAULT 0.7,
+        review_required INTEGER DEFAULT 1,
+        migrated INTEGER DEFAULT 0,
+        effective_status TEXT DEFAULT 'current',
+        dedup_key TEXT,
+        fields_json TEXT,
         FOREIGN KEY(document_id) REFERENCES knowledge_documents(id)
       );
 
@@ -651,6 +721,34 @@ export class KnowledgeDb {
         VALUES ('delete', old.id, old.question, old.answer, old.statute, old.source_file, old.page_section);
       END;
     `);
+    this.migrateKnowledgeEntriesSchema();
+  }
+
+  private migrateKnowledgeEntriesSchema(): void {
+    const columns = new Set(
+      (this.db.prepare("PRAGMA table_info(knowledge_entries)").all() as Array<{ name: string }>).map((column) => column.name),
+    );
+    const addColumn = (name: string, ddl: string): void => {
+      if (!columns.has(name)) {
+        this.db.exec(`ALTER TABLE knowledge_entries ADD COLUMN ${ddl}`);
+        columns.add(name);
+      }
+    };
+
+    // 旧库补列时不能把存量条目批量标黄；历史条目统一标记 migrated=true、reviewRequired=false。
+    addColumn("entry_type", "entry_type TEXT DEFAULT 'practice_note'");
+    addColumn("confidence", "confidence REAL DEFAULT 0.7");
+    addColumn("review_required", "review_required INTEGER DEFAULT 0");
+    addColumn("migrated", "migrated INTEGER DEFAULT 1");
+    addColumn("effective_status", "effective_status TEXT DEFAULT 'unknown'");
+    addColumn("dedup_key", "dedup_key TEXT");
+    addColumn("fields_json", "fields_json TEXT");
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_knowledge_entries_dedup_key
+        ON knowledge_entries(dedup_key)
+        WHERE dedup_key IS NOT NULL;
+    `);
   }
 }
 
@@ -668,7 +766,49 @@ function toEntryRecord(row: KnowledgeEntryRow): KnowledgeEntryRecord {
     embeddingModel: row.embedding_model ?? undefined,
     embedding: parseNumericArray(row.embedding_json),
     createdAt: row.created_at,
+    entryType: normalizeEntryType(row.entry_type),
+    confidence: row.confidence ?? undefined,
+    reviewRequired: row.review_required === 1,
+    migrated: row.migrated === 1,
+    effectiveStatus: row.effective_status ?? undefined,
+    dedupKey: row.dedup_key ?? undefined,
+    fieldsJson: row.fields_json ?? undefined,
   };
+}
+
+function normalizeEntryMetadata(input: {
+  entryType?: KnowledgeEntryType | undefined;
+  confidence?: number | undefined;
+  reviewRequired?: boolean | undefined;
+  migrated?: boolean | undefined;
+  effectiveStatus?: string | undefined;
+}): {
+  entryType: KnowledgeEntryType;
+  confidence: number;
+  reviewRequired: boolean;
+  migrated: boolean;
+  effectiveStatus: string;
+} {
+  const entryType = input.entryType ?? "practice_note";
+  return {
+    entryType,
+    confidence: input.confidence ?? DEFAULT_ENTRY_CONFIDENCE[entryType],
+    reviewRequired: input.reviewRequired ?? DEFAULT_ENTRY_REVIEW_REQUIRED[entryType],
+    migrated: input.migrated ?? false,
+    effectiveStatus: input.effectiveStatus ?? (entryType === "article" ? "current" : "unknown"),
+  };
+}
+
+function normalizeEntryType(value: string | null): KnowledgeEntryType {
+  switch (value) {
+    case "article":
+    case "case_digest":
+    case "case_reflow":
+    case "practice_note":
+      return value;
+    default:
+      return "practice_note";
+  }
 }
 
 function scoreStatuteReferenceMatch(record: KnowledgeEntryRecord, ref: StatuteReference): KnowledgeEntryCandidate | null {

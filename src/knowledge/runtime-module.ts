@@ -263,8 +263,8 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
           template: "yellow",
           icon: "maybe_outlined",
           message: message.chatType === "p2p"
-            ? "私聊里不再使用 `/legal-query-start`。直接发送问题即可；如需批量入库，请使用 `/kb-ingest-start`。"
-            : "知识库模式入口已从 `/legal-query-start` 迁移到 `/法律咨询开始`。如需单次检索，也可以使用 `/kb-query <问题>`。",
+            ? "私聊里不再使用 `/legal-query-start`。直接发送问题即可；如需批量入库，请使用 `/知识入库`。"
+            : "知识库模式入口已从 `/legal-query-start` 迁移到 `/法律咨询开始`。如需单次检索，也可以使用 `/法律咨询 <问题>`。",
         });
         return true;
       }
@@ -285,8 +285,8 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
           template: "yellow",
           icon: "maybe_outlined",
           message: message.chatType === "p2p"
-            ? "私聊里不再使用 `/legal-query <问题>`。直接发送问题即可；如需强制走知识库查询，请使用 `/kb-query <问题>`。"
-            : "单次知识库检索已从 `/legal-query <问题>` 迁移到 `/kb-query <问题>`；连续检索模式请使用 `/法律咨询开始`。",
+            ? "私聊里不再使用 `/legal-query <问题>`。直接发送问题即可；如需强制走知识库查询，请使用 `/法律咨询 <问题>`。"
+            : "单次知识库检索已从 `/legal-query <问题>` 迁移到 `/法律咨询 <问题>`；连续检索模式请使用 `/法律咨询开始`。",
         });
         return true;
       }
@@ -309,7 +309,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
         title: "私聊里直接提问即可",
         template: "blue",
         icon: "search_outlined",
-        message: "私聊不需要显式切换知识库模式。直接发送问题即可，由 OpenCode 自主决定是否使用知识库；如需批量入库，请使用 `/kb-ingest-start`。",
+        message: "私聊不需要显式切换知识库模式。直接发送问题即可，由 OpenCode 自主决定是否使用知识库；如需批量入库，请使用 `/知识入库`。",
       });
       return true;
     }
@@ -380,7 +380,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
           title: "已在知识入库模式",
           template: "blue",
           icon: "upload_outlined",
-          message: "请继续上传 PDF / DOCX / TXT / MD / 图片文件；发送 `/kb-ingest-end` 可退出。",
+          message: "请继续上传 PDF / DOCX / TXT / MD / 图片文件；发送 `/知识入库结束` 可退出。",
         });
         return true;
       }
@@ -428,7 +428,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
           title: "当前未开启知识入库模式",
           template: "grey",
           icon: "info-hollow_filled",
-          message: "发送 `/kb-ingest-start` 可进入知识入库模式。",
+          message: "发送 `/知识入库` 可进入知识入库模式。",
         });
         return true;
       }
@@ -490,7 +490,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
         title: "已退出知识库模式",
         template: "green",
         icon: "chat_outlined",
-        message: "后续消息将恢复为普通 OpenCode 对话，仍可用 `/kb-query <问题>` 单次检索知识库。",
+        message: "后续消息将恢复为普通 OpenCode 对话，仍可用 `/法律咨询 <问题>` 单次检索知识库。",
       });
       return true;
     }
@@ -793,7 +793,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     } else {
       const webIngest = detectKnowledgeWebIngest(message.plainText, { requireIngestIntent: false });
       if (!webIngest.matched || !webIngest.url || !this.deps.knowledge.ingestWebPage) {
-        await this.sendKnowledgeIngestMarkdown(pending, "请继续上传 PDF / DOCX / TXT / MD / 图片文件，或直接发送网页 URL / 带 URL 的入库请求；发送 `/kb-ingest-end` 退出。");
+        await this.sendKnowledgeIngestMarkdown(pending, "请继续上传 PDF / DOCX / TXT / MD / 图片文件，或直接发送网页 URL / 带 URL 的入库请求；发送 `/知识入库结束` 退出。");
         return true;
       }
       sourceLabel = webIngest.url;
@@ -826,7 +826,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       message: [
         `素材：${sourceLabel}`,
         "",
-        "已加入本次入库清单，发送 `/kb-ingest-end` 后开始统一分析。",
+        "已加入本次入库清单，发送 `/知识入库结束` 后开始统一分析。",
       ].join("\n"),
       showMessageIcon: false,
     }), {
@@ -1096,7 +1096,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     await this.sendPayload(pending.chatId, buildNoticeCardPayload({
       title: "已退出知识入库模式",
       level: "info",
-      message: "后续文件消息将不再自动入库；如需继续入库，请发送 `/kb-ingest-start`。",
+      message: "后续文件消息将不再自动入库；如需继续入库，请发送 `/知识入库`。",
       showMessageIcon: false,
     }), {
       event: "knowledge ingest ended",
@@ -1155,7 +1155,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     await this.sendPayload(current.chatId, buildNoticeCardPayload({
       title: "入库任务已超时",
       level: "warning",
-      message: "长时间未收到新的入库素材，已结束当前入库任务。需要继续时请重新发送 `/kb-ingest-start`。",
+      message: "长时间未收到新的入库素材，已结束当前入库任务。需要继续时请重新发送 `/知识入库`。",
       showMessageIcon: false,
     }), {
       event: "knowledge ingest timed out",
@@ -1295,7 +1295,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       await this.sendPayload(record.chatId, buildNoticeCardPayload({
         title: "入库任务已中断",
         level: "warning",
-        message: "入库任务因服务重启中断，请重新发送 `/kb-ingest-start`。",
+        message: "入库任务因服务重启中断，请重新发送 `/知识入库`。",
         showMessageIcon: false,
       }), {
         event: "knowledge ingest interrupted",

@@ -154,6 +154,10 @@ describe("routeIncomingText", () => {
       kind: "command",
       command: { kind: "knowledge-ingest-end" },
     });
+    expect(routeIncomingText("/知识入库结束")).toEqual({
+      kind: "command",
+      command: { kind: "knowledge-ingest-end" },
+    });
     expect(routeIncomingText("/法律咨询开始")).toEqual({
       kind: "command",
       command: { kind: "passthrough", name: "法律咨询开始", arguments: [] },

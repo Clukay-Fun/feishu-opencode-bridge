@@ -742,7 +742,7 @@ export class BridgeApp {
       return true;
     }
     if (message.messageType === "file" || message.messageType === "image") {
-      await this.sendMarkdown(message.chatId, "已收到上一个文件，请先发送文字说明你希望我如何处理；如需入库，请发送 `/kb-ingest-start`。", message.messageId);
+      await this.sendMarkdown(message.chatId, "已收到上一个文件，请先发送文字说明你希望我如何处理；如需入库，请发送 `/知识入库`。", message.messageId);
       return true;
     }
     const instruction = message.plainText.trim();

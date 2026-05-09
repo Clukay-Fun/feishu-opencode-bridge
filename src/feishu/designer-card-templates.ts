@@ -3815,7 +3815,7 @@ export const DESIGNER_CARD_TEMPLATES = {
         },
         {
           "tag": "markdown",
-          "content": ">发送 `/kb-ingest-end` 结束本次任务",
+          "content": ">发送 `/知识入库结束` 结束本次任务",
           "text_align": "left",
           "text_size": "notation",
           "margin": "0px 0px 0px 0px"
@@ -3923,7 +3923,7 @@ export const DESIGNER_CARD_TEMPLATES = {
               "elements": [
                 {
                   "tag": "markdown",
-                  "content": "> 发送 /kb-ingest-end 提前结束入库",
+                  "content": "> 发送 /知识入库结束 提前结束入库",
                   "text_align": "left",
                   "text_size": "notation"
                 }

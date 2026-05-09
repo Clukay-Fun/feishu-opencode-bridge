@@ -255,8 +255,8 @@ core router 只处理 bridge / framework 命令。
 - `/allow`
 - `/deny`
 - `/kb-query`
-- `/kb-ingest-start`
-- `/kb-ingest-end`
+- `/知识入库`
+- `/知识入库结束`
 
 应归业务扩展处理的命令：
 

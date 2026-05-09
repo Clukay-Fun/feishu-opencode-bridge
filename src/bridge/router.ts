@@ -101,7 +101,7 @@ export function routeIncomingText(text: string): RoutedText {
     return { kind: "command", command: { kind: "knowledge-ingest" } };
   }
 
-  if (rawCommand === "kb-ingest-end" && args.length === 0) {
+  if ((rawCommand === "知识入库结束" || rawCommand === "kb-ingest-end") && args.length === 0) {
     return { kind: "command", command: { kind: "knowledge-ingest-end" } };
   }
 
