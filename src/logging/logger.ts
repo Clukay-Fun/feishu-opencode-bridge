@@ -7,7 +7,8 @@
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFileSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
 export type TranscriptType = "inbound" | "outbound-process" | "outbound-final" | "opencode-reply" | "reasoning-raw";
@@ -153,7 +154,7 @@ export async function createLogger(loggingDir: string, options: LoggerInputOptio
       }
       const header = `[${TRANSCRIPT_LABELS[type]}] ${formatFields(prepareFields(fields, resolvedOptions))}`.trimEnd();
       const block = `${header}\n内容: ${content}\n---\n`;
-      void appendFile(resolveLogPath(loggingDir, "transcript", resolvedOptions.rotateDaily), block, "utf8");
+      appendLogLine(resolveLogPath(loggingDir, "transcript", resolvedOptions.rotateDaily), block);
     },
   };
 }
@@ -224,13 +225,22 @@ function writeBridgeLog(
   const line = options.format === "json"
     ? formatJsonLine(scope, message, preparedFields, level)
     : `${timeStamp()} [${scope}] ${message} ${formatFields(preparedFields)}`.trimEnd();
-  void appendFile(resolveLogPath(loggingDir, "bridge", options.rotateDaily), `${line}\n`, "utf8");
+  appendLogLine(resolveLogPath(loggingDir, "bridge", options.rotateDaily), `${line}\n`);
   if (options.enableConsole) {
     console.log(options.enableColor && options.format === "pretty" ? colorizeLine(line, level) : line);
   }
 }
 
 // #endregion
+
+function appendLogLine(filePath: string, content: string): void {
+  // 日志写入本身不应影响业务流程；同步写入让测试和短生命周期 CLI 不再和异步落盘竞态。
+  try {
+    appendFileSync(filePath, content, "utf8");
+  } catch {
+    // Ignore logging failures: callers should not fail because a log file cannot be written.
+  }
+}
 
 function prepareFields(fields: Record<string, unknown>, options: LoggerOptions): Record<string, unknown> {
   return applyMessagePolicy(redactFields({

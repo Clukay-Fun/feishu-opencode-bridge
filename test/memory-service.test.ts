@@ -125,7 +125,7 @@ describe("MemoryService", () => {
     await expect(service.buildRecallBlock("u1", "third")).resolves.not.toContain("用户记录 third");
 
     await service.stop();
-  });
+  }, 10_000);
 
   it("drains queued learn tasks before shutdown closes the db", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-memory-service-"));

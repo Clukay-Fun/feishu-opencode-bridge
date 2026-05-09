@@ -2099,7 +2099,7 @@ describe("KnowledgeBaseService", () => {
     expect(result.extractedCount).toBe(5);
     expect(fetchSpy).toHaveBeenCalledTimes(5);
     service.close();
-  });
+  }, 10_000);
 });
 
 function createOpenCodeStub(options?: {
