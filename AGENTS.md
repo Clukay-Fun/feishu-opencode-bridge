@@ -55,6 +55,13 @@
 - Post-freeze feature PRs should include the new-feature checklist self-check when relevant.
 - Keep updating the same branch and PR while the related feature line is still open and unmerged.
 - Once a PR has been merged into `main`, do not reopen or reuse it for follow-up work; create a new branch and a new PR instead.
+- Branch workflow:
+  - Prefer feature branches for follow-up delivery instead of committing directly to `main`, unless the user explicitly asks for a direct main commit.
+  - Branch names should use `codex/<feature-topic>` for product or architecture work, for example `codex/case-workbench-checkpoints`.
+  - Large features should stay on one feature branch until the user-facing capability is coherent, then merge and delete the branch.
+  - Small independent fixes, docs, tests, or CI patches can use short-lived branches and merge as soon as validation passes.
+  - Do not rewrite already pushed `main` history just to retroactively split old work. If past direct-main commits need review, classify them logically by feature line and apply the branch workflow only to new follow-up work.
+  - If a branch accumulates unrelated changes, split by new commits or follow-up branches before PR instead of mixing product behavior, docs, and maintenance in one review.
 - GitHub Release / portable packaging workflow:
   - Create releases only from a clean `main`; first confirm `git status --short --branch` is clean, `main` is synced with `origin/main`, and `package.json` version matches the corresponding `CHANGELOG.md` entry.
   - Use `v<package.version>` for the release tag. Prefer a Chinese release title in the format `v<version>: <release theme>`.
