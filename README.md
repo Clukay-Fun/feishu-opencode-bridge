@@ -3,7 +3,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6)](https://www.typescriptlang.org/)
 [![Feishu](https://img.shields.io/badge/Feishu-Bridge-0F6FFF)](https://open.feishu.cn/)
-[![测试](https://img.shields.io/badge/tests-618%20passing-success)](#%EF%B8%8F-开发命令)
+[![测试](https://img.shields.io/badge/tests-623%20passing-success)](#%EF%B8%8F-开发命令)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **中文** | [英文版](README.en.md)
@@ -18,6 +18,8 @@
 敏感案件建议使用本地模型或私有模型网关，并保持 `memory.enabled=false`、`knowledgeBase.parser.externalApiEnabled=false`、`logging.messagePolicy=preview/hash/none`。
 
 ## 📢 项目动态
+
+**2026-05-09** · `0.2.0` 开发版进入案件工作台里程碑：案件工作台成为劳动材料收集主入口，知识库新增类型化条目、法条精确召回、Jina-compatible 重排与基础脱敏层，用户侧卡片收敛到设计器模板，劳动二审链路新增案件断点记忆，文档与命令面统一到中文优先口径，当前验证基线为 77 个测试文件、623 个测试
 
 **2026-05-09** · `0.1.61` 开发版新增案件工作台统一入口、知识库法条精确召回与 Jina-compatible 重排配置，继续收口用户侧卡片规范和劳动二审展示，当前验证基线为 75 个测试文件、618 个测试
 
@@ -64,17 +66,17 @@ OpenCode turn 执行链抽象出 `prepareTurnExecution` / `handlePermissionAsked
 
 **会话窗口**：支持私聊、群聊、话题群的 session 绑定、切换、关闭、重命名
 
-**过程卡片**：运行中的 OpenCode turn 通过飞书卡片持续更新状态、工具调用和最终回复
+**过程卡片**：运行中的 OpenCode turn、知识入库、案件工作台和劳动二审通过设计器卡片持续更新状态
 
 **权限确认**：OpenCode 权限请求支持飞书按钮审批，并保留 `/allow once`、`/allow always`、`/deny` 文本兜底
 
-**群聊协作**：通过白名单绑定支持群内免重复 `@bot` 的协作流
+**群聊协作**：群聊与话题群支持独立 session window、线程回复和显式 `@bot` 协作流
 
-**知识库**：支持法律知识查询、批量文件入库、URL 入库、统一文档解析和本地 CLI 诊断
+**知识库**：支持法律知识查询、批量文件/URL 入库、法条精确召回、可选 rerank、类型化条目和本地 CLI 诊断
 
-**合同助手**：支持合同起草、案件录入/更新、待办和提醒管理
+**合同助手**：支持合同起草、合同/发票/案件结构化录入、案件更新和工作台协同
 
-**劳动分析**：支持劳动争议材料收集、整理和分析输出
+**案件工作台**：支持劳动争议材料收集、案件断点记忆、证据链整理、一审分析和二审复核
 
 **长期记忆**：可选的记忆提取、检索、SQLite / FTS5 存储和 Obsidian 同步
 
@@ -211,10 +213,10 @@ flowchart TB
 | 私聊 / 群聊 / 话题群各自独立绑定，切换不丢上下文 | 卡片原地滚动更新，工具调用逐步展开，最终回复就地落地 | 敏感操作通过 `/allow` `/deny` 文本确认，按钮链路暂缓 | 拖文件进聊天、粘 URL 或批量入库，进度卡片全程可见 |
 | `/new` · `/switch` · `/sessions`         | 实时工具调用 + 最终回复                              | `/allow` · `/deny`                                  | 文件 · URL · 批量                               |
 
-| 合同助手                                 | 劳动分析                                         | 长期记忆                                    | 启动诊断                                       |
+| 合同助手                                 | 案件工作台                                       | 长期记忆                                    | 启动诊断                                       |
 | :--------------------------------------- | :----------------------------------------------- | :------------------------------------------ | :--------------------------------------------- |
-| 从合同起草到案件追踪，待办与提醒按日推送 | 收齐工资 / 考勤 / 协议，产出争议分析与工作台材料 | 按会话 / 主题检索，支持与 Obsidian 双向同步 | 启动前自检飞书 / OpenCode / 回调，缺什么报什么 |
-| 起草 · 案件 · 待办 · 提醒             | 材料收集 · 时间线 · 台账                       | SQLite + FTS5 + Obsidian                    | `npm run doctor`                             |
+| 合同起草、合同/发票/案件结构化录入与案件更新 | 收齐工资 / 考勤 / 协议，记录断点并产出争议分析与工作台材料 | 按会话 / 主题检索，支持与 Obsidian 双向同步 | 启动前自检飞书 / OpenCode / 回调，缺什么报什么 |
+| 起草 · 录入 · 发票 · 案件更新             | 材料收集 · 断点 · 时间线 · 二审                 | SQLite + FTS5 + Obsidian                    | `npm run doctor`                             |
 
 > 截图与 GIF 正在补充中。当前版本运行 `npm run dev` 并在飞书侧发送示例命令即可复现上述卡片体验。
 
@@ -278,7 +280,7 @@ npm run doctor
 
 `/button-test` — 发送一张按钮回调测试卡，用于验收飞书 Action 回调链路
 
-`/法律咨询 <问题>` · `/kb-query <问题>` — 知识库查询
+`/法律咨询 <问题>` · `/知识入库` · `/知识入库结束` — 知识库查询与入库
 
 `/合同起草开始` · `/案件录入 <案件信息>` — 合同助手
 
@@ -325,9 +327,9 @@ npm run doctor
 
 `/知识入库`
 
-`/kb-ingest-start`
+`/知识入库结束`
 
-`/kb-ingest-end`
+`/kb-ingest-start`、`/kb-ingest-end`：兼容旧入口
 
 ### 合同与案件
 

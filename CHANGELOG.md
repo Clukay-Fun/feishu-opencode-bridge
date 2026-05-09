@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.2.0 - 2026-05-09
+
+### Added
+- Added labor case checkpoints so case-workbench material collection, analysis, final review, failure, timeout, and completion stages are persisted as recoverable case state.
+- Added typed knowledge-base entries for `article`, `case_digest`, `practice_note`, and `case_reflow`, including confidence, review-required, effective-status, dedup-key, and structured field metadata.
+- Added a deterministic regex redaction layer for sensitive identifiers such as phone numbers, ID cards, email addresses, bank cards, and unified social credit codes.
+- Added Chinese knowledge-ingest exit command support with `/知识入库结束`, while keeping the existing `/kb-ingest-end` compatibility path.
+
+### Changed
+- Promoted the project to the `0.2.0` workbench milestone: the bridge is no longer just a runtime adapter with business modules, but a Feishu-native case workbench with legal knowledge retrieval, designer cards, labor-review checkpoints, and typed knowledge storage.
+- Updated knowledge-ingest user-facing notices, card templates, and help text to prefer `/知识入库` and `/知识入库结束`.
+- Tightened labor final-review source typing by splitting local knowledge references into hard article evidence and softer digest/reflow/practice references.
+- Updated README, knowledge-base docs, labor workflow docs, and architecture notes to reflect retired group whitelist cards, retired reminder wording, the case-workbench entry, typed knowledge entries, and the `0.2.0` milestone.
+
+### Fixed
+- Prevented pass-level labor review status from surviving when the final review has no hard authority or article evidence.
+- Kept older `/kb-ingest-end` and `/kb-query` command paths available as compatibility aliases while making the Chinese commands the recommended user surface.
+
 ## 0.1.61 - 2026-05-09
 
 ### Added
