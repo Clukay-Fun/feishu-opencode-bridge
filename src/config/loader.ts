@@ -170,6 +170,11 @@ export async function loadConfigWithWarnings(
       githubRepo: parsed.updates.githubRepo,
       channel: parsed.updates.channel,
     },
+    persona: {
+      enabled: parsed.persona.enabled,
+      profile: parsed.persona.profile,
+      scope: parsed.persona.scope,
+    },
     memory: {
       enabled: parsed.memory.enabled,
       dbPath: resolveRelative(baseDir, parsed.memory.dbPath ?? path.join(dataDir, "memory.db")),

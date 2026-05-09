@@ -56,6 +56,37 @@ describe("createRuntimeModules", () => {
     await result.moduleManager.stop();
   });
 
+  it("injects Xiaojing persona only for legal-scoped turns by default", async () => {
+    const result = createRuntimeModules({
+      config: createConfig({ knowledgeEnabled: false, contractEnabled: false, laborEnabled: false }),
+      outbound: createOutbound(),
+      transport: createTransport(),
+      logger: { log: vi.fn() } as never,
+      opencode: createOpenCode(),
+      whitelist: { bind: vi.fn(async () => {}) },
+      getSessionWindow: () => ({ mode: "single", interactionMode: "default", activeSessionId: null, sessions: [] }),
+      saveSessionWindow: vi.fn(async () => {}),
+      createAndBindSession: vi.fn(async () => ({ sessionId: "ses_1", label: "会话", createdAt: 1, lastUsedAt: 1 })),
+    });
+    const window = {
+      mode: "single" as const,
+      activeSessionId: "ses_1",
+      sessions: [{ sessionId: "ses_1", label: "会话", createdAt: 1, lastUsedAt: 1 }],
+    };
+
+    const legalBlocks = await result.moduleManager.collectBeforeTurnBlocks({
+      turn: createTurn("帮我分析这个劳动仲裁案件"),
+      window,
+    });
+    const genericBlocks = await result.moduleManager.collectBeforeTurnBlocks({
+      turn: createTurn("帮我写一个 shell 脚本"),
+      window,
+    });
+
+    expect(legalBlocks.join("\n")).toContain("[Persona: Xiaojing]");
+    expect(genericBlocks.join("\n")).not.toContain("[Persona: Xiaojing]");
+  });
+
   it("adapts external extension modules through the public runtime context", async () => {
     const result = createRuntimeModules({
       config: {
@@ -240,6 +271,20 @@ function createOpenCode() {
   };
 }
 
+function createTurn(plainText: string) {
+  return {
+    turnId: "turn_1",
+    chatId: "oc_chat",
+    conversationKey: "conv",
+    threadKey: "thread",
+    senderOpenId: "ou_1",
+    inboundMessageId: "om_1",
+    plainText,
+    text: plainText,
+    sessionId: "ses_1",
+  };
+}
+
 function createConfig(options: { knowledgeEnabled: boolean; contractEnabled: boolean; laborEnabled: boolean }): AppConfig {
   const dataDir = mkdtempSync(join(tmpdir(), "runtime-modules-test-"));
   tempDirs.push(dataDir);
@@ -321,6 +366,11 @@ function createConfig(options: { knowledgeEnabled: boolean; contractEnabled: boo
       appendTranscript: false,
     },
     extensions: {},
+    persona: {
+      enabled: true,
+      profile: "xiaojing",
+      scope: "legal",
+    },
     contractAssistant: {
       enabled: options.contractEnabled,
       storage: {

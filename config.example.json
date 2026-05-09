@@ -76,6 +76,11 @@
     "githubRepo": "clukay/feishu-opencode-bridge",
     "channel": "stable"
   },
+  "persona": {
+    "enabled": true,
+    "profile": "xiaojing",
+    "scope": "legal"
+  },
   "embeddings": {
     "provider": {
       "baseUrl": "https://api.openai.com/v1/",

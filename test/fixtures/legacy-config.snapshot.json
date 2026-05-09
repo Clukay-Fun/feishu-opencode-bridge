@@ -99,6 +99,11 @@
     "githubRepo": "clukay/feishu-opencode-bridge",
     "channel": "stable"
   },
+  "persona": {
+    "enabled": true,
+    "profile": "xiaojing",
+    "scope": "legal"
+  },
   "memory": {
     "enabled": true,
     "dbPath": "<fixtureDir>/data/memory.db",

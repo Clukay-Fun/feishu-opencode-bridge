@@ -67,6 +67,11 @@ const UpdatesConfigSchema = z.object({
   githubRepo: z.string().min(1).default("clukay/feishu-opencode-bridge"),
   channel: z.literal("stable").default("stable"),
 }).default({});
+const PersonaConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  profile: z.literal("xiaojing").default("xiaojing"),
+  scope: z.enum(["legal", "global"]).default("legal"),
+}).default({});
 
 export const ConfigSchema = z.object({
   feishu: z.object({
@@ -151,6 +156,7 @@ export const ConfigSchema = z.object({
   }).default({}),
   costs: CostsConfigSchema,
   updates: UpdatesConfigSchema,
+  persona: PersonaConfigSchema,
   memory: MemoryConfigSchema.default({}),
   extensions: z.record(z.unknown()).default({}),
   knowledgeBase: moduleConfigSchemas.knowledgeBase,
@@ -268,6 +274,11 @@ export type AppConfig = {
     githubRepo: string;
     channel: "stable";
   };
+  persona?: {
+    enabled: boolean;
+    profile: "xiaojing";
+    scope: "legal" | "global";
+  } | undefined;
   memory: {
     enabled: boolean;
     dbPath: string;

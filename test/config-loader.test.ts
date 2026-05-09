@@ -40,6 +40,11 @@ describe("loadConfig", () => {
     expect(config.whitelist.storePath).toBe(path.join(dir, "data", "whitelist.json"));
     expect(config.server.publicBaseUrl.toString()).toBe("http://127.0.0.1:3000/");
     expect(config.feishu.cardActions.path).toBe("/webhook/card");
+    expect(config.persona).toEqual({
+      enabled: true,
+      profile: "xiaojing",
+      scope: "legal",
+    });
   });
 
   it("keeps the legacy config normalized snapshot stable", async () => {

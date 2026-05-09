@@ -17,6 +17,7 @@ import type { KnowledgeRuntimeModule } from "../knowledge/runtime-module.js";
 import type { Logger } from "../logging/logger.js";
 import { MemoryService } from "../memory/index.js";
 import type { OpenCodeClient } from "../opencode/client.js";
+import { DEFAULT_PERSONA_CONFIG, PersonaRuntimeModule } from "../persona/runtime-module.js";
 import type { CostTracker } from "./cost-tracker.js";
 import type { SessionBindingRecord, SessionWindowRecord } from "../store/mappings.js";
 import type { WhitelistStore } from "../store/whitelist.js";
@@ -65,6 +66,8 @@ export function createRuntimeModules(options: {
   const moduleManager = new RuntimeModuleManager(options.logger);
   let knowledgeModule: KnowledgeRuntimeModule | null = null;
   let laborPort: CaseWorkbenchLaborPort | null = null;
+
+  moduleManager.register(new PersonaRuntimeModule(options.config.persona ?? DEFAULT_PERSONA_CONFIG));
 
   for (const extension of builtinExtensions) {
     const module = extension.createModule({

@@ -269,6 +269,7 @@ Feishu Transport
 
 当前模块：
 
+- `persona`
 - `knowledge`
 - `contract-assistant`
 - `labor`
@@ -279,6 +280,7 @@ Feishu Transport
 - 通过 `RuntimeModule` 认领或忽略消息
 - 可通过 `claimFileInstruction()` 接入通用 `file-await-instruction`，把自己的文件后续动作接回模块内
 - 通过 `beforeTurn` 注入 system prompt block
+- `persona` 只能通过 `beforeTurn` 注入人格 overlay，不接管消息路由、会话控制或业务卡片
 - 通过 `afterTurn` 执行 feature 专属 after-turn 工作
 - 只持久化自己的状态
 - 如果持有 timer、worker、handle 或临时运行时资源，就实现 `stop()`
