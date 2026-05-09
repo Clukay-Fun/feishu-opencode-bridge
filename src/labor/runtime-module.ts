@@ -3,6 +3,7 @@
  * 关注点:
  * - 拦截劳动分析相关命令并组织执行流程。
  * - 管理材料上传态交互以及进度卡、结果卡更新。
+ * - 管理案件断点记忆，支持跨会话恢复。
  */
 import { DEFAULT_LABOR_SKILL_CONFIG, type AppConfig } from "../config/schema.js";
 import path from "node:path";
@@ -35,6 +36,7 @@ import type {
   LaborReviewAuthorityContext,
   LaborFinalReviewReport,
 } from "./index.js";
+import { LaborCaseCheckpointStore } from "./checkpoint.js";
 
 type LaborRuntimeModuleDeps = {
   config: AppConfig;
@@ -48,6 +50,7 @@ type LaborCommand = Extract<RoutedText, { kind: "command" }>["command"];
 
 type PendingLaborInteraction = {
   stage?: "collecting" | undefined;
+  caseId: string;
   chatId: string;
   chatType: string;
   conversationKey: string;
@@ -100,6 +103,7 @@ export class LaborRuntimeModule implements RuntimeModule {
 
   private readonly featureConfig;
   private readonly interactions: PersistedInteractionManager<PendingLaborInteraction>;
+  private readonly checkpoints: LaborCaseCheckpointStore;
   private readonly recentMaterials = new Map<string, RecentLaborMaterial[]>();
 
   constructor(private readonly deps: LaborRuntimeModuleDeps) {
@@ -114,19 +118,22 @@ export class LaborRuntimeModule implements RuntimeModule {
         await this.handleExpiredInteraction(interaction);
       },
     });
+    this.checkpoints = new LaborCaseCheckpointStore(deps.config.storage.dataDir, deps.logger);
   }
 
   // #region 生命周期与入口
 
-  /** 恢复持久化的劳动分析交互状态。 */
+  /** 恢复持久化的劳动分析交互状态和案件断点。 */
   async start(): Promise<void> {
     await this.interactions.restore();
+    await this.checkpoints.restore();
   }
 
-  /** 停止交互状态管理器。 */
+  /** 停止交互状态管理器并刷新断点。 */
   async stop(): Promise<void> {
     this.recentMaterials.clear();
     await this.interactions.stop();
+    await this.checkpoints.stop();
   }
 
   /** 处理劳动分析命令、收集态输入和结束指令。 */
@@ -226,8 +233,12 @@ export class LaborRuntimeModule implements RuntimeModule {
     }
 
     if (isCaseWorkbenchStartCommand(command)) {
-      const title = command.arguments.join(" ").trim() || undefined;
-      await this.startCaseWorkbenchCollection(message, title);
+      const forceNew = command.arguments.some((argument) => argument === "新建" || argument.toLowerCase() === "new");
+      const title = command.arguments
+        .filter((argument) => argument !== "新建" && argument.toLowerCase() !== "new")
+        .join(" ")
+        .trim() || undefined;
+      await this.startCaseWorkbenchCollection(message, title, { forceNew });
       return true;
     }
 
@@ -244,6 +255,7 @@ export class LaborRuntimeModule implements RuntimeModule {
   async startCaseWorkbenchCollection(
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "senderOpenId">,
     title?: string,
+    options?: { forceNew?: boolean },
   ): Promise<void> {
     if (!this.featureConfig.enabled || !this.deps.service) {
       await this.sendNotice(message, {
@@ -253,6 +265,23 @@ export class LaborRuntimeModule implements RuntimeModule {
         message: "当前未启用 laborSkill，请先补充 `laborSkill` 配置。",
       });
       return;
+    }
+
+    if (!options?.forceNew) {
+      const unfinished = this.checkpoints.findRecentUnfinished(message.senderOpenId);
+      if (unfinished && !this.interactions.get(unfinished.conversationKey)) {
+        await this.sendNotice(message, {
+          title: "发现未完成劳动案件",
+          template: "yellow",
+          icon: "maybe_outlined",
+          message: [
+            `最近案件：${unfinished.lastStep}`,
+            "当前断点只能提示恢复位置，不能重建已过期的飞书文件句柄。",
+            "如需重新开始，请发送 `/案件工作台 新建`。",
+          ].join("\n"),
+        });
+        return;
+      }
     }
 
     await this.startCollection(message, title);
@@ -275,6 +304,7 @@ export class LaborRuntimeModule implements RuntimeModule {
     title?: string,
   ): Promise<PendingLaborInteraction> {
     this.clearRequesterInteractions(message.chatId, message.senderOpenId);
+    const caseId = this.checkpoints.generateCaseId();
     const deliveryMode = message.chatType === "p2p" ? "p2p_reply" : "group_thread";
     const ready = await this.deps.transport.sendPayload(message.chatId, buildLaborMaterialCollectionPayload({
       title,
@@ -287,6 +317,7 @@ export class LaborRuntimeModule implements RuntimeModule {
     }, { replyToMessageId: message.messageId, replyInThread: deliveryMode === "group_thread" });
 
     const interaction: PendingLaborInteraction = {
+      caseId,
       chatId: message.chatId,
       chatType: message.chatType,
       conversationKey: message.conversationKey,
@@ -301,6 +332,23 @@ export class LaborRuntimeModule implements RuntimeModule {
       files: [],
     };
     this.interactions.set(interaction);
+
+    // 创建案件断点
+    this.checkpoints.set({
+      caseId,
+      userId: message.senderOpenId,
+      conversationKey: message.conversationKey,
+      chatId: message.chatId,
+      stage: "collecting",
+      lastStep: "开始收集材料",
+      pendingMaterials: [],
+      openIssues: [],
+      anchorMessageId: ready.messageId,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    this.deps.logger.log("labor/checkpoint", "case checkpoint created", { caseId });
+
     return interaction;
   }
 
@@ -316,12 +364,23 @@ export class LaborRuntimeModule implements RuntimeModule {
         fileName: message.file.fileName,
         size: message.file.size,
       });
+      this.checkpoints.updateCollection(pending.caseId, {
+        pendingMaterials: pending.files.map((file) => ({
+          fileName: file.fileName,
+          messageId: file.messageId,
+        })),
+        lastStep: `已收集 ${pending.files.length} 份材料`,
+      });
       this.interactions.touch(pending.conversationKey, pending.expiresAt);
       return;
     }
 
     if (message.plainText.trim()) {
       pending.notes.push(message.plainText.trim());
+      this.checkpoints.updateCollection(pending.caseId, {
+        openIssues: pending.notes.slice(-5),
+        lastStep: `已补充 ${pending.notes.length} 条背景说明`,
+      });
       this.interactions.touch(pending.conversationKey, pending.expiresAt);
     }
   }
@@ -343,6 +402,7 @@ export class LaborRuntimeModule implements RuntimeModule {
 
     if (pending.files.length === 0 && pending.notes.length === 0) {
       this.clearInteraction(message.conversationKey);
+      this.checkpoints.updateStage(pending.caseId, "expired", "空材料退出");
       await this.sendNotice(message, {
         title: "当前没有可分析内容",
         template: "grey",
@@ -353,6 +413,10 @@ export class LaborRuntimeModule implements RuntimeModule {
     }
 
     this.clearInteraction(message.conversationKey);
+
+    // 更新案件断点阶段
+    this.checkpoints.updateStage(pending.caseId, "analyzing", "开始证据链分析");
+
     const progressState: LaborProgressState = {
       totalFiles: pending.files.length,
       completedFiles: [],
@@ -408,6 +472,7 @@ export class LaborRuntimeModule implements RuntimeModule {
     }
 
     if (extractedMaterials.length === 0) {
+      this.checkpoints.updateStage(pending.caseId, "failed", "无可用材料");
       await this.safeUpdateNotice(pending.chatId, processing.messageId, {
         title: "劳动分析失败",
         template: "red",
@@ -453,6 +518,7 @@ export class LaborRuntimeModule implements RuntimeModule {
 
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
+      this.checkpoints.updateStage(pending.caseId, "failed", "分析生成失败");
       await this.safeUpdateNotice(pending.chatId, processing.messageId, {
         title: "劳动分析失败",
         template: "red",
@@ -461,6 +527,9 @@ export class LaborRuntimeModule implements RuntimeModule {
       }, "labor analysis failed");
       return;
     }
+
+    // 更新案件断点：分析完成，进入二审
+    this.checkpoints.updateStage(pending.caseId, "reviewing", "分析完成，进入二审");
 
     const reviewCard = await this.deps.transport.sendPayload(pending.chatId, buildLaborFinalReviewPayload({
       title: result.title,
@@ -542,11 +611,14 @@ export class LaborRuntimeModule implements RuntimeModule {
         textPreview: finalReviewStatus,
         len: finalReviewStatus.length,
       });
+      // 更新案件断点：二审完成
+      this.checkpoints.updateStage(pending.caseId, "completed", "二审完成");
     } catch (error) {
       this.deps.logger.log("labor/authority", "post-decision review failed", {
         conversationKey: pending.conversationKey,
         detail: error instanceof Error ? error.message : String(error),
       }, "warn");
+      this.checkpoints.updateStage(pending.caseId, "failed", "二审调用失败");
     }
     this.clearInteraction(pending.conversationKey);
   }
@@ -792,6 +864,7 @@ export class LaborRuntimeModule implements RuntimeModule {
   }
 
   private async handleExpiredInteraction(pending: PendingLaborInteraction): Promise<void> {
+    this.checkpoints.updateStage(pending.caseId, "expired", "材料收集超时");
     await this.deps.transport.sendNotice({
       chatId: pending.chatId,
       replyToMessageId: pending.anchorMessageId,

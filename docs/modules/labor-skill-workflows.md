@@ -83,7 +83,7 @@ bridge runtime 拥有通用运行时机制。
 它负责：
 
 - 承接案件工作台进入劳动领域后的材料收集与 `/完成上传` 兜底命令。
-- 管理 labor 自己的 pending interaction、TTL 和状态恢复。
+- 管理 labor 自己的 pending interaction、TTL、状态恢复和案件断点记忆。
 - 收集用户上传文件和补充说明。
 - 记录最近上传的劳动材料上下文；当用户随后明确要求“做劳动分析 / 生成劳动争议证据链 / 整理工作台”时，可直接复用这些材料启动分析。
 - 调用 `LaborSkillService`，并通过 labor card family 输出过程卡和结果卡。
@@ -126,6 +126,28 @@ skill 文件是 OpenCode 能力发现和业务提示词维护入口。
 - 飞书文档：案件摘要、核心判断、下一步建议、证据链总表、时间线表。
 - 白板图：时间线、证据关系图、请求项结构图、补证流程图。
 - 多维表联动：当配置 `laborSkill.storage.evidenceLedger` 后，将证据项和缺口项同步到同一张证据台账表。
+
+## 0.2.0 案件断点记忆
+
+`0.2.0` 新增 `LaborCaseCheckpointStore`，每次从案件工作台进入劳动材料收集时都会生成独立 `caseId`。
+
+断点记录包括：
+
+- 发起用户、会话窗口、聊天 ID 和入口卡片 message id。
+- 当前阶段：`collecting`、`analyzing`、`reviewing`、`completed`、`failed`、`expired`。
+- 最近步骤，例如“已收集 3 份材料”“分析完成，进入二审”。
+- 已收集材料文件名和最近补充说明。
+
+断点文件位于 `storage.dataDir/labor-case-checkpoints.json`。
+
+恢复策略是保守的：如果发现同一用户有未完成案件，系统先提示最近断点和重开方式；由于飞书文件句柄可能过期，当前不会静默重建已过期的文件上传上下文。用户可发送 `/案件工作台 新建` 强制开启新案件。
+
+二审 source 类型从 `0.2.0` 起细分为：
+
+- 硬依据：`authority`、`local_kb:article`
+- 软参考：`material`、`local_kb:digest`、`local_kb:reflow`、`local_kb:practice`
+
+如果二审报告声明 `pass` 但没有硬依据，运行时会降级为 `needs_revision`，防止只有材料或经验条目支撑时误判为完全通过。
 
 当前默认台账字段：
 

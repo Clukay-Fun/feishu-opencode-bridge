@@ -108,11 +108,45 @@ export type LaborMaterialExtractResult = {
   cached: boolean;
 };
 
+export type LaborReviewSourceType =
+  | "material"
+  | "local_kb:article"
+  | "local_kb:digest"
+  | "local_kb:reflow"
+  | "local_kb:practice"
+  | "authority"
+  | null;
+
 export type SourceRef =
   | { type: "material"; ref: string }
-  | { type: "local_kb"; ref: string }
+  | { type: "local_kb:article"; ref: string }
+  | { type: "local_kb:digest"; ref: string }
+  | { type: "local_kb:reflow"; ref: string }
+  | { type: "local_kb:practice"; ref: string }
+  | { type: "local_kb"; ref: string } // 兼容旧格式
   | { type: "authority"; ref: string }
   | { type: null; ref?: string };
+
+/** 将旧 local_kb 映射为 local_kb:practice */
+export function normalizeSourceType(source: SourceRef): SourceRef {
+  if (source.type === "local_kb") {
+    return { type: "local_kb:practice", ref: source.ref };
+  }
+  return source;
+}
+
+/** 判断是否为硬依据（authority 或 local_kb:article） */
+export function isHardEvidence(source: SourceRef): boolean {
+  return source.type === "authority" || source.type === "local_kb:article";
+}
+
+/** 判断是否为软参考 */
+export function isSoftReference(source: SourceRef): boolean {
+  return source.type === "local_kb:digest"
+    || source.type === "local_kb:reflow"
+    || source.type === "local_kb:practice"
+    || source.type === "material";
+}
 
 export interface LaborFinalReviewReport {
   status: "pass" | "needs_revision" | "needs_human_review";
@@ -1286,8 +1320,18 @@ function normalizeReviewReport(value: Record<string, unknown>): LaborFinalReview
   const hasNullSource = findings.some((item) => item.source.type === null)
     || authorityCoverage.some((item) => item.source.type === null);
 
+  // 硬依据检查：authority 或 local_kb:article
+  const hasHardEvidence = findings.some((item) => item.source.type === "authority" || item.source.type === "local_kb:article")
+    || authorityCoverage.some((item) => item.source.type === "authority" || item.source.type === "local_kb:article");
+
+  // 如果模型说 pass 但没有硬依据，降级为 needs_revision
+  let finalStatus = hasNullSource ? "needs_human_review" : modelStatus;
+  if (finalStatus === "pass" && !hasHardEvidence) {
+    finalStatus = "needs_revision";
+  }
+
   return {
-    status: hasNullSource ? "needs_human_review" : modelStatus,
+    status: finalStatus,
     findings,
     unsupportedClaims: readStringArray(value, "unsupportedClaims"),
     authorityCoverage,
@@ -1320,7 +1364,15 @@ function normalizeAuthorityStatus(value: string | undefined): "sufficient" | "pa
 }
 
 /** type 白名单，不在此范围内的值归为 { type: null } 触发 needs_human_review。 */
-const VALID_SOURCE_TYPES = new Set<string>(["material", "local_kb", "authority"]);
+const VALID_SOURCE_TYPES = new Set<string>([
+  "material",
+  "local_kb",
+  "local_kb:article",
+  "local_kb:digest",
+  "local_kb:reflow",
+  "local_kb:practice",
+  "authority",
+]);
 
 function normalizeSourceRef(item: Record<string, unknown>): SourceRef {
   const rawSource = item["source"];
@@ -1333,7 +1385,11 @@ function normalizeSourceRef(item: Record<string, unknown>): SourceRef {
   if (!typeValue || !VALID_SOURCE_TYPES.has(typeValue)) {
     return { type: null, ...(refValue !== undefined ? { ref: refValue } : {}) } as SourceRef;
   }
-  return { type: typeValue as "material" | "local_kb" | "authority", ...(refValue !== undefined ? { ref: refValue } : {}) } as SourceRef;
+  // 旧 local_kb 兼容映射
+  if (typeValue === "local_kb") {
+    return { type: "local_kb:practice", ...(refValue !== undefined ? { ref: refValue } : {}) } as SourceRef;
+  }
+  return { type: typeValue as SourceRef["type"], ...(refValue !== undefined ? { ref: refValue } : {}) } as SourceRef;
 }
 
 function buildLaborCacheKey(value: string | Buffer): string {
