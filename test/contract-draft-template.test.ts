@@ -68,6 +68,69 @@ describe("contract draft template helpers", () => {
     expect(explicit).toBe(new Date(2026, 3, 15).getTime());
   });
 
+  it("lists case reminders from date fields without requiring todo text", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "contract-case-todos-"));
+    try {
+      const service = new ContractAssistantService(
+        {
+          enabled: true,
+          storage: {
+            baseToken: "app_token",
+            contractTableId: "tbl_contract",
+            invoiceTableId: "tbl_invoice",
+            caseTableId: "tbl_case",
+          },
+          models: {},
+          ingest: {
+            contractAllowedExtensions: [".pdf", ".docx", ".txt", ".md"],
+            invoiceAllowedExtensions: [".pdf", ".png", ".jpg", ".jpeg", ".webp"],
+            maxFileSizeMb: 20,
+            pendingTtlMs: 60_000,
+          },
+        },
+        tempDir,
+        {
+          createBitableRecord: async () => "rec_unused",
+          listBitableRecords: async () => [{
+            recordId: "rec_case_1",
+            fields: {
+              委托人: "张三",
+              对方当事人: "某公司",
+              案由: "劳动争议",
+              案件状态: "进行中",
+              程序阶段: "劳动仲裁",
+              举证截止日: "今天",
+            },
+          }],
+          updateBitableRecord: async () => undefined,
+          resolveFileToLocalPath: async () => {
+            throw new Error("not needed");
+          },
+        } as never,
+        {
+          createSession: async () => ({ id: "ses_1", title: "test" }),
+          postMessageSync: async () => {
+            throw new Error("not needed");
+          },
+          deleteSession: async () => undefined,
+        } as never,
+        {
+          log: () => undefined,
+          logTranscript: () => undefined,
+        } as never,
+      );
+
+      const result = await service.listCaseTodos("查看案件提醒");
+      const todayResult = await service.listCaseTodos("查看今日待办");
+
+      expect(result.lines.join("\n")).toContain("关注案件节点");
+      expect(result.lines.join("\n")).toContain("举证截止日");
+      expect(todayResult.lines).toHaveLength(1);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("allocates numbered draft paths without embedding timestamps", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "contract-draft-template-"));
     const outputDir = path.join(tempDir, "contract-drafts");

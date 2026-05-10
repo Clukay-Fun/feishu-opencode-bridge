@@ -92,11 +92,29 @@ export type InvoiceRecognizeResult = {
   matchedContract?: string | undefined;
 };
 
+export type InvoiceLedgerItem = {
+  recordId: string;
+  invoiceNo?: string | undefined;
+  invoiceType?: string | undefined;
+  invoiceDate?: string | undefined;
+  amount?: number | undefined;
+  payer?: string | undefined;
+};
+
+export type InvoiceLedgerListResult = {
+  items: InvoiceLedgerItem[];
+  total: number;
+};
+
 export type CaseCreateResult = {
   summary: string;
   record: Record<string, unknown>;
   recordId: string;
 };
+
+export type CaseCreateProgressStage = "extract-fields" | "write-record";
+
+export type CaseCreateProgressReporter = (stage: CaseCreateProgressStage, detail?: string) => Promise<void> | void;
 
 export type CaseUpdateResult = {
   matchedLabel: string;
@@ -104,6 +122,10 @@ export type CaseUpdateResult = {
 };
 
 export type CaseTodoResult = {
+  items?: Array<{
+    line: string;
+    recordId: string;
+  }>;
   lines: string[];
 };
 
@@ -354,6 +376,26 @@ export class ContractAssistantService {
     };
   }
 
+  // 只读取发票台账字段，供普通对话注入真实表格上下文，避免模型凭聊天记录猜测。
+  async listRecentInvoices(limit = 10): Promise<InvoiceLedgerListResult> {
+    const records = await this.resources.listBitableRecords(this.config.storage.baseToken, this.config.storage.invoiceTableId);
+    const items = records
+      .slice(-limit)
+      .reverse()
+      .map((item) => ({
+        recordId: item.recordId,
+        invoiceNo: readFieldString(item.fields, "发票号") ?? readFieldString(item.fields, "发票号码"),
+        invoiceType: readFieldString(item.fields, "发票类型"),
+        invoiceDate: readFieldDate(item.fields, "开票日期"),
+        amount: readFieldNumber(item.fields, "发票金额"),
+        payer: readFieldString(item.fields, "购买方") ?? readFieldString(item.fields, "付款方"),
+      }));
+    return {
+      items,
+      total: records.length,
+    };
+  }
+
   private async prepareInvoiceRecognitionResult(
     extraction: PreparedEvidenceJsonResult,
   ): Promise<{ result: Record<string, unknown>; structured: StructuredInvoiceExtraction | null }> {
@@ -417,10 +459,12 @@ export class ContractAssistantService {
 
   //#region Case workflows
   // Create a new case record from free-form user instructions.
-  async createCase(request: string): Promise<CaseCreateResult> {
+  async createCase(request: string, onProgress?: CaseCreateProgressReporter): Promise<CaseCreateResult> {
+    await onProgress?.("extract-fields", "正在根据案情提取案件字段");
     const result = await this.askForJson(await resolveCaseCreatePrompt(request), resolveModel(this.config, "caseManage"));
     const record = normalizeCaseRecord(readRecord(result, "record"));
     const summary = readString(result, "summary") ?? "已整理案件管理字段。";
+    await onProgress?.("write-record", "正在写入案件管理表");
     const recordId = await this.resources.createBitableRecord(
       this.config.storage.baseToken,
       this.config.storage.caseTableId,
@@ -489,13 +533,10 @@ export class ContractAssistantService {
   // List case todo items, optionally filtered by a free-form query.
   async listCaseTodos(query = ""): Promise<CaseTodoResult> {
     const records = await this.resources.listBitableRecords(this.config.storage.baseToken, this.config.storage.caseTableId);
-    const normalizedQuery = query.trim();
-    const lines = records
+    const queryFilter = parseCaseTodoQuery(query);
+    const items = records
       .map((item) => {
         const todo = readFieldString(item.fields, "待做事项");
-        if (!todo) {
-          return null;
-        }
         const status = readFieldString(item.fields, "案件状态");
         if (status === "已结案") {
           return null;
@@ -503,15 +544,24 @@ export class ContractAssistantService {
         const label = buildCaseRecordLabel(item.fields);
         const stage = readFieldString(item.fields, "程序阶段");
         const progress = readFieldString(item.fields, "进展");
-        const haystack = [label, stage, status, todo, progress].filter(Boolean).join(" ");
-        if (normalizedQuery && !haystack.includes(normalizedQuery)) {
+        const dateSummary = buildCaseTodoDateSummary(item.fields);
+        if (!todo && !dateSummary.text) {
           return null;
         }
-        return `${label}${stage ? `｜${stage}` : ""}${status ? `｜${status}` : ""}\n待办：${todo}${progress ? `\n进展：${progress}` : ""}`;
+        const haystack = [label, stage, status, todo, progress].filter(Boolean).join(" ");
+        if (queryFilter.todayOnly && !dateSummary.todayMatched && !/(今天|今日)/.test(todo ?? "")) {
+          return null;
+        }
+        if (queryFilter.text && !haystack.includes(queryFilter.text)) {
+          return null;
+        }
+        const todoText = todo ?? `关注案件节点：${dateSummary.text}`;
+        const line = `${label}${stage ? `｜${stage}` : ""}${status ? `｜${status}` : ""}${dateSummary.text ? `\n日期：${dateSummary.text}` : ""}\n待办：${todoText}${progress ? `\n进展：${progress}` : ""}`;
+        return { line, recordId: item.recordId };
       })
-      .filter((value): value is string => Boolean(value))
+      .filter((value): value is { line: string; recordId: string } => Boolean(value))
       .slice(0, 10);
-    return { lines };
+    return { items, lines: items.map((item) => item.line) };
   }
 
   private async tryMatchContract(
@@ -1255,6 +1305,62 @@ function readFieldNumber(fields: Record<string, unknown>, key: string): number |
     return Number.isFinite(parsed) ? parsed : undefined;
   }
   return undefined;
+}
+
+function readFieldDate(fields: Record<string, unknown>, key: string): string | undefined {
+  const value = fields[key];
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) {
+      return undefined;
+    }
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }
+  return readFieldString(fields, key);
+}
+
+function parseCaseTodoQuery(query: string): { text: string; todayOnly: boolean } {
+  const trimmed = query.replace(/\s+/g, "").trim();
+  const todayOnly = /(今天|今日)/.test(trimmed);
+  const text = trimmed
+    .replace(/^(帮我)?(查看|查询|列出|看看|展示|打开|获取)/, "")
+    .replace(/(今天|今日)/g, "")
+    .replace(/(案件|案子|案源|全部|所有)/g, "")
+    .replace(/(待办|提醒|事项|日程|期限|节点)/g, "")
+    .trim();
+  return { text, todayOnly };
+}
+
+function buildCaseTodoDateSummary(fields: Record<string, unknown>): { text: string; todayMatched: boolean } {
+  const dateFields = [
+    "日期",
+    "开庭日",
+    "举证截止日",
+    "反诉截止日",
+    "管辖权异议截止日",
+    "上诉截止日",
+  ];
+  const parts: string[] = [];
+  let todayMatched = false;
+  for (const field of dateFields) {
+    const formatted = readFieldDate(fields, field);
+    if (!formatted) {
+      continue;
+    }
+    parts.push(`${field} ${formatted}`);
+    const timestamp = normalizeBitableDateValue(fields[field]);
+    if (timestamp !== undefined && isTodayTimestamp(timestamp)) {
+      todayMatched = true;
+    }
+  }
+  return { text: parts.join("；"), todayMatched };
+}
+
+function isTodayTimestamp(timestamp: number, now = new Date()): boolean {
+  const date = new Date(timestamp);
+  return date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate();
 }
 
 function buildCaseRecordLabel(fields: Record<string, unknown>): string {

@@ -8,6 +8,7 @@ import path from "node:path";
 
 import type {
   CaseCreateResult,
+  CaseCreateProgressStage,
   ContractDraftProgressStage,
   InvoiceRecognizeResult,
 } from "../contract-assistant/index.js";
@@ -44,17 +45,40 @@ export type CaseWorkbenchCardView = {
   requesterOpenId?: string | undefined;
 };
 
+export type CaseCreateProgressView = {
+  request: string;
+  steps: Array<{
+    stage: CaseCreateProgressStage;
+    label: string;
+    status: "pending" | "running" | "completed";
+    detail?: string | undefined;
+  }>;
+};
+
+export type CaseTodoReminderCardView = {
+  items: ReadonlyArray<{
+    line: string;
+    url?: string | undefined;
+  }>;
+};
+
 // #region 进度与结果卡
 
 /** 构建案件录入进行中卡。 */
-export function buildCaseCreateProcessingPayload(request: string): FeishuPostPayload {
-  const preview = parseCaseCreateRequestPreview(request);
+export function buildCaseCreateProcessingPayload(view: CaseCreateProgressView | string): FeishuPostPayload {
+  const progressView = typeof view === "string" ? createCaseCreateProgressState(view) : view;
+  const preview = parseCaseCreateRequestPreview(progressView.request);
   return buildDesignerCardPayload("案件信息录入中", [
     { from: "委托人：张三", to: `委托人：${preview.clientName ?? "待识别"}` },
     { from: "对方当事人：某科技公司", to: `对方当事人：${preview.counterpartyName ?? "待识别"}` },
-    { from: "案号：xxx", to: `案由：${preview.cause ?? "待识别"}` },
-    { from: "审理法院：xx法院", to: `程序阶段：${preview.stage ?? "待识别"}` },
-  ]);
+    { from: "案由：劳动争议", to: `案由：${preview.cause ?? preview.type ?? "待识别"}` },
+    { from: "程序阶段：劳动仲裁", to: `程序阶段：${preview.stage ?? preview.status ?? "待识别"}` },
+    { from: "案号：xxx", to: `案号：${preview.caseNo ?? "待识别"}` },
+    { from: "审理法院：xx法院", to: `审理法院：${preview.court ?? "待识别"}` },
+    ...renderCaseCreateStepReplacements(progressView),
+  ], (card) => {
+    applyCaseCreateStepStyles(card, progressView);
+  });
 }
 
 /** 构建合同起草进度卡。 */
@@ -148,6 +172,50 @@ export function buildCaseWorkbenchPayload(view: CaseWorkbenchCardView = {}): Fei
   });
 }
 
+/** 构建案件提醒卡，复用设计器的今日待办模板但填入案件待办真实数据。 */
+export function buildCaseTodoReminderPayload(view: CaseTodoReminderCardView): FeishuPostPayload {
+  return buildDesignerCardPayload("今日待办", [], (card) => {
+    const header = getDesignerRecord(card.header);
+    const title = getDesignerRecord(header?.title);
+    if (title) {
+      title.content = "案件提醒";
+    }
+    const tags = Array.isArray(header?.text_tag_list) ? header.text_tag_list : [];
+    const countTag = getDesignerRecord(tags[0]);
+    const countText = getDesignerRecord(countTag?.text);
+    if (countText) {
+      countText.content = `${view.items.length} 项`;
+    }
+
+    const rows = getDesignerBodyElements(card).filter((element) => element.tag === "column_set");
+    const nextItems = view.items.length > 0 ? view.items.slice(0, rows.length) : [{ line: "当前没有待做事项。" }];
+    rows.forEach((row, index) => {
+      if (index >= nextItems.length) {
+        row.__remove = true;
+        return;
+      }
+      const item = nextItems[index]!;
+      row.background_style = resolveTodoRowBackground(index, item.line);
+      const columns = Array.isArray(row.columns) ? row.columns : [];
+      const firstColumn = getDesignerRecord(columns[0]);
+      const actionColumn = getDesignerRecord(columns[1]);
+      const markdownElement = getFirstMarkdownElement(firstColumn);
+      if (markdownElement) {
+        markdownElement.content = formatCaseTodoLine(item.line);
+      }
+      const button = getFirstButtonElement(actionColumn);
+      if (button && item.url) {
+        button.value = { kind: "contract-case-action", action: "open-case-record", url: item.url };
+        row.columns = firstColumn && actionColumn ? [firstColumn, actionColumn] : [firstColumn].filter(Boolean);
+      } else {
+        // 没有 record 链接时仍移除按钮，避免假按钮。
+        row.columns = firstColumn ? [firstColumn] : [];
+      }
+    });
+    removeMarkedDesignerElements(card);
+  });
+}
+
 function buildCaseWorkbenchActionValue(view: CaseWorkbenchCardView, action: "start-material-collection" | "cancel"): Record<string, unknown> {
   return {
     kind: "case-workbench-action",
@@ -159,6 +227,101 @@ function buildCaseWorkbenchActionValue(view: CaseWorkbenchCardView, action: "sta
   };
 }
 
+function formatCaseTodoLine(line: string): string {
+  const parts = line.split("\n").map((item) => item.trim()).filter(Boolean);
+  const title = parts[0] ?? "案件提醒";
+  const date = parts.find((item) => item.startsWith("日期："))?.replace(/^日期：/, "");
+  const todo = parts.find((item) => item.startsWith("待办："))?.replace(/^待办：/, "");
+  const progress = parts.find((item) => item.startsWith("进展："))?.replace(/^进展：/, "");
+  const headline = date ? `**案件节点** ${date}` : "**案件提醒**";
+  const detail = [title, todo, progress].filter(Boolean).join(" · ");
+  return detail ? `${headline}\n${detail}` : headline;
+}
+
+function resolveTodoRowBackground(index: number, line: string): string {
+  if (/截止|上诉|开庭|今日|今天/.test(line)) {
+    return index === 0 ? "red-50" : "yellow-50";
+  }
+  return ["wathet-50", "grey-50", "blue-50", "green-50"][index] ?? "grey-50";
+}
+
+function getDesignerBodyElements(card: Record<string, unknown>): Array<Record<string, unknown>> {
+  const body = getDesignerRecord(card.body);
+  const elements = Array.isArray(body?.elements) ? body.elements : [];
+  return elements.filter(getDesignerRecord);
+}
+
+function getFirstMarkdownElement(input: unknown): Record<string, unknown> | null {
+  if (Array.isArray(input)) {
+    for (const item of input) {
+      const found = getFirstMarkdownElement(item);
+      if (found) return found;
+    }
+    return null;
+  }
+  const record = getDesignerRecord(input);
+  if (!record) {
+    return null;
+  }
+  if (record.tag === "markdown" && typeof record.content === "string") {
+    return record;
+  }
+  for (const value of Object.values(record)) {
+    const found = getFirstMarkdownElement(value);
+    if (found) return found;
+  }
+  return null;
+}
+
+function getFirstButtonElement(input: unknown): Record<string, unknown> | null {
+  if (Array.isArray(input)) {
+    for (const item of input) {
+      const found = getFirstButtonElement(item);
+      if (found) return found;
+    }
+    return null;
+  }
+  const record = getDesignerRecord(input);
+  if (!record) {
+    return null;
+  }
+  if (record.tag === "button") {
+    return record;
+  }
+  for (const value of Object.values(record)) {
+    const found = getFirstButtonElement(value);
+    if (found) return found;
+  }
+  return null;
+}
+
+function removeMarkedDesignerElements(input: unknown): void {
+  if (Array.isArray(input)) {
+    for (let index = input.length - 1; index >= 0; index -= 1) {
+      const item = input[index];
+      if (getDesignerRecord(item)?.__remove) {
+        input.splice(index, 1);
+        continue;
+      }
+      removeMarkedDesignerElements(item);
+    }
+    return;
+  }
+  const record = getDesignerRecord(input);
+  if (!record) {
+    return;
+  }
+  for (const value of Object.values(record)) {
+    removeMarkedDesignerElements(value);
+  }
+}
+
+function getDesignerRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
 // #endregion
 
 export function createInvoiceRecognizeProgressState(): InvoiceRecognizeProgressView {
@@ -168,6 +331,50 @@ export function createInvoiceRecognizeProgressState(): InvoiceRecognizeProgressV
       { label: "填写表格", status: "pending" },
     ],
   };
+}
+
+export function createCaseCreateProgressState(request: string): CaseCreateProgressView {
+  return {
+    request,
+    steps: [
+      { stage: "extract-fields", label: "提取案件字段", status: "running", detail: "正在根据案情提取案件字段" },
+      { stage: "write-record", label: "写入案件管理表", status: "pending" },
+    ],
+  };
+}
+
+export function applyCaseCreateProgress(
+  view: CaseCreateProgressView,
+  currentStage: CaseCreateProgressStage,
+  detail?: string,
+): void {
+  const currentIndex = view.steps.findIndex((step) => step.stage === currentStage);
+  if (currentIndex < 0) {
+    return;
+  }
+  view.steps.forEach((step, index) => {
+    if (index < currentIndex) {
+      step.status = "completed";
+      step.detail = undefined;
+      return;
+    }
+    if (index === currentIndex) {
+      step.status = "running";
+      step.detail = detail;
+      return;
+    }
+    if (step.status !== "completed") {
+      step.status = "pending";
+      step.detail = undefined;
+    }
+  });
+}
+
+export function completeCaseCreateProgress(view: CaseCreateProgressView): void {
+  view.steps.forEach((step) => {
+    step.status = "completed";
+    step.detail = undefined;
+  });
 }
 
 export function applyInvoiceRecognizeStep(view: InvoiceRecognizeProgressView, currentIndex: number): void {
@@ -234,6 +441,71 @@ export function completeContractDraftProgress(view: ContractDraftProgressView): 
   });
 }
 
+function renderCaseCreateStepReplacements(view: CaseCreateProgressView): Array<{ from: string; to: string }> {
+  const first = view.steps[0];
+  const second = view.steps[1];
+  return [
+    { from: "提取字段：进行中...", to: formatCaseCreateStep(first, first?.status === "running" ? first.detail : undefined) },
+    { from: "写入案件管理表：等待中", to: `生成结果卡：${second?.status === "completed" ? "进行中" : "等待中"}` },
+    { from: "提取字段：已完成", to: formatCaseCreateStep(second, second?.status === "running" ? second.detail : undefined) },
+  ];
+}
+
+function applyCaseCreateStepStyles(card: Record<string, unknown>, view: CaseCreateProgressView): void {
+  const first = view.steps[0]?.status ?? "pending";
+  const second = view.steps[1]?.status ?? "pending";
+  const resultStatus = second === "completed" ? "running" : "pending";
+  updateStepDiv(card, "提取案件字段：", first);
+  updateStepDiv(card, "写入案件管理表：", second);
+  updateStepDiv(card, "生成结果卡：", resultStatus);
+}
+
+function updateStepDiv(input: unknown, prefix: string, status: "pending" | "running" | "completed"): boolean {
+  if (Array.isArray(input)) {
+    return input.some((item) => updateStepDiv(item, prefix, status));
+  }
+  if (!input || typeof input !== "object") {
+    return false;
+  }
+  const record = input as Record<string, unknown>;
+  const text = record.text;
+  if (record.tag === "div" && text && typeof text === "object" && !Array.isArray(text)) {
+    const textRecord = text as Record<string, unknown>;
+    if (typeof textRecord.content === "string" && textRecord.content.startsWith(prefix)) {
+      const style = stepStyle(status);
+      textRecord.text_color = style.color;
+      record.icon = {
+        tag: "standard_icon",
+        token: style.token,
+        color: style.color,
+      };
+      return true;
+    }
+  }
+  return Object.values(record).some((value) => updateStepDiv(value, prefix, status));
+}
+
+function stepStyle(status: "pending" | "running" | "completed"): { token: string; color: string } {
+  if (status === "completed") {
+    return { token: "yes_outlined", color: "green" };
+  }
+  if (status === "running") {
+    return { token: "loading_outlined", color: "blue" };
+  }
+  return { token: "ellipse_outlined", color: "grey" };
+}
+
+function formatCaseCreateStep(
+  step: CaseCreateProgressView["steps"][number] | undefined,
+  detail?: string | undefined,
+): string {
+  if (!step) {
+    return "等待处理";
+  }
+  const statusLabel = step.status === "completed" ? "已完成" : step.status === "running" ? "进行中" : "等待中";
+  return `${step.label}：${detail ?? statusLabel}`;
+}
+
 function parseCaseCreateRequestPreview(request: string): {
   clientName?: string | undefined;
   counterpartyName?: string | undefined;
@@ -243,12 +515,14 @@ function parseCaseCreateRequestPreview(request: string): {
   status?: string | undefined;
   type?: string | undefined;
   stage?: string | undefined;
+  caseNo?: string | undefined;
 } {
   const text = request.trim();
   const clientName = matchFirst(text, [/委托人[：:\s]*([^，。,；;\n]+)/]);
   const counterpartyName = matchFirst(text, [/对方当事人[：:\s]*([^，。,；;\n]+)/]);
   const cause = matchFirst(text, [/案由[：:\s]*([^，。,；;\n]+)/]);
   const court = matchFirst(text, [/受理机构[：:\s]*([^，。,；;\n]+)/, /审理法院[：:\s]*([^，。,；;\n]+)/]);
+  const caseNo = matchFirst(text, [/案号[：:\s]*([^，。,；;\n]+)/]);
   const rawLawyer = matchFirst(text, [/承办律师[：:\s]*([^，。,；;\n]+)/, /主办律师[：:\s]*([^，。,；;\n]+)/]);
   const lawyer = rawLawyer?.replace(/律师$/u, "").trim() || undefined;
   const status = normalizeCaseCreateStatus(matchFirst(text, [/案件状态[：:\s]*([^，。,；;\n]+)/]));
@@ -263,6 +537,7 @@ function parseCaseCreateRequestPreview(request: string): {
     ...(status ? { status } : {}),
     ...(type ? { type } : {}),
     ...(stage ? { stage } : {}),
+    ...(caseNo ? { caseNo } : {}),
   };
 }
 

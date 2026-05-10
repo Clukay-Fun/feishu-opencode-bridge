@@ -13,15 +13,19 @@ import type { PendingFileInstructionInteraction } from "../bridge/state.js";
 import { buildNoticeCardPayload, resolveNoticeLevelFromTemplate } from "../feishu/shared-primitives.js";
 import {
   applyContractDraftProgress,
+  applyCaseCreateProgress,
   applyInvoiceRecognizeStep,
   buildCaseCreateCompletedPayload,
   buildCaseCreateProcessingPayload,
+  buildCaseTodoReminderPayload,
   buildContractDraftCompletedPayload,
   buildContractDraftProgressPayload,
   buildInvoiceRecognizeCompletedPayload,
   buildInvoiceRecognizeProgressPayload,
   completeContractDraftProgress,
+  completeCaseCreateProgress,
   completeInvoiceRecognizeProgress,
+  createCaseCreateProgressState,
   createContractDraftProgressState,
   createInvoiceRecognizeProgressState,
 } from "../feishu/contract-cards.js";
@@ -38,6 +42,7 @@ import type {
   ContractAssistantIntentResult,
   ContractState,
   ContractWorkbenchModelResult,
+  InvoiceLedgerListResult,
 } from "./index.js";
 
 type ContractAssistantRuntimeModuleDeps = {
@@ -150,6 +155,32 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
   /** 停止状态管理器。 */
   async stop(): Promise<void> {
     await this.interactions.stop();
+  }
+
+  /** 在普通对话前注入发票台账真实数据，让最终回复仍走标准 OpenCode 卡片。 */
+  async beforeTurn(context: { turn: { plainText: string } }): Promise<{ systemBlocks?: string[] } | void> {
+    if (!this.featureConfig.enabled || !this.deps.service || !isInvoiceLedgerQuery(context.turn.plainText)) {
+      return;
+    }
+    try {
+      const ledger = await this.deps.service.listRecentInvoices(10);
+      return {
+        systemBlocks: [renderInvoiceLedgerSystemBlock(ledger)],
+      };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.deps.logger.log("contract-assistant", "invoice ledger context skipped", { detail }, "warn");
+      return {
+        systemBlocks: [
+          [
+            "[Invoice Ledger Context]",
+            "用户正在询问发票表格/台账中的发票情况，但本轮读取发票表失败。",
+            `读取错误：${detail}`,
+            "请明确说明当前无法读取发票表，不要根据聊天记录或上传历史推断台账数据。",
+          ].join("\n"),
+        ],
+      };
+    }
   }
 
   /** 处理合同助手命令、上传态交互和工作台对话。 */
@@ -477,6 +508,13 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     const text = message.plainText.trim();
     if (!text || looksLikeKnowledgeOrLaborRequest(text)) {
       return false;
+    }
+    if (isCaseWorkbenchEntrypoint(text)) {
+      return false;
+    }
+    if (isCaseTodoQuery(text)) {
+      await this.handleCaseTodos(message, text);
+      return true;
     }
     const localPath = extractLocalPath(text) ?? undefined;
     const intent = await this.classifyIntentSafely({
@@ -908,15 +946,31 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     message: Pick<IncomingChatMessage, "chatId" | "messageId">,
     request: string,
   ): Promise<void> {
-    const processing = await this.deps.transport.sendPayload(message.chatId, buildCaseCreateProcessingPayload(request), {
+    const progressState = createCaseCreateProgressState(request);
+    const processing = await this.deps.transport.sendPayload(message.chatId, buildCaseCreateProcessingPayload(progressState), {
       event: "case create processing",
       transcriptType: "outbound-final",
       textPreview: createTextPreview(request),
       len: request.length,
     }, { replyToMessageId: message.messageId });
     try {
-      const result = await this.deps.service!.createCase(request);
+      const result = await this.deps.service!.createCase(request, async (stage, detail) => {
+        applyCaseCreateProgress(progressState, stage, detail);
+        await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildCaseCreateProcessingPayload(progressState), {
+          event: "case create progress updated",
+          transcriptType: "outbound-final",
+          textPreview: detail ?? stage,
+          len: (detail ?? stage).length,
+        });
+      });
       const recordUrl = buildBitableRecordUrl(this.featureConfig.storage.baseToken, this.featureConfig.storage.caseTableId, result.recordId);
+      completeCaseCreateProgress(progressState);
+      await this.deps.transport.updatePayload(message.chatId, processing.messageId, buildCaseCreateProcessingPayload(progressState), {
+        event: "case create progress updated",
+        transcriptType: "outbound-final",
+        textPreview: "案件记录已写入，正在生成完成卡",
+        len: 15,
+      });
       const payload = buildCaseCreateCompletedPayload(result, recordUrl, request);
       await this.deps.transport.updatePayload(message.chatId, processing.messageId, payload, {
         event: "case create completed",
@@ -981,17 +1035,21 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
   ): Promise<void> {
     try {
       const result = await this.deps.service!.listCaseTodos(query);
-      const body = result.lines.length > 0
-        ? result.lines.map((line, index) => `${index + 1}. ${line}`).join("\n\n")
-        : query
-          ? `未找到匹配“${query}”的案件待办。`
-          : "当前没有待做事项。";
-      await this.sendNotice(message, {
-        title: "案件待办",
-        template: "blue",
-        icon: "file-task_outlined",
-        message: body,
-      });
+      const sourceItems: Array<{ line: string; recordId?: string | undefined }> = result.items ?? result.lines.map((line) => ({ line }));
+      const items = sourceItems.map((item) => ({
+        line: item.line,
+        ...(item.recordId
+          ? { url: buildBitableRecordUrl(this.featureConfig.storage.baseToken, this.featureConfig.storage.caseTableId, item.recordId) }
+          : {}),
+      }));
+      await this.deps.transport.sendPayload(message.chatId, buildCaseTodoReminderPayload({ items }), {
+        event: "case todos sent",
+        transcriptType: "outbound-final",
+        textPreview: result.lines.length > 0
+          ? createTextPreview(result.lines.join("\n"))
+          : "当前没有待做事项。",
+        len: result.lines.join("\n").length,
+      }, { replyToMessageId: message.messageId });
     } catch (error) {
       await this.sendNotice(message, {
         title: "案件待办查询失败",
@@ -1997,6 +2055,85 @@ function getContractFileName(file: ContractAssistantFileInput): string {
 function looksLikeKnowledgeOrLaborRequest(text: string): boolean {
   const normalized = text.replace(/\s+/g, "");
   return /(知识库|入库|检索知识|查询知识|劳动争议工作台|劳动案件工作台|证据链|生成材料|劳动分析)/.test(normalized);
+}
+
+function isCaseTodoQuery(text: string): boolean {
+  const normalized = text.replace(/\s+/g, "");
+  if (!/(待办|提醒|事项)/.test(normalized)) {
+    return false;
+  }
+  if (/(新增|录入|写入|添加|设置|更新|修改|改成|完成|删除)/.test(normalized)) {
+    return false;
+  }
+  return /(查看|查询|列出|看看|展示|今日|今天|案件)/.test(normalized);
+}
+
+function isCaseWorkbenchEntrypoint(text: string): boolean {
+  const normalized = text.replace(/\s+/g, "");
+  return /^(启动|打开|进入|开启)?(案件|办案)工作台$/.test(normalized)
+    || /^case-workbench$/i.test(text.trim());
+}
+
+function isInvoiceLedgerQuery(text: string): boolean {
+  const normalized = text.replace(/\s+/g, "");
+  if (!/(发票|票据)/.test(normalized)) {
+    return false;
+  }
+  if (/(识别|上传|录入|写入|填入|填到|入账|重新处理)/.test(normalized)) {
+    return false;
+  }
+  return /(列出|查看|查询|展示|看看|最近|历史|情况|明细|表格|台账|发票表)/.test(normalized);
+}
+
+function renderInvoiceLedgerSystemBlock(result: InvoiceLedgerListResult): string {
+  const lines = [
+    "[Invoice Ledger Context]",
+    "用户正在询问发票表格/台账中的发票情况。以下数据来自配置的发票 Bitable 表，请把它视为本轮回答的唯一发票台账来源。",
+    "不要根据聊天记录、上传次数、图片识别结果或会话记忆推断台账记录；如果用户问“根据表格里的数据”，必须基于下列记录回答。",
+    `表内总记录数：${result.total}`,
+  ];
+  if (result.items.length === 0) {
+    lines.push("最近记录：空");
+    return lines.join("\n");
+  }
+  lines.push(`最近记录：${result.items.length} 条`);
+  for (const [index, item] of result.items.entries()) {
+    lines.push(
+      [
+        `${index + 1}. recordId=${item.recordId}`,
+        `发票号=${item.invoiceNo ?? "未填"}`,
+        `发票类型=${item.invoiceType ?? "未填"}`,
+        `开票日期=${item.invoiceDate ?? "未填"}`,
+        `购买方=${formatInvoiceLedgerParty(item.payer)}`,
+        `金额=${formatInvoiceLedgerAmount(item.amount)}`,
+      ].join(" | "),
+    );
+  }
+  return lines.join("\n");
+}
+
+function formatInvoiceLedgerParty(value: string | undefined): string {
+  if (!value?.trim()) {
+    return "未填";
+  }
+  const normalized = value.trim();
+  if (/公司|律所|事务所|中心|医院|学校|银行|集团|有限|股份|合伙|委员会|部门|单位/.test(normalized)) {
+    return normalized;
+  }
+  if (/^[\u4e00-\u9fa5]{2,4}$/.test(normalized)) {
+    return "个人客户（已脱敏）";
+  }
+  return normalized;
+}
+
+function formatInvoiceLedgerAmount(value: number | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "未填";
+  }
+  return `¥${value.toLocaleString("zh-CN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 }
 
 function isContractReentryCommand(command: ContractAssistantCommand, pendingKind: PendingInteraction["kind"]): boolean {
