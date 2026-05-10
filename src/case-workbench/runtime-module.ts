@@ -7,6 +7,7 @@
  */
 import type { RuntimeModule, RuntimeModuleHandleResult, RuntimeModuleMessageContext } from "../bridge/module.js";
 import { buildCaseWorkbenchPayload } from "../feishu/contract-cards.js";
+import { buildNoticeCardPayload } from "../feishu/shared-primitives.js";
 import { createTextPreview, type Logger } from "../logging/logger.js";
 import type { IncomingChatMessage } from "../runtime/app.js";
 import type { FeishuTransport } from "../runtime/feishu-transport.js";
@@ -15,6 +16,7 @@ export type CaseWorkbenchLaborPort = {
   startCaseWorkbenchCollection(
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "senderOpenId">,
     title?: string | undefined,
+    options?: { anchorMessageId?: string | undefined; suppressInitialCard?: boolean | undefined } | undefined,
   ): Promise<void>;
 };
 
@@ -73,6 +75,11 @@ export class CaseWorkbenchRuntimeModule implements RuntimeModule {
       return buildCaseWorkbenchToast("只有工作台发起人可以操作。", "warning");
     }
     if (value.action === "cancel") {
+      if (chatIdFromValue(value)) {
+        await this.updateEntryCard(openMessageId, value, "案件工作台已取消", "已取消本次案件工作台入口。", "grey").catch((error) => {
+          this.logCardUpdateFailure(error);
+        });
+      }
       return buildCaseWorkbenchToast("已取消案件工作台入口。", "success");
     }
     if (value.action !== "start-material-collection") {
@@ -86,12 +93,12 @@ export class CaseWorkbenchRuntimeModule implements RuntimeModule {
       return buildCaseWorkbenchToast("入口卡片缺少上下文，请重新发送 /案件工作台。", "warning");
     }
 
-    await this.deps.labor.startCaseWorkbenchCollection({
+    this.scheduleMaterialCollectionStart({
       chatId,
       chatType,
-      messageId: openMessageId,
+      openMessageId,
       conversationKey,
-      senderOpenId: actorOpenId,
+      actorOpenId,
     });
     return buildCaseWorkbenchToast("已进入材料收集。", "success");
   }
@@ -124,6 +131,77 @@ export class CaseWorkbenchRuntimeModule implements RuntimeModule {
       len: 7,
     }, { replyToMessageId: message.messageId });
   }
+
+  private scheduleMaterialCollectionStart(input: {
+    chatId: string;
+    chatType: string;
+    openMessageId: string;
+    conversationKey: string;
+    actorOpenId: string;
+  }): void {
+    setTimeout(() => {
+      void (async () => {
+        const message = "劳动争议分析已进入材料收集阶段，请在新的收集卡片下继续上传材料。";
+        try {
+          await this.deps.transport.updatePayload(input.chatId, input.openMessageId, buildNoticeCardPayload({
+            title: "案件工作台已进入材料收集",
+            level: "info",
+            message,
+            showMessageIcon: false,
+          }), {
+            event: "case workbench entry acknowledged",
+            transcriptType: "outbound-final",
+            textPreview: createTextPreview(message),
+            len: message.length,
+          });
+        } catch (error) {
+          this.logCardUpdateFailure(error);
+        } finally {
+          await this.deps.labor.startCaseWorkbenchCollection({
+            chatId: input.chatId,
+            chatType: input.chatType,
+            messageId: input.openMessageId,
+            conversationKey: input.conversationKey,
+            senderOpenId: input.actorOpenId,
+          });
+        }
+      })();
+    }, 0);
+  }
+
+  private async updateEntryCard(
+    openMessageId: string,
+    value: Record<string, unknown>,
+    title: string,
+    message: string,
+    template: "green" | "grey",
+  ): Promise<void> {
+    const chatId = chatIdFromValue(value);
+    if (!chatId) {
+      return;
+    }
+    await this.deps.transport.updatePayload(chatId, openMessageId, buildNoticeCardPayload({
+      title,
+      level: template === "green" ? "info" : "neutral",
+      message,
+      showMessageIcon: false,
+    }), {
+      event: "case workbench entry updated",
+      transcriptType: "outbound-final",
+      textPreview: createTextPreview(message),
+      len: message.length,
+    });
+  }
+
+  private logCardUpdateFailure(error: unknown): void {
+    this.deps.logger.log("case-workbench/runtime", "case workbench entry card update failed", {
+      detail: error instanceof Error ? error.message : String(error),
+    }, "warn");
+  }
+}
+
+function chatIdFromValue(value: Record<string, unknown>): string {
+  return typeof value.chatId === "string" ? value.chatId : "";
 }
 
 function detectCaseWorkbenchIntent(text: string): CaseWorkbenchIntent {

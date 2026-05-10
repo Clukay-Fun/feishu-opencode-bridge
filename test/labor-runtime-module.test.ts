@@ -113,19 +113,23 @@ async function createModule(existingTempDir?: string) {
     extraction: createExtraction(),
     cached: false,
   }));
-  const finalizeAnalysis = vi.fn(async () => ({
-    title: "劳动争议分析",
-    markdown: "### 劳动争议分析",
-    docUrl: "https://example.com/doc",
-    ledgerUrl: "https://example.com/base/app?table=tbl_labor",
-    keyEvidenceViewUrl: "https://example.com/base/app?table=tbl_labor&view=vew_key",
-    missingEvidenceViewUrl: "https://example.com/base/app?table=tbl_labor&view=vew_gap",
-    syncedEvidenceCount: 1,
-    syncedGapCount: 1,
-    extractedMaterials: [createExtraction()],
-    aggregate: createAggregate(),
-    warnings: [],
-  }));
+  const expandMaterialFile = vi.fn(async (file) => [file]);
+  const finalizeAnalysis = vi.fn(async (_input?: unknown, options?: { onWorkbenchPreviewCreated?: (docUrl: string) => Promise<void> | void }) => {
+    await options?.onWorkbenchPreviewCreated?.("https://example.com/doc/preview");
+    return {
+      title: "劳动争议分析",
+      markdown: "### 劳动争议分析",
+      docUrl: "https://example.com/doc",
+      ledgerUrl: "https://example.com/base/app?table=tbl_labor",
+      keyEvidenceViewUrl: "https://example.com/base/app?table=tbl_labor&view=vew_key",
+      missingEvidenceViewUrl: "https://example.com/base/app?table=tbl_labor&view=vew_gap",
+      syncedEvidenceCount: 1,
+      syncedGapCount: 1,
+      extractedMaterials: [createExtraction()],
+      aggregate: createAggregate(),
+      warnings: [],
+    };
+  });
   const finalizeReviewOnly = vi.fn(async () => ({
     reviewReport: {
       status: "needs_human_review" as const,
@@ -150,6 +154,17 @@ async function createModule(existingTempDir?: string) {
       items: [{ title: "劳动合同法", excerpt: "违法解除规则" }],
       durationMs: 10,
     },
+    citationValidation: {
+      status: "success",
+      input: "citation",
+      items: [{
+        title: "中华人民共和国劳动合同法",
+        articleNumber: "48",
+        originalText: "第四十八条 用人单位违反本法规定解除或者终止劳动合同，应当依法承担责任。",
+        url: "https://pkulaw.example/chl?tiao=48",
+      }],
+      durationMs: 10,
+    },
   }));
 
   const logger = { log: vi.fn() };
@@ -170,6 +185,7 @@ async function createModule(existingTempDir?: string) {
     knowledge: null,
     service: {
       extractMaterial,
+      expandMaterialFile,
       finalizeAnalysis,
       finalizeReviewOnly,
       buildAuthoritySearchDraft,
@@ -187,6 +203,7 @@ async function createModule(existingTempDir?: string) {
     sendPayload,
     updatePayload,
     extractMaterial,
+    expandMaterialFile,
     finalizeAnalysis,
     finalizeReviewOnly,
     buildAuthoritySearchDraft,
@@ -236,6 +253,27 @@ describe("LaborRuntimeModule", () => {
       const payloadCalls = sendPayload.mock.calls as unknown as Array<[string, unknown]>;
       expect(JSON.stringify(payloadCalls[0]?.[1] ?? {})).toContain("该命令已并入");
       expect(JSON.stringify(payloadCalls[0]?.[1] ?? {})).toContain("/案件工作台");
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("can turn the case workbench entry card into the collection card", async () => {
+    const { module, tempDir, sendPayload, updatePayload } = await createModule();
+    try {
+      const start = createTextMessage("/案件工作台 劳动争议演示");
+
+      await module.startCaseWorkbenchCollection(start, "劳动争议演示", {
+        anchorMessageId: "om_workbench",
+        suppressInitialCard: true,
+      });
+
+      expect(sendPayload).not.toHaveBeenCalled();
+      expect(updatePayload).not.toHaveBeenCalled();
+      const interaction = (module as unknown as {
+        interactions: { get(key: string): { anchorMessageId: string } | undefined };
+      }).interactions.get(start.conversationKey);
+      expect(interaction?.anchorMessageId).toBe("om_workbench");
     } finally {
       await cleanupModule(module, tempDir);
     }
@@ -298,32 +336,100 @@ describe("LaborRuntimeModule", () => {
       });
 
       expect(endResult).toEqual({ claimed: true });
-      expect(sendPayload).toHaveBeenCalledTimes(3);
-      expect(extractMaterial).toHaveBeenCalledTimes(2);
-      expect(finalizeAnalysis).toHaveBeenCalledTimes(1);
-      expect(finalizeReviewOnly).toHaveBeenCalledTimes(1);
-      expect(updatePayload).toHaveBeenCalled();
+      await vi.waitFor(() => {
+        expect(sendPayload).toHaveBeenCalledTimes(3);
+        expect(extractMaterial).toHaveBeenCalledTimes(2);
+        expect(finalizeAnalysis).toHaveBeenCalledTimes(1);
+        expect(finalizeReviewOnly).toHaveBeenCalledTimes(1);
+        expect(updatePayload).toHaveBeenCalled();
+      });
       const progressPayloads = sendPayload.mock.calls as unknown as Array<[string, unknown]>;
       const progressSerialized = JSON.stringify(progressPayloads[1]?.[1] ?? {});
       expect(progressSerialized).toContain("材料分析进行中");
+      expect(progressSerialized).toContain("待处理：证据2.pdf");
+      const collectionSerialized = JSON.stringify(progressPayloads[0]?.[1] ?? {});
+      expect(collectionSerialized).toContain("发送 `/完成上传`");
+      expect(collectionSerialized).not.toContain("完成上传，开始分析");
+      expect(collectionSerialized).not.toContain("labor-collection-action");
       const updatedPayloads = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
       const completedSerialized = JSON.stringify(updatedPayloads.find((call) => JSON.stringify(call[2]).includes("材料分析完成"))?.[2] ?? {});
       expect(completedSerialized).toContain("材料分析完成");
       expect(completedSerialized).toContain("材料 2");
       expect(completedSerialized).toContain("证据 1");
       expect(completedSerialized).toContain("焦点 1");
-      expect(completedSerialized).toContain("标签占比");
+      expect(completedSerialized).toContain("材料占比");
+      expect(completedSerialized).not.toContain("\"tag\":\"劳动\",\"value\":32");
       const outboundPayloads = JSON.stringify(progressPayloads.map((call) => call[1]));
       expect(outboundPayloads).toContain("二次审查进行中");
       expect(outboundPayloads).not.toContain("补充权威法规检索");
       expect(outboundPayloads).not.toContain("labor-authority-search");
+      expect(JSON.stringify(updatedPayloads.map((call) => call[2]))).toContain("证据1.pdf｜耗时");
+      expect(JSON.stringify(updatedPayloads.map((call) => call[2]))).not.toContain("命中缓存");
+      expect(JSON.stringify(updatedPayloads.map((call) => call[2]))).not.toContain("进展：《证据1.pdf》已完成");
     } finally {
       await cleanupModule(module, tempDir);
     }
   });
 
-  it("starts analysis from the collection card finish button", async () => {
-    const { module, tempDir, sendPayload, extractMaterial, finalizeAnalysis, finalizeReviewOnly } = await createModule();
+  it("expands uploaded folder archives before labor extraction", async () => {
+    const { module, tempDir, extractMaterial, expandMaterialFile, finalizeAnalysis } = await createModule();
+    try {
+      const start = createTextMessage("/案件工作台");
+      await module.handleMessage({ message: start, routed: routeIncomingText(start.plainText) });
+      const folderMessage = createFileMessage("发票.zip", { resourceType: "folder" });
+      await module.handleMessage({ message: folderMessage, routed: null });
+      expandMaterialFile.mockResolvedValueOnce([
+        { fileName: "发票/劳动合同.pdf", buffer: Buffer.from("contract") },
+        { fileName: "发票/工资流水.xlsx", buffer: Buffer.from("salary") },
+      ]);
+
+      const end = createTextMessage("/完成上传");
+      await module.handleMessage({ message: end, routed: routeIncomingText(end.plainText) });
+
+      await vi.waitFor(() => {
+        expect(expandMaterialFile).toHaveBeenCalledWith(expect.objectContaining({ fileName: "发票.zip", resourceType: "folder" }));
+        expect(extractMaterial).toHaveBeenCalledTimes(2);
+        expect(finalizeAnalysis).toHaveBeenCalledTimes(1);
+      });
+      const extractCalls = extractMaterial.mock.calls as unknown as Array<[unknown]>;
+      expect(extractCalls.map((call) => (call[0] as { fileName: string }).fileName)).toEqual([
+        "发票/劳动合同.pdf",
+        "发票/工资流水.xlsx",
+      ]);
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("does not swallow ordinary chat while collecting labor materials", async () => {
+    const { module, tempDir, sendPayload, extractMaterial } = await createModule();
+    try {
+      const start = createTextMessage("/案件工作台 劳动争议演示");
+      await module.handleMessage({
+        message: start,
+        routed: routeIncomingText(start.plainText),
+      });
+
+      const chat = createTextMessage("你好");
+      const result = await module.handleMessage({
+        message: chat,
+        routed: routeIncomingText(chat.plainText),
+      });
+
+      expect(result).toEqual({ claimed: false });
+      expect(sendPayload).toHaveBeenCalledTimes(1);
+      expect(extractMaterial).not.toHaveBeenCalled();
+      const interaction = (module as unknown as {
+        interactions: Map<string, { notes: string[] }>;
+      }).interactions.get(start.conversationKey);
+      expect(interaction?.notes).toEqual([]);
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("accepts /材料收集完成 as a finish alias", async () => {
+    const { module, tempDir, extractMaterial, finalizeAnalysis } = await createModule();
     try {
       const start = createTextMessage("/案件工作台 劳动争议演示");
       await module.handleMessage({
@@ -335,18 +441,99 @@ describe("LaborRuntimeModule", () => {
         routed: null,
       });
 
-      const response = await module.handleCardAction("ou_user", "om_button", {
-        kind: "labor-collection-action",
-        action: "finish-upload",
-        conversationKey: start.conversationKey,
+      const end = createTextMessage("/材料收集完成");
+      const result = await module.handleMessage({
+        message: end,
+        routed: routeIncomingText(end.plainText),
       });
 
-      expect(response).toEqual({ toast: { type: "success", content: "已开始分析材料。" } });
-      expect(extractMaterial).toHaveBeenCalledTimes(1);
-      expect(finalizeAnalysis).toHaveBeenCalledTimes(1);
-      expect(finalizeReviewOnly).toHaveBeenCalledTimes(1);
-      const sentPayloads = JSON.stringify((sendPayload.mock.calls as unknown as Array<[string, unknown]>).map((call) => call[1]));
-      expect(sentPayloads).toContain("二次审查进行中");
+      expect(result).toEqual({ claimed: true });
+      await vi.waitFor(() => {
+        expect(extractMaterial).toHaveBeenCalledTimes(1);
+        expect(finalizeAnalysis).toHaveBeenCalledTimes(1);
+      });
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("accepts exact natural language finish text while collecting", async () => {
+    const { module, tempDir, extractMaterial, finalizeAnalysis, finalizeReviewOnly } = await createModule();
+    try {
+      const start = createTextMessage("/案件工作台 劳动争议演示");
+      await module.handleMessage({
+        message: start,
+        routed: routeIncomingText(start.plainText),
+      });
+      await module.handleMessage({
+        message: createFileMessage("证据1.pdf"),
+        routed: null,
+      });
+
+      const finish = createTextMessage("• 材料收集完成");
+      const result = await module.handleMessage({
+        message: finish,
+        routed: routeIncomingText(finish.plainText),
+      });
+
+      expect(result).toEqual({ claimed: true });
+      await vi.waitFor(() => {
+        expect(extractMaterial).toHaveBeenCalledTimes(1);
+        expect(finalizeAnalysis).toHaveBeenCalledTimes(1);
+        expect(finalizeReviewOnly).toHaveBeenCalledTimes(1);
+      });
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("keeps loose finish-like text as collection notes", async () => {
+    const { module, tempDir, extractMaterial } = await createModule();
+    try {
+      const start = createTextMessage("/案件工作台 劳动争议演示");
+      await module.handleMessage({
+        message: start,
+        routed: routeIncomingText(start.plainText),
+      });
+
+      const note = createTextMessage("完成上传了");
+      const result = await module.handleMessage({
+        message: note,
+        routed: routeIncomingText(note.plainText),
+      });
+
+      expect(result).toEqual({ claimed: true });
+      expect(extractMaterial).not.toHaveBeenCalled();
+      const interaction = (module as unknown as {
+        interactions: Map<string, { notes: string[] }>;
+      }).interactions.get(start.conversationKey);
+      expect(interaction?.notes).toEqual(["完成上传了"]);
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("keeps negative finish-like text as collection notes", async () => {
+    const { module, tempDir, extractMaterial } = await createModule();
+    try {
+      const start = createTextMessage("/案件工作台 劳动争议演示");
+      await module.handleMessage({
+        message: start,
+        routed: routeIncomingText(start.plainText),
+      });
+
+      const note = createTextMessage("还没完成上传，等我继续补材料");
+      const result = await module.handleMessage({
+        message: note,
+        routed: routeIncomingText(note.plainText),
+      });
+
+      expect(result).toEqual({ claimed: true });
+      expect(extractMaterial).not.toHaveBeenCalled();
+      const interaction = (module as unknown as {
+        interactions: Map<string, { notes: string[] }>;
+      }).interactions.get(start.conversationKey);
+      expect(interaction?.notes).toEqual(["还没完成上传，等我继续补材料"]);
     } finally {
       await cleanupModule(module, tempDir);
     }
@@ -444,11 +631,13 @@ describe("LaborRuntimeModule", () => {
       const end = createTextMessage("/完成上传");
       await module.handleMessage({ message: end, routed: routeIncomingText(end.plainText) });
 
-      expect(appendAuthoritySearch).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => {
+        expect(appendAuthoritySearch).toHaveBeenCalledTimes(1);
+        expect(finalizeReviewOnly).toHaveBeenCalledTimes(1);
+      });
       expect(appendAuthoritySearch).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
         query: "劳动争议 违法解除",
       }));
-      expect(finalizeReviewOnly).toHaveBeenCalledTimes(1);
       expect(finalizeReviewOnly).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
         status: "completed",
         searchResult: expect.objectContaining({ query: "劳动争议 违法解除" }),
@@ -458,10 +647,22 @@ describe("LaborRuntimeModule", () => {
       const sentPayloads = sendPayload.mock.calls as unknown as Array<[string, unknown]>;
       const serializedSends = JSON.stringify(sentPayloads.map((call) => call[1]));
       expect(serializedUpdates).toContain("材料分析完成");
+      expect(serializedUpdates).toContain("预览分析文档");
+      expect(serializedUpdates).toContain("https://example.com/doc/preview");
       expect(serializedSends).toContain("二次审查进行中");
+      expect(serializedUpdates).toContain("二审模型审查：进行中");
+      expect(serializedUpdates).not.toContain("请求权基础校验：等待中");
       expect(serializedUpdates).toContain("法条引用已完成独立校验");
       expect(serializedUpdates).toContain("二审状态");
       expect(serializedUpdates).toContain("需人工复核");
+      expect(serializedUpdates).toContain("已校验法条");
+      expect(serializedUpdates).toContain("中华人民共和国劳动合同法");
+      expect(serializedUpdates).toContain("[《中华人民共和国劳动合同法》第48条](https://pkulaw.example/chl?tiao=48)");
+      expect(serializedUpdates).toContain("https://pkulaw.example/chl?tiao=48");
+      expect(serializedUpdates).not.toContain("open-citation-source");
+      expect(serializedUpdates).not.toContain("打开北大法宝原文");
+      expect(serializedUpdates).not.toContain("需人工复核的问题");
+      expect(serializedUpdates).not.toContain("二审状态：法条引用");
       expect(serializedUpdates).not.toContain("补充权威法规检索");
       expect(serializedUpdates).not.toContain("权威法规检索完成");
       expect(serializedUpdates).not.toContain("lark-table");
@@ -480,36 +681,18 @@ describe("LaborRuntimeModule", () => {
 
       await module.handleMessage({ message: createTextMessage("/完成上传"), routed: routeIncomingText("/完成上传") });
 
+      await vi.waitFor(() => {
+        expect(finalizeReviewOnly).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+          status: "pending",
+        }));
+      });
       const updatedPayloads = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
       const serializedUpdates = JSON.stringify(updatedPayloads.map((call) => call[2]));
       expect(serializedUpdates).toContain("材料分析完成");
       expect(serializedUpdates).not.toContain("劳动分析失败");
-      expect(finalizeReviewOnly).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-        status: "pending",
-      }));
       expect(logger.log).toHaveBeenCalledWith("labor/authority", "background authority search failed", expect.objectContaining({
         detail: "pkulaw timeout",
       }), "warn");
-    } finally {
-      await cleanupModule(module, tempDir);
-    }
-  });
-
-  it("ignores stale authority card actions because labor authority search is now background-only", async () => {
-    const { module, tempDir } = await createModule();
-    try {
-      const start = createTextMessage("/案件工作台 劳动争议演示");
-      await module.handleMessage({ message: start, routed: routeIncomingText(start.plainText) });
-      await module.handleMessage({ message: createFileMessage("证据1.pdf"), routed: null });
-      await module.handleMessage({ message: createTextMessage("/完成上传"), routed: routeIncomingText("/完成上传") });
-
-      const response = await module.handleCardAction("ou_user", "om_card", {
-        kind: "labor-authority-search",
-        action: "confirm",
-        conversationKey: start.conversationKey,
-      });
-
-      expect(response).toBeNull();
     } finally {
       await cleanupModule(module, tempDir);
     }
@@ -651,7 +834,10 @@ describe("LaborRuntimeModule", () => {
         routed: routeIncomingText(end.plainText),
       });
 
-      expect(finalizeAnalysis).not.toHaveBeenCalled();
+      await vi.waitFor(() => {
+        expect(finalizeAnalysis).not.toHaveBeenCalled();
+        expect(JSON.stringify((updatePayload.mock.calls as unknown as Array<[string, string, unknown]>).at(-1)?.[2] ?? {})).toContain("劳动分析失败");
+      });
       const updatedPayloads = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
       const failedSerialized = JSON.stringify(updatedPayloads.at(-1)?.[2] ?? {});
       expect(failedSerialized).toContain("劳动分析失败");
@@ -680,6 +866,9 @@ describe("LaborRuntimeModule", () => {
         routed: routeIncomingText(end.plainText),
       });
 
+      await vi.waitFor(() => {
+        expect(JSON.stringify((updatePayload.mock.calls as unknown as Array<[string, string, unknown]>).at(-1)?.[2] ?? {})).toContain("劳动分析失败");
+      });
       const updatedPayloads = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
       const failedSerialized = JSON.stringify(updatedPayloads.at(-1)?.[2] ?? {});
       expect(failedSerialized).toContain("劳动分析失败");

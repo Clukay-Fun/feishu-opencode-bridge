@@ -9,6 +9,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { LaborSkillConfig } from "../config/schema.js";
+import { expandArchiveMaterialEntries, isArchiveFileName } from "../document-pipeline/archive.js";
+import { SUPPORTED_DOCUMENT_EXTENSIONS } from "../document-pipeline/material-support.js";
 import type { DocumentParserOptions } from "../document-pipeline/index.js";
 import type { KnowledgeBasePort } from "../knowledge/index.js";
 import type {
@@ -29,6 +31,7 @@ import {
   EvidenceExtractService,
   type EvidenceExtractResourcePort,
   type EvidenceFileRef,
+  type EvidenceMaterialInput,
 } from "../workflows/evidence-extract.js";
 import { syncEvidenceLedger, type EvidenceLedgerResourcePort } from "../workflows/evidence-ledger.js";
 import { generateCaseWorkflowWorkbench } from "../workflows/case-workflow.js";
@@ -107,6 +110,8 @@ export type LaborMaterialExtractResult = {
   extraction: LaborMaterialExtraction;
   cached: boolean;
 };
+
+export type LaborMaterialInput = EvidenceMaterialInput;
 
 export type LaborReviewSourceType =
   | "material"
@@ -249,7 +254,7 @@ export class LaborSkillService {
       ? await Promise.all([
         this.authority.searchLawSemantic(input),
         this.authority.recognizeLawReferences({
-          text: result.markdown,
+          text: buildPkulawSourceText(result),
           turnId: input.turnId,
           sessionId: input.sessionId,
         }),
@@ -259,7 +264,7 @@ export class LaborSkillService {
           sessionId: input.sessionId,
         }),
         this.authority.recognizeCaseNumbers({
-          text: result.markdown,
+          text: buildPkulawSourceText(result),
           turnId: input.turnId,
           sessionId: input.sessionId,
         }),
@@ -288,10 +293,13 @@ export class LaborSkillService {
 
     for (const file of files) {
       try {
-        const extracted = await this.extractMaterial(file, {
-          onProgress,
-        });
-        extractedMaterials.push(extracted.extraction);
+        const expandedFiles = await this.expandMaterialFile(file);
+        for (const expandedFile of expandedFiles) {
+          const extracted = await this.extractMaterial(expandedFile, {
+            onProgress,
+          });
+          extractedMaterials.push(extracted.extraction);
+        }
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         const warning = `已跳过《${file.fileName}》：${detail}`;
@@ -309,29 +317,48 @@ export class LaborSkillService {
     return await this.finalizeAnalysis({
       extractedMaterials,
       notes,
-      materialCount: files.length,
+      materialCount: extractedMaterials.length,
       warnings,
     }, { onProgress });
   }
 
   /** 提取单份材料中的事实、证据和风险信息。 */
+  async expandMaterialFile(file: EvidenceFileRef): Promise<LaborMaterialInput[]> {
+    if (!isArchiveFileName(file.fileName)) {
+      return [file];
+    }
+    const downloaded = await this.resources.downloadMessageResource(file.messageId, file.fileKey, file.resourceType ?? "file");
+    const archiveFileName = path.extname(downloaded.fileName) ? downloaded.fileName : file.fileName;
+    const entries = expandArchiveMaterialEntries(archiveFileName, downloaded.buffer, this.config.ingest.allowedExtensions);
+    if (entries.length === 0) {
+      throw new Error(`文件夹压缩包内未找到可分析材料；支持 ${this.config.ingest.allowedExtensions.filter((extension) => extension !== ".zip").join(" / ")} 文件`);
+    }
+    return entries.map((entry) => ({
+      fileName: entry.fileName,
+      buffer: entry.buffer,
+      mimeType: extensionToMimeType(path.extname(entry.fileName).toLowerCase()),
+      size: entry.buffer.byteLength,
+    }));
+  }
+
   async extractMaterial(
-    file: EvidenceFileRef,
+    file: LaborMaterialInput,
     options?: { onProgress?: ((step: string) => Promise<void> | void) | undefined },
   ): Promise<LaborMaterialExtractResult> {
     const onProgress = options?.onProgress;
-    await onProgress?.(`准备解析《${file.fileName}》`);
+    const displayFileName = getLaborMaterialInputFileName(file);
+    await onProgress?.(`准备解析《${displayFileName}》`);
     const preparedFile = await this.evidenceExtractor.prepareFile(file, {
       allowedExtensions: this.config.ingest.allowedExtensions,
       maxFileSizeMb: this.config.ingest.maxFileSizeMb,
       maxExtractedTextLength: 20_000,
-      parseTextExtensions: [".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp", ".xls", ".xlsx", ".csv"],
+      parseTextExtensions: [...SUPPORTED_DOCUMENT_EXTENSIONS],
     });
     const cache = await this.readCache();
     const fileHash = buildLaborCacheKey(preparedFile.buffer);
     const cached = cache.materials[fileHash];
     if (cached) {
-      await onProgress?.(`命中缓存，已复用《${file.fileName}》的历史提取结果`);
+      await onProgress?.(`命中缓存，已复用《${displayFileName}》的历史提取结果`);
       return {
         fileName: preparedFile.fileName,
         extraction: cached,
@@ -341,8 +368,8 @@ export class LaborSkillService {
 
     await onProgress?.(
       preparedFile.extractedText
-        ? `已提取文本预览，正在识别《${file.fileName}》的关键事实`
-        : `未提取到稳定文本，正在结合原文件识别《${file.fileName}》`,
+        ? `已提取文本预览，正在识别《${displayFileName}》的关键事实`
+        : `未提取到稳定文本，正在结合原文件识别《${displayFileName}》`,
     );
     const result = await this.evidenceExtractor.extractPreparedJson(preparedFile, {
       model: resolveModel(this.config, "extract"),
@@ -352,7 +379,7 @@ export class LaborSkillService {
     const extraction = normalizeMaterialExtraction(result);
     cache.materials[fileHash] = extraction;
     await this.writeCache(cache);
-    await onProgress?.(`《${file.fileName}》提取完成`);
+    await onProgress?.(`《${displayFileName}》提取完成`);
     return {
       fileName: preparedFile.fileName,
       extraction,
@@ -369,7 +396,10 @@ export class LaborSkillService {
       warnings: string[];
       preferredTitle?: string | undefined;
     },
-    options?: { onProgress?: ((step: string) => Promise<void> | void) | undefined },
+    options?: {
+      onProgress?: ((step: string) => Promise<void> | void) | undefined;
+      onWorkbenchPreviewCreated?: ((docUrl: string) => Promise<void> | void) | undefined;
+    },
   ): Promise<LaborAnalyzeResult> {
     const onProgress = options?.onProgress;
     await onProgress?.("正在汇总证据链并识别争议焦点");
@@ -411,6 +441,7 @@ export class LaborSkillService {
       logger: this.logger,
       logScope: "labor-skill",
       onProgress,
+      onPreviewCreated: options?.onWorkbenchPreviewCreated,
     });
     const ledger = await this.syncEvidenceLedger(title, normalizedAggregate, onProgress);
 
@@ -1129,6 +1160,17 @@ function buildPkulawCitationValidationParam(result: LaborAnalyzeResult): PkulawC
   };
 }
 
+function buildPkulawSourceText(result: LaborAnalyzeResult): string {
+  return [
+    result.aggregate.caseTitle,
+    result.aggregate.summary,
+    ...result.aggregate.keyIssues,
+    ...result.aggregate.issues.flatMap((item) => [item.issue, item.analysis]),
+    ...result.aggregate.claimBasis.flatMap((item) => [item.claim, item.basis, item.reviewNote ?? ""]),
+    ...result.aggregate.legalSupports.flatMap((item) => [item.issue, item.rule, item.relation]),
+  ].filter((item) => item.trim().length > 0).join("\n").slice(0, 6000);
+}
+
 function extractLawArticleRefs(text: string): Array<{ title: string; article_number: string }> {
   const refs: Array<{ title: string; article_number: string }> = [];
   const pattern = /《([^》]{2,80})》\s*第?\s*([一二三四五六七八九十百千万零〇\d]+)\s*条/g;
@@ -1390,6 +1432,44 @@ function normalizeSourceRef(item: Record<string, unknown>): SourceRef {
     return { type: "local_kb:practice", ...(refValue !== undefined ? { ref: refValue } : {}) } as SourceRef;
   }
   return { type: typeValue as SourceRef["type"], ...(refValue !== undefined ? { ref: refValue } : {}) } as SourceRef;
+}
+
+function getLaborMaterialInputFileName(file: LaborMaterialInput): string {
+  if ("fileName" in file && file.fileName?.trim()) {
+    return file.fileName.trim();
+  }
+  if ("localPath" in file) {
+    return path.basename(file.localPath);
+  }
+  return "未命名材料";
+}
+
+function extensionToMimeType(extension: string): string {
+  switch (extension) {
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".webp":
+      return "image/webp";
+    case ".pdf":
+      return "application/pdf";
+    case ".docx":
+      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    case ".xls":
+      return "application/vnd.ms-excel";
+    case ".xlsx":
+      return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    case ".csv":
+      return "text/csv";
+    case ".md":
+      return "text/markdown";
+    case ".txt":
+      return "text/plain";
+    default:
+      return "application/octet-stream";
+  }
 }
 
 function buildLaborCacheKey(value: string | Buffer): string {

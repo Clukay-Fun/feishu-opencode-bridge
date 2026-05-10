@@ -17,6 +17,30 @@ export type WorkbenchDiagram = {
 
 export async function createWorkbenchDocument(title: string, markdown: string): Promise<WorkbenchDocumentResult> {
   const output = await runLarkCli(["docs", "+create", "--title", title, "--markdown", "-"], markdown);
+  return parseWorkbenchDocumentResult(output);
+}
+
+export async function createWorkbenchPreviewDocument(title: string): Promise<WorkbenchDocumentResult> {
+  return await createWorkbenchDocument(title, renderWorkbenchPreviewMarkdown(title));
+}
+
+export async function updateWorkbenchDocument(docUrl: string, title: string, markdown: string): Promise<WorkbenchDocumentResult> {
+  const output = await runLarkCli([
+    "docs",
+    "+update",
+    "--doc",
+    docUrl,
+    "--mode",
+    "overwrite",
+    "--new-title",
+    title,
+    "--markdown",
+    "-",
+  ], markdown);
+  return parseWorkbenchDocumentResult(output);
+}
+
+function parseWorkbenchDocumentResult(output: string): WorkbenchDocumentResult {
   const parsed = parseJsonObject(output);
   const boardTokens = readStringArray(parsed, "board_tokens");
   const data = readRecord(parsed, "data");
@@ -24,6 +48,19 @@ export async function createWorkbenchDocument(title: string, markdown: string): 
     docUrl: readString(parsed, "doc_url") ?? readString(data, "doc_url"),
     boardTokens: boardTokens.length > 0 ? boardTokens : readStringArray(data, "board_tokens"),
   };
+}
+
+function renderWorkbenchPreviewMarkdown(title: string): string {
+  return [
+    `# ${title}`,
+    "",
+    "> 工作台文档已创建，正在写入案件分析内容。你可以保持此页面打开，稍后会看到内容更新。",
+    "",
+    "## 写入进度",
+    "",
+    "- 正在生成案件总览、证据链、争议焦点和二审准备区。",
+    "- 最终版本仍需以二审完成卡片为准。",
+  ].join("\n");
 }
 
 export async function updateWorkbenchBoards(boardTokens: string[], diagrams: WorkbenchDiagram[]): Promise<void> {

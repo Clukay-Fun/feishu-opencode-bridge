@@ -114,11 +114,11 @@ export class LaborCaseCheckpointStore {
     return deleted;
   }
 
-  /** 查找指定用户最近的未完成案件 */
+  /** 查找指定用户最近的可恢复未完成案件 */
   findRecentUnfinished(userId: string): LaborCaseCheckpoint | undefined {
     const unfinished: LaborCaseCheckpoint[] = [];
     for (const cp of this.checkpoints.values()) {
-      if (cp.userId === userId && !isTerminalStage(cp.stage)) {
+      if (cp.userId === userId && isRecoverableUnfinished(cp)) {
         unfinished.push(cp);
       }
     }
@@ -126,11 +126,11 @@ export class LaborCaseCheckpointStore {
     return unfinished[0];
   }
 
-  /** 查找指定用户所有未完成案件 */
+  /** 查找指定用户所有可恢复未完成案件 */
   findAllUnfinished(userId: string): LaborCaseCheckpoint[] {
     const unfinished: LaborCaseCheckpoint[] = [];
     for (const cp of this.checkpoints.values()) {
-      if (cp.userId === userId && !isTerminalStage(cp.stage)) {
+      if (cp.userId === userId && isRecoverableUnfinished(cp)) {
         unfinished.push(cp);
       }
     }
@@ -221,4 +221,14 @@ export class LaborCaseCheckpointStore {
 
 function isTerminalStage(stage: LaborCaseStage): boolean {
   return stage === "completed" || stage === "failed" || stage === "expired";
+}
+
+function isRecoverableUnfinished(checkpoint: LaborCaseCheckpoint): boolean {
+  if (isTerminalStage(checkpoint.stage)) {
+    return false;
+  }
+  if (checkpoint.stage !== "collecting") {
+    return true;
+  }
+  return checkpoint.pendingMaterials.length > 0 || checkpoint.openIssues.length > 0;
 }

@@ -3,7 +3,7 @@
  * 关注点:
  * - 通过 Zod 校验进度和完成卡片的数据输入。
  * - 将劳动分析视图模型渲染为通用业务卡片规格。
- * - 文档链接只在二审完成卡出现，一审完成卡不放。
+ * - 一审完成卡保留分析文档入口，二审卡只展示审查结果。
  */
 import { z } from "zod";
 
@@ -22,6 +22,14 @@ const LaborAnalysisProgressCardViewSchema = z.object({
   progressText: z.string().optional(),
   startedAt: z.number().optional(),
   elapsedMs: z.number().optional(),
+  totalFiles: z.number().optional(),
+  queuedFiles: z.array(z.string()).optional(),
+  completedFiles: z.array(z.string()).optional(),
+  failedFiles: z.array(z.string()).optional(),
+  currentPhase: z.string().optional(),
+  recentUpdates: z.array(z.string()).optional(),
+  insightLines: z.array(z.string()).optional(),
+  docUrl: z.string().optional(),
 });
 
 const LaborAnalysisCompletedCardViewSchema = z.object({
@@ -37,6 +45,7 @@ const LaborAnalysisCompletedCardViewSchema = z.object({
   syncedEvidenceCount: z.number().optional(),
   syncedGapCount: z.number().optional(),
   reviewStatus: z.string().optional(),
+  elapsedMs: z.number().optional(),
 });
 
 const LaborReviewCompletedCardViewSchema = z.object({
@@ -54,6 +63,16 @@ const LaborReviewCompletedCardViewSchema = z.object({
   missingEvidenceViewUrl: z.string().optional(),
   syncedEvidenceCount: z.number().optional(),
   syncedGapCount: z.number().optional(),
+  elapsedMs: z.number().optional(),
+  citationDetails: z.array(z.object({
+    label: z.string(),
+    excerpt: z.string().optional(),
+    url: z.string().optional(),
+  })).optional(),
+  findings: z.array(z.object({
+    severity: z.enum(["low", "medium", "high"]),
+    message: z.string(),
+  })).optional(),
 });
 
 export const LABOR_ANALYSIS_PROGRESS_TEMPLATE_ID = "labor.analysis.progress";
@@ -72,6 +91,17 @@ export const laborAnalysisProgressTemplate: BusinessCardTemplateDefinition<typeo
         { kind: "title", content: `当前处理：**${escapeText(input.sourceLabel)}**` },
         { kind: "steps", steps: input.steps },
         ...(input.progressText ? [{ kind: "quote" as const, content: escapeText(input.progressText) }] : []),
+        ...(input.docUrl
+          ? [{
+            kind: "actions" as const,
+            buttons: [{
+              label: "预览分析文档",
+              type: "primary" as const,
+              width: "fill" as const,
+              value: { kind: "labor-progress-action", action: "open-preview-doc", url: input.docUrl },
+            }],
+          }]
+          : []),
         { kind: "divider" },
         { kind: "elapsed", content: resolveElapsedText(input) },
       ],
@@ -93,6 +123,17 @@ export const laborAnalysisCompletedTemplate: BusinessCardTemplateDefinition<type
         ...(input.reviewStatus
           ? [{ kind: "quote" as const, content: escapeText(input.reviewStatus) }]
           : []),
+        ...(input.docUrl
+          ? [{
+            kind: "actions" as const,
+            buttons: [{
+              label: "打开分析文档",
+              type: "primary" as const,
+              width: "fill" as const,
+              value: { kind: "labor-analysis-action", action: "open-analysis-doc", url: input.docUrl },
+            }],
+          }]
+          : []),
         { kind: "tagChart", tagCounts: input.tagCounts, title: "材料占比" },
       ],
     };
@@ -104,10 +145,6 @@ export const laborReviewCompletedTemplate: BusinessCardTemplateDefinition<typeof
   schema: LaborReviewCompletedCardViewSchema,
   render(input) {
     const isPass = input.reviewStatus.includes("通过");
-    const docLinks = [
-      input.docUrl ? `[打开分析文档](${input.docUrl})` : "",
-      input.ledgerUrl ? `[打开证据台账](${input.ledgerUrl})` : "",
-    ].filter(Boolean).join("｜");
     const reviewStats = [
       typeof input.findingsCount === "number" ? `发现 ${input.findingsCount} 项` : "",
       typeof input.humanReviewCount === "number" ? `需人工复核 ${input.humanReviewCount} 项` : "",
@@ -122,9 +159,6 @@ export const laborReviewCompletedTemplate: BusinessCardTemplateDefinition<typeof
         { kind: "quote", content: escapeText(input.reviewStatus) },
         ...(reviewStats
           ? [{ kind: "quote" as const, content: reviewStats }]
-          : []),
-        ...(docLinks
-          ? [{ kind: "quote" as const, content: docLinks }]
           : []),
         ...(input.ledgerUrl
           ? [{ kind: "quote" as const, content: [
