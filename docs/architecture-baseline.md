@@ -578,6 +578,7 @@ contract assistant 和 labor 目前都维护了相似模式：
 - `src/feishu/templates/*` 只承载模板运行时、注册表和纯类型契约；具体业务模板定义应留在业务模块侧
 - `BusinessCardBlock.kind` 统一使用小写驼峰命名，例如 `tagChart`、`stepList`、`elapsed`；不要在不同 PR 中混用短横线、下划线或同义别名
 - 交互型业务模板可通过 `actions` block 渲染按钮，但按钮 value 只能携带模块自有 action payload；不得把模板 runtime 扩展成通用业务路由器
+- 业务专属卡片只用于提醒类和流程类场景；普通查询、资料摘要、一次性结果、空状态和错误提示默认走 shared notice / 通用结果卡，不为单次文本展示新增 designer 模板
 - `src/feishu/formatter.ts` 的导出面变更必须同步 formatter export snapshot；如果某个业务能力改为后台自动执行，不应继续保留仅供旧确认卡使用的导出
 - 用户侧卡片以 `docs/cards/spec.md` 为当前样式真值；群聊 `/who`、`/leave` 与提醒类卡片停用时，必须同步删除调用面、formatter export、测试断言和用户侧 guide 提及，避免保留孤儿卡片入口
 - PDF 规范中的用户侧新卡片如果已实现 builder，应通过 formatter 兼容面导出；如果只用于离线 harness 或尚无运行时功能，不得进入 formatter 导出面
