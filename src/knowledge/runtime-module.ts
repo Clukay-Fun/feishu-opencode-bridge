@@ -41,6 +41,7 @@ import {
   type KnowledgeIngestProgressStep,
   type KnowledgeIngestProgressUpdate,
   type KnowledgeIngestResult,
+  type KnowledgeQueryResult,
 } from "./index.js";
 
 type KnowledgeIngestQueueItem = {
@@ -57,6 +58,7 @@ type KnowledgeIngestQueueItem = {
     fileKey: string;
     fileName: string;
     size?: number | undefined;
+    resourceType?: "file" | "image" | "folder" | undefined;
   }
   | {
     kind: "web";
@@ -81,8 +83,8 @@ type KnowledgeIngestSessionStats = {
   totalExtractedCount: number;
   totalDedupedCount: number;
   bitableUrl?: string | undefined;
-  results: KnowledgeIngestResult[];
-  failures: Array<{ sourceFile: string; reason: string }>;
+  results: Array<KnowledgeIngestResult & { elapsedMs?: number | undefined }>;
+  failures: Array<{ sourceFile: string; reason: string; elapsedMs?: number | undefined }>;
 };
 
 type RecentKnowledgeMaterial = {
@@ -93,10 +95,13 @@ type RecentKnowledgeMaterial = {
   fileKey: string;
   fileName: string;
   size?: number | undefined;
+  resourceType?: "file" | "image" | "folder" | undefined;
   createdAt: number;
 };
 
 const KNOWLEDGE_INGEST_TEXT_PATTERN = /(^|[\s/])(?:kb-ingest-start|入库|导入|收录|加入知识库|添加到知识库|写入知识库|保存到知识库|放进知识库|同步到知识库)(?=$|\s)/i;
+const KNOWLEDGE_INGEST_START_TEXT_PATTERN = /^(?:知识入库|开始知识入库|开启知识入库|进入知识入库)$/;
+const KNOWLEDGE_INGEST_END_TEXT_PATTERN = /^(?:知识入库完成|知识入库结束|入库完成|结束入库)$/;
 const MAX_RECENT_KNOWLEDGE_MATERIALS = 10;
 
 type KnowledgeRuntimeModuleDeps = {
@@ -162,8 +167,11 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     const { message, routed, pendingInteraction } = context;
     const activeKnowledgeIngest = this.findKnowledgeIngestInteraction(message);
     if (activeKnowledgeIngest) {
-      if (routed?.kind === "command" && routed.command.kind === "knowledge-ingest-end") {
-        await this.endKnowledgeIngestInteraction(message, activeKnowledgeIngest);
+      if (
+        (routed?.kind === "command" && routed.command.kind === "knowledge-ingest-end")
+        || matchesKnowledgeIngestEndInstruction(message.plainText)
+      ) {
+        await this.endKnowledgeIngestInteraction(message, activeKnowledgeIngest, { replyToMessageId: message.messageId });
         return { claimed: true };
       }
 
@@ -183,6 +191,27 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
 
     if (this.captureRecentKnowledgeMaterial(message)) {
       return { claimed: false };
+    }
+
+    if (matchesKnowledgeIngestStartInstruction(message.plainText)) {
+      const claimed = await this.handleKnowledgeCommand(message, {
+        kind: "knowledge-ingest",
+      });
+      if (claimed) {
+        return { claimed: true };
+      }
+    }
+
+    const naturalKnowledgeQuestion = parseNaturalKnowledgeQuestion(message.plainText);
+    if (naturalKnowledgeQuestion) {
+      const claimed = await this.handleKnowledgeCommand(message, {
+        kind: "knowledge-query",
+        question: naturalKnowledgeQuestion,
+        explicit: true,
+      });
+      if (claimed) {
+        return { claimed: true };
+      }
     }
 
     const backgroundKnowledgeIngest = this.getInteraction(message.conversationKey);
@@ -252,9 +281,16 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
         return await this.handleKnowledgeCommand(message, { kind: "knowledge-mode-end" });
       }
       if (legacyAlias === "法律咨询" && command.arguments.length > 0) {
+        await this.sendNotice(message, {
+          title: "命令已更新",
+          template: "yellow",
+          icon: "maybe_outlined",
+          message: "法律知识库问答入口已从 `/法律咨询 <问题>` 迁移到 `/法律问答 <问题>`；你这次的问题会继续按知识库检索处理。",
+        });
         return await this.handleKnowledgeCommand(message, {
           kind: "knowledge-query",
           question: command.arguments.join(" ").trim(),
+          explicit: true,
         });
       }
       if (legacyAlias === "legal-query-start") {
@@ -264,7 +300,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
           icon: "maybe_outlined",
           message: message.chatType === "p2p"
             ? "私聊里不再使用 `/legal-query-start`。直接发送问题即可；如需批量入库，请使用 `/知识入库`。"
-            : "知识库模式入口已从 `/legal-query-start` 迁移到 `/法律咨询开始`。如需单次检索，也可以使用 `/法律咨询 <问题>`。",
+            : "知识库模式入口已从 `/legal-query-start` 迁移到 `/法律咨询开始`。如需单次检索，也可以使用 `/法律问答 <问题>`。",
         });
         return true;
       }
@@ -285,8 +321,8 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
           template: "yellow",
           icon: "maybe_outlined",
           message: message.chatType === "p2p"
-            ? "私聊里不再使用 `/legal-query <问题>`。直接发送问题即可；如需强制走知识库查询，请使用 `/法律咨询 <问题>`。"
-            : "单次知识库检索已从 `/legal-query <问题>` 迁移到 `/法律咨询 <问题>`；连续检索模式请使用 `/法律咨询开始`。",
+            ? "私聊里不再使用 `/legal-query <问题>`。直接发送问题即可；如需强制走知识库查询，请使用 `/法律问答 <问题>`。"
+            : "单次知识库检索已从 `/legal-query <问题>` 迁移到 `/法律问答 <问题>`；连续检索模式请使用 `/法律咨询开始`。",
         });
         return true;
       }
@@ -325,33 +361,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
         return true;
       }
       try {
-        const processing = await this.sendPayload(
-          message.chatId,
-          buildNoticeCardPayload({
-            title: "知识检索进行中",
-            level: "info",
-            message: `正在检索知识库...\n\n**问题**\n${command.question}`,
-          }),
-          {
-            event: "knowledge query started",
-            transcriptType: "outbound-process",
-            textPreview: command.question,
-            len: command.question.length,
-          },
-          { replyToMessageId: message.messageId },
-        );
-        const result = await this.deps.knowledge.query(command.question);
-        await this.updatePayload(
-          message.chatId,
-          processing.messageId,
-          result.results.length > 0 ? buildKnowledgeQueryPayload(result) : buildKnowledgeQueryEmptyPayload({ question: command.question }),
-          {
-            event: "knowledge query sent",
-            transcriptType: "outbound-final",
-            textPreview: command.question,
-            len: command.question.length,
-          },
-        );
+        await this.sendKnowledgeQueryWithProgress(message, command.question);
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         await this.sendNotice(message, {
@@ -380,7 +390,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
           title: "已在知识入库模式",
           template: "blue",
           icon: "upload_outlined",
-          message: "请继续上传 PDF / DOCX / TXT / MD / 图片文件；发送 `/知识入库结束` 可退出。",
+          message: `请继续上传 ${formatKnowledgeAllowedExtensions(this.deps.config.knowledgeBase.ingest.allowedExtensions)} 文件；发送 \`知识入库完成\` 可退出。`,
         });
         return true;
       }
@@ -395,7 +405,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       );
       await this.deps.saveSessionWindow(message.conversationKey, nextWindow);
       const deliveryMode = message.chatType === "p2p" ? "p2p_reply" : "group_thread";
-      const ready = await this.sendPayload(message.chatId, buildKnowledgeIngestReadyPayload(), {
+      const ready = await this.sendPayload(message.chatId, buildKnowledgeIngestReadyPayload(this.deps.config.knowledgeBase.ingest.allowedExtensions), {
         event: "knowledge ingest pending",
         transcriptType: "outbound-final",
         textPreview: "已进入知识入库模式",
@@ -490,7 +500,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
         title: "已退出知识库模式",
         template: "green",
         icon: "chat_outlined",
-        message: "后续消息将恢复为普通 OpenCode 对话，仍可用 `/法律咨询 <问题>` 单次检索知识库。",
+        message: "后续消息将恢复为普通 OpenCode 对话，仍可用 `/法律问答 <问题>` 单次检索知识库。",
       });
       return true;
     }
@@ -526,6 +536,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
         fileName: pendingFile.file.fileName,
         size: pendingFile.file.size,
       },
+      resourceType: pendingFile.resourceType,
     };
     await this.enqueueKnowledgeIngestInput(fileMessage, pending);
   }
@@ -558,6 +569,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
           fileName: material.fileName,
           size: material.size,
         },
+        resourceType: material.resourceType,
       };
       await this.enqueueKnowledgeIngestInput(fileMessage, pending);
     }
@@ -579,7 +591,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     );
     await this.deps.saveSessionWindow(message.conversationKey, nextWindow);
     const deliveryMode = message.chatType === "p2p" ? "p2p_reply" : "group_thread";
-    const ready = await this.sendPayload(message.chatId, buildKnowledgeIngestReadyPayload(), {
+    const ready = await this.sendPayload(message.chatId, buildKnowledgeIngestReadyPayload(this.deps.config.knowledgeBase.ingest.allowedExtensions), {
       event: "knowledge ingest pending",
       transcriptType: "outbound-final",
       textPreview: "已进入知识入库模式",
@@ -621,18 +633,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       && knowledgeModeDetection.confidence >= this.deps.config.knowledgeBase.autoDetect.minConfidence
     ) {
       try {
-        const result = await this.deps.knowledge.query(message.plainText);
-        await this.sendPayload(
-          message.chatId,
-          result.results.length > 0 ? buildKnowledgeQueryPayload(result) : buildKnowledgeQueryEmptyPayload({ question: message.plainText }),
-          {
-            event: "knowledge query sent",
-            transcriptType: "outbound-final",
-            textPreview: message.plainText,
-            len: message.plainText.length,
-          },
-          { replyToMessageId: message.messageId },
-        );
+        await this.sendKnowledgeQueryWithProgress(message, message.plainText);
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         await this.sendPayload(message.chatId, buildNoticeCardPayload({
@@ -654,7 +655,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     }
 
     const detection = detectLegalQuestion(message.plainText);
-    if (!detection.matched || detection.confidence < this.deps.config.knowledgeBase.autoDetect.minConfidence) {
+    if (!detection.matched) {
       return false;
     }
 
@@ -663,17 +664,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       if (result.results.length === 0) {
         return false;
       }
-      await this.sendPayload(
-        message.chatId,
-        buildKnowledgeQueryPayload(result),
-        {
-          event: "knowledge query sent",
-          transcriptType: "outbound-final",
-          textPreview: message.plainText,
-          len: message.plainText.length,
-        },
-        { replyToMessageId: message.messageId },
-      );
+      await this.sendKnowledgeQueryWithProgress(message, message.plainText, result);
       return true;
     } catch (error) {
       this.deps.logger.log("knowledge/query", "auto-detect query failed", {
@@ -703,6 +694,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       fileKey: message.file.fileKey,
       fileName: message.file.fileName,
       size: message.file.size,
+      resourceType: message.resourceType,
       createdAt: Date.now(),
     });
     this.recentKnowledgeMaterials.set(key, existing.slice(-MAX_RECENT_KNOWLEDGE_MATERIALS));
@@ -728,6 +720,40 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     });
     await this.startKnowledgeIngestFromRecentMaterials(materials, message);
     return true;
+  }
+
+  private async sendKnowledgeQueryWithProgress(
+    message: Pick<IncomingChatMessage, "chatId" | "messageId">,
+    question: string,
+    knownResult?: KnowledgeQueryResult | undefined,
+  ): Promise<void> {
+    const processing = await this.sendPayload(
+      message.chatId,
+      buildNoticeCardPayload({
+        title: "知识检索进行中",
+        level: "info",
+        message: `正在检索知识库...\n\n**问题**\n${question}`,
+      }),
+      {
+        event: "knowledge query started",
+        transcriptType: "outbound-process",
+        textPreview: question,
+        len: question.length,
+      },
+      { replyToMessageId: message.messageId },
+    );
+    const result = knownResult ?? await this.deps.knowledge?.query(question);
+    await this.updatePayload(
+      message.chatId,
+      processing.messageId,
+      result && result.results.length > 0 ? buildKnowledgeQueryPayload(result) : buildKnowledgeQueryEmptyPayload({ question }),
+      {
+        event: "knowledge query sent",
+        transcriptType: "outbound-final",
+        textPreview: question,
+        len: question.length,
+      },
+    );
   }
 
   private getRecentKnowledgeMaterials(message: Pick<IncomingChatMessage, "chatId" | "senderOpenId">): RecentKnowledgeMaterial[] {
@@ -789,11 +815,12 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
         fileKey: message.file.fileKey,
         fileName: message.file.fileName,
         size: message.file.size,
+        resourceType: message.resourceType,
       };
     } else {
       const webIngest = detectKnowledgeWebIngest(message.plainText, { requireIngestIntent: false });
       if (!webIngest.matched || !webIngest.url || !this.deps.knowledge.ingestWebPage) {
-        await this.sendKnowledgeIngestMarkdown(pending, "请继续上传 PDF / DOCX / TXT / MD / 图片文件，或直接发送网页 URL / 带 URL 的入库请求；发送 `/知识入库结束` 退出。");
+        await this.sendKnowledgeIngestMarkdown(pending, `请继续上传 ${formatKnowledgeAllowedExtensions(this.deps.config.knowledgeBase.ingest.allowedExtensions)} 文件，或直接发送网页 URL / 带 URL 的入库请求；发送 \`知识入库完成\` 退出。`);
         return true;
       }
       sourceLabel = webIngest.url;
@@ -820,22 +847,6 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     };
     queue.pending.push(queuedItem);
     this.refreshKnowledgeIngestPending(pending.conversationKey, pending);
-    const receipt = await this.sendPayload(message.chatId, buildNoticeCardPayload({
-      title: "已收到入库素材",
-      level: "info",
-      message: [
-        `素材：${sourceLabel}`,
-        "",
-        "已加入本次入库清单，发送 `/知识入库结束` 后开始统一分析。",
-      ].join("\n"),
-      showMessageIcon: false,
-    }), {
-      event: itemInput.kind === "web" ? "knowledge web ingest accepted" : "knowledge ingest accepted",
-      transcriptType: "outbound-final",
-      textPreview: sourceLabel,
-      len: sourceLabel.length,
-    }, this.getKnowledgeIngestDelivery(pending));
-    queuedItem.receiptMessageId = receipt.messageId;
     return true;
   }
 
@@ -871,13 +882,14 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
               },
             });
             this.refreshKnowledgeIngestPending(conversationKey, pending);
-            this.recordKnowledgeIngestResult(conversationKey, result);
+            this.recordKnowledgeIngestResult(conversationKey, result, Date.now() - currentItem.progressState.startedAt);
           } else {
             const result = await this.deps.knowledge.ingestFile({
               messageId: currentItem.messageId,
               fileKey: currentItem.fileKey,
               fileName: currentItem.fileName,
               size: currentItem.size,
+              resourceType: currentItem.resourceType,
             }, {
               onProgress: async (update) => {
                 if (!queue.batchMessageId) {
@@ -887,15 +899,18 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
               },
             });
             this.refreshKnowledgeIngestPending(conversationKey, pending);
-            this.recordKnowledgeIngestResult(conversationKey, result);
+            this.recordKnowledgeIngestResult(conversationKey, result, Date.now() - currentItem.progressState.startedAt);
           }
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
-          this.recordKnowledgeIngestFailure(conversationKey, getKnowledgeIngestQueueItemLabel(currentItem), detail);
+          const elapsedMs = Date.now() - currentItem.progressState.startedAt;
+          this.recordKnowledgeIngestFailure(conversationKey, getKnowledgeIngestQueueItemLabel(currentItem), detail, elapsedMs);
           if (queue.batchMessageId) {
             await this.updatePayload(currentItem.chatId, queue.batchMessageId, buildKnowledgeIngestFailurePayload({
               sourceLabel: getKnowledgeIngestQueueItemLabel(currentItem),
               reason: detail,
+              steps: currentItem.progressState.steps,
+              elapsedMs,
             }), {
               event: currentItem.kind === "web" ? "knowledge web ingest failed" : "knowledge ingest failed",
               transcriptType: "outbound-final",
@@ -965,20 +980,20 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     return stats;
   }
 
-  private recordKnowledgeIngestResult(conversationKey: string, result: KnowledgeIngestResult): void {
+  private recordKnowledgeIngestResult(conversationKey: string, result: KnowledgeIngestResult, elapsedMs?: number): void {
     const stats = this.getKnowledgeIngestSessionStats(conversationKey);
     const rawExtractedCount = result.rawExtractedCount ?? result.extractedCount;
     stats.completedCount += 1;
     stats.totalExtractedCount += result.extractedCount;
     stats.totalDedupedCount += result.dedupedCount ?? Math.max(0, rawExtractedCount - result.extractedCount);
     stats.bitableUrl = result.bitableUrl ?? stats.bitableUrl;
-    stats.results.push(result);
+    stats.results.push({ ...result, elapsedMs });
   }
 
-  private recordKnowledgeIngestFailure(conversationKey: string, sourceFile: string, reason: string): void {
+  private recordKnowledgeIngestFailure(conversationKey: string, sourceFile: string, reason: string, elapsedMs?: number): void {
     const stats = this.getKnowledgeIngestSessionStats(conversationKey);
     stats.failedCount += 1;
-    stats.failures.push({ sourceFile, reason });
+    stats.failures.push({ sourceFile, reason, elapsedMs });
   }
 
   private async sendKnowledgeIngestFinalSummary(pending: PendingKnowledgeIngestInteraction): Promise<void> {
@@ -997,27 +1012,41 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       results: stats.results,
       failures: stats.failures,
     });
+    const finalSummaryPreview = stats.completedCount === 0 && stats.failedCount > 0
+      ? "知识入库失败汇总"
+      : stats.failedCount > 0
+        ? "知识入库部分完成汇总"
+        : "知识入库完成汇总";
     const queue = this.knowledgeIngestQueues.get(pending.conversationKey);
     if (queue?.batchMessageId) {
       await this.updatePayload(pending.chatId, queue.batchMessageId, payload, {
         event: "knowledge ingest session final summary updated",
         transcriptType: "outbound-final",
-        textPreview: "知识入库完成汇总",
-        len: 10,
+        textPreview: finalSummaryPreview,
+        len: finalSummaryPreview.length,
       });
       return;
     }
     await this.sendPayload(pending.chatId, payload, {
       event: "knowledge ingest session final summary sent",
       transcriptType: "outbound-final",
-      textPreview: "知识入库完成汇总",
-      len: 10,
+      textPreview: finalSummaryPreview,
+      len: finalSummaryPreview.length,
     }, this.getKnowledgeIngestDelivery(pending));
   }
 
   private findKnowledgeIngestInteraction(message: IncomingChatMessage): PendingKnowledgeIngestInteraction | null {
     const direct = this.getInteraction(message.conversationKey);
     if (direct && this.isMessageInKnowledgeIngestChain(message, direct)) {
+      return direct;
+    }
+    if (
+      direct
+      && message.chatType === "p2p"
+      && message.messageType === "text"
+      && direct.requesterOpenId === message.senderOpenId
+      && matchesKnowledgeIngestEndInstruction(message.plainText)
+    ) {
       return direct;
     }
 
@@ -1380,8 +1409,8 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     completedCount: number;
     failedCount: number;
     queuedLabels: string[];
-    completedItems: Array<{ sourceFile: string; extractedCount: number }>;
-    failedItems: Array<{ sourceFile: string; reason: string }>;
+    completedItems: Array<{ sourceFile: string; extractedCount: number; elapsedMs?: number | undefined }>;
+    failedItems: Array<{ sourceFile: string; reason: string; elapsedMs?: number | undefined }>;
   } {
     const queue = this.knowledgeIngestQueues.get(conversationKey);
     const stats = this.getKnowledgeIngestSessionStats(conversationKey);
@@ -1393,6 +1422,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       completedItems: stats.results.map((result) => ({
         sourceFile: result.sourceFile,
         extractedCount: result.extractedCount,
+        elapsedMs: result.elapsedMs,
       })),
       failedItems: stats.failures,
     };
@@ -1466,12 +1496,40 @@ function getKnowledgeIngestQueueItemLabel(item: KnowledgeIngestQueueItem): strin
   return item.kind === "web" ? item.url : item.fileName;
 }
 
+function formatKnowledgeAllowedExtensions(allowedExtensions: readonly string[]): string {
+  return allowedExtensions.map((extension) => extension.toUpperCase()).join(" / ");
+}
+
 function matchesKnowledgeIngestInstruction(text: string): boolean {
   const routed = routeIncomingText(text.trim());
   if (routed.kind === "command" && routed.command.kind === "knowledge-ingest") {
     return true;
   }
   return KNOWLEDGE_INGEST_TEXT_PATTERN.test(text.trim());
+}
+
+function matchesKnowledgeIngestStartInstruction(text: string): boolean {
+  const trimmed = text.trim();
+  const routed = routeIncomingText(trimmed);
+  if (routed.kind === "command" && routed.command.kind === "knowledge-ingest") {
+    return true;
+  }
+  return KNOWLEDGE_INGEST_START_TEXT_PATTERN.test(trimmed);
+}
+
+function matchesKnowledgeIngestEndInstruction(text: string): boolean {
+  const trimmed = text.trim();
+  const routed = routeIncomingText(trimmed);
+  if (routed.kind === "command" && routed.command.kind === "knowledge-ingest-end") {
+    return true;
+  }
+  return KNOWLEDGE_INGEST_END_TEXT_PATTERN.test(trimmed);
+}
+
+function parseNaturalKnowledgeQuestion(text: string): string | null {
+  const match = text.trim().match(/^法律问答(?:\s+|[：:])(.+)$/s);
+  const question = match?.[1]?.trim();
+  return question ? question : null;
 }
 
 function applyKnowledgeIngestProgress(state: KnowledgeIngestProgressState, update: KnowledgeIngestProgressUpdate): void {
@@ -1482,7 +1540,7 @@ function applyKnowledgeIngestProgress(state: KnowledgeIngestProgressState, updat
   }
   step.status = update.status;
   if (update.detail) {
-    step.detail = update.detail;
+    step.detail = normalizeKnowledgeProgressDetail(update.detail, label);
   } else if (update.status === "completed") {
     step.detail = "已完成";
   } else if (update.status === "running") {
@@ -1490,6 +1548,25 @@ function applyKnowledgeIngestProgress(state: KnowledgeIngestProgressState, updat
   } else if (update.status === "error") {
     step.detail = "执行失败";
   }
+}
+
+function normalizeKnowledgeProgressDetail(detail: string, label: ToolUpdateView["label"]): string {
+  const normalized = detail.trim();
+  if (!normalized) {
+    return normalized;
+  }
+  const prefixes = label === "提取问答"
+    ? ["提取问答", "提取关键信息"]
+    : label === "写入知识库"
+      ? ["写入知识库", "生成结果"]
+      : [label];
+  for (const prefix of prefixes) {
+    const marker = `${prefix}：`;
+    if (normalized.startsWith(marker)) {
+      return normalized.slice(marker.length).trim() || normalized;
+    }
+  }
+  return normalized;
 }
 
 function mapKnowledgeProgressLabel(step: KnowledgeIngestProgressStep): ToolUpdateView["label"] {

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import PizZip from "pizzip";
 
 import { KnowledgeBaseService } from "../src/knowledge/index.js";
 
@@ -84,6 +85,198 @@ describe("KnowledgeBaseService", () => {
     expect(ingest.extractedCount).toBe(1);
     expect(query.results[0]?.answer).toContain("试用期最长不超过六个月");
     expect(createdRecords).toHaveLength(2);
+    service.close();
+  });
+
+  it("downloads folder resources with folder type before expanding zip entries", async () => {
+    stubEmbeddingFetch();
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-folder-"));
+    tempDirs.push(dir);
+    const archive = new PizZip();
+    archive.file("劳动合同.txt", "试用期最长不超过六个月。");
+    const downloadMessageResource = vi.fn(async () => ({
+      fileName: "材料.zip",
+      mimeType: "application/zip",
+      buffer: archive.generate({ type: "nodebuffer" }) as Buffer,
+    }));
+    const createdRecords: Array<Record<string, unknown>> = [];
+    const service = new KnowledgeBaseService(
+      {
+        enabled: true,
+        autoDetect: { enabled: true, minConfidence: 0.75 },
+        query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
+        storage: {
+          sqlitePath: join(dir, "knowledge.db"),
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+            documentTableId: "tbl_docs",
+          },
+        },
+        embeddingProvider: {
+          baseUrl: new URL("https://example.com/v1/"),
+          apiKey: "token",
+          model: "text-embedding",
+        },
+        models: {},
+        ingest: {
+          allowedExtensions: [".txt", ".zip"],
+          maxFileSizeMb: 20,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+        },
+      },
+      {
+        downloadMessageResource,
+        async createBitableRecord(_appToken, tableId, fields) {
+          createdRecords.push({ tableId, fields });
+          return `${tableId}_${createdRecords.length}`;
+        },
+        async listBitableRecords() {
+          return [];
+        },
+      },
+      createOpenCodeStub(),
+      logger(),
+    );
+
+    await service.ingestFile({
+      messageId: "om_folder",
+      fileKey: "file_v3_folder",
+      fileName: "材料.zip",
+      resourceType: "folder",
+    });
+
+    expect(downloadMessageResource).toHaveBeenCalledWith("om_folder", "file_v3_folder", "folder");
+    service.close();
+  });
+
+  it("uses the original message filename when Feishu download omits extension", async () => {
+    stubEmbeddingFetch();
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-"));
+    tempDirs.push(dir);
+    const createdRecords: Array<Record<string, unknown>> = [];
+    const service = new KnowledgeBaseService(
+      {
+        enabled: true,
+        autoDetect: { enabled: true, minConfidence: 0.75 },
+        query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
+        storage: {
+          sqlitePath: join(dir, "knowledge.db"),
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+            documentTableId: "tbl_docs",
+          },
+        },
+        embeddingProvider: {
+          baseUrl: new URL("https://example.com/v1/"),
+          apiKey: "token",
+          model: "text-embedding",
+        },
+        models: {},
+        ingest: {
+          allowedExtensions: [".txt"],
+          maxFileSizeMb: 20,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+        },
+      },
+      {
+        async downloadMessageResource() {
+          return {
+            fileName: "file_v3_resource_key",
+            mimeType: "text/plain",
+            buffer: Buffer.from("试用期最长不超过六个月。", "utf8"),
+          };
+        },
+        async createBitableRecord(_appToken, tableId, fields) {
+          createdRecords.push({ tableId, fields });
+          return `${tableId}_${createdRecords.length}`;
+        },
+        async listBitableRecords() {
+          return [];
+        },
+      },
+      createOpenCodeStub(),
+      logger(),
+    );
+
+    await service.ingestFile({
+      messageId: "om_file_1",
+      fileKey: "file_1",
+      fileName: "劳动合同.txt",
+    });
+
+    expect(createdRecords[0]?.fields).toEqual(expect.objectContaining({
+      文件名: "劳动合同.txt",
+    }));
+    service.close();
+  });
+
+  it("expands zip folder packages into individual knowledge files", async () => {
+    stubEmbeddingFetch();
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-"));
+    tempDirs.push(dir);
+    const archive = new PizZip();
+    archive.file("案件材料/劳动合同.txt", "试用期最长不超过六个月。");
+    archive.file("案件材料/解除通知.txt", "违法解除可能需要支付赔偿金。");
+    const buffer = archive.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer;
+    const createdRecords: Array<Record<string, unknown>> = [];
+    const service = new KnowledgeBaseService(
+      {
+        enabled: true,
+        autoDetect: { enabled: true, minConfidence: 0.75 },
+        query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
+        storage: {
+          sqlitePath: join(dir, "knowledge.db"),
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+            documentTableId: "tbl_docs",
+          },
+        },
+        embeddingProvider: {
+          baseUrl: new URL("https://example.com/v1/"),
+          apiKey: "token",
+          model: "text-embedding",
+        },
+        models: {},
+        ingest: {
+          allowedExtensions: [".txt", ".zip"],
+          maxFileSizeMb: 20,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+        },
+      },
+      {
+        async downloadMessageResource() {
+          return {
+            fileName: "案件材料.zip",
+            mimeType: "application/zip",
+            buffer,
+          };
+        },
+        async createBitableRecord(_appToken, tableId, fields) {
+          createdRecords.push({ tableId, fields });
+          return `${tableId}_${createdRecords.length}`;
+        },
+        async listBitableRecords() {
+          return [];
+        },
+      },
+      createOpenCodeStub(),
+      logger(),
+    );
+
+    const result = await service.ingestFile({
+      messageId: "om_zip",
+      fileKey: "file_zip",
+      fileName: "案件材料.zip",
+    });
+
+    expect(result.sourceFile).toBe("案件材料.zip（2 个文件）");
+    expect(result.extractedCount).toBe(2);
+    expect(result.rawExtractedCount).toBe(2);
+    expect(createdRecords.some((record) => JSON.stringify(record.fields).includes("案件材料/劳动合同.txt"))).toBe(true);
+    expect(createdRecords.some((record) => JSON.stringify(record.fields).includes("案件材料/解除通知.txt"))).toBe(true);
     service.close();
   });
 
@@ -603,7 +796,7 @@ describe("KnowledgeBaseService", () => {
             statuteField: {
               name: "法条",
               type: "hyperlink",
-              urlTemplate: "https://example.com/law?keyword={{statute}}",
+              urlTemplate: "https://alphalawyer.cn/#/app/tool/search/case?searchType=law&keyword={{statute}}",
               textTemplate: "{{statute}}",
             },
           },
@@ -649,7 +842,7 @@ describe("KnowledgeBaseService", () => {
     expect(createdRecords[1]?.fields).toEqual(expect.objectContaining({
       法条: {
         text: "《劳动合同法》第 19 条",
-        link: "https://example.com/law?keyword=%E3%80%8A%E5%8A%B3%E5%8A%A8%E5%90%88%E5%90%8C%E6%B3%95%E3%80%8B%E7%AC%AC%2019%20%E6%9D%A1",
+        link: "https://alphalawyer.cn/#/app/tool/search/case?searchType=law&keyword=%E3%80%8A%E5%8A%B3%E5%8A%A8%E5%90%88%E5%90%8C%E6%B3%95%E3%80%8B%E7%AC%AC%2019%20%E6%9D%A1",
       },
     }));
     service.close();
@@ -674,7 +867,7 @@ describe("KnowledgeBaseService", () => {
             statuteField: {
               name: "法条",
               type: "hyperlink",
-              urlTemplate: "https://example.com/law?keyword={{statute}}",
+              urlTemplate: "https://alphalawyer.cn/#/app/tool/search/case?searchType=law&keyword={{statute}}",
               textTemplate: "{{statute}}",
             },
           },
@@ -820,7 +1013,7 @@ describe("KnowledgeBaseService", () => {
             statuteField: {
               name: "法条",
               type: "hyperlink",
-              urlTemplate: "https://example.com/law?keyword={{statute}}",
+              urlTemplate: "https://alphalawyer.cn/#/app/tool/search/case?searchType=law&keyword={{statute}}",
               textTemplate: "{{statute}}",
             },
           },
@@ -853,7 +1046,7 @@ describe("KnowledgeBaseService", () => {
               标签: ["劳动"],
               法条: {
                 text: "《劳动合同法》第 19 条",
-                link: "https://example.com/law?keyword=劳动合同法",
+                link: "https://www.pkulaw.com/law?keyword=劳动合同法第19条",
               },
               资料链接: {
                 text: "劳动合同法手册.pdf",
@@ -874,6 +1067,9 @@ describe("KnowledgeBaseService", () => {
     expect(result.bitableUrl).toBe("https://feishu.cn/base/app_token?table=tbl_entries");
     expect(result.results[0]?.sourceFile).toBe("劳动合同法手册.pdf");
     expect(result.results[0]?.statute).toBe("《劳动合同法》第 19 条");
+    expect(result.results[0]?.statuteUrl).toBe(
+      "https://alphalawyer.cn/#/app/tool/search/case?searchType=law&keyword=%E3%80%8A%E5%8A%B3%E5%8A%A8%E5%90%88%E5%90%8C%E6%B3%95%E3%80%8B%E7%AC%AC%2019%20%E6%9D%A1",
+    );
     service.close();
   });
 
@@ -914,6 +1110,12 @@ describe("KnowledgeBaseService", () => {
             appToken: "app_token",
             tableId: "tbl_entries",
             documentTableId: undefined,
+            statuteField: {
+              name: "法条",
+              type: "hyperlink",
+              urlTemplate: "https://alphalawyer.cn/#/app/tool/search/case?searchType=law&keyword={{statute}}",
+              textTemplate: "{{statute}}",
+            },
           },
         },
         embeddingProvider: {
@@ -977,6 +1179,12 @@ describe("KnowledgeBaseService", () => {
             appToken: "app_token",
             tableId: "tbl_entries",
             documentTableId: undefined,
+            statuteField: {
+              name: "法条",
+              type: "hyperlink",
+              urlTemplate: "https://alphalawyer.cn/#/app/tool/search/case?searchType=law&keyword={{statute}}",
+              textTemplate: "{{statute}}",
+            },
           },
         },
         embeddingProvider: {
@@ -1053,6 +1261,12 @@ describe("KnowledgeBaseService", () => {
             appToken: "app_token",
             tableId: "tbl_entries",
             documentTableId: undefined,
+            statuteField: {
+              name: "法条",
+              type: "hyperlink",
+              urlTemplate: "https://alphalawyer.cn/#/app/tool/search/case?searchType=law&keyword={{statute}}",
+              textTemplate: "{{statute}}",
+            },
           },
         },
         embeddingProvider: {
@@ -1121,6 +1335,9 @@ describe("KnowledgeBaseService", () => {
     const result = await service.query("劳动合同法第十九条");
 
     expect(result.results[0]?.statute).toBe("《劳动合同法》第 19 条");
+    expect(result.results[0]?.statuteUrl).toBe(
+      "https://alphalawyer.cn/#/app/tool/search/case?searchType=law&keyword=%E3%80%8A%E5%8A%B3%E5%8A%A8%E5%90%88%E5%90%8C%E6%B3%95%E3%80%8B%E7%AC%AC%2019%20%E6%9D%A1",
+    );
     expect(result.results[0]?.source).toBe("exact_article");
     expect(result.results[0]?.reranked).toBe(false);
     expect(fetchSpy).not.toHaveBeenCalled();

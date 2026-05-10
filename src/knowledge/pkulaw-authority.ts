@@ -19,12 +19,13 @@ import { redactEvidenceText } from "../runtime/sanitize.js";
 const execFileAsync = promisify(execFile);
 const DEFAULT_SKILLS = {
   lawSemantic: { tool: "law-semantic", operation: "search_article" },
-  lawRecognition: { tool: "law_recognition", operation: "law_recognition" },
-  citationValidator: { tool: "pku_citation_validator", operation: "adjust_provisions" },
-  caseNumberRecognition: { tool: "pkulaw-case-number-recognition", operation: "anhao_recognition" },
+  lawRecognition: { tool: "law-recognition", operation: "law_recognition" },
+  citationValidator: { tool: "citation-validator", operation: "adjust_provisions" },
+  caseNumberRecognition: { tool: "case-number", operation: "anhao_recognition" },
 } as const;
 const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_TEXT_TOOL_INPUT_LENGTH = 6_000;
 
 export type PkulawAuthorityItem = {
   title: string;
@@ -161,14 +162,10 @@ export class PkulawAuthorityService {
     }
 
     try {
-      const { stdout, stderr } = await execFileAsync(
-        this.cliCommand,
-        [skill.tool, skill.operation, "--text", query, "--json"],
-        {
-          timeout: this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-          maxBuffer: 1024 * 1024,
-        },
-      );
+      const { stdout, stderr } = await this.runPkulawCliWithToolCacheRetry([skill.tool, skill.operation, "--text", query, "--json"], {
+        timeout: this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024,
+      });
       const items = normalizePkulawItems(parsePkulawJson(stdout));
       if (items.length === 0) {
         this.logger.log("knowledge/pkulaw", "law semantic returned empty result", {
@@ -260,7 +257,7 @@ export class PkulawAuthorityService {
     emptyMessage: string;
     normalize: (value: unknown) => T[];
   }): Promise<PkulawToolResult<T>> {
-    const text = input.text.trim();
+    const text = normalizePkulawTextToolInput(input.text);
     return await this.callTool({
       kind: input.kind,
       binding: input.binding,
@@ -324,14 +321,10 @@ export class PkulawAuthorityService {
     }
 
     try {
-      const { stdout, stderr } = await execFileAsync(
-        this.cliCommand,
-        [input.binding.tool, input.binding.operation, ...input.args],
-        {
-          timeout: this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-          maxBuffer: 2 * 1024 * 1024,
-        },
-      );
+      const { stdout, stderr } = await this.runPkulawCliWithToolCacheRetry([input.binding.tool, input.binding.operation, ...input.args], {
+        timeout: this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        maxBuffer: 2 * 1024 * 1024,
+      });
       const items = input.normalize(parsePkulawJson(stdout));
       if (items.length === 0) {
         this.logger.log("knowledge/pkulaw", `${input.kind} returned empty result`, {
@@ -360,8 +353,27 @@ export class PkulawAuthorityService {
       this.logger.log("knowledge/pkulaw", `${input.kind} downgraded`, {
         status,
         detail: redactEvidenceText(detail.slice(0, 240)),
-      }, status === "timeout" ? "warn" : "error");
+      }, "warn");
       return this.toolFail(status, input.inputText, startedAt, status === "timeout" ? "北大法宝调用超时。" : "北大法宝调用不可用。");
+    }
+  }
+
+  private async runPkulawCliWithToolCacheRetry(
+    args: string[],
+    options: { timeout: number; maxBuffer: number },
+  ): Promise<{ stdout: string; stderr: string }> {
+    try {
+      return await execFileAsync(this.cliCommand, args, options);
+    } catch (error) {
+      if (!isPkulawUnknownCommandError(error)) {
+        throw error;
+      }
+      // pkulaw-mcp 的动态工具命令依赖本地 tools/list 缓存；缓存过期时先刷新再重试一次。
+      await execFileAsync(this.cliCommand, ["update"], {
+        timeout: options.timeout,
+        maxBuffer: options.maxBuffer,
+      });
+      return await execFileAsync(this.cliCommand, args, options);
     }
   }
 
@@ -440,6 +452,21 @@ function parsePkulawJson(stdout: string): unknown {
   return JSON.parse(stdout.slice(jsonStart));
 }
 
+function isPkulawUnknownCommandError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /unknown command|请运行:\s*pkulaw-mcp tools|工具缓存/i.test(message);
+}
+
+function normalizePkulawTextToolInput(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/<[^>\n]+>/g, " ")
+    .replace(/[#*_`>]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_TEXT_TOOL_INPUT_LENGTH);
+}
+
 function normalizePkulawItems(value: unknown): PkulawAuthorityItem[] {
   if (!Array.isArray(value)) {
     return [];
@@ -449,7 +476,7 @@ function normalizePkulawItems(value: unknown): PkulawAuthorityItem[] {
     .map((item) => ({
       title: readString(item, "title") ?? readString(item, "Title") ?? "未命名法规",
       excerpt: readString(item, "article") ?? readString(item, "FullText") ?? readString(item, "summary") ?? "",
-      url: readString(item, "url") ?? readString(item, "Url"),
+      url: normalizePkulawUrl(readString(item, "url") ?? readString(item, "Url")),
       sourceUpdatedAt: readString(item, "UpdateTime") ?? readString(item, "updateTime"),
       timeliness: readDictionaryText(item, "TimelinessDic"),
     }))
@@ -472,7 +499,7 @@ function normalizeLawRecognitionItems(value: unknown): PkulawLawRecognitionItem[
       text: redactEvidenceText(readString(item, "text") ?? ""),
       original: redactEvidenceText(readString(item, "original") ?? readString(item, "text") ?? ""),
       fulltext: redactEvidenceText((readString(item, "fulltext") ?? "").slice(0, 1200)) || undefined,
-      source: readString(item, "source"),
+      source: normalizePkulawUrl(readString(item, "source")),
     }))
     .filter((item) => item.text || item.original || item.fulltext)
     .slice(0, 10);
@@ -488,7 +515,7 @@ function normalizeCitationValidationItems(value: unknown): PkulawCitationValidat
       title: redactEvidenceText(readString(item, "title") ?? ""),
       articleNumber: readString(item, "article_number") ?? readString(item, "articleNumber") ?? "",
       originalText: redactEvidenceText((readString(item, "original_text") ?? readString(item, "originalText") ?? "").slice(0, 1200)),
-      url: readString(item, "url"),
+      url: normalizePkulawUrl(readString(item, "url")),
       issueDate: readString(item, "issue_date") ?? readString(item, "issueDate"),
       implementDate: readString(item, "implement_date") ?? readString(item, "implementDate"),
       gid: readString(item, "gid"),
@@ -516,10 +543,22 @@ function normalizeCaseNumberItems(value: unknown): PkulawCaseNumberItem[] {
       court: redactEvidenceText(readString(item, "court") ?? ""),
       title: redactEvidenceText(readString(item, "title") ?? ""),
       lastInstanceDate: readString(item, "lastInstanceDate"),
-      url: readString(item, "url"),
+      url: normalizePkulawUrl(readString(item, "url")),
     }))
     .filter((item) => item.text || item.caseFlag || item.title)
     .slice(0, 10);
+}
+
+function normalizePkulawUrl(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return undefined;
+  }
+  const markdownLink = normalized.match(/\]\((https?:\/\/[^)\s]+)\)/);
+  if (markdownLink?.[1]) {
+    return markdownLink[1];
+  }
+  return /^https?:\/\//.test(normalized) ? normalized : undefined;
 }
 
 function readString(record: Record<string, unknown>, key: string): string | undefined {

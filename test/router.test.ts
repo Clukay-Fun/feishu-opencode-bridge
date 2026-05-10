@@ -158,6 +158,10 @@ describe("routeIncomingText", () => {
       kind: "command",
       command: { kind: "knowledge-ingest-end" },
     });
+    expect(routeIncomingText("/知识入库完成")).toEqual({
+      kind: "command",
+      command: { kind: "knowledge-ingest-end" },
+    });
     expect(routeIncomingText("/法律咨询开始")).toEqual({
       kind: "command",
       command: { kind: "passthrough", name: "法律咨询开始", arguments: [] },
@@ -165,6 +169,10 @@ describe("routeIncomingText", () => {
     expect(routeIncomingText("/法律咨询结束")).toEqual({
       kind: "command",
       command: { kind: "passthrough", name: "法律咨询结束", arguments: [] },
+    });
+    expect(routeIncomingText("/法律问答 员工试用期最长多久？")).toEqual({
+      kind: "command",
+      command: { kind: "knowledge-query", question: "员工试用期最长多久？", explicit: true },
     });
     expect(routeIncomingText("/法律咨询 员工试用期最长多久？")).toEqual({
       kind: "command",

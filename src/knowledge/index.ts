@@ -9,6 +9,7 @@ import crypto from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
+import { expandArchiveMaterialEntries, isArchiveFileName } from "../document-pipeline/archive.js";
 import type { Logger } from "../logging/logger.js";
 import { OpenAICompatibleEmbeddingClient, type EmbeddingProviderClient } from "../memory/embedding-retriever.js";
 import type { OpenCodeClient, OpenCodeModelRef, OpenCodePromptRequest } from "../opencode/client.js";
@@ -86,6 +87,7 @@ export type KnowledgeFileRef = {
   fileKey: string;
   fileName: string;
   size?: number | undefined;
+  resourceType?: "file" | "image" | "folder" | undefined;
 };
 
 export type KnowledgeWebPageIngestRequest = {
@@ -125,7 +127,7 @@ export interface KnowledgeBasePort {
 type OpenCodePort = Pick<OpenCodeClient, "createSession" | "postMessageSync" | "deleteSession">;
 
 type KnowledgeResourcePort = {
-  downloadMessageResource(messageId: string, fileKey: string, type: "file" | "image"): Promise<{
+  downloadMessageResource(messageId: string, fileKey: string, type: "file" | "image" | "folder"): Promise<{
     fileName: string;
     mimeType: string;
     buffer: Buffer;
@@ -209,7 +211,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
         // V1: exact 命中即返回；V2 可考虑注入 hybrid 候选后统一 rerank。
         return {
           question,
-          results: exactMatches,
+          results: exactMatches.map((candidate) => this.enrichQueryCandidateLinks(candidate)),
           bitableUrl: resolveKnowledgeBitableViewUrl(this.config),
         };
       }
@@ -231,7 +233,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     const uniqueResults = dedupeEquivalentCandidates(reranked);
     return {
       question,
-      results: uniqueResults.slice(0, this.config.query.finalTopN),
+      results: uniqueResults.slice(0, this.config.query.finalTopN).map((candidate) => this.enrichQueryCandidateLinks(candidate)),
       bitableUrl: resolveKnowledgeBitableViewUrl(this.config),
     };
   }
@@ -243,10 +245,18 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
       status: "running",
       detail: "正在下载并解析文件",
     });
-    const downloaded = await this.resources.downloadMessageResource(file.messageId, file.fileKey, "file");
-    validateUploadedFile(downloaded.fileName, downloaded.buffer, this.config.ingest.allowedExtensions, this.config.ingest.maxFileSizeMb);
+    const downloaded = await this.resources.downloadMessageResource(file.messageId, file.fileKey, file.resourceType ?? "file");
+    const fileName = resolveDownloadedKnowledgeFileName(downloaded.fileName, file.fileName);
+    validateUploadedFile(fileName, downloaded.buffer, this.config.ingest.allowedExtensions, this.config.ingest.maxFileSizeMb);
+    if (isArchiveFileName(fileName)) {
+      return await this.ingestArchiveBuffer(fileName, downloaded.buffer, {
+        sourceType: "message-archive",
+        messageId: file.messageId,
+        fileKey: file.fileKey,
+      }, options);
+    }
     return await this.ingestBuffer({
-      fileName: downloaded.fileName,
+      fileName,
       buffer: downloaded.buffer,
       sourceType: "message-file",
       messageId: file.messageId,
@@ -671,6 +681,8 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
           embedding: JSON.stringify(embedding),
           入库时间: Date.now(),
         });
+        const sourceFieldValue = fields[resolveSourceFileFieldName(this.config)];
+        const statuteFieldValue = fields[resolveStatuteFieldName(this.config)];
         const bitableRecordId = await this.resources.createBitableRecord(
           this.config.storage.bitable.appToken,
           this.config.storage.bitable.tableId,
@@ -684,6 +696,8 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
           statute: item.statute,
           sourceFile: input.fileName,
           pageSection: item.pageSection,
+          sourceUrl: readUrlValue(sourceFieldValue),
+          statuteUrl: readUrlValue(statuteFieldValue),
           bitableRecordId,
           embedding,
           embeddingModel: this.embeddingClient.model,
@@ -761,6 +775,72 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     };
   }
 
+  private async ingestArchiveBuffer(
+    archiveFileName: string,
+    buffer: Buffer,
+    context: {
+      sourceType: string;
+      messageId?: string | undefined;
+      fileKey?: string | undefined;
+    },
+    options?: KnowledgeIngestOptions,
+  ): Promise<KnowledgeIngestResult> {
+    await this.reportProgress(options, {
+      step: "read",
+      status: "running",
+      detail: "正在展开文件夹压缩包",
+    });
+    const entries = expandArchiveMaterialEntries(archiveFileName, buffer, this.config.ingest.allowedExtensions);
+    if (entries.length === 0) {
+      throw new Error(`压缩包内未找到可入库文件；支持 ${this.config.ingest.allowedExtensions.filter((extension) => extension !== ".zip").join(" / ")} 文件`);
+    }
+    const startedAt = Date.now();
+    const aggregateTags = new Map<string, number>();
+    const failures: string[] = [];
+    let rawExtractedCount = 0;
+    let dedupedCount = 0;
+    let extractedCount = 0;
+    let bitableUrl: string | undefined;
+    for (const [index, entry] of entries.entries()) {
+      await this.reportProgress(options, {
+        step: "read",
+        status: "running",
+        detail: `正在处理压缩包内文件（${index + 1}/${entries.length}）：${entry.fileName}`,
+      });
+      try {
+        const result = await this.ingestBuffer({
+          fileName: entry.fileName,
+          buffer: entry.buffer,
+          sourceType: context.sourceType,
+          messageId: context.messageId,
+          fileKey: context.fileKey,
+        }, options);
+        rawExtractedCount += result.rawExtractedCount ?? result.extractedCount;
+        dedupedCount += result.dedupedCount ?? 0;
+        extractedCount += result.extractedCount;
+        bitableUrl = result.bitableUrl ?? bitableUrl;
+        for (const [tag, count] of Object.entries(result.tagCounts)) {
+          aggregateTags.set(tag, (aggregateTags.get(tag) ?? 0) + count);
+        }
+      } catch (error) {
+        failures.push(`${entry.fileName}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    if (extractedCount === 0 && failures.length > 0) {
+      throw new Error(`压缩包内文件全部入库失败。首个错误：${failures[0]}`);
+    }
+    return {
+      sourceFile: `${archiveFileName}（${entries.length} 个文件）`,
+      rawExtractedCount,
+      dedupedCount,
+      extractedCount,
+      tagCounts: Object.fromEntries([...aggregateTags.entries()].sort((left, right) => right[1] - left[1])),
+      durationMs: Date.now() - startedAt,
+      bitableUrl,
+      warning: failures.length > 0 ? `压缩包内 ${failures.length} 个文件入库失败：${failures.slice(0, 3).join("；")}` : undefined,
+    };
+  }
+
   // #endregion
 
   // #region 外部同步与关闭
@@ -812,6 +892,8 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
         statute: readStringField(record.fields, resolveStatuteFieldName(this.config)) ?? readStringField(record.fields, "法条"),
         sourceFile,
         pageSection: readStringField(record.fields, "页码/章节"),
+        sourceUrl: readUrlField(record.fields, sourceFieldName) ?? readUrlField(record.fields, "源文件"),
+        statuteUrl: readUrlField(record.fields, resolveStatuteFieldName(this.config)) ?? readUrlField(record.fields, "法条"),
         bitableRecordId: record.recordId,
         embedding,
         embeddingModel: this.embeddingClient.model,
@@ -1088,6 +1170,20 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     }
   }
 
+  private enrichQueryCandidateLinks(candidate: KnowledgeEntryCandidate): KnowledgeEntryCandidate {
+    const statuteTemplateUrl = buildStatuteUrl(this.config, {
+      fileName: candidate.sourceFile,
+      pageSection: candidate.pageSection,
+      sourceUrl: candidate.sourceUrl,
+      statute: candidate.statute,
+    });
+    return {
+      ...candidate,
+      sourceUrl: candidate.sourceUrl ?? buildKnowledgeRecordUrl(resolveKnowledgeBitableViewUrl(this.config), candidate.bitableRecordId),
+      statuteUrl: resolveDisplayStatuteUrl(candidate.statuteUrl, statuteTemplateUrl),
+    };
+  }
+
   // #endregion
 
   private async saveDocumentRecord(
@@ -1248,6 +1344,56 @@ function normalizeBitableUrl(value: string): string {
   return encodeURI(trimmed);
 }
 
+function buildKnowledgeRecordUrl(bitableUrl: string | undefined, recordId: string | undefined): string | undefined {
+  if (!bitableUrl || !recordId) {
+    return undefined;
+  }
+  try {
+    const url = new URL(bitableUrl);
+    url.searchParams.set("record", recordId);
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function buildStatuteUrl(config: KnowledgeBaseConfig, context: StatuteTemplateContext): string | undefined {
+  const fieldConfig = config.storage.bitable.statuteField;
+  if (!context.statute || !fieldConfig?.urlTemplate) {
+    return undefined;
+  }
+  return normalizeBitableUrl(renderStatuteTemplate(fieldConfig.urlTemplate, {
+    fileName: context.fileName,
+    pageSection: context.pageSection,
+    sourceUrl: context.sourceUrl,
+    statute: context.statute,
+  }));
+}
+
+function resolveDisplayStatuteUrl(recordedUrl: string | undefined, fallbackUrl: string | undefined): string | undefined {
+  if (!recordedUrl) {
+    return fallbackUrl;
+  }
+  // 旧数据可能把法条字段链接到飞书知识库，或写入不可搜索的北大法宝 keyword 链接；展示时统一回退到当前法条搜索模板。
+  if (isStaleStatuteUrl(recordedUrl)) {
+    return fallbackUrl ?? recordedUrl;
+  }
+  return recordedUrl;
+}
+
+function isStaleStatuteUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.toLowerCase();
+    if (hostname.endsWith("feishu.cn") || hostname.endsWith("larksuite.com")) {
+      return true;
+    }
+    return hostname.endsWith("pkulaw.com") && url.searchParams.has("keyword");
+  } catch {
+    return false;
+  }
+}
+
 function renderSourceFileTemplate(template: string, context: SourceFileTemplateContext): string {
   return template.replace(/\{\{\s*(fileName|messageId|fileKey|checksum|pageSection|sourceUrl)\s*\}\}/g, (_match, key: keyof SourceFileTemplateContext) => {
     const value = context[key];
@@ -1325,6 +1471,17 @@ function validateUploadedFile(fileName: string, buffer: Buffer, allowedExtension
   if (sizeMb > maxFileSizeMb) {
     throw new Error(`文件过大，请控制在 ${maxFileSizeMb}MB 以内`);
   }
+}
+
+function resolveDownloadedKnowledgeFileName(downloadedFileName: string, messageFileName: string): string {
+  if (path.extname(downloadedFileName)) {
+    return downloadedFileName;
+  }
+  if (!path.extname(messageFileName)) {
+    return downloadedFileName;
+  }
+  // 飞书下载接口偶尔只返回资源 key 或无扩展名名称；入库校验以消息卡片上的原始文件名兜底。
+  return messageFileName;
 }
 
 function createChecksum(buffer: Buffer): string {
@@ -1413,6 +1570,10 @@ function readStringField(fields: Record<string, unknown>, key: string): string |
   return readStringValue(fields[key]);
 }
 
+function readUrlField(fields: Record<string, unknown>, key: string): string | undefined {
+  return readUrlValue(fields[key]);
+}
+
 function readStringListField(fields: Record<string, unknown>, key: string): string[] {
   const value = fields[key];
   if (Array.isArray(value)) {
@@ -1443,6 +1604,25 @@ function readStringValue(value: unknown): string | undefined {
   if (value && typeof value === "object" && typeof (value as { text?: unknown }).text === "string") {
     const text = ((value as { text: string }).text).trim();
     return text || undefined;
+  }
+  return undefined;
+}
+
+function readUrlValue(value: unknown): string | undefined {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const url = readUrlValue(item);
+      if (url) {
+        return url;
+      }
+    }
+    return undefined;
+  }
+  if (value && typeof value === "object") {
+    const record = value as { link?: unknown; url?: unknown };
+    const link = typeof record.link === "string" && record.link.trim() ? record.link.trim() : undefined;
+    const url = typeof record.url === "string" && record.url.trim() ? record.url.trim() : undefined;
+    return link ?? url;
   }
   return undefined;
 }

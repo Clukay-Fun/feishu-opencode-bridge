@@ -53,8 +53,9 @@ describe("knowledge base bridge flow", () => {
     expect(knowledgeQuery).toHaveBeenCalledWith("劳动合同试用期最长多久？");
     const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
     const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
-    expect(JSON.stringify(replyPayloads)).toContain("法律咨询");
-    expect(JSON.stringify(replyPayloads)).toContain("试用期最长不超过六个月");
+    expect(JSON.stringify(replyPayloads)).toContain("知识检索进行中");
+    expect(JSON.stringify(updatedPayloads)).toContain("法律咨询");
+    expect(JSON.stringify(updatedPayloads)).toContain("试用期最长不超过六个月");
     expect(JSON.stringify(updatedPayloads)).not.toContain("这是普通 OpenCode 回复。");
   });
 
@@ -91,7 +92,49 @@ describe("knowledge base bridge flow", () => {
     expect(JSON.stringify(replyPayloads)).not.toContain("法律咨询");
   });
 
-  it("routes /kb-query through bridge-side knowledge lookup in private chat", async () => {
+  it("routes copied knowledge-base questions when lookup returns results", async () => {
+    const outbound = createOutbound();
+    const eventStream = new FakeOpenCodeEventStream();
+    const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "这是普通 OpenCode 回复。" });
+    const knowledgeQuery = vi.fn(async (question: string) => ({
+      question,
+      results: [{
+        id: 1,
+        documentId: 1,
+        question,
+        answer: "员工试用期最长不超过六个月。",
+        tags: ["劳动"],
+        statute: "《劳动合同法》第 19 条",
+        sourceFile: "劳动合同法手册.pdf",
+        pageSection: "第 23 页",
+        createdAt: Date.now(),
+        score: 0.95,
+      }],
+    }));
+    const app = new BridgeApp(baseConfig({ autoDetect: true }), outbound, logger(), createWhitelist(), {
+      knowledge: {
+        query: knowledgeQuery,
+        async ingestFile() {
+          throw new Error("not used");
+        },
+        async syncMirror() {},
+        close() {},
+      },
+      opencode,
+      eventStream,
+      memory: null,
+    });
+
+    await app.handleIncomingMessage(createTextMessage("员工试用期最长多久？"));
+
+    expect(knowledgeQuery).toHaveBeenCalledWith("员工试用期最长多久？");
+    const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+    expect(JSON.stringify(updatedPayloads)).toContain("法律咨询");
+    expect(JSON.stringify(updatedPayloads)).toContain("员工试用期最长不超过六个月");
+    expect(opencode.sessions.size).toBe(0);
+  });
+
+  it("routes /法律问答 through bridge-side knowledge lookup in private chat", async () => {
     const outbound = createOutbound();
     const eventStream = new FakeOpenCodeEventStream();
     const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "not used" });
@@ -124,13 +167,53 @@ describe("knowledge base bridge flow", () => {
       memory: null,
     });
 
-    await app.handleIncomingMessage(createTextMessage("/kb-query 劳动合同试用期最长多久？"));
+    await app.handleIncomingMessage(createTextMessage("/法律问答 劳动合同试用期最长多久？"));
 
     expect(knowledgeQuery).toHaveBeenCalledWith("劳动合同试用期最长多久？");
     const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
     const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
     expect(JSON.stringify(replyPayloads)).toContain("知识检索进行中");
     expect(JSON.stringify(updatedPayloads)).toContain("法律咨询");
+    expect(JSON.stringify(updatedPayloads)).toContain("试用期最长不超过六个月");
+  });
+
+  it("routes natural language 法律问答 through bridge-side knowledge lookup", async () => {
+    const outbound = createOutbound();
+    const eventStream = new FakeOpenCodeEventStream();
+    const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "not used" });
+    const knowledgeQuery = vi.fn(async (question: string) => ({
+      question,
+      results: [{
+        id: 1,
+        documentId: 1,
+        question,
+        answer: "试用期最长不超过六个月。",
+        tags: ["劳动"],
+        statute: "《劳动合同法》第 19 条",
+        sourceFile: "劳动合同法手册.pdf",
+        pageSection: "第 23 页",
+        createdAt: Date.now(),
+        score: 0.95,
+      }],
+    }));
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
+      knowledge: {
+        query: knowledgeQuery,
+        async ingestFile() {
+          throw new Error("not used");
+        },
+        async syncMirror() {},
+        close() {},
+      },
+      opencode,
+      eventStream,
+      memory: null,
+    });
+
+    await app.handleIncomingMessage(createTextMessage("法律问答 劳动合同试用期最长多久？"));
+
+    expect(knowledgeQuery).toHaveBeenCalledWith("劳动合同试用期最长多久？");
+    const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
     expect(JSON.stringify(updatedPayloads)).toContain("试用期最长不超过六个月");
   });
 
@@ -183,27 +266,58 @@ describe("knowledge base bridge flow", () => {
       messageType: "file",
       file: {
         fileKey: "file_2",
-        fileName: "劳动合同2.txt",
+        fileName: "劳动合同2.zip",
       },
+      resourceType: "folder",
     });
     expect(ingestFile).not.toHaveBeenCalled();
-    await app.handleIncomingMessage(createIngestReplyMessage("/kb-ingest-end", "om_end"));
+    await app.handleIncomingMessage(createIngestReplyMessage("知识入库完成", "om_end"));
     await vi.waitFor(() => {
       expect(ingestFile).toHaveBeenCalledTimes(2);
+    });
+    expect(ingestFile.mock.calls[1]?.[0]).toMatchObject({
+      fileName: "劳动合同2.zip",
+      resourceType: "folder",
     });
 
     const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
     const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
-    expect(JSON.stringify(replyPayloads)).toContain("已收到入库素材");
     expect(JSON.stringify(updatedPayloads)).toContain("知识入库进行中");
-    expect(JSON.stringify(updatedPayloads)).toContain("提取关键信息：进行中");
-    expect(JSON.stringify(updatedPayloads)).toContain("生成结果：等待中");
+    expect(JSON.stringify(updatedPayloads)).toContain("提取问答：进行中");
+    expect(JSON.stringify(updatedPayloads)).toContain("写入知识库：等待中");
     expect(JSON.stringify(updatedPayloads)).toContain("知识入库完成");
     expect(JSON.stringify(updatedPayloads)).toContain("提取 12");
     expect(JSON.stringify(updatedPayloads)).toContain("去重 4");
     expect(JSON.stringify(updatedPayloads)).toContain("劳动合同.txt");
-    expect(JSON.stringify(replyPayloads)).not.toContain("知识入库完成");
     expect(JSON.stringify(replyPayloads)).not.toContain("已收到结束指令，将处理完当前队列后结束");
+    expect(JSON.stringify(replyPayloads)).not.toContain("已收到结束指令，将处理完当前队列后结束");
+  });
+
+  it("starts ingest mode from natural language 知识入库", async () => {
+    const outbound = createOutbound();
+    const eventStream = new FakeOpenCodeEventStream();
+    const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "not used" });
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
+      knowledge: {
+        async query() {
+          return { question: "", results: [] };
+        },
+        async ingestFile() {
+          throw new Error("not used");
+        },
+        async syncMirror() {},
+        close() {},
+      },
+      opencode,
+      eventStream,
+      memory: null,
+    });
+
+    await app.handleIncomingMessage(createTextMessage("知识入库"));
+
+    const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+    expect(JSON.stringify(replyPayloads)).toContain("知识入库已开启");
+    expect(JSON.stringify(replyPayloads)).toContain("发送文件或 URL 即可入库");
   });
 
   it("ingests recently uploaded files when the next message asks to save them to the knowledge base", async () => {
@@ -250,7 +364,6 @@ describe("knowledge base bridge flow", () => {
     const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
     const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
     expect(JSON.stringify(replyPayloads)).toContain("知识入库已开启");
-    expect(JSON.stringify(replyPayloads)).toContain("已收到入库素材");
     expect(JSON.stringify(updatedPayloads)).toContain("知识入库完成");
     expect(JSON.stringify(updatedPayloads)).toContain("公司法实务.pdf");
     expect(JSON.stringify(updatedPayloads)).toContain("入库 6");
@@ -423,17 +536,17 @@ describe("knowledge base bridge flow", () => {
     const appAny = app as unknown as { pendingInteractions: Map<string, unknown> };
 
     await app.handleIncomingMessage({
-      ...createTextMessage("归档.zip", "om_file_zip"),
+      ...createTextMessage("归档.exe", "om_file_exe"),
       messageType: "file",
       file: {
-        fileKey: "file_zip",
-        fileName: "归档.zip",
+        fileKey: "file_exe",
+        fileName: "归档.exe",
         size: 1_024,
       },
     });
 
     const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
-    expect(JSON.stringify(replyPayloads)).toContain("仅支持 .pdf / .docx / .txt / .md / .png / .jpg / .jpeg / .webp 文件");
+    expect(JSON.stringify(replyPayloads)).toContain("仅支持 .pdf / .docx / .txt / .md / .png / .jpg / .jpeg / .webp / .xls / .xlsx / .csv / .zip 文件");
     expect(appAny.pendingInteractions.has("oc_p2p_1")).toBe(false);
     expect(outbound.downloadMessageResource).not.toHaveBeenCalled();
   });
@@ -599,7 +712,7 @@ describe("knowledge base bridge flow", () => {
     expect(outboundTexts[0]).toContain("命令已更新");
     expect(outboundTexts[0]).toContain("`/legal-query-start`");
     expect(outboundTexts[1]).toContain("命令已更新");
-    expect(outboundTexts[1]).toContain("`/法律咨询 <问题>`");
+    expect(outboundTexts[1]).toContain("`/法律问答 <问题>`");
     expect(outboundTexts[2]).toContain("命令已更新");
     expect(outboundTexts[2]).toContain("`/legal-query-end`");
     expect(JSON.stringify(allPayloads)).toContain("这是普通 OpenCode 回复");
@@ -677,7 +790,6 @@ describe("knowledge base bridge flow", () => {
       expect(JSON.stringify(updatedPayloads)).toContain("知识入库完成");
     });
 
-    const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
     const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
     expect(ingestWebPage).toHaveBeenCalledWith({
       url: "https://example.com/law",
@@ -685,7 +797,6 @@ describe("knowledge base bridge flow", () => {
       messageId: "om_web",
     }, expect.any(Object));
     expect(knowledgeQuery).not.toHaveBeenCalled();
-    expect(JSON.stringify(replyPayloads)).toContain("已收到入库素材");
     expect(JSON.stringify(updatedPayloads)).toContain("知识入库完成");
     expect(JSON.stringify(updatedPayloads)).toContain("入库 2");
     expect(JSON.stringify(updatedPayloads)).toContain("劳动合同法网页.md");
@@ -796,7 +907,6 @@ describe("knowledge base bridge flow", () => {
     expect(ingestWebPage).not.toHaveBeenCalled();
     expect(appAny.pendingInteractions.has("oc_p2p_1")).toBe(false);
     expect(appAny.knowledgeIngestInteractions.has("oc_p2p_1")).toBe(true);
-    expect(JSON.stringify(replyPayloads)).toContain("已收到入库素材");
     expect(JSON.stringify(replyPayloads)).not.toContain("已收到文件");
     expect(JSON.stringify(updatedPayloads)).toContain("主线继续聊天");
     expect(JSON.stringify(updatedPayloads)).toContain("知识入库完成");
@@ -939,7 +1049,6 @@ describe("knowledge base bridge flow", () => {
 
     const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
     const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
-    expect(JSON.stringify(replyPayloads)).toContain("已收到入库素材");
     expect(JSON.stringify(updatedPayloads)).toContain("知识入库完成");
     expect(JSON.stringify(replyPayloads)).not.toContain("已收到文件");
   });
@@ -1064,7 +1173,6 @@ describe("knowledge base bridge flow", () => {
     });
 
     const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
-    expect(JSON.stringify(replyPayloads)).toContain("已收到入库素材");
     expect(JSON.stringify(replyPayloads)).toContain("劳动合同2.txt");
     expect(JSON.stringify(replyPayloads)).not.toContain("已达上限，请等待当前文件处理完成");
   });
@@ -1226,7 +1334,7 @@ function baseConfig(options?: { autoDetect?: boolean; queueLimit?: number }): Ap
       },
       models: {},
       ingest: {
-        allowedExtensions: [".pdf", ".docx", ".txt", ".md"],
+        allowedExtensions: [".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp", ".xls", ".xlsx", ".csv", ".zip"],
         maxFileSizeMb: 20,
         pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
       },
