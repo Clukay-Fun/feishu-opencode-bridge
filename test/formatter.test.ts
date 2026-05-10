@@ -15,6 +15,8 @@ import {
   buildGuideCardPayload,
   buildLaborAnalysisCompletedPayload,
   buildLaborAnalysisProgressPayload,
+  buildLaborFinalReviewPayload,
+  buildLaborReviewCompletedPayload,
   buildModelListCardPayload,
   buildNoticeCardPayload,
   buildPostMarkdownPayload,
@@ -93,6 +95,7 @@ describe("buildPostPayload", () => {
         paths: ["C:\\Users\\LENOVO\\Desktop\\今日新闻五条_正式版.md"],
         commands: [],
       },
+      costSummary: "本次约消耗 123 tokens（估算）",
     });
     const content = JSON.parse(payload.content) as any;
     const serialized = JSON.stringify(content);
@@ -104,6 +107,10 @@ describe("buildPostPayload", () => {
     expect(serialized).toContain("https://www.miit.gov.cn/example");
     expect(serialized).toContain("今日新闻五条_正式版.md");
     expect(serialized).toContain("约 8s");
+    expect(serialized).not.toContain("中止任务");
+    expect(serialized).not.toContain("/abort");
+    expect(serialized).not.toContain("本次约消耗");
+    expect(serialized).not.toContain("tokens");
   });
 
   it("preserves fenced code blocks without escaping arrows", () => {
@@ -434,11 +441,13 @@ describe("buildPostPayload", () => {
         id: 1,
         documentId: 1,
         question: "员工试用期最长多久？",
-        answer: "试用期最长不超过 6 个月。",
+        answer: "试用期规则如下：（1）三个月以上不满一年不得超过一个月。（2）一年以上不满三年不得超过二个月。①三年以上不得超过六个月。",
         tags: ["劳动"],
         statute: "《劳动合同法》第 19 条",
         sourceFile: "劳动合同法实务指南.pdf",
         pageSection: "第 23 页",
+        sourceUrl: "https://example.com/base/app?table=tbl&record=rec_123",
+        statuteUrl: "https://example.com/law?keyword=%E5%8A%B3%E5%8A%A8%E5%90%88%E5%90%8C%E6%B3%95",
         bitableRecordId: "rec_123",
         createdAt: Date.now(),
         score: 0.98,
@@ -447,15 +456,16 @@ describe("buildPostPayload", () => {
     const content = JSON.parse(payload.content) as any;
     const serialized = JSON.stringify(content);
     expect(content.header.title.content).toBe("法律咨询");
-    expect(serialized).toContain("试用期最长不超过 6 个月");
+    expect(serialized).toContain("试用期规则如下：\\n（1）三个月以上不满一年不得超过一个月。\\n（2）一年以上不满三年不得超过二个月。\\n①三年以上不得超过六个月。");
     expect(serialized).toContain("劳动合同法实务指南.pdf");
     expect(serialized).toContain("《劳动合同法》第 19 条");
-    expect(serialized).toContain("查看知识库");
-    expect(serialized).toContain("https://example.com/base/app?table=tbl");
+    expect(serialized).not.toContain("查看知识库");
+    expect(serialized).toContain("https://example.com/base/app?table=tbl&record=rec_123");
+    expect(serialized).toContain("https://example.com/law?keyword=%E5%8A%B3%E5%8A%A8%E5%90%88%E5%90%8C%E6%B3%95");
     expect(serialized).not.toContain("继续追问");
   });
 
-  it("falls back to plain source text when the knowledge view url is not a base table", () => {
+  it("renders plain source text when no knowledge source url exists", () => {
     const payload = buildKnowledgeQueryPayload({
       question: "员工试用期最长多久？",
       bitableUrl: "https://example.com/knowledge",
@@ -477,6 +487,25 @@ describe("buildPostPayload", () => {
     expect(serialized).not.toContain("recordId=rec_123");
   });
 
+  it("splits long knowledge answers into readable paragraphs", () => {
+    const payload = buildKnowledgeQueryPayload({
+      question: "医疗期怎么算？",
+      results: [{
+        id: 1,
+        documentId: 1,
+        question: "医疗期怎么算？",
+        answer: "医疗期依据员工实际参加工作年限和在本单位工作年限确定。国家层面规定：实际工作10年以下、在本单位5年以下的，医疗期3个月，累计病休6个月；5年以上的，医疗期6个月，累计病休12个月。实际工作10年以上的，根据本单位工作年限不同，医疗期从6个月到24个月不等。医疗期从病休第一天开始累计计算，包括休息日和法定节假日。但地方法规可能有特殊规定，例如上海按本单位工作年限计算，每满1年增加1个月，最高不超过24个月，且每月按20.83天计算，不含休息日和节假日。",
+        tags: ["医疗期"],
+        sourceFile: "律师来了.pdf",
+        createdAt: Date.now(),
+        score: 0.98,
+      }],
+    });
+    const serialized = JSON.stringify(JSON.parse(payload.content));
+    expect(serialized).toContain("确定。\\n国家层面规定");
+    expect(serialized).toContain("不等。\\n医疗期从");
+  });
+
   it("renders an empty knowledge query card", () => {
     const payload = buildKnowledgeQueryEmptyPayload({ question: "员工试用期最长多久？" });
     const serialized = JSON.stringify(JSON.parse(payload.content));
@@ -492,15 +521,20 @@ describe("buildPostPayload", () => {
         { label: "提取问答", detail: "等待开始", status: "pending" },
         { label: "写入知识库", detail: "等待开始", status: "pending" },
       ],
+      queuedLabels: ["社保缴纳记录.pdf"],
+      completedItems: [{ sourceFile: "劳动合同.pdf", extractedCount: 18, elapsedMs: 3_200 }],
+      failedItems: [{ sourceFile: "损坏文件.pdf", reason: "PDF 解析失败", elapsedMs: 1_200 }],
     });
     const content = JSON.parse(payload.content) as any;
     const serialized = JSON.stringify(content);
     expect(serialized).toContain("知识入库进行中");
     expect(serialized).toContain("知识入库进行中");
     expect(serialized).toContain("劳动合同.txt");
-    expect(serialized).toContain("读取内容：已完成");
-    expect(serialized).toContain("提取关键信息：进行中");
-    expect(serialized).toContain("耗时");
+    expect(serialized).toContain("读取内容：正在下载并解析文件");
+    expect(serialized).toContain("提取问答：等待中");
+    expect(serialized).toContain("待处理：社保缴纳记录.pdf");
+    expect(serialized).toContain("已完成：劳动合同.pdf｜入库 18 条｜耗时 3s");
+    expect(serialized).toContain("失败：损坏文件.pdf｜耗时 1s｜PDF 解析失败");
   });
 
   it("renders step error labels consistently after shared helper rename", () => {
@@ -525,17 +559,23 @@ describe("buildPostPayload", () => {
     const failurePayload = buildKnowledgeIngestFailurePayload({
       sourceLabel: "经济补偿计算规则.docx",
       reason: "PDF 解析失败",
+      elapsedMs: 10_000,
     });
     const queuedSerialized = JSON.stringify(JSON.parse(queuedPayload.content));
     const failureSerialized = JSON.stringify(JSON.parse(failurePayload.content));
     expect(queuedSerialized).toContain("知识入库排队中");
-    expect(queuedSerialized).toContain("排队文件");
-    expect(queuedSerialized).toContain("前方队列");
-    expect(queuedSerialized).toContain("2 个素材");
+    expect(queuedSerialized).toContain("待处理：经济补偿计算规则.docx");
+    expect(queuedSerialized).toContain("流程步骤");
+    expect(queuedSerialized).toContain("读取内容：等待中");
+    expect(queuedSerialized).toContain("前方还有 2 个素材");
     expect(failureSerialized).toContain("入库失败");
-    expect(failureSerialized).toContain("原因");
+    expect(failureSerialized).toContain("流程步骤");
+    expect(failureSerialized).toContain("读取内容：PDF 解析失败");
+    expect(failureSerialized).toContain("失败原因");
     expect(failureSerialized).toContain("PDF 解析失败");
-    expect(failureSerialized).toContain("请检查文件是否损坏或重新上传");
+    expect(failureSerialized).toContain("耗时 10s");
+    expect(failureSerialized).not.toContain("retry-upload");
+    expect(failureSerialized).not.toContain("重新上传");
   });
 
   it("renders knowledge ingest completed card", () => {
@@ -564,18 +604,51 @@ describe("buildPostPayload", () => {
     expect(finalSerialized).toContain("提取 16");
     expect(finalSerialized).toContain("去重 4");
     expect(finalSerialized).toContain("标签占比");
+    expect(finalSerialized).toContain("\"tag\":\"劳动\",\"value\":8");
+    expect(finalSerialized).toContain("yes_filled");
     expect(finalSerialized).toContain("查看知识库");
+    expect(finalSerialized).toContain("knowledge-ingest-action");
+    expect(finalSerialized).toContain("https://example.com/base/app?table=tbl");
+    expect(finalSerialized).not.toContain("本次素材");
+  });
+
+  it("renders knowledge ingest final summary as failure when every item fails", () => {
+    const finalPayload = buildKnowledgeIngestCompletedPayload({
+      completedCount: 0,
+      failedCount: 1,
+      queuedCount: 0,
+      totalExtractedCount: 0,
+      totalDedupedCount: 0,
+      elapsedMs: 5_000,
+      bitableUrl: "https://example.com/base/app?table=tbl",
+      failures: [{
+        sourceFile: "资料.zip",
+        reason: "Feishu downloadMessageResource failed: 400 Bad Request",
+      }],
+    });
+
+    const finalSerialized = JSON.stringify(JSON.parse(finalPayload.content));
+    expect(finalSerialized).toContain("知识入库失败");
+    expect(finalSerialized).toContain("资料.zip");
+    expect(finalSerialized).toContain("400 Bad Request");
+    expect(finalSerialized).not.toContain("查看知识库");
+    expect(finalSerialized).not.toContain("knowledge-ingest-action");
   });
 
   it("renders labor analysis progress and completed cards through formatter exports", () => {
     const progressPayload = buildLaborAnalysisProgressPayload({
       sourceLabel: "仲裁申请书.pdf",
       steps: [
-        { label: "提取事实", detail: "正在识别关键事实", status: "running" },
-        { label: "整理证据", detail: "等待开始", status: "pending" },
+        { label: "读取内容", detail: "已完成", status: "completed" },
+        { label: "提取关键信息", detail: "正在识别关键事实", status: "running" },
       ],
       progressText: "正在聚合争议焦点",
       elapsedMs: 9_000,
+      totalFiles: 4,
+      completedFiles: ["劳动合同.pdf｜耗时 3s", "工资流水.xlsx｜耗时 2s"],
+      failedFiles: [],
+      insightLines: ["正在识别关键事实", "准备归并证据用途"],
+      docUrl: "https://example.com/doc/preview",
     });
     const completedPayload = buildLaborAnalysisCompletedPayload({
       title: "张三劳动争议案",
@@ -597,13 +670,95 @@ describe("buildPostPayload", () => {
     expect(progressSerialized).toContain("材料分析进行中");
     expect(progressSerialized).toContain("仲裁申请书.pdf");
     expect(progressSerialized).toContain("当前处理");
+    expect(progressSerialized).toContain("读取内容：已完成");
     expect(progressSerialized).toContain("提取关键信息：进行中");
+    expect(progressSerialized).toContain("案件级汇总：等待中");
+    expect(progressSerialized).toContain("创建预览文档：等待中");
+    expect(progressSerialized).toContain("写入云文档：等待中");
+    expect(progressSerialized).toContain("生成图表与台账：等待中");
+    expect(progressSerialized).not.toContain("社保缴纳记录.pdf");
+    expect(progressSerialized).toContain("待处理材料 1");
+    expect(progressSerialized).toContain("已完成：劳动合同.pdf｜耗时 3s");
+    expect(progressSerialized).toContain("已完成：工资流水.xlsx｜耗时 2s");
+    expect(progressSerialized).not.toContain("耗时 1m");
+    expect(progressSerialized).toContain("模型处理动态");
+    expect(progressSerialized).toContain("正在识别关键事实");
+    expect(progressSerialized).not.toContain("进展：正在聚合争议焦点");
+    expect(progressSerialized).toContain("预览分析文档");
+    expect(progressSerialized).toContain("https://example.com/doc/preview");
+    expect((progressSerialized.match(/yes_outlined/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect((progressSerialized.match(/已完成：/g) ?? []).length).toBe(2);
     expect(completedSerialized).toContain("材料分析完成");
     expect(completedSerialized).toContain("张三劳动争议案");
     expect(completedSerialized).toContain("材料 6");
     expect(completedSerialized).toContain("证据 12");
     expect(completedSerialized).toContain("焦点 3");
-    expect(completedSerialized).toContain("标签占比");
+    expect(completedSerialized).toContain("打开分析文档");
+    expect(completedSerialized).toContain("https://example.com/doc/123");
+    expect(completedSerialized).toContain("材料占比");
+    expect(completedSerialized).toContain("\"tag\":\"仲裁\",\"value\":4");
+    expect(completedSerialized).toContain("\"tag\":\"加班费\",\"value\":2");
+    expect(completedSerialized).not.toContain("\"tag\":\"劳动\",\"value\":32");
+  });
+
+  it("renders labor review card without empty risk sections and with review details", () => {
+    const payload = buildLaborReviewCompletedPayload({
+      title: "张三劳动争议案",
+      materialCount: 3,
+      evidenceCount: 7,
+      issueCount: 2,
+      tagCounts: { 劳动合同: 2, 工资流水: 1 },
+      reviewStatus: "需人工复核（1 项），法条引用已完成独立校验",
+      findings: [{ severity: "medium", message: "社保欠缴依据需补充权威来源" }],
+      citationDetails: [{
+        label: "《中华人民共和国劳动合同法》第48条",
+        excerpt: "违法解除或者终止劳动合同的法律后果",
+        url: "https://pkulaw.example/chl?tiao=48",
+      }],
+      docUrl: "https://example.com/doc/123",
+      elapsedMs: 1_250,
+      syncedEvidenceCount: 0,
+      syncedGapCount: 0,
+    });
+
+    const serialized = JSON.stringify(JSON.parse(payload.content));
+
+    expect(serialized).toContain("二次审查完成");
+    expect(serialized).not.toContain("\"tag\":\"劳动\",\"value\":32");
+    expect(serialized).toContain("耗时 1s");
+    expect(serialized).toContain("二审状态：需人工复核（1 项），法条引用已完成独立校验");
+    expect(serialized).toContain("中风险问题（1项）");
+    expect(serialized).toContain("社保欠缴依据需补充权威来源");
+    expect(serialized).toContain("已校验法条（1项）");
+    expect(serialized).toContain("《中华人民共和国劳动合同法》第48条");
+    expect(serialized).toContain("[《中华人民共和国劳动合同法》第48条](https://pkulaw.example/chl?tiao=48)");
+    expect(serialized).toContain("https://pkulaw.example/chl?tiao=48");
+    expect(serialized).not.toContain("打开分析文档");
+    expect(serialized).not.toContain("labor-review-action");
+    expect(serialized).not.toContain("打开北大法宝原文");
+    expect(serialized).not.toContain("需人工复核的问题");
+    expect(serialized).not.toContain("高风险问题");
+    expect(serialized).not.toContain("低风险问题");
+    expect(serialized).not.toContain("二审状态：法条引用");
+  });
+
+  it("renders labor final review progress from runtime state instead of template defaults", () => {
+    const payload = buildLaborFinalReviewPayload({
+      title: "张三劳动争议案",
+      statusText: "二审模型审查中...",
+      level: "info",
+      authorityStatus: "error",
+      citationStatus: "skipped",
+      modelReviewStatus: "running",
+    });
+
+    const serialized = JSON.stringify(JSON.parse(payload.content));
+
+    expect(serialized).toContain("权威法规检索：不可用");
+    expect(serialized).toContain("法条引用校验：已跳过");
+    expect(serialized).toContain("二审模型审查：进行中");
+    expect(serialized).not.toContain("权威法规检索：已完成");
+    expect(serialized).not.toContain("请求权基础校验：等待中");
   });
 
   it("renders a notice card without body icon when disabled", () => {

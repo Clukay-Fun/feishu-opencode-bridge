@@ -134,6 +134,39 @@ describe("TurnExecutor text buffering", () => {
     expect(replaceActive).toHaveBeenCalled();
   });
 
+  it("sends the first progress card before creating a missing session", async () => {
+    const context = createContext();
+    const order: string[] = [];
+    const replaceActive = vi.fn();
+    context.queues.get = () => ({
+      peek: () => createTurn({ sessionId: undefined }),
+      replaceActive,
+      current: () => createTurn(),
+      finishActive() {},
+    });
+    context.turnCardManager.createTurnCard = vi.fn(async (_chatId, _turnId, sessionId) => {
+      order.push(`card:${sessionId}`);
+      return { messageId: "om_card" };
+    });
+    context.turnCardManager.updateTurnCard = vi.fn(async (_turnId, update) => {
+      if (update.sessionId) order.push(`card-session:${update.sessionId}`);
+    });
+    context.ensureSession = vi.fn(async () => {
+      order.push("ensure-session");
+      return "ses_created";
+    });
+    const executor = new TurnExecutor(context) as unknown as {
+      runTurn: (queueKey: string) => Promise<void>;
+      executeTurn: () => Promise<string>;
+    };
+    executor.executeTurn = vi.fn(async () => "最终回复");
+
+    await executor.runTurn("queue-1");
+
+    expect(order.slice(0, 3)).toEqual(["card:准备中", "ensure-session", "card-session:ses_created"]);
+    expect(replaceActive).toHaveBeenCalledWith(expect.objectContaining({ processMessageId: "om_card" }));
+  });
+
   it("cleans turn-owned resources after a failed run", async () => {
     const context = createContext();
     const cleanupTurnResources = vi.fn(async () => {});

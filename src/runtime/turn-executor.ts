@@ -154,7 +154,7 @@ export type TurnExecutorContext = {
   turnCardManager: {
     createTurnCard(chatId: string, turnId: string, sessionId: string, replyToMessageId: string): Promise<{ messageId: string } | null>;
     flushStreamUpdate(turnId: string, text: string, force: boolean): Promise<void>;
-    updateTurnCard(turnId: string, update: { status?: string; update?: string; sanitize?: boolean; target?: "step" | "tool" | "final"; toolKey?: string; costSummary?: string }): Promise<void>;
+    updateTurnCard(turnId: string, update: { status?: string; sessionId?: string; update?: string; sanitize?: boolean; target?: "step" | "tool" | "final"; toolKey?: string; costSummary?: string }): Promise<void>;
     scheduleStreamUpdate(turnId: string, text: string): Promise<void>;
     cleanup(turnId: string): void;
   };
@@ -246,17 +246,18 @@ export class TurnExecutor {
     let hasProcessCard = false;
 
     try {
+      const initialCard = await this.context.turnCardManager.createTurnCard(turn.chatId, turn.turnId, turn.sessionId ?? "准备中", turn.inboundMessageId);
+      if (initialCard) {
+        hasProcessCard = true;
+        turn = { ...turn, processMessageId: initialCard.messageId };
+        queue.replaceActive(turn);
+      }
+
       const sessionId = turn.sessionId ?? await this.context.ensureSession(turn);
       turn = { ...turn, sessionId, logContext: { ...(turn.logContext ?? {}), sessionId } };
       queue.replaceActive(turn);
       logEvent(this.context.logger, "bridge/queue", "turn.started", { turnId: turn.turnId, sessionId, chatId: turn.chatId, conversationKey: turn.conversationKey });
-
-      const card = await this.context.turnCardManager.createTurnCard(turn.chatId, turn.turnId, sessionId, turn.inboundMessageId);
-      if (card) {
-        hasProcessCard = true;
-        turn = { ...turn, processMessageId: card.messageId };
-        queue.replaceActive(turn);
-      }
+      await this.context.turnCardManager.updateTurnCard(turn.turnId, { sessionId, status: "处理中", update: "会话已就绪，正在整理上下文...", target: "step" });
 
       const reply = cleanAssistantReply(await this.executeTurn(queueKey, turn as BridgeTurn & { sessionId: string }));
       const costSummary = this.context.costTracker
@@ -279,7 +280,7 @@ export class TurnExecutor {
           window: this.context.getSessionWindow(turn.conversationKey, turn.chatType),
         });
       }
-      if (!card && reply) {
+      if (!initialCard && reply) {
         await this.sendTurnFallbackMarkdown(turn.chatId, reply, turn.inboundMessageId);
       }
       await this.context.turnCardManager.flushStreamUpdate(turn.turnId, reply, true);

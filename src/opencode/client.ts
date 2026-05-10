@@ -273,7 +273,23 @@ export class OpenCodeClient {
       return undefined as T;
     }
 
-    return (await response.json()) as T;
+    const body = await response.text();
+    if (!body.trim()) {
+      return undefined as T;
+    }
+    const contentType = response.headers.get("content-type") ?? "";
+    try {
+      return JSON.parse(body) as T;
+    } catch (error) {
+      if (contentType.includes("json")) {
+        throw error;
+      }
+      throw new OpenCodeRequestError(
+        response.status,
+        response.statusText,
+        body.trim().slice(0, 1_000),
+      );
+    }
   }
 }
 
