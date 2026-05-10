@@ -74,6 +74,55 @@ describe("LaborCaseCheckpointStore", () => {
     expect(store.findRecentUnfinished("ou_2")).toBeUndefined();
     await store.stop();
   });
+
+  it("does not return empty collection checkpoints as recoverable", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "bridge-labor-checkpoint-"));
+    const store = new LaborCaseCheckpointStore(dataDir, logger());
+    const caseId = store.generateCaseId();
+
+    store.set({
+      caseId,
+      userId: "ou_3",
+      conversationKey: "chat_3:thread_1",
+      chatId: "chat_3",
+      stage: "collecting",
+      lastStep: "开始收集材料",
+      pendingMaterials: [],
+      openIssues: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    expect(store.findRecentUnfinished("ou_3")).toBeUndefined();
+    expect(store.findAllUnfinished("ou_3")).toEqual([]);
+    await store.stop();
+  });
+
+  it("keeps non-collecting unfinished checkpoints recoverable", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "bridge-labor-checkpoint-"));
+    const store = new LaborCaseCheckpointStore(dataDir, logger());
+    const caseId = store.generateCaseId();
+
+    store.set({
+      caseId,
+      userId: "ou_4",
+      conversationKey: "chat_4:thread_1",
+      chatId: "chat_4",
+      stage: "reviewing",
+      lastStep: "二审审查中",
+      pendingMaterials: [],
+      openIssues: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    expect(store.findRecentUnfinished("ou_4")).toMatchObject({
+      caseId,
+      stage: "reviewing",
+      lastStep: "二审审查中",
+    });
+    await store.stop();
+  });
 });
 
 function logger() {

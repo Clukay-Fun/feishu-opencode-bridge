@@ -432,7 +432,7 @@ describe("loadConfig memory settings", () => {
     });
     expect(config.knowledgeBase.ingest.maxExtractChunks).toBe(30);
     expect(config.knowledgeBase.ingest.maxExtractQas).toBe(500);
-    expect(config.knowledgeBase.ingest.allowedExtensions).toEqual([".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp"]);
+    expect(config.knowledgeBase.ingest.allowedExtensions).toEqual([".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp", ".xls", ".xlsx", ".csv", ".zip"]);
     expect(config.knowledgeBase.parser).toEqual({
       externalApiEnabled: false,
       pdfProviderOrder: ["pdf-parse", "pymupdf4llm", "docling"],
@@ -634,9 +634,9 @@ describe("loadConfig memory settings", () => {
       transport: "http",
       skills: {
         lawSemantic: { tool: "law-semantic", operation: "search_article" },
-        lawRecognition: { tool: "law_recognition", operation: "law_recognition" },
-        citationValidator: { tool: "pku_citation_validator", operation: "adjust_provisions" },
-        caseNumberRecognition: { tool: "pkulaw-case-number-recognition", operation: "anhao_recognition" },
+        lawRecognition: { tool: "law-recognition", operation: "law_recognition" },
+        citationValidator: { tool: "citation-validator", operation: "adjust_provisions" },
+        caseNumberRecognition: { tool: "case-number", operation: "anhao_recognition" },
       },
     });
   });
@@ -715,9 +715,10 @@ describe("loadConfig memory settings", () => {
         default: undefined,
         extract: undefined,
         analyze: undefined,
+        review: undefined,
       },
       ingest: {
-        allowedExtensions: [".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp", ".xls", ".xlsx", ".csv"],
+        allowedExtensions: [".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp", ".xls", ".xlsx", ".csv", ".zip"],
         maxFileSizeMb: 20,
         pendingTtlMs: 600000,
       },

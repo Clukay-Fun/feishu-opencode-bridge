@@ -1,6 +1,6 @@
 # 法律知识库方案
 
-> 注：当前命令面已更新。英文兼容别名 `/legal-query*` 已退役；群聊连续检索使用 `/法律咨询开始` / `/法律咨询结束`，单次显式检索使用 `/法律咨询 <问题>`，私聊直接提问即可。批量入库推荐 `/知识入库` / `/知识入库结束`，`/kb-ingest-start` / `/kb-ingest-end` 仅作为兼容入口保留。
+> 注：当前命令面已更新。英文兼容别名 `/legal-query*` 已退役；群聊连续检索使用 `/法律咨询开始` / `/法律咨询结束`，单次显式检索使用 `/法律问答 <问题>` 或自然语言 `法律问答 <问题>`，私聊直接提问即可。批量入库推荐 `/知识入库` / `/知识入库结束`，`/kb-ingest-start` / `/kb-ingest-end` 仅作为兼容入口保留。
 
 ## 定位
 
@@ -14,8 +14,8 @@
 - 通过 `/法律咨询开始` 进入知识库模式，后续直接提问，无需每条消息都输入命令
 
 实现为 bridge 内建知识库子系统（`src/knowledge/`）。
-`/知识入库`、`/知识入库结束`、`/kb-query` 是 framework 级入口，仍由 core router 解析。
-`/法律咨询开始`、`/法律咨询结束`、`/法律咨询 <问题>` 属于知识库扩展命令，由 knowledge RuntimeModule 基于 passthrough 认领。
+`/知识入库`、`/知识入库结束`、`/法律问答 <问题>`、`/kb-query <问题>` 是 framework 级入口，仍由 core router 解析。
+`/法律咨询开始`、`/法律咨询结束` 属于知识库扩展命令，由 knowledge RuntimeModule 基于 passthrough 认领；自然语言 `法律问答 <问题>` 由 knowledge RuntimeModule 认领。
 
 ## 0.2.0 类型化条目
 
@@ -282,7 +282,7 @@ URL 入库路径：bridge 创建一次 OpenCode 短生命周期 session，使用
 单次查询仍可使用：
 
 ```
-@bot /kb-query 员工试用期最长多久？
+@bot /法律问答 员工试用期最长多久？
 ```
 
 未开启知识库模式时，bridge 会保守识别普通文本中的法律咨询问题（基于关键词 + 问句特征 + 法条引用的置信度评分）；置信度不足则回退到 OpenCode 普通对话。
@@ -357,7 +357,6 @@ src/knowledge/
 ├── parser.ts      # 文档解析 + 分块（PDF/DOCX/TXT/MD）
 ├── db.ts          # SQLite 存储：文档表、条目表、FTS5、embedding、类型化元数据
 ├── entry-types.ts # typed entry / case_reflow / dedup key 契约
-├── redaction.ts   # 规则层脱敏扫描与替换
 ├── statute-ref.ts # 法条引用解析与中文条号归一
 └── detector.ts    # 法律问题自动识别：关键词匹配 + 问句特征 + 法条引用检测
 ```
@@ -507,7 +506,7 @@ SQLite 表结构：
 ```
 bridge = 控制面 + 查询面
   - 飞书消息接入、模式切换
-  - 命令入口（/知识入库、/知识入库结束、/kb-query 等由 core router 解析；/法律咨询* 由 knowledge module 认领）
+  - 命令入口（/知识入库、/知识入库结束、/法律问答、/kb-query 等由 core router 解析；/法律咨询开始/结束和自然语言法律问答由 knowledge module 认领）
   - 本地 SQLite 检索
   - 查询结果卡片、入库进度卡片
 

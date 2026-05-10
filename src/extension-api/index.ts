@@ -64,7 +64,7 @@ export type ExtensionOutboundPort = {
   sendMessage(chatId: string, payload: ExtensionOutboundPayload): Promise<{ messageId: string }>;
   replyMessage(messageId: string, payload: ExtensionOutboundPayload, options?: { replyInThread?: boolean }): Promise<{ messageId: string }>;
   updateMessage(messageId: string, payload: ExtensionOutboundPayload): Promise<{ messageId: string }>;
-  downloadMessageResource(messageId: string, fileKey: string, type: "file" | "image"): Promise<{
+  downloadMessageResource(messageId: string, fileKey: string, type: "file" | "image" | "folder"): Promise<{
     fileName: string;
     mimeType: string;
     buffer: Buffer;
@@ -135,8 +135,8 @@ export type ExtensionIncomingMessage = {
     fileName: string;
     size?: number | undefined;
   } | undefined;
-  /** 区分普通文件与图片资源，缺失时默认 "file"。 */
-  resourceType?: "file" | "image" | undefined;
+  /** 区分普通文件、图片与文件夹资源，缺失时默认 "file"。 */
+  resourceType?: "file" | "image" | "folder" | undefined;
 };
 
 export type ExtensionRoutedText =

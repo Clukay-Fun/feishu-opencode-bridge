@@ -76,8 +76,8 @@ type TextParseResult = {
     fileName: string;
     size?: number | undefined;
   } | undefined;
-  /** 区分普通文件与图片资源，下载时传给飞书 API。 */
-  resourceType?: "file" | "image" | undefined;
+  /** 区分普通文件、图片与文件夹资源，下载时传给飞书 API。 */
+  resourceType?: "file" | "image" | "folder" | undefined;
 };
 
 type IncomingMessageInspection =
@@ -102,7 +102,7 @@ type IncomingMessageInspection =
     fields?: Record<string, unknown>;
   };
 
-const SUPPORTED_MESSAGE_TYPES = new Set(["text", "post", "file", "image"]);
+const SUPPORTED_MESSAGE_TYPES = new Set(["text", "post", "file", "image", "folder"]);
 const RECENT_MESSAGE_TTL_MS = 24 * 60 * 60 * 1000;
 
 type FeishuIngressOptions = {
@@ -434,7 +434,15 @@ function parseIncomingMessage(payload: FeishuReceiveEvent, options: FeishuIngres
     return { accepted: false, reason: "unsupported-chat-type", fields: { chatType } };
   }
   if (!SUPPORTED_MESSAGE_TYPES.has(messageType)) {
-    return { accepted: false, reason: "unsupported-message-type", fields: { chatType, messageType } };
+    return {
+      accepted: false,
+      reason: "unsupported-message-type",
+      fields: {
+        chatType,
+        messageType,
+        ...(messageType === "folder" ? { contentPreview: createFolderMessageContentPreview(message.content ?? "") } : {}),
+      },
+    };
   }
 
   if (options.ignoreNonUserSenders && senderType && senderType !== "USER" && options.selfBotOpenIds.has(senderOpenId)) {
@@ -584,6 +592,10 @@ function parseMessageContent(
     return parseFileMessage(rawContent);
   }
 
+  if (messageType === "folder") {
+    return parseFolderMessage(rawContent);
+  }
+
   if (messageType === "image") {
     return parseImageMessage(rawContent);
   }
@@ -686,6 +698,33 @@ function parseFileMessage(rawContent: string): TextParseResult {
           fileKey,
           fileName,
           size,
+        }
+        : undefined,
+    };
+  } catch {
+    return {
+      plainText: "",
+      hasAnyMention: false,
+      hasExactBotMention: false,
+    };
+  }
+}
+
+function parseFolderMessage(rawContent: string): TextParseResult {
+  try {
+    const parsed = JSON.parse(rawContent) as Record<string, unknown>;
+    const fileKey = nonEmptyStringFromKeys(parsed, ["file_key", "fileKey", "key", "folder_key", "folderKey"]);
+    const folderName = nonEmptyStringFromKeys(parsed, ["file_name", "name", "folder_name", "folderName"]) ?? "文件夹";
+    const fileName = pathSafeZipFileName(folderName);
+    return {
+      plainText: folderName,
+      hasAnyMention: false,
+      hasExactBotMention: false,
+      resourceType: "folder",
+      file: fileKey
+        ? {
+          fileKey,
+          fileName,
         }
         : undefined,
     };
@@ -813,6 +852,19 @@ function normalizeWhitespace(text: string): string {
     .filter((line, index, lines) => line !== "" || (index > 0 && lines[index - 1] !== ""))
     .join("\n")
     .trim();
+}
+
+function createFolderMessageContentPreview(content: string): string {
+  const compact = content.replace(/\s+/g, " ").trim();
+  return compact.length > 600 ? `${compact.slice(0, 600)}...` : compact;
+}
+
+function pathSafeZipFileName(folderName: string): string {
+  const baseName = folderName
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim() || "文件夹";
+  return /\.[A-Za-z0-9]+$/.test(baseName) ? baseName : `${baseName}.zip`;
 }
 
 function nonEmptyString(value: string | undefined): string | undefined {

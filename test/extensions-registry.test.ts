@@ -15,6 +15,7 @@ import { routeIncomingText } from "../src/bridge/router.js";
 describe("builtin extension registry", () => {
   it("lists commands from data-only meta without changing router dispatch", () => {
     expect(builtinExtensionCommands).toEqual(expect.arrayContaining([
+      expect.objectContaining({ extensionId: "knowledge-base", name: "法律问答" }),
       expect.objectContaining({ extensionId: "knowledge-base", name: "法律咨询开始" }),
       expect.objectContaining({ extensionId: "contract-assistant", name: "合同起草开始" }),
       expect.objectContaining({ extensionId: "labor-skill", name: "完成上传" }),

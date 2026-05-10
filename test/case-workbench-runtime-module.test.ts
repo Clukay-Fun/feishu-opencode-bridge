@@ -4,7 +4,7 @@
  * - 验证单领域 fast-path 与泛化入口分流。
  * - 验证入口卡按钮权限与劳动模块移交契约。
  */
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { routeIncomingText } from "../src/bridge/router.js";
 import { CaseWorkbenchRuntimeModule } from "../src/case-workbench/runtime-module.js";
@@ -29,16 +29,21 @@ function createTextMessage(text: string, overrides: Partial<IncomingChatMessage>
 
 function createModule() {
   const sendPayload = vi.fn(async () => ({ messageId: "out-1" }));
+  const updatePayload = vi.fn(async () => ({ messageId: "om_card" }));
   const startCaseWorkbenchCollection = vi.fn(async () => undefined);
   const module = new CaseWorkbenchRuntimeModule({
     logger: { log: vi.fn() } as never,
-    transport: { sendPayload } as never,
+    transport: { sendPayload, updatePayload } as never,
     labor: { startCaseWorkbenchCollection },
   });
-  return { module, sendPayload, startCaseWorkbenchCollection };
+  return { module, sendPayload, updatePayload, startCaseWorkbenchCollection };
 }
 
 describe("CaseWorkbenchRuntimeModule", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("fast-paths /案件工作台 to labor collection while there is only one runnable domain", async () => {
     const { module, sendPayload, startCaseWorkbenchCollection } = createModule();
     const message = createTextMessage("/案件工作台 王某违法解除");
@@ -101,7 +106,7 @@ describe("CaseWorkbenchRuntimeModule", () => {
   });
 
   it("only lets the requester operate the workbench entry card", async () => {
-    const { module, startCaseWorkbenchCollection } = createModule();
+    const { module, updatePayload, startCaseWorkbenchCollection } = createModule();
 
     const rejected = await module.handleCardAction("ou_other", "om_card", {
       kind: "case-workbench-action",
@@ -114,6 +119,7 @@ describe("CaseWorkbenchRuntimeModule", () => {
     expect(rejected).toEqual({ toast: { type: "warning", content: "只有工作台发起人可以操作。" } });
     expect(startCaseWorkbenchCollection).not.toHaveBeenCalled();
 
+    vi.useFakeTimers();
     const accepted = await module.handleCardAction("ou_user", "om_card", {
       kind: "case-workbench-action",
       action: "start-material-collection",
@@ -123,6 +129,44 @@ describe("CaseWorkbenchRuntimeModule", () => {
       conversationKey: "chat-1:thread-1",
     });
     expect(accepted).toEqual({ toast: { type: "success", content: "已进入材料收集。" } });
+    expect(startCaseWorkbenchCollection).not.toHaveBeenCalled();
+    expect(updatePayload).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(updatePayload).toHaveBeenCalledWith(
+      "chat-1",
+      "om_card",
+      expect.objectContaining({ msg_type: "interactive" }),
+      expect.objectContaining({ event: "case workbench entry acknowledged" }),
+    );
+    const updateCalls = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
+    expect(JSON.stringify(updateCalls[0]?.[2] ?? {})).toContain("案件工作台已进入材料收集");
+    expect(JSON.stringify(updateCalls[0]?.[2] ?? {})).toContain("新的收集卡片");
+    expect(startCaseWorkbenchCollection).toHaveBeenCalledWith({
+      chatId: "chat-1",
+      chatType: "group",
+      messageId: "om_card",
+      conversationKey: "chat-1:thread-1",
+      senderOpenId: "ou_user",
+    });
+  });
+
+  it("still starts material collection when entry card update fails", async () => {
+    vi.useFakeTimers();
+    const { module, updatePayload, startCaseWorkbenchCollection } = createModule();
+    updatePayload.mockRejectedValueOnce(new Error("Feishu 200341"));
+
+    const accepted = await module.handleCardAction("ou_user", "om_card", {
+      kind: "case-workbench-action",
+      action: "start-material-collection",
+      requesterOpenId: "ou_user",
+      chatId: "chat-1",
+      chatType: "group",
+      conversationKey: "chat-1:thread-1",
+    });
+
+    expect(accepted).toEqual({ toast: { type: "success", content: "已进入材料收集。" } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(updatePayload).toHaveBeenCalled();
     expect(startCaseWorkbenchCollection).toHaveBeenCalledWith({
       chatId: "chat-1",
       chatType: "group",

@@ -100,20 +100,34 @@ function createModule(existingTempDir?: string, options?: {
       warnings: [],
     };
   });
-  const createCase = vi.fn(async (request: string) => ({
-    summary: `已整理案件：${request}`,
-    recordId: "rec_case_1",
-    record: {
-      类型: "劳动争议",
-      案由: "违法解除劳动合同争议",
-      委托人: "张三",
-      对方当事人: "北京XX科技有限公司",
-      审理法院: "朝阳区劳动仲裁委员会",
-      程序阶段: ["劳动仲裁"],
-      承办律师: "刘达律师",
-      开庭日: "2026-04-18 09:30",
-      举证截止日: "2026-04-17",
-    },
+  const createCase = vi.fn(async (
+    request: string,
+    onProgress?: (stage: "extract-fields" | "write-record", detail?: string) => Promise<void> | void,
+  ) => {
+    await onProgress?.("extract-fields", "正在根据案情提取案件字段");
+    await onProgress?.("write-record", "正在写入案件管理表");
+    return {
+      summary: `已整理案件：${request}`,
+      recordId: "rec_case_1",
+      record: {
+        类型: "劳动争议",
+        案由: "违法解除劳动合同争议",
+        委托人: "张三",
+        对方当事人: "北京XX科技有限公司",
+        审理法院: "朝阳区劳动仲裁委员会",
+        程序阶段: ["劳动仲裁"],
+        承办律师: "刘达律师",
+        开庭日: "2026-04-18 09:30",
+        举证截止日: "2026-04-17",
+      },
+    };
+  });
+  const listCaseTodos = vi.fn(async (query = "") => ({
+    items: [{
+      line: `案件A｜一审｜进行中\n待办：${query.includes("今日") || query.includes("今天") ? "今日提交证据目录" : "补充证据目录"}`,
+      recordId: "rec_case_todo_1",
+    }],
+    lines: [`案件A｜一审｜进行中\n待办：${query.includes("今日") || query.includes("今天") ? "今日提交证据目录" : "补充证据目录"}`],
   }));
   const recognizeInvoice = vi.fn(async () => ({
     summary: "付款方 张三，身份证号 110101199001010011，增值税普通发票，项目 诉讼代理律师费",
@@ -125,6 +139,27 @@ function createModule(existingTempDir?: string, options?: {
       发票金额: 20000,
     },
     matchedContract: "委托代理合同（张三 vs 北京XX科技）",
+  }));
+  const listRecentInvoices = vi.fn(async () => ({
+    total: 2,
+    items: [
+      {
+        recordId: "rec_invoice_2",
+        invoiceNo: "26952000001657386511",
+        invoiceType: "电子发票（普通发票）",
+        invoiceDate: "2026-04-23",
+        amount: 8000,
+        payer: "客户甲",
+      },
+      {
+        recordId: "rec_invoice_1",
+        invoiceNo: "032001900104",
+        invoiceType: "增值税普通发票",
+        invoiceDate: "2026-04-10",
+        amount: 20000,
+        payer: "客户乙",
+      },
+    ],
   }));
   const extractContract = vi.fn(async () => ({
     summary: "已提取合同字段",
@@ -166,8 +201,10 @@ function createModule(existingTempDir?: string, options?: {
       listDraftTemplates,
       draftContract,
       createCase,
+      listCaseTodos,
       extractContract,
       recognizeInvoice,
+      listRecentInvoices,
       classifyIntent,
     } as never,
     transport: createFeishuTransport({
@@ -183,8 +220,10 @@ function createModule(existingTempDir?: string, options?: {
     listDraftTemplates,
     draftContract,
     createCase,
+    listCaseTodos,
     extractContract,
     recognizeInvoice,
+    listRecentInvoices,
     classifyIntent,
   };
 }
@@ -195,6 +234,51 @@ async function cleanupModule(module: ContractAssistantRuntimeModule, tempDir: st
 }
 
 describe("ContractAssistantRuntimeModule onboard draft", () => {
+  it("injects invoice ledger table context into normal OpenCode turns", async () => {
+    const { module, classifyIntent, listRecentInvoices, tempDir } = createModule();
+    try {
+      const result = await module.beforeTurn?.({
+        turn: {
+          plainText: "列出最近的发票情况，根据表格里的数据",
+        },
+        window: {} as never,
+      } as never);
+
+      expect(listRecentInvoices).toHaveBeenCalledWith(10);
+      expect(classifyIntent).not.toHaveBeenCalled();
+      const block = result?.systemBlocks?.join("\n") ?? "";
+      expect(block).toContain("Invoice Ledger Context");
+      expect(block).toContain("发票 Bitable 表");
+      expect(block).toContain("26952000001657386511");
+      expect(block).toContain("个人客户（已脱敏）");
+      expect(block).not.toContain("客户甲");
+      expect(block).toContain("不要根据聊天记录");
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("routes natural language case todo queries without calling OpenCode intent classification", async () => {
+    const { module, sendPayload, classifyIntent, listCaseTodos, tempDir } = createModule();
+    try {
+      const message = createTextMessage("查看今日待办");
+      const result = await module.handleMessage({
+        message,
+        routed: routeIncomingText(message.plainText),
+      });
+
+      expect(result).toEqual({ claimed: true });
+      expect(listCaseTodos).toHaveBeenCalledWith("查看今日待办");
+      expect(classifyIntent).not.toHaveBeenCalled();
+      const payload = JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {});
+      expect(payload).toContain("案件提醒");
+      expect(payload).toContain("今日提交证据目录");
+      expect(payload).toContain("rec_case_todo_1");
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
   it("claims file-await-instruction for invoice recognize and reuses the uploaded file", async () => {
     const { module, recognizeInvoice, tempDir } = createModule();
     try {
@@ -379,7 +463,31 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
       });
 
       expect(result).toEqual({ claimed: true });
-      expect(createCase).toHaveBeenCalledWith(message.plainText);
+      expect(createCase).toHaveBeenCalledWith(message.plainText, expect.any(Function));
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("does not hijack the case workbench entrypoint as case creation", async () => {
+    const { module, createCase, classifyIntent, tempDir } = createModule(undefined, {
+      classifyIntent: async () => ({
+        skill: "case-manage",
+        confidence: 0.95,
+        needsFile: false,
+        reason: "误判为案件录入",
+      }),
+    });
+    try {
+      const message = createTextMessage("启动案件工作台");
+      const result = await module.handleMessage({
+        message,
+        routed: routeIncomingText(message.plainText),
+      });
+
+      expect(result).toEqual({ claimed: false });
+      expect(classifyIntent).not.toHaveBeenCalled();
+      expect(createCase).not.toHaveBeenCalled();
     } finally {
       await cleanupModule(module, tempDir);
     }
@@ -470,11 +578,20 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
       expect(createCase).toHaveBeenCalledTimes(1);
 
       const processingSerialized = JSON.stringify(sendPayload.mock.calls[0]?.[1] ?? {});
-      const completedSerialized = JSON.stringify(updatePayload.mock.calls[0]?.[2] ?? {});
-      const completedCard = JSON.parse((updatePayload.mock.calls[0]?.[2] as { content?: string })?.content ?? "{}");
+      const progressSerialized = JSON.stringify(updatePayload.mock.calls[1]?.[2] ?? {});
+      const completedSerialized = JSON.stringify(updatePayload.mock.calls.at(-1)?.[2] ?? {});
+      const completedCard = JSON.parse((updatePayload.mock.calls.at(-1)?.[2] as { content?: string })?.content ?? "{}");
       expect(processingSerialized).toContain("案件信息录入中");
-      expect(processingSerialized).toContain("提取字段：进行中");
+      expect(processingSerialized).toContain("提取案件字段：正在根据案情提取案件字段");
       expect(processingSerialized).toContain("写入案件管理表：等待中");
+      expect(processingSerialized).toContain("案由：待识别");
+      expect(processingSerialized).toContain("程序阶段：待识别");
+      expect(processingSerialized).toContain("案号：待识别");
+      expect(processingSerialized).toContain("审理法院：待识别");
+      expect(processingSerialized.match(/案由：/g)?.length).toBe(1);
+      expect(processingSerialized.match(/程序阶段：/g)?.length).toBe(1);
+      expect(progressSerialized).toContain("提取案件字段：已完成");
+      expect(progressSerialized).toContain("写入案件管理表：正在写入案件管理表");
       expect(completedSerialized).toContain("案件已录入");
       expect(completedSerialized).toContain("张三 vs 北京XX科技有限公司");
       expect(completedSerialized).toContain("劳动争议");

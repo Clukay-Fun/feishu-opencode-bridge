@@ -33,6 +33,7 @@ import type {
   LaborAnalyzeResult,
   LaborSkillService,
   LaborMaterialExtraction,
+  LaborMaterialInput,
   LaborReviewAuthorityContext,
   LaborFinalReviewReport,
 } from "./index.js";
@@ -66,17 +67,21 @@ type PendingLaborInteraction = {
     fileKey: string;
     fileName: string;
     size?: number | undefined;
+    resourceType?: "file" | "image" | "folder" | undefined;
   }>;
 };
 
 type LaborProgressState = {
   totalFiles: number;
-  completedFiles: string[];
-  failedFiles: string[];
+  fileNames: string[];
+  completedFiles: Array<{ fileName: string; elapsedMs: number; cached: boolean }>;
+  failedFiles: Array<{ fileName: string; elapsedMs: number; detail: string }>;
   currentFile?: string | undefined;
+  currentFileStartedAt?: number | undefined;
   currentPhase: string;
   recentUpdates: string[];
   startedAt: number;
+  previewDocUrl?: string | undefined;
   steps: Array<{
     label: string;
     status: "pending" | "running" | "completed" | "error";
@@ -92,6 +97,7 @@ type RecentLaborMaterial = {
   fileKey: string;
   fileName: string;
   size?: number | undefined;
+  resourceType?: "file" | "image" | "folder" | undefined;
   createdAt: number;
 };
 
@@ -105,6 +111,7 @@ export class LaborRuntimeModule implements RuntimeModule {
   private readonly interactions: PersistedInteractionManager<PendingLaborInteraction>;
   private readonly checkpoints: LaborCaseCheckpointStore;
   private readonly recentMaterials = new Map<string, RecentLaborMaterial[]>();
+  private readonly finishingCollections = new Set<string>();
 
   constructor(private readonly deps: LaborRuntimeModuleDeps) {
     this.featureConfig = deps.config.laborSkill ?? DEFAULT_LABOR_SKILL_CONFIG;
@@ -148,7 +155,7 @@ export class LaborRuntimeModule implements RuntimeModule {
       }
 
       if (routed?.kind === "command" && isLaborFinishCommand(routed.command)) {
-        await this.finishCollection(message, pending);
+        await this.startFinishCollection(message, pending);
         return { claimed: true };
       }
 
@@ -162,14 +169,23 @@ export class LaborRuntimeModule implements RuntimeModule {
         return { claimed: true };
       }
 
+      if (isLaborFinishText(message.plainText)) {
+        await this.startFinishCollection(message, pending);
+        return { claimed: true };
+      }
+
       if (routed?.kind === "command" && isCaseWorkbenchStartCommand(routed.command)) {
         await this.sendNotice(message, {
           title: "已有劳动分析正在收集",
           template: "yellow",
           icon: "maybe_outlined",
-          message: "请继续上传材料，或点击收集卡片上的“完成上传，开始分析”。",
+          message: "请继续上传材料，或发送 `/完成上传` 开始分析。",
         }, this.getDelivery(pending));
         return { claimed: true };
+      }
+
+      if (!shouldCollectLaborInput(message)) {
+        return { claimed: false };
       }
 
       await this.collectInput(message, pending);
@@ -190,31 +206,6 @@ export class LaborRuntimeModule implements RuntimeModule {
     return { claimed: await this.handleCommand(message, routed.command) };
   }
 
-  async handleCardAction(
-    actorOpenId: string,
-    openMessageId: string,
-    value: Record<string, unknown>,
-  ): Promise<Record<string, unknown> | null> {
-    if (value.kind !== "labor-collection-action" || value.action !== "finish-upload") {
-      return null;
-    }
-    const conversationKey = typeof value.conversationKey === "string" ? value.conversationKey : "";
-    const pending = conversationKey ? this.interactions.get(conversationKey) : null;
-    if (!pending || pending.stage !== "collecting") {
-      return buildLaborActionToast("当前材料收集任务已失效，请重新打开案件工作台。", "warning");
-    }
-    if (actorOpenId !== pending.requesterOpenId) {
-      return buildLaborActionToast("只有任务发起人可以开始分析。", "warning");
-    }
-    await this.finishCollection({
-      chatId: pending.chatId,
-      messageId: openMessageId || pending.anchorMessageId,
-      conversationKey: pending.conversationKey,
-      senderOpenId: actorOpenId,
-    }, pending);
-    return buildLaborActionToast("已开始分析材料。", "success");
-  }
-
   /** 处理劳动模块自有命令。 */
   private async handleCommand(
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "senderOpenId">,
@@ -233,12 +224,10 @@ export class LaborRuntimeModule implements RuntimeModule {
     }
 
     if (isCaseWorkbenchStartCommand(command)) {
-      const forceNew = command.arguments.some((argument) => argument === "新建" || argument.toLowerCase() === "new");
       const title = command.arguments
-        .filter((argument) => argument !== "新建" && argument.toLowerCase() !== "new")
         .join(" ")
         .trim() || undefined;
-      await this.startCaseWorkbenchCollection(message, title, { forceNew });
+      await this.startCaseWorkbenchCollection(message, title);
       return true;
     }
 
@@ -255,7 +244,7 @@ export class LaborRuntimeModule implements RuntimeModule {
   async startCaseWorkbenchCollection(
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "senderOpenId">,
     title?: string,
-    options?: { forceNew?: boolean },
+    options?: { anchorMessageId?: string; suppressInitialCard?: boolean },
   ): Promise<void> {
     if (!this.featureConfig.enabled || !this.deps.service) {
       await this.sendNotice(message, {
@@ -267,24 +256,21 @@ export class LaborRuntimeModule implements RuntimeModule {
       return;
     }
 
-    if (!options?.forceNew) {
-      const unfinished = this.checkpoints.findRecentUnfinished(message.senderOpenId);
-      if (unfinished && !this.interactions.get(unfinished.conversationKey)) {
-        await this.sendNotice(message, {
-          title: "发现未完成劳动案件",
-          template: "yellow",
-          icon: "maybe_outlined",
-          message: [
-            `最近案件：${unfinished.lastStep}`,
-            "当前断点只能提示恢复位置，不能重建已过期的飞书文件句柄。",
-            "如需重新开始，请发送 `/案件工作台 新建`。",
-          ].join("\n"),
-        });
-        return;
-      }
+    const unfinished = this.checkpoints.findRecentUnfinished(message.senderOpenId);
+    if (unfinished && !this.interactions.get(unfinished.conversationKey)) {
+      // 旧断点没有活跃交互时不能继续接收文件；直接关闭残留，避免挡住新工作台入口。
+      this.checkpoints.updateStage(unfinished.caseId, "expired", "旧断点已关闭");
     }
 
-    await this.startCollection(message, title);
+    const collectionOptions: { anchorMessageId?: string; suppressInitialCard?: boolean } | undefined =
+      options?.anchorMessageId || options?.suppressInitialCard ? {} : undefined;
+    if (collectionOptions && options?.anchorMessageId) {
+      collectionOptions.anchorMessageId = options.anchorMessageId;
+    }
+    if (collectionOptions && options?.suppressInitialCard !== undefined) {
+      collectionOptions.suppressInitialCard = options.suppressInitialCard;
+    }
+    await this.startCollection(message, title, collectionOptions);
   }
 
   private async sendLegacyMigrationNotice(
@@ -302,19 +288,25 @@ export class LaborRuntimeModule implements RuntimeModule {
   private async startCollection(
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "senderOpenId">,
     title?: string,
+    options?: { anchorMessageId?: string; suppressInitialCard?: boolean },
   ): Promise<PendingLaborInteraction> {
     this.clearRequesterInteractions(message.chatId, message.senderOpenId);
     const caseId = this.checkpoints.generateCaseId();
     const deliveryMode = message.chatType === "p2p" ? "p2p_reply" : "group_thread";
-    const ready = await this.deps.transport.sendPayload(message.chatId, buildLaborMaterialCollectionPayload({
+    const payload = buildLaborMaterialCollectionPayload({
       title,
       conversationKey: message.conversationKey,
-    }), {
+    });
+    const metadata = {
       event: "labor collection started",
       transcriptType: "outbound-final",
       textPreview: "材料收集中",
       len: 5,
-    }, { replyToMessageId: message.messageId, replyInThread: deliveryMode === "group_thread" });
+    } as const;
+    const ready = options?.suppressInitialCard
+      ? { messageId: options.anchorMessageId ?? message.messageId }
+      : await this.deps.transport.sendPayload(message.chatId, payload, metadata, { replyToMessageId: message.messageId, replyInThread: deliveryMode === "group_thread" });
+    const anchorMessageId = ready.messageId || options?.anchorMessageId || message.messageId;
 
     const interaction: PendingLaborInteraction = {
       caseId,
@@ -323,7 +315,7 @@ export class LaborRuntimeModule implements RuntimeModule {
       conversationKey: message.conversationKey,
       requesterOpenId: message.senderOpenId,
       expiresAt: Date.now() + this.featureConfig.ingest.pendingTtlMs,
-      anchorMessageId: ready.messageId,
+      anchorMessageId,
       rootMessageId: message.messageId,
       deliveryMode,
       stage: "collecting",
@@ -343,7 +335,7 @@ export class LaborRuntimeModule implements RuntimeModule {
       lastStep: "开始收集材料",
       pendingMaterials: [],
       openIssues: [],
-      anchorMessageId: ready.messageId,
+      anchorMessageId,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     });
@@ -363,6 +355,7 @@ export class LaborRuntimeModule implements RuntimeModule {
         fileKey: message.file.fileKey,
         fileName: message.file.fileName,
         size: message.file.size,
+        resourceType: message.resourceType,
       });
       this.checkpoints.updateCollection(pending.caseId, {
         pendingMaterials: pending.files.map((file) => ({
@@ -386,17 +379,45 @@ export class LaborRuntimeModule implements RuntimeModule {
   }
 
   /** 结束收集阶段，并正式启动劳动分析。 */
+  private async startFinishCollection(
+    message: Pick<IncomingChatMessage, "chatId" | "messageId" | "conversationKey" | "senderOpenId">,
+    pending: PendingLaborInteraction,
+  ): Promise<void> {
+    if (this.finishingCollections.has(pending.conversationKey)) {
+      return;
+    }
+    this.finishingCollections.add(pending.conversationKey);
+    let markVisible: () => void = () => {};
+    const visible = new Promise<void>((resolve) => {
+      markVisible = resolve;
+    });
+    void this.finishCollection(message, pending, { onFirstVisibleCard: markVisible })
+      .catch((error) => {
+        markVisible();
+        this.deps.logger.log("labor/runtime", "finish collection failed", {
+          conversationKey: pending.conversationKey,
+          detail: error instanceof Error ? error.message : String(error),
+        }, "warn");
+      })
+      .finally(() => {
+        this.finishingCollections.delete(pending.conversationKey);
+      });
+    await visible;
+  }
+
   private async finishCollection(
     message: Pick<IncomingChatMessage, "chatId" | "messageId" | "conversationKey" | "senderOpenId">,
     pending: PendingLaborInteraction,
+    options?: { onFirstVisibleCard?: (() => void) | undefined },
   ): Promise<void> {
     if (message.senderOpenId !== pending.requesterOpenId) {
       await this.sendNotice(message, {
         title: "只有发起人可以结束当前分析",
         template: "yellow",
         icon: "maybe_outlined",
-        message: "请由当前发起人点击“完成上传，开始分析”，或发送 `/完成上传`。",
+        message: "请由当前发起人发送 `/完成上传`。",
       }, this.getDelivery(pending));
+      options?.onFirstVisibleCard?.();
       return;
     }
 
@@ -409,6 +430,7 @@ export class LaborRuntimeModule implements RuntimeModule {
         icon: "info_outlined",
         message: "还没有收到材料或背景说明，已退出劳动分析模式。",
       });
+      options?.onFirstVisibleCard?.();
       return;
     }
 
@@ -419,10 +441,11 @@ export class LaborRuntimeModule implements RuntimeModule {
 
     const progressState: LaborProgressState = {
       totalFiles: pending.files.length,
+      fileNames: pending.files.map((file) => file.fileName),
       completedFiles: [],
       failedFiles: [],
       currentPhase: "正在准备证据链分析",
-      recentUpdates: ["已开始处理劳动争议材料"],
+      recentUpdates: [],
       startedAt: Date.now(),
       steps: createLaborAnalysisSteps(),
     };
@@ -433,40 +456,65 @@ export class LaborRuntimeModule implements RuntimeModule {
       textPreview: "劳动分析处理中",
       len: 7,
     }, { replyToMessageId: message.messageId });
+    options?.onFirstVisibleCard?.();
 
     const extractedMaterials: LaborMaterialExtraction[] = [];
     const warnings: string[] = [];
+    const materialInputs: LaborMaterialInput[] = [];
 
     for (const file of pending.files) {
-      progressState.currentFile = file.fileName;
+      try {
+        const expanded = await this.deps.service!.expandMaterialFile(file);
+        materialInputs.push(...expanded);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        warnings.push(`已跳过《${file.fileName}》：${detail}`);
+        progressState.failedFiles.push({
+          fileName: file.fileName,
+          elapsedMs: 0,
+          detail,
+        });
+      }
+    }
+    progressState.totalFiles = materialInputs.length + progressState.failedFiles.length;
+    progressState.fileNames = materialInputs.map(getLaborMaterialInputName);
+    await this.updateProcessingCard(pending.chatId, processing.messageId, progressState);
+
+    for (const file of materialInputs) {
+      const fileName = getLaborMaterialInputName(file);
+      progressState.currentFile = fileName;
+      progressState.currentFileStartedAt = Date.now();
       progressState.currentPhase = "正在解析证据材料";
       setLaborStep(progressState, "读取内容", "running", "正在解析证据材料");
       setLaborStep(progressState, "提取关键信息", "pending");
-      pushProgress(progressState, `开始处理《${file.fileName}》`);
       await this.updateProcessingCard(pending.chatId, processing.messageId, progressState);
 
       try {
         const extracted = await this.deps.service!.extractMaterial(file, {
           onProgress: async (step) => {
             setLaborStep(progressState, "读取内容", "completed", "已完成");
-            setLaborStep(progressState, "提取关键信息", "running", shortenProgress(step, file.fileName));
-            pushProgress(progressState, shortenProgress(step, file.fileName));
+            setLaborStep(progressState, "提取关键信息", "running", shortenProgress(step, fileName));
+            pushProgress(progressState, shortenProgress(step, fileName));
             await this.updateProcessingCard(pending.chatId, processing.messageId, progressState);
           },
         });
         extractedMaterials.push(extracted.extraction);
-        progressState.completedFiles.push(file.fileName);
+        progressState.completedFiles.push({
+          fileName,
+          elapsedMs: Date.now() - (progressState.currentFileStartedAt ?? Date.now()),
+          cached: extracted.cached,
+        });
         setLaborStep(progressState, "读取内容", "completed", "已完成");
-        setLaborStep(progressState, "提取关键信息", "completed", extracted.cached ? "命中缓存" : "已完成");
-        pushProgress(progressState, extracted.cached
-          ? `《${file.fileName}》已完成，命中缓存`
-          : `《${file.fileName}》已完成`);
+        setLaborStep(progressState, "提取关键信息", "completed", "已完成");
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
-        progressState.failedFiles.push(file.fileName);
-        warnings.push(`已跳过《${file.fileName}》：${detail}`);
+        progressState.failedFiles.push({
+          fileName,
+          elapsedMs: Date.now() - (progressState.currentFileStartedAt ?? Date.now()),
+          detail,
+        });
+        warnings.push(`已跳过《${fileName}》：${detail}`);
         setLaborStep(progressState, "提取关键信息", "error", detail);
-        pushProgress(progressState, `《${file.fileName}》处理失败：${detail}`);
       }
       await this.updateProcessingCard(pending.chatId, processing.messageId, progressState);
     }
@@ -483,10 +531,15 @@ export class LaborRuntimeModule implements RuntimeModule {
     }
 
     progressState.currentFile = undefined;
+    progressState.currentFileStartedAt = undefined;
     progressState.currentPhase = "正在汇总证据链并生成文档";
-    setLaborStep(progressState, "检索法律依据", "running", "正在检索知识库与法条线索");
-    setLaborStep(progressState, "生成分析文档", "pending");
-    pushProgress(progressState, "开始案件级汇总");
+    progressState.recentUpdates = [];
+    setLaborStep(progressState, "读取内容", "completed", "已完成");
+    setLaborStep(progressState, "提取关键信息", "completed", "已完成");
+    setLaborStep(progressState, "案件级汇总", "running", "正在检索知识库与识别争议焦点");
+    setLaborStep(progressState, "创建预览文档", "pending");
+    setLaborStep(progressState, "写入云文档", "pending");
+    setLaborStep(progressState, "生成图表与台账", "pending");
     await this.updateProcessingCard(pending.chatId, processing.messageId, progressState);
 
     let result: LaborAnalyzeResult;
@@ -494,7 +547,7 @@ export class LaborRuntimeModule implements RuntimeModule {
       result = await this.deps.service!.finalizeAnalysis({
         extractedMaterials,
         notes: pending.notes,
-        materialCount: pending.files.length,
+        materialCount: materialInputs.length,
         warnings,
         preferredTitle: pending.title,
       }, {
@@ -503,9 +556,19 @@ export class LaborRuntimeModule implements RuntimeModule {
           pushProgress(progressState, shortenProgress(step));
           await this.updateProcessingCard(pending.chatId, processing.messageId, progressState);
         },
+        onWorkbenchPreviewCreated: async (docUrl) => {
+          progressState.previewDocUrl = docUrl;
+          progressState.currentPhase = "正在写入工作台文档";
+          setLaborStep(progressState, "创建预览文档", "completed", "已完成");
+          setLaborStep(progressState, "写入云文档", "running", "预览文档已创建");
+          pushProgress(progressState, "预览文档已创建，可打开查看写入进度");
+          await this.updateProcessingCard(pending.chatId, processing.messageId, progressState);
+        },
       });
 
-      await this.deps.transport.updatePayload(pending.chatId, processing.messageId, buildLaborAnalysisCompletedPayload(buildLaborCompletedView(result, progressState.totalFiles)), {
+      await this.deps.transport.updatePayload(pending.chatId, processing.messageId, buildLaborAnalysisCompletedPayload(buildLaborCompletedView(result, progressState.totalFiles, {
+        elapsedMs: Date.now() - progressState.startedAt,
+      })), {
         event: "labor first-pass analysis completed",
         transcriptType: "outbound-final",
         textPreview: createTextPreview(`${result.title}｜一审劳动分析完成`),
@@ -536,6 +599,9 @@ export class LaborRuntimeModule implements RuntimeModule {
       statusText: "二审模型审查中...",
       detail: "正在后台校验法条引用、请求权基础、证据支撑和高风险结论。",
       level: "info",
+      authorityStatus: "running",
+      citationStatus: "pending",
+      modelReviewStatus: "pending",
     }), {
       event: "labor final review started",
       transcriptType: "outbound-final",
@@ -543,7 +609,7 @@ export class LaborRuntimeModule implements RuntimeModule {
       len: 9,
     }, this.getDelivery(pending));
 
-    await this.runAuthoritySearchAndReview(pending, result, reviewCard.messageId);
+    await this.runAuthoritySearchAndReview(pending, result, reviewCard.messageId, Date.now());
   }
 
   private clearInteraction(conversationKey: string): void {
@@ -554,6 +620,7 @@ export class LaborRuntimeModule implements RuntimeModule {
     pending: PendingLaborInteraction,
     result: LaborAnalyzeResult,
     reviewMessageId: string,
+    reviewStartedAt: number,
   ): Promise<void> {
     const draft = this.deps.service!.buildAuthoritySearchDraft(result);
     let authorityContext: LaborReviewAuthorityContext = { status: "pending" };
@@ -577,7 +644,41 @@ export class LaborRuntimeModule implements RuntimeModule {
       }, "warn");
     }
 
-    await this.runReviewAndUpdateCard(pending, result, authorityContext, reviewMessageId);
+    await this.updateReviewProgressCard(pending, result, authorityContext, reviewMessageId);
+    await this.runReviewAndUpdateCard(pending, result, authorityContext, reviewMessageId, reviewStartedAt);
+  }
+
+  private async updateReviewProgressCard(
+    pending: PendingLaborInteraction,
+    result: LaborAnalyzeResult,
+    authorityContext: LaborReviewAuthorityContext,
+    reviewMessageId: string,
+  ): Promise<void> {
+    const authorityAvailable = authorityContext.status === "completed";
+    const citationAvailable = Boolean(authorityContext.citationValidation);
+    try {
+      await this.deps.transport.updatePayload(pending.chatId, reviewMessageId, buildLaborFinalReviewPayload({
+        title: result.title,
+        statusText: "二审模型审查中...",
+        detail: authorityAvailable
+          ? "权威检索与引用线索已完成，正在进行二审模型审查。"
+          : "权威检索不可用，正在使用一审结果与本地线索进行二审模型审查。",
+        level: "info",
+        authorityStatus: authorityAvailable ? "completed" : "error",
+        citationStatus: citationAvailable ? "completed" : authorityAvailable ? "skipped" : "error",
+        modelReviewStatus: "running",
+      }), {
+        event: "labor final review progress updated",
+        transcriptType: "outbound-final",
+        textPreview: authorityAvailable ? "权威检索完成，二审模型审查中" : "权威检索不可用，二审模型审查中",
+        len: 16,
+      });
+    } catch (error) {
+      this.deps.logger.log("feishu/reply", "labor review progress update failed", {
+        conversationKey: pending.conversationKey,
+        detail: error instanceof Error ? error.message : String(error),
+      }, "warn");
+    }
   }
 
   private async runReviewAndUpdateCard(
@@ -585,10 +686,11 @@ export class LaborRuntimeModule implements RuntimeModule {
     result: LaborAnalyzeResult,
     authorityContext: LaborReviewAuthorityContext,
     reviewMessageId: string,
+    reviewStartedAt: number,
   ): Promise<void> {
     try {
       const { reviewReport, reviewSkippedReason } = await this.deps.service!.finalizeReviewOnly(result, authorityContext);
-      const finalReviewStatus = formatReviewStatus(reviewReport, reviewSkippedReason) ?? "二审状态：未返回审查结论";
+      const finalReviewStatus = formatReviewStatus(reviewReport, reviewSkippedReason) ?? "未返回审查结论，法条引用待人工校验";
       const completedView = buildLaborCompletedView(result, undefined, { reviewReport, reviewSkippedReason });
       await this.deps.transport.updatePayload(pending.chatId, reviewMessageId, buildLaborReviewCompletedPayload({
         title: completedView.title,
@@ -599,6 +701,12 @@ export class LaborRuntimeModule implements RuntimeModule {
         reviewStatus: finalReviewStatus,
         findingsCount: reviewReport?.findings.length,
         humanReviewCount: reviewReport ? countHumanReviewItems(reviewReport) : undefined,
+        citationDetails: collectCitationValidationDetails(authorityContext),
+        findings: reviewReport?.findings.map((finding) => ({
+          severity: finding.severity,
+          message: finding.message,
+        })),
+        elapsedMs: Date.now() - reviewStartedAt,
         docUrl: result.docUrl,
         ledgerUrl: result.ledgerUrl,
         keyEvidenceViewUrl: result.keyEvidenceViewUrl,
@@ -671,6 +779,7 @@ export class LaborRuntimeModule implements RuntimeModule {
       fileKey: message.file.fileKey,
       fileName: message.file.fileName,
       size: message.file.size,
+      resourceType: message.resourceType,
       createdAt: Date.now(),
     });
     this.recentMaterials.set(key, existing.slice(-MAX_RECENT_LABOR_MATERIALS));
@@ -701,6 +810,7 @@ export class LaborRuntimeModule implements RuntimeModule {
         fileKey: material.fileKey,
         fileName: material.fileName,
         size: material.size,
+        resourceType: material.resourceType,
       });
     }
     const note = message.plainText.trim();
@@ -887,8 +997,47 @@ export class LaborRuntimeModule implements RuntimeModule {
 }
 
 function isLaborFinishCommand(command: LaborCommand): boolean {
-  return command.kind === "passthrough"
-    && command.name.trim().toLowerCase() === "完成上传";
+  if (command.kind !== "passthrough") {
+    return false;
+  }
+  const normalized = command.name.trim().toLowerCase();
+  return normalized === "完成上传" || normalized === "材料收集完成";
+}
+
+function isLaborFinishText(text: string): boolean {
+  const normalized = text
+    .replace(/^[\s\-*•·●▪▫]+/g, "")
+    .replace(/\s+/g, "")
+    .replace(/[，。；、,.!?！？～~]+$/g, "")
+    .trim()
+    .toLowerCase();
+  return normalized === "完成上传" || normalized === "材料收集完成";
+}
+
+function shouldCollectLaborInput(message: IncomingChatMessage): boolean {
+  if (message.messageType === "file") {
+    return true;
+  }
+  if (message.messageType !== "text") {
+    return false;
+  }
+  const text = message.plainText.trim();
+  if (!text) {
+    return false;
+  }
+  if (/^(你好|您好|在吗|hi|hello|test|测试|启动安全工作台)$/i.test(text)) {
+    return false;
+  }
+  if (/^(补充|补充说明|材料说明|案情|背景|事实|备注|说明)[：:\s]/.test(text)) {
+    return true;
+  }
+  if (/(补充.*(背景|说明)|背景说明|材料说明|完成上传了)/.test(text)) {
+    return true;
+  }
+  if (text.length < 12) {
+    return false;
+  }
+  return /(劳动|仲裁|工资|社保|解除|辞退|离职|赔偿|补偿|合同|考勤|绩效|证据|材料|公司|用人单位)/.test(text);
 }
 
 function isCaseWorkbenchStartCommand(command: LaborCommand): boolean {
@@ -905,15 +1054,6 @@ function isLegacyLaborCommand(command: LaborCommand): boolean {
     || normalized === "劳动分析结束"
     || normalized === "labor-start"
     || normalized === "labor-end";
-}
-
-function buildLaborActionToast(content: string, type: "success" | "warning"): Record<string, unknown> {
-  return {
-    toast: {
-      type,
-      content,
-    },
-  };
 }
 
 type LaborRecentMaterialIntentResult = {
@@ -970,9 +1110,9 @@ function renderProcessingMessage(state: LaborProgressState): string {
   if (state.currentFile) {
     lines.push(`**当前材料**\n${state.currentFile}`);
   }
-  lines.push(`**已完成**\n${state.completedFiles.length > 0 ? state.completedFiles.join("、") : "暂无"}`);
+  lines.push(`**已完成**\n${state.completedFiles.length > 0 ? state.completedFiles.map((item) => item.fileName).join("、") : "暂无"}`);
   if (state.failedFiles.length > 0) {
-    lines.push(`**失败**\n${state.failedFiles.join("、")}`);
+    lines.push(`**失败**\n${state.failedFiles.map((item) => item.fileName).join("、")}`);
   }
   lines.push("**处理进展**\n" + state.recentUpdates.map((item) => `- ${item}`).join("\n"));
   return lines.join("\n\n");
@@ -982,8 +1122,10 @@ function createLaborAnalysisSteps(): LaborProgressState["steps"] {
   return [
     { label: "读取内容", status: "pending" },
     { label: "提取关键信息", status: "pending" },
-    { label: "检索法律依据", status: "pending" },
-    { label: "生成分析文档", status: "pending" },
+    { label: "案件级汇总", status: "pending" },
+    { label: "创建预览文档", status: "pending" },
+    { label: "写入云文档", status: "pending" },
+    { label: "生成图表与台账", status: "pending" },
   ];
 }
 
@@ -1003,12 +1145,27 @@ function setLaborStep(
 
 function applyLaborFinalizeProgress(state: LaborProgressState, step: string): void {
   const normalized = step.trim();
-  if (/知识|法律|法条|检索/.test(normalized)) {
-    setLaborStep(state, "检索法律依据", "running", shortenProgress(normalized));
+  setLaborStep(state, "读取内容", "completed", "已完成");
+  setLaborStep(state, "提取关键信息", "completed", "已完成");
+  if (/预览文档|创建飞书工作台预览文档/.test(normalized)) {
+    setLaborStep(state, "案件级汇总", "completed", "已完成");
+    setLaborStep(state, "创建预览文档", "running", shortenProgress(normalized));
     return;
   }
-  setLaborStep(state, "检索法律依据", "completed", "已完成");
-  setLaborStep(state, "生成分析文档", "running", shortenProgress(normalized));
+  if (/写入飞书工作台文档|写入云文档/.test(normalized)) {
+    setLaborStep(state, "案件级汇总", "completed", "已完成");
+    setLaborStep(state, "创建预览文档", "completed", "已完成");
+    setLaborStep(state, "写入云文档", "running", shortenProgress(normalized));
+    return;
+  }
+  if (/图|白板|台账|视图/.test(normalized)) {
+    setLaborStep(state, "案件级汇总", "completed", "已完成");
+    setLaborStep(state, "创建预览文档", "completed", "已完成");
+    setLaborStep(state, "写入云文档", "completed", "已完成");
+    setLaborStep(state, "生成图表与台账", "running", shortenProgress(normalized));
+    return;
+  }
+  setLaborStep(state, "案件级汇总", "running", shortenProgress(normalized));
 }
 
 function pushProgress(state: LaborProgressState, line: string): void {
@@ -1025,6 +1182,7 @@ function pushProgress(state: LaborProgressState, line: string): void {
 
 function shortenProgress(step: string, fileName?: string): string {
   return step
+    .replace(/命中缓存[，,、\s]*/g, "")
     .replace(/^正在/, "")
     .replace(/^已/, "已")
     .replace(fileName ?? "", "")
@@ -1045,7 +1203,47 @@ function toLaborProgressCardView(state: LaborProgressState): LaborAnalysisProgre
       ? `当前进度：${state.recentUpdates.at(-1) ?? ""}`
       : undefined,
     startedAt: state.startedAt,
+    elapsedMs: Date.now() - state.startedAt,
+    totalFiles: state.totalFiles,
+    queuedFiles: inferLaborQueuedFiles(state),
+    completedFiles: state.completedFiles.map((item) => formatLaborFileResult(item.fileName, item.elapsedMs)),
+    failedFiles: state.failedFiles.map((item) => formatLaborFileResult(item.fileName, item.elapsedMs, item.detail)),
+    currentPhase: state.currentPhase,
+    recentUpdates: state.recentUpdates,
+    insightLines: compactLaborProgressUpdates(state.recentUpdates),
+    docUrl: state.previewDocUrl,
   };
+}
+
+function compactLaborProgressUpdates(updates: string[]): string[] {
+  const seen = new Set<string>();
+  return updates
+    .map((line) => line.trim())
+    .filter((line) => line && !seen.has(line) && seen.add(line))
+    .slice(-4);
+}
+
+function inferLaborQueuedFiles(state: LaborProgressState): string[] {
+  const done = new Set([
+    ...state.completedFiles.map((item) => item.fileName),
+    ...state.failedFiles.map((item) => item.fileName),
+  ]);
+  return state.fileNames.filter((fileName) => fileName !== state.currentFile && !done.has(fileName));
+}
+
+function formatLaborFileResult(fileName: string, elapsedMs: number, suffix?: string | undefined): string {
+  const elapsed = formatShortElapsed(elapsedMs);
+  return [fileName, `耗时 ${elapsed}`, suffix].filter(Boolean).join("｜");
+}
+
+function formatShortElapsed(elapsedMs: number): string {
+  const seconds = Math.max(1, Math.round(elapsedMs / 1000));
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest > 0 ? `${minutes}m ${rest}s` : `${minutes}m`;
 }
 
 function buildLaborCompletedView(result: {
@@ -1062,6 +1260,7 @@ function buildLaborCompletedView(result: {
   reviewReport?: LaborFinalReviewReport | null | undefined;
   reviewSkippedReason?: string | undefined;
   reviewStatusOverride?: string | undefined;
+  elapsedMs?: number | undefined;
 }): LaborAnalysisCompletedCardView {
   const tagCounts: Record<string, number> = {};
   for (const material of result.extractedMaterials) {
@@ -1081,6 +1280,7 @@ function buildLaborCompletedView(result: {
     syncedEvidenceCount: result.syncedEvidenceCount,
     syncedGapCount: result.syncedGapCount,
     reviewStatus: review?.reviewStatusOverride ?? formatReviewStatus(review?.reviewReport, review?.reviewSkippedReason),
+    elapsedMs: review?.elapsedMs,
   };
 }
 
@@ -1092,20 +1292,20 @@ function formatReviewStatus(
   if (report) {
     switch (report.status) {
       case "pass":
-        return "法条引用已完成独立校验｜二审状态：通过";
+        return "通过，法条引用已完成独立校验";
       case "needs_revision":
-        return `法条引用已完成独立校验｜二审状态：建议修改（${report.findings.length} 条发现）`;
+        return `建议修改（${report.findings.length} 条发现），法条引用已完成独立校验`;
       case "needs_human_review":
-        return `法条引用已完成独立校验，存在 ${countHumanReviewItems(report)} 项需人工复核｜二审状态：需人工复核`;
+        return `需人工复核（${countHumanReviewItems(report)} 项），法条引用已完成独立校验`;
     }
   }
   switch (skippedReason) {
     case "review_skipped_no_config":
-      return "法条引用待人工校验｜二审状态：未配置";
+      return "未配置，法条引用待人工校验";
     case "review_skipped_same_as_analyze":
-      return "法条引用待人工校验｜二审状态：跳过（与一审同模型）";
+      return "跳过（与一审同模型），法条引用待人工校验";
     case "review_call_failed":
-      return "法条引用待人工校验｜二审状态：调用失败";
+      return "调用失败，法条引用待人工校验";
     default:
       return undefined;
   }
@@ -1114,4 +1314,39 @@ function formatReviewStatus(
 function countHumanReviewItems(report: LaborFinalReviewReport): number {
   const highFindings = report.findings.filter((finding) => finding.severity === "high").length;
   return Math.max(highFindings, report.unsupportedClaims.length, report.findings.length, 1);
+}
+
+function collectCitationValidationDetails(authorityContext: LaborReviewAuthorityContext): Array<{ label: string; excerpt?: string; url?: string }> {
+  const items = authorityContext.citationValidation?.items ?? [];
+  return items.slice(0, 5).map((item) => {
+    const article = formatCitationArticleNumber(item.articleNumber);
+    const excerpt = item.originalText.replace(/\s+/g, " ").slice(0, 80);
+    const label = `《${item.title}》${article}`;
+    return {
+      label,
+      ...(excerpt ? { excerpt } : {}),
+      ...(item.url ? { url: item.url } : {}),
+    };
+  });
+}
+
+function getLaborMaterialInputName(file: LaborMaterialInput): string {
+  if ("fileName" in file && file.fileName?.trim()) {
+    return file.fileName.trim();
+  }
+  if ("localPath" in file) {
+    return path.basename(file.localPath);
+  }
+  return "未命名材料";
+}
+
+function formatCitationArticleNumber(value: string): string {
+  const normalized = value.trim();
+  if (!normalized) {
+    return "";
+  }
+  if (/^第.+条$/.test(normalized)) {
+    return normalized;
+  }
+  return `第${normalized}条`;
 }

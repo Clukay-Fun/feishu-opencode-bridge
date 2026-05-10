@@ -15,15 +15,17 @@ import type { Logger } from "../logging/logger.js";
 import type { OpenCodeClient, OpenCodeMessage, OpenCodeModelRef, OpenCodePromptRequest } from "../opencode/client.js";
 import { extractAssistantText } from "../runtime/app-helpers.js";
 import type { DocumentParserOptions } from "../document-pipeline/index.js";
+import { SUPPORTED_DOCUMENT_EXTENSIONS, normalizeAllowedExtensions } from "../document-pipeline/material-support.js";
 
 type OpenCodePort = Pick<OpenCodeClient, "createSession" | "postMessageSync" | "deleteSession">;
-const DEFAULT_PARSE_TEXT_EXTENSIONS = [".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp", ".xls", ".xlsx", ".csv"] as const;
+const DEFAULT_PARSE_TEXT_EXTENSIONS = [...SUPPORTED_DOCUMENT_EXTENSIONS];
 
 export type EvidenceFileRef = {
   messageId: string;
   fileKey: string;
   fileName: string;
   size?: number | undefined;
+  resourceType?: "file" | "image" | "folder" | undefined;
 };
 
 export type LocalEvidenceFileRef = {
@@ -32,8 +34,15 @@ export type LocalEvidenceFileRef = {
   size?: number | undefined;
 };
 
+export type BufferEvidenceFileRef = {
+  buffer: Buffer;
+  fileName: string;
+  mimeType?: string | undefined;
+  size?: number | undefined;
+};
+
 export type EvidenceExtractResourcePort = {
-  downloadMessageResource(messageId: string, fileKey: string, type: "file" | "image"): Promise<{
+  downloadMessageResource(messageId: string, fileKey: string, type: "file" | "image" | "folder"): Promise<{
     fileName: string;
     mimeType: string;
     buffer: Buffer;
@@ -49,8 +58,10 @@ export type PreparedEvidenceFile = {
   extractedText: string;
 };
 
+export type EvidenceMaterialInput = EvidenceFileRef | LocalEvidenceFileRef | BufferEvidenceFileRef;
+
 export type EvidenceExtractRequest = {
-  file: EvidenceFileRef | LocalEvidenceFileRef;
+  file: EvidenceMaterialInput;
   allowedExtensions: string[];
   maxFileSizeMb: number;
   maxExtractedTextLength?: number | undefined;
@@ -80,7 +91,7 @@ export class EvidenceExtractService {
   ) {}
 
   async prepareFile(
-    file: EvidenceFileRef | LocalEvidenceFileRef,
+    file: EvidenceMaterialInput,
     options: {
       allowedExtensions: string[];
       maxFileSizeMb: number;
@@ -88,15 +99,17 @@ export class EvidenceExtractService {
       parseTextExtensions?: string[] | undefined;
     },
   ): Promise<PreparedEvidenceFile> {
-    const downloaded = isLocalEvidenceFileRef(file)
-      ? await readLocalEvidenceFile(file)
-      : await this.resources.downloadMessageResource(file.messageId, file.fileKey, "file");
+    const downloaded = isBufferEvidenceFileRef(file)
+      ? readBufferEvidenceFile(file)
+      : isLocalEvidenceFileRef(file)
+        ? await readLocalEvidenceFile(file)
+        : await this.resources.downloadMessageResource(file.messageId, file.fileKey, file.resourceType ?? "file");
     validateEvidenceFile(downloaded.fileName, downloaded.buffer, options.allowedExtensions, options.maxFileSizeMb);
     const extension = path.extname(downloaded.fileName).toLowerCase();
     const localPath = await saveEvidenceTempFile(downloaded.fileName, downloaded.buffer);
 
     let extractedText = "";
-    const parseTextExtensions = (options.parseTextExtensions ?? [...DEFAULT_PARSE_TEXT_EXTENSIONS]).map((value) => value.trim().toLowerCase());
+    const parseTextExtensions = normalizeAllowedExtensions(options.parseTextExtensions ?? DEFAULT_PARSE_TEXT_EXTENSIONS);
     if (parseTextExtensions.includes(extension)) {
       try {
         extractedText = isSpreadsheetExtension(extension)
@@ -170,8 +183,24 @@ export class EvidenceExtractService {
   }
 }
 
-function isLocalEvidenceFileRef(file: EvidenceFileRef | LocalEvidenceFileRef): file is LocalEvidenceFileRef {
+function isLocalEvidenceFileRef(file: EvidenceMaterialInput): file is LocalEvidenceFileRef {
   return "localPath" in file;
+}
+
+function isBufferEvidenceFileRef(file: EvidenceMaterialInput): file is BufferEvidenceFileRef {
+  return "buffer" in file;
+}
+
+function readBufferEvidenceFile(file: BufferEvidenceFileRef): {
+  fileName: string;
+  mimeType: string;
+  buffer: Buffer;
+} {
+  return {
+    fileName: file.fileName,
+    mimeType: file.mimeType ?? extensionToMimeType(path.extname(file.fileName).toLowerCase()),
+    buffer: file.buffer,
+  };
 }
 
 async function readLocalEvidenceFile(file: LocalEvidenceFileRef): Promise<{

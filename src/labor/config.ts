@@ -7,6 +7,7 @@
 import { z } from "zod";
 
 import type { ModuleConfigDefinition } from "../config/module-registry.js";
+import { SUPPORTED_MATERIAL_EXTENSIONS, normalizeAllowedExtensions } from "../document-pipeline/material-support.js";
 
 const LaborSkillModelRefSchema = z.string()
   .trim()
@@ -28,7 +29,7 @@ const LaborSkillConfigSchema = z.object({
     review: LaborSkillModelRefSchema.optional(),
   }).default({}),
   ingest: z.object({
-    allowedExtensions: z.array(z.string().min(1)).default([".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp", ".xls", ".xlsx", ".csv"]),
+    allowedExtensions: z.array(z.string().min(1)).default([...SUPPORTED_MATERIAL_EXTENSIONS]),
     maxFileSizeMb: z.number().positive().default(20),
     pendingTtlMs: z.number().int().positive().default(600_000),
   }).default({}),
@@ -66,7 +67,7 @@ export const DEFAULT_LABOR_SKILL_CONFIG: LaborSkillConfig = {
   enabled: false,
   models: {},
   ingest: {
-    allowedExtensions: [".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp", ".xls", ".xlsx", ".csv"],
+    allowedExtensions: [...SUPPORTED_MATERIAL_EXTENSIONS],
     maxFileSizeMb: 20,
     pendingTtlMs: 600_000,
   },
@@ -89,7 +90,7 @@ function normalizeLaborSkillConfig(parsed: LaborSkillParsedConfig): LaborSkillCo
       review: parsed.models.review,
     },
     ingest: {
-      allowedExtensions: parsed.ingest.allowedExtensions.map((value) => value.trim().toLowerCase()),
+      allowedExtensions: normalizeAllowedExtensions(parsed.ingest.allowedExtensions),
       maxFileSizeMb: parsed.ingest.maxFileSizeMb,
       pendingTtlMs: parsed.ingest.pendingTtlMs,
     },

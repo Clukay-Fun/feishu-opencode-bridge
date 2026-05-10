@@ -19,7 +19,7 @@ import {
 } from "./app-helpers.js";
 import { cleanAssistantReply } from "./sanitize.js";
 
-const INITIAL_CARD_SUMMARY = "已创建会话，等待 OpenCode 事件...";
+const INITIAL_CARD_SUMMARY = "已收到消息，正在准备会话...";
 const STREAM_FLUSH_MIN_CHARS = 120;
 const STREAM_FLUSH_INTERVAL_MS = 750;
 
@@ -169,11 +169,12 @@ export class TurnCardManager {
   }
 
   /** 更新 turn 卡片中的状态、步骤、工具或最终输出。 */
-  async updateTurnCard(turnId: string, update: { status?: string; update?: string; sanitize?: boolean; target?: "step" | "tool" | "final"; toolKey?: string; costSummary?: string }): Promise<void> {
+  async updateTurnCard(turnId: string, update: { status?: string; sessionId?: string; update?: string; sanitize?: boolean; target?: "step" | "tool" | "final"; toolKey?: string; costSummary?: string }): Promise<void> {
     const card = this.turnCards.get(turnId);
     if (!card) return;
 
     if (update.status) card.status = update.status;
+    if (update.sessionId) card.sessionId = update.sessionId;
     if (update.costSummary !== undefined) card.costSummary = update.costSummary;
     const nextUpdate = update.update ? (update.sanitize === false ? update.update.trim() : cleanAssistantReply(update.update)) : "";
     if (nextUpdate) {

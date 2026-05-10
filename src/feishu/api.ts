@@ -5,6 +5,10 @@
  * - 提供文件上传和消息资源读取能力。
  * - 缓存并刷新 tenant access token，减少重复鉴权开销。
  */
+import path from "node:path";
+
+import PizZip from "pizzip";
+
 import type { FeishuPostPayload } from "./shared-primitives.js";
 
 const RETRY_MAX_ATTEMPTS = 3;
@@ -87,13 +91,16 @@ export class FeishuApiClient {
     return this.tokenRequest;
   }
 
-  /** 下载消息关联的文件或图片资源。 */
+  /** 下载消息关联的文件、图片或文件夹资源。 */
   async downloadMessageResource(
     messageId: string,
     fileKey: string,
-    type: "file" | "image",
+    type: "file" | "image" | "folder",
   ): Promise<{ fileName: string; mimeType: string; buffer: Buffer }> {
     const token = await this.getTenantToken();
+    if (type === "folder") {
+      return await this.downloadFolderAsArchive(token, fileKey);
+    }
     const response = await withRetry(() => fetch(`https://open.feishu.cn/open-apis/im/v1/messages/${encodeURIComponent(messageId)}/resources/${encodeURIComponent(fileKey)}?type=${type}`, {
       method: "GET",
       headers: {
@@ -103,16 +110,7 @@ export class FeishuApiClient {
     if (!response.ok) {
       throw new Error(`Feishu downloadMessageResource failed: ${response.status} ${response.statusText}`);
     }
-    const disposition = response.headers.get("content-disposition") ?? "";
-    const rawFileName = disposition.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i)?.[1] ?? fileKey;
-    const fileName = normalizeDownloadedFileName(rawFileName);
-    const mimeType = response.headers.get("content-type") ?? "application/octet-stream";
-    const buffer = Buffer.from(await response.arrayBuffer());
-    return {
-      fileName,
-      mimeType,
-      buffer,
-    };
+    return await readDownloadResponse(response, fileKey);
   }
 
   /** 创建一条多维表格记录，必要时做单选字段重试。 */
@@ -313,11 +311,176 @@ export class FeishuApiClient {
     this.bitableFieldCache.set(cacheKey, results);
     return results;
   }
+
+  /** 飞书 folder 消息不是附件资源，需要走云空间目录枚举并在本地打包。 */
+  private async downloadFolderAsArchive(token: string, folderToken: string): Promise<{ fileName: string; mimeType: string; buffer: Buffer }> {
+    if (!isDriveFolderToken(folderToken)) {
+      throw new Error("飞书本地文件夹消息只提供 file_v3 临时资源 key，开放平台不能直接展开目录；请将文件夹压缩为 .zip 后上传，或发送云空间文件夹链接。");
+    }
+    const archive = new PizZip();
+    const errors: string[] = [];
+    let fileCount = 0;
+    const usedPaths = new Set<string>();
+    const walk = async (currentFolderToken: string, prefix: string): Promise<void> => {
+      const children = await this.listDriveFolderChildren(token, currentFolderToken);
+      for (const child of children) {
+        const childType = normalizeDriveChildType(child);
+        const childToken = getDriveChildToken(child);
+        const childName = getDriveChildName(child) ?? childToken ?? "未命名文件";
+        if (!childToken) {
+          continue;
+        }
+        if (childType === "folder") {
+          await walk(childToken, joinZipPath(prefix, childName));
+          continue;
+        }
+        if (childType && childType !== "file") {
+          continue;
+        }
+        try {
+          const downloaded = await this.downloadDriveFile(token, childToken, childName);
+          const entryPath = uniqueZipPath(usedPaths, joinZipPath(prefix, downloaded.fileName));
+          archive.file(entryPath, downloaded.buffer);
+          fileCount += 1;
+        } catch (error) {
+          errors.push(`${childName}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    };
+
+    await walk(folderToken, "");
+    if (fileCount === 0) {
+      const suffix = errors.length > 0 ? `；下载失败：${errors.slice(0, 3).join("；")}` : "";
+      throw new Error(`飞书文件夹内没有可下载的普通文件${suffix}`);
+    }
+    return {
+      fileName: folderToken,
+      mimeType: "application/zip",
+      buffer: archive.generate({ type: "nodebuffer", compression: "DEFLATE" }) as Buffer,
+    };
+  }
+
+  private async listDriveFolderChildren(token: string, folderToken: string): Promise<DriveFolderChild[]> {
+    const response = await withRetry(() => fetch(`https://open.feishu.cn/open-apis/drive/explorer/v2/folder/${encodeURIComponent(folderToken)}/children`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }));
+    const body = await readJsonResponse<{
+      code?: number;
+      msg?: string;
+      data?: Record<string, unknown>;
+    }>(response, "Feishu list folder children");
+    if (!response.ok || body.code !== 0) {
+      throw new Error(`Feishu list folder children failed: ${body.msg ?? response.statusText}`);
+    }
+    return normalizeDriveFolderChildren(body.data);
+  }
+
+  private async downloadDriveFile(token: string, fileToken: string, fallbackName: string): Promise<{ fileName: string; mimeType: string; buffer: Buffer }> {
+    const response = await withRetry(() => fetch(`https://open.feishu.cn/open-apis/drive/v1/files/${encodeURIComponent(fileToken)}/download`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }));
+    if (!response.ok) {
+      throw new Error(`Feishu drive file download failed: ${response.status} ${response.statusText}`);
+    }
+    return await readDownloadResponse(response, fallbackName);
+  }
 }
 
 type BitableFieldSchema = {
   name: string;
 };
+
+type DriveFolderChild = Record<string, unknown>;
+
+function normalizeDriveFolderChildren(data: Record<string, unknown> | undefined): DriveFolderChild[] {
+  const rawChildren = data?.children ?? data?.items ?? data?.files;
+  if (Array.isArray(rawChildren)) {
+    return rawChildren.filter(isRecord);
+  }
+  if (isRecord(rawChildren)) {
+    return Object.values(rawChildren).filter(isRecord);
+  }
+  return [];
+}
+
+function normalizeDriveChildType(child: DriveFolderChild): string | null {
+  const raw = child.type ?? child.obj_type ?? child.file_type ?? child.node_type;
+  return typeof raw === "string" && raw.trim() ? raw.trim().toLowerCase() : null;
+}
+
+function getDriveChildToken(child: DriveFolderChild): string | null {
+  const raw = child.token ?? child.file_token ?? child.obj_token ?? child.node_token ?? child.folder_token;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+}
+
+function getDriveChildName(child: DriveFolderChild): string | null {
+  const raw = child.name ?? child.title ?? child.file_name;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+}
+
+async function readDownloadResponse(response: Response, fallbackName: string): Promise<{ fileName: string; mimeType: string; buffer: Buffer }> {
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const rawFileName = disposition.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i)?.[1] ?? fallbackName;
+  const fileName = normalizeDownloadedFileName(rawFileName);
+  const mimeType = response.headers.get("content-type") ?? "application/octet-stream";
+  const buffer = Buffer.from(await response.arrayBuffer());
+  return {
+    fileName,
+    mimeType,
+    buffer,
+  };
+}
+
+async function readJsonResponse<T>(response: Response, operation: string): Promise<T> {
+  const text = await response.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    const preview = text.replace(/\s+/g, " ").trim().slice(0, 200);
+    throw new Error(`${operation} returned non-JSON response: ${preview || response.statusText}`);
+  }
+}
+
+function joinZipPath(prefix: string, name: string): string {
+  const safeName = sanitizeZipPathPart(name);
+  return prefix ? `${prefix}/${safeName}` : safeName;
+}
+
+function sanitizeZipPathPart(value: string): string {
+  return value
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((part) => part.trim())
+    .filter((part) => part && part !== "." && part !== "..")
+    .join("/") || "未命名文件";
+}
+
+function uniqueZipPath(usedPaths: Set<string>, value: string): string {
+  const extension = path.extname(value);
+  const base = extension ? value.slice(0, -extension.length) : value;
+  let candidate = value;
+  let index = 2;
+  while (usedPaths.has(candidate)) {
+    candidate = `${base} (${index})${extension}`;
+    index += 1;
+  }
+  usedPaths.add(candidate);
+  return candidate;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isDriveFolderToken(value: string): boolean {
+  return /^fldcn[A-Za-z0-9]+$/.test(value);
+}
 
 function normalizeDownloadedFileName(value: string): string {
   const decoded = safeDecodeURIComponent(value).replace(/^"+|"+$/g, "").trim();

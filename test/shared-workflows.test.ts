@@ -46,6 +46,43 @@ describe("shared case workflows", () => {
     expect(onProgress).toHaveBeenCalledWith("正在生成时间线、关系图和思维导图");
   });
 
+  it("creates a preview document before progressively writing the final workbench", async () => {
+    const createPreviewDocument = vi.fn(async () => ({
+      docUrl: "https://example.com/doc/preview",
+      boardTokens: [],
+    }));
+    const updateDocument = vi.fn(async () => ({
+      docUrl: "https://example.com/doc/preview",
+      boardTokens: ["board_1"],
+    }));
+    const updateBoards = vi.fn(async () => {});
+    const onProgress = vi.fn();
+    const onPreviewCreated = vi.fn();
+    const markdown = Array.from({ length: 45 }, (_, index) => `第 ${index + 1} 行`).join("\n");
+
+    const result = await generateCaseWorkflowWorkbench({
+      title: "案件工作台",
+      markdown,
+      diagrams: [{ source: "flowchart TD\nA[开始]" }],
+      logger: { log: vi.fn() },
+      logScope: "test",
+      onProgress,
+      onPreviewCreated,
+      createPreviewDocument,
+      updateDocument,
+      updateBoards,
+    });
+
+    expect(result).toEqual({ docUrl: "https://example.com/doc/preview" });
+    expect(createPreviewDocument).toHaveBeenCalledWith("案件工作台");
+    expect(onPreviewCreated).toHaveBeenCalledWith("https://example.com/doc/preview");
+    expect(updateDocument).toHaveBeenCalledTimes(3);
+    expect(updateDocument).toHaveBeenLastCalledWith("https://example.com/doc/preview", "案件工作台", markdown);
+    expect(updateBoards).toHaveBeenCalledWith(["board_1"], [{ source: "flowchart TD\nA[开始]" }]);
+    expect(onProgress).toHaveBeenCalledWith("正在创建飞书工作台预览文档");
+    expect(onProgress).toHaveBeenCalledWith("正在写入飞书工作台文档（1/3）");
+  });
+
   it("marks Mermaid sources for Feishu whiteboard rendering", () => {
     expect(withWhiteboardDslInstruction("flowchart TD\nA[开始]")).toContain("使用飞书白板内置DSL精确控制样式");
   });

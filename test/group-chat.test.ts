@@ -918,4 +918,46 @@ describe("group chat support", () => {
     expect(passedMessage.resourceType).toBe("image");
     expect(passedMessage.plainText).toBe("[图片]");
   });
+
+  it("accepts folder messages as downloadable zip-like file payloads", async () => {
+    const handler = vi.fn(async (message: IncomingChatMessage) => {
+      void message;
+    });
+    const logger = { log: vi.fn() };
+    const client = new FeishuWsClient(
+      "app",
+      "secret",
+      makeOptions({ enableP2p: true }),
+      createWhitelist(),
+      handler,
+      logger,
+    );
+
+    await (client as unknown as { handleEvent(payload: unknown): Promise<void> }).handleEvent({
+      message: {
+        chat_id: "oc_p2p_folder_1",
+        chat_type: "p2p",
+        message_id: "om_folder_1",
+        message_type: "folder",
+        content: JSON.stringify({
+          file_key: "file_v3_folder",
+          file_name: "发票",
+        }),
+      },
+      sender: { sender_id: { open_id: "ou_123" } },
+    });
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    const passedMessage = handler.mock.calls[0]?.[0] as IncomingChatMessage;
+    expect(passedMessage.messageType).toBe("file");
+    if (passedMessage.messageType !== "file") {
+      throw new Error("expected folder to normalize to file message");
+    }
+    expect(passedMessage.file).toEqual(expect.objectContaining({
+      fileKey: "file_v3_folder",
+      fileName: "发票.zip",
+    }));
+    expect(passedMessage.resourceType).toBe("folder");
+    expect(passedMessage.plainText).toBe("发票");
+  });
 });

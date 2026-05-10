@@ -8,6 +8,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import * as XLSX from "xlsx";
 
 import { spawnPythonTool } from "../utils/python-tool.js";
 import {
@@ -24,6 +25,7 @@ export type { ParsedDocumentSection } from "./normalize.js";
 export type DocumentParserUsed =
   | "plain-text"
   | "html-text"
+  | "spreadsheet"
   | "doc-to-text"
   | "mammoth"
   | "pymupdf4llm"
@@ -120,6 +122,19 @@ export async function parseDocument(fileName: string, buffer: Buffer, options?: 
       quality: text.length > 80 ? "medium" : "low",
       fallbackChain: ["html-text"],
       sectionPrefix: "HTML",
+    });
+  }
+
+  if ([".xls", ".xlsx", ".csv"].includes(extension)) {
+    const markdown = normalizePlainMarkdown(parseSpreadsheetFile(fileName, buffer));
+    return buildParsedDocument({
+      markdown,
+      plainText: markdown,
+      sourceFormat: extension.slice(1),
+      parserUsed: "spreadsheet",
+      quality: markdown.length > 80 ? "high" : "medium",
+      fallbackChain: ["spreadsheet"],
+      sectionPrefix: "表格",
     });
   }
 
@@ -346,6 +361,41 @@ function combineWarnings(primary: string | undefined, warnings: string[]): strin
 
 function sanitizeFileName(fileName: string): string {
   return fileName.replace(/[\\/:"*?<>|]+/g, "_");
+}
+
+function parseSpreadsheetFile(fileName: string, buffer: Buffer): string {
+  const workbook = XLSX.read(buffer, { type: "buffer", cellDates: false });
+  const sections: string[] = [`文件：${fileName}`];
+  for (const sheetName of workbook.SheetNames.slice(0, 5)) {
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet) {
+      continue;
+    }
+    const rows = XLSX.utils.sheet_to_json<(string | number | boolean | null)[]>(sheet, {
+      header: 1,
+      raw: false,
+      defval: "",
+      blankrows: false,
+    });
+    if (rows.length === 0) {
+      continue;
+    }
+    sections.push(`\n## 工作表：${sheetName}`);
+    const previewRows = rows.slice(0, 80).map((row) => row.map((cell) => String(cell ?? "").replace(/\s+/g, " ").trim()));
+    const width = Math.max(...previewRows.map((row) => row.length), 1);
+    const normalized = previewRows.map((row) => Array.from({ length: width }, (_value, index) => row[index] ?? ""));
+    const header = normalized[0] ?? Array.from({ length: width }, () => "");
+    sections.push(`| ${header.map(escapeTableCell).join(" | ")} |`);
+    sections.push(`| ${header.map(() => "---").join(" | ")} |`);
+    for (const row of normalized.slice(1)) {
+      sections.push(`| ${row.map(escapeTableCell).join(" | ")} |`);
+    }
+  }
+  return sections.join("\n");
+}
+
+function escapeTableCell(value: string): string {
+  return value.replace(/\|/g, "\\|").replace(/\n/g, " ");
 }
 
 function extractHtmlText(source: string): string {

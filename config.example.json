@@ -139,7 +139,7 @@
           "statuteField": {
             "name": "法条",
             "type": "text",
-            "urlTemplate": "https://example.com/law?keyword={{statute}}",
+            "urlTemplate": "https://alphalawyer.cn/#/app/tool/search/case?searchType=law&keyword={{statute}}",
             "textTemplate": "{{statute}}"
           }
         }
@@ -151,7 +151,7 @@
         "rerank": "minimax-cn-coding-plan/MiniMax-M2.7"
       },
       "ingest": {
-        "allowedExtensions": [".pdf", ".docx", ".txt", ".md"],
+        "allowedExtensions": [".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp", ".xls", ".xlsx", ".csv", ".zip"],
         "maxFileSizeMb": 20,
         "sessionIdleMs": 1800000,
         "concurrency": 3,
@@ -213,7 +213,8 @@
       "models": {
         "default": "minimax-cn-coding-plan/MiniMax-M2.7",
         "extract": "minimax-cn-coding-plan/MiniMax-M2.7",
-        "analyze": "minimax-cn-coding-plan/MiniMax-M2.7"
+        "analyze": "minimax-cn-coding-plan/MiniMax-M2.7",
+        "review": "minimax-cn-coding-plan/MiMo-V2.5-Pro"
       },
       "ingest": {
         "allowedExtensions": [".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp", ".xls", ".xlsx", ".csv"],

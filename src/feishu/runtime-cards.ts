@@ -294,7 +294,7 @@ export function buildGuideCardPayload(view: GuideCardView): FeishuPostPayload {
     iconToken: "compass_outlined",
     bodyElements: [
       buildGuideStepBlock("1", "上传样例材料", "先使用样例材料验证流程，再处理真实案件。"),
-      buildGuideStepBlock("2", "启动案件工作台", "发送 `/案件工作台`，上传材料后点击“完成上传，开始分析”，或发送 `/完成上传`。"),
+      buildGuideStepBlock("2", "启动案件工作台", "发送 `/案件工作台`，上传材料后发送 `/完成上传`。"),
       buildGuideStepBlock("3", "查看分析输出", "重点核对争议焦点、请求权基础、证据缺口、策略和文书草稿摘要。"),
       buildGuideStepBlock("4", "核对二审状态", "完成卡会显示法条引用校验、建议修改或需人工复核状态。"),
       buildDivider(),
@@ -374,13 +374,7 @@ function buildTurnBodyElements(
 
   elements.push(buildOutputBlock(outputElements));
   elements.push(buildDivider());
-  if (state.kind === "running") {
-    elements.push(buildRuntimeActionBlock([
-      runtimeCommandButton("中止任务", "/abort", "danger", "update-card"),
-    ]));
-    elements.push(buildDivider());
-  }
-  elements.push(buildFooter(view.sessionId, view.durationText, view.costSummary));
+  elements.push(buildFooter(view.sessionId, view.durationText));
   return elements;
 }
 
@@ -966,14 +960,13 @@ function buildOutputBlock(outputElements: Array<Record<string, unknown>>): Recor
   };
 }
 
-function buildFooter(sessionId: string, durationText: string, costSummary?: string): Record<string, unknown> {
+function buildFooter(sessionId: string, durationText: string): Record<string, unknown> {
   const duration = durationText ? `｜耗时：${durationText}` : "";
-  const cost = costSummary ? `｜${costSummary}` : "";
   return {
     tag: "div",
     text: {
       tag: "plain_text",
-      content: `ID：${shortSessionId(sessionId)}${duration}${cost}`,
+      content: `ID：${shortSessionId(sessionId)}${duration}`,
       text_size: "notation",
       text_align: "left",
       text_color: "grey",

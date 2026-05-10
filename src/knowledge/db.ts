@@ -43,6 +43,8 @@ export type KnowledgeEntryRecord = {
   statute?: string | undefined;
   sourceFile: string;
   pageSection?: string | undefined;
+  sourceUrl?: string | undefined;
+  statuteUrl?: string | undefined;
   bitableRecordId?: string | undefined;
   embeddingModel?: string | undefined;
   embedding?: number[] | undefined;
@@ -81,6 +83,8 @@ type KnowledgeEntryRow = {
   statute: string | null;
   source_file: string;
   page_section: string | null;
+  source_url: string | null;
+  statute_url: string | null;
   bitable_record_id: string | null;
   embedding_model: string | null;
   embedding_json: string | null;
@@ -200,6 +204,8 @@ export class KnowledgeDb {
     statute?: string | undefined;
     sourceFile: string;
     pageSection?: string | undefined;
+    sourceUrl?: string | undefined;
+    statuteUrl?: string | undefined;
     bitableRecordId?: string | undefined;
     embedding?: number[] | undefined;
     embeddingModel?: string | undefined;
@@ -222,6 +228,8 @@ export class KnowledgeDb {
         statute,
         source_file,
         page_section,
+        source_url,
+        statute_url,
         bitable_record_id,
         embedding_model,
         embedding_json,
@@ -242,6 +250,8 @@ export class KnowledgeDb {
         @statute,
         @sourceFile,
         @pageSection,
+        @sourceUrl,
+        @statuteUrl,
         @bitableRecordId,
         @embeddingModel,
         @embeddingJson,
@@ -258,6 +268,8 @@ export class KnowledgeDb {
         tags_json = excluded.tags_json,
         statute = excluded.statute,
         source_file = excluded.source_file,
+        source_url = COALESCE(excluded.source_url, knowledge_entries.source_url),
+        statute_url = COALESCE(excluded.statute_url, knowledge_entries.statute_url),
         bitable_record_id = COALESCE(excluded.bitable_record_id, knowledge_entries.bitable_record_id),
         embedding_model = COALESCE(excluded.embedding_model, knowledge_entries.embedding_model),
         embedding_json = COALESCE(excluded.embedding_json, knowledge_entries.embedding_json),
@@ -276,6 +288,8 @@ export class KnowledgeDb {
       statute: input.statute ?? null,
       sourceFile: input.sourceFile,
       pageSection: input.pageSection ?? null,
+      sourceUrl: input.sourceUrl ?? null,
+      statuteUrl: input.statuteUrl ?? null,
       bitableRecordId: input.bitableRecordId ?? null,
       embeddingModel: input.embeddingModel ?? null,
       embeddingJson: input.embedding ? JSON.stringify(input.embedding) : null,
@@ -663,6 +677,8 @@ export class KnowledgeDb {
         statute TEXT,
         source_file TEXT NOT NULL,
         page_section TEXT,
+        source_url TEXT,
+        statute_url TEXT,
         bitable_record_id TEXT,
         embedding_model TEXT,
         embedding_json TEXT,
@@ -743,6 +759,8 @@ export class KnowledgeDb {
     addColumn("effective_status", "effective_status TEXT DEFAULT 'unknown'");
     addColumn("dedup_key", "dedup_key TEXT");
     addColumn("fields_json", "fields_json TEXT");
+    addColumn("source_url", "source_url TEXT");
+    addColumn("statute_url", "statute_url TEXT");
 
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_knowledge_entries_dedup_key
@@ -762,6 +780,8 @@ function toEntryRecord(row: KnowledgeEntryRow): KnowledgeEntryRecord {
     statute: row.statute ?? undefined,
     sourceFile: row.source_file,
     pageSection: row.page_section ?? undefined,
+    sourceUrl: row.source_url ?? undefined,
+    statuteUrl: row.statute_url ?? undefined,
     bitableRecordId: row.bitable_record_id ?? undefined,
     embeddingModel: row.embedding_model ?? undefined,
     embedding: parseNumericArray(row.embedding_json),
