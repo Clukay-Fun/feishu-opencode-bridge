@@ -3,6 +3,7 @@
  * 关注点: 验证核心路径、边界条件和回归场景。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import PizZip from "pizzip";
 
 import { FeishuApiClient } from "../src/feishu/api.js";
 
@@ -200,6 +201,68 @@ describe("FeishuApiClient", () => {
       fileName: "以不能.txt",
       mimeType: "text/plain",
     });
+  });
+
+  it("reports non-json folder children responses without leaking JSON parser errors", async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ code: 0, tenant_access_token: "token_1" }))
+      .mockResolvedValueOnce(new Response("404 page not found", {
+        status: 404,
+        headers: { "content-type": "text/plain" },
+      }));
+    vi.stubGlobal("fetch", fetch);
+    const client = new FeishuApiClient("app", "secret");
+
+    await expect(client.downloadMessageResource("om_folder", "fldcnFolderABC123", "folder"))
+      .rejects.toThrow("Feishu list folder children returned non-JSON response");
+  });
+
+  it("rejects local folder message keys before calling drive folder APIs", async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ code: 0, tenant_access_token: "token_1" }));
+    vi.stubGlobal("fetch", fetch);
+    const client = new FeishuApiClient("app", "secret");
+
+    await expect(client.downloadMessageResource("om_folder", "file_v3_folder", "folder"))
+      .rejects.toThrow("飞书本地文件夹消息只提供 file_v3 临时资源 key");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("lists folder children and downloads drive files for folder messages", async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ code: 0, tenant_access_token: "token_1" }))
+      .mockResolvedValueOnce(jsonResponse({
+        code: 0,
+        data: {
+          children: [
+            { type: "file", token: "box_file_1", name: "劳动合同.txt" },
+            { type: "docx", token: "docx_online_1", name: "在线文档" },
+          ],
+        },
+      }))
+      .mockResolvedValueOnce(new Response(Buffer.from("合同内容", "utf8"), {
+        status: 200,
+        headers: {
+          "content-disposition": `attachment; filename="${encodeURIComponent("劳动合同.txt")}"`,
+          "content-type": "text/plain",
+        },
+      }));
+    vi.stubGlobal("fetch", fetch);
+    const client = new FeishuApiClient("app", "secret");
+
+    const downloaded = await client.downloadMessageResource("om_folder", "fldcnFolderABC123", "folder");
+
+    expect(String(fetch.mock.calls[1]?.[0])).toContain("/drive/explorer/v2/folder/fldcnFolderABC123/children");
+    expect(fetch.mock.calls[1]?.[1]).toMatchObject({ method: "GET" });
+    expect(String(fetch.mock.calls[2]?.[0])).toContain("/drive/v1/files/box_file_1/download");
+    expect(downloaded).toMatchObject({
+      fileName: "fldcnFolderABC123",
+      mimeType: "application/zip",
+    });
+    expect(new PizZip(downloaded.buffer).file("劳动合同.txt")?.asText()).toBe("合同内容");
   });
 });
 

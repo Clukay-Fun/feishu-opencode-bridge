@@ -38,6 +38,7 @@ import { getEventSessionId, OpenCodeEventStream, type OpenCodeEvent } from "../o
 import { MappingStore, type MappingRecord, type SessionBindingRecord, type SessionWindowRecord } from "../store/mappings.js";
 import type { WhitelistStore } from "../store/whitelist.js";
 import type { AppConfig } from "../config/schema.js";
+import { SUPPORTED_MATERIAL_EXTENSIONS } from "../document-pipeline/material-support.js";
 import {
   buildSessionRangeIndices,
   buildSessionTitle,
@@ -96,8 +97,8 @@ export type IncomingFileMessage = IncomingChatMessageBase & {
     fileName: string;
     size?: number | undefined;
   };
-  /** 区分普通文件与图片资源，下载时传给飞书 API。缺失时默认 "file"。 */
-  resourceType?: "file" | "image" | undefined;
+  /** 区分普通文件、图片与文件夹资源，下载时传给飞书 API。缺失时默认 "file"。 */
+  resourceType?: "file" | "image" | "folder" | undefined;
 };
 
 export type IncomingChatMessage = IncomingTextMessage | IncomingFileMessage;
@@ -109,7 +110,7 @@ type OutboundPort = {
 };
 
 type KnowledgeResourcePort = {
-  downloadMessageResource(messageId: string, fileKey: string, type: "file" | "image"): Promise<{
+  downloadMessageResource(messageId: string, fileKey: string, type: "file" | "image" | "folder"): Promise<{
     fileName: string;
     mimeType: string;
     buffer: Buffer;
@@ -146,7 +147,7 @@ type OpenCodePort = Pick<OpenCodeClient,
 
 type OpenCodeEventStreamPort = Pick<OpenCodeEventStream, "start" | "stop" | "subscribe" | "getConnectionState">;
 
-const REGULAR_FILE_ALLOWED_EXTENSIONS = [".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp"] as const;
+const REGULAR_FILE_ALLOWED_EXTENSIONS = SUPPORTED_MATERIAL_EXTENSIONS;
 const PENDING_NEW_SESSION_TTL_MS = 10 * 60_000;
 
 type PendingNewSessionAnchor = {
@@ -401,7 +402,11 @@ export class BridgeApp {
     }
 
     const pending = this.pendingInteractions.get(message.conversationKey);
-    if (pending && this.isCorePendingInteraction(pending)) {
+    const bypassCorePending = pending?.kind === "question" && shouldBypassQuestionForBusinessEntrypoint(message);
+    if (bypassCorePending) {
+      this.clearPendingInteraction(message.conversationKey, false);
+    }
+    if (pending && !bypassCorePending && this.isCorePendingInteraction(pending)) {
       const consumed = await this.handlePendingInteraction(message, pending);
       if (consumed) {
         return;
@@ -1738,11 +1743,20 @@ function inferBridgeOutputTitle(kind: BridgeOutputContext["kind"], event: string
   }
 }
 
+function shouldBypassQuestionForBusinessEntrypoint(message: IncomingChatMessage): boolean {
+  if (message.messageType !== "text" && message.messageType !== "post") {
+    return false;
+  }
+  const normalized = message.plainText.replace(/\s+/g, "");
+  // 保护明确的新业务入口，避免 OpenCode 的挂起 question 把“启动案件工作台”等指令吞掉。
+  return /(启动|打开|进入|开启)?(案件工作台|办案工作台)/.test(normalized);
+}
+
 function buildUploadedResourcePromptParts(
   fileName: string,
   mimeType: string,
   buffer: Buffer,
-  resourceType?: "file" | "image",
+  resourceType?: "file" | "image" | "folder",
 ): OpenCodePromptPart[] | undefined {
   const extension = path.extname(fileName).toLowerCase();
   const imageMimeType = mimeType.startsWith("image/")

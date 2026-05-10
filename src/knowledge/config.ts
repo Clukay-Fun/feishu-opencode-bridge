@@ -9,6 +9,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import type { ConfigLoadContext, ModuleConfigDefinition } from "../config/module-registry.js";
+import { SUPPORTED_MATERIAL_EXTENSIONS, normalizeAllowedExtensions } from "../document-pipeline/material-support.js";
 
 const EmbeddingProviderSchema = z.object({
   baseUrl: z.string().url(),
@@ -57,7 +58,7 @@ const KnowledgeBaseStorageSchema = z.object({
 }).default({});
 
 const KnowledgeBaseIngestSchema = z.object({
-  allowedExtensions: z.array(z.string().min(1)).default([".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp"]),
+  allowedExtensions: z.array(z.string().min(1)).default([...SUPPORTED_MATERIAL_EXTENSIONS]),
   maxFileSizeMb: z.number().positive().default(20),
   pendingTtlMs: z.number().int().positive().default(600_000),
   sessionIdleMs: z.number().int().positive().default(1_800_000),
@@ -156,9 +157,9 @@ const KnowledgeBaseAuthoritySourcesSchema = z.object({
     transport: PkulawTransportSchema.default("auto"),
     skills: z.object({
       lawSemantic: PkulawSkillBindingSchema.default({ tool: "law-semantic", operation: "search_article" }),
-      lawRecognition: PkulawSkillBindingSchema.default({ tool: "law_recognition", operation: "law_recognition" }),
-      citationValidator: PkulawSkillBindingSchema.default({ tool: "pku_citation_validator", operation: "adjust_provisions" }),
-      caseNumberRecognition: PkulawSkillBindingSchema.default({ tool: "pkulaw-case-number-recognition", operation: "anhao_recognition" }),
+      lawRecognition: PkulawSkillBindingSchema.default({ tool: "law-recognition", operation: "law_recognition" }),
+      citationValidator: PkulawSkillBindingSchema.default({ tool: "citation-validator", operation: "adjust_provisions" }),
+      caseNumberRecognition: PkulawSkillBindingSchema.default({ tool: "case-number", operation: "anhao_recognition" }),
     }).default({}),
   }).default({}),
 }).default({});
@@ -408,7 +409,7 @@ function normalizeKnowledgeBaseConfig(
       rerank: parsed.models.rerank,
     },
     ingest: {
-      allowedExtensions: parsed.ingest.allowedExtensions.map((value) => value.trim().toLowerCase()),
+      allowedExtensions: normalizeAllowedExtensions(parsed.ingest.allowedExtensions),
       maxFileSizeMb: parsed.ingest.maxFileSizeMb,
       pendingTtlMs: parsed.ingest.pendingTtlMs,
       sessionIdleMs: parsed.ingest.sessionIdleMs,
