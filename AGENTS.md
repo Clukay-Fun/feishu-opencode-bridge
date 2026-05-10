@@ -53,6 +53,12 @@
   - `merge`: merge-main conflict resolution or integration branch merge commit
   - `followup`: feedback-driven or validation-driven follow-up patch
 - Post-freeze feature PRs should include the new-feature checklist self-check when relevant.
+- Repository hygiene is part of every commit:
+  - Keep the codebase organized and clean before committing.
+  - Remove temporary files, dead code, dead files, obsolete folders, and unnecessary subfolders created during the task.
+  - Do not leave debug artifacts, one-off scratch scripts, generated local outputs, or unused scaffolding in the repository.
+  - If a file or folder remains, it should have an active product, test, documentation, release, or maintainer purpose.
+  - Review `git status --short` and the staged diff before every commit to ensure unrelated or disposable files are not included.
 - Keep updating the same branch and PR while the related feature line is still open and unmerged.
 - Once a PR has been merged into `main`, do not reopen or reuse it for follow-up work; create a new branch and a new PR instead.
 - Branch workflow:
