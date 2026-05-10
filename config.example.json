@@ -156,7 +156,13 @@
         "sessionIdleMs": 1800000,
         "concurrency": 3,
         "maxExtractChunks": 30,
-        "maxExtractQas": 500
+        "maxExtractQas": 0
+      },
+      "judicialIngest": {
+        "enabled": true,
+        "batchEnabled": false,
+        "sources": ["manual"],
+        "batchSize": 20
       },
       "parser": {
         "externalApiEnabled": false,

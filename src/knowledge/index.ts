@@ -20,6 +20,12 @@ import {
   parseKnowledgeFile,
   type KnowledgeParserUsed,
 } from "./parser.js";
+import {
+  buildCaseDigestPrompt,
+  detectJudicialDocument,
+  normalizeCaseDigestItems,
+  type CaseDigestCandidate,
+} from "./extractors/case-digest.js";
 import type { KnowledgeBaseConfig } from "./config.js";
 import { exportKnowledgeObsidianNote } from "./obsidian-export.js";
 import {
@@ -146,6 +152,12 @@ type ExtractedQa = {
 type ExtractedQaCandidate = ExtractedQa & {
   pageSection: string;
   embedding?: number[] | undefined;
+  entryType?: "article" | "case_digest" | "practice_note" | "case_reflow" | undefined;
+  confidence?: number | undefined;
+  reviewRequired?: boolean | undefined;
+  effectiveStatus?: "current" | "unknown" | "expired" | undefined;
+  dedupKey?: string | undefined;
+  fieldsJson?: string | undefined;
 };
 
 type ChunkExtractionState = {
@@ -332,6 +344,12 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
       ? chapterGrouping.chapters.filter((chapter) => !chapter.skipped).flatMap((chapter) => chapter.sections)
       : parsedDocument.sections;
     const extractionMarkdown = extractionSections.map((section) => section.text).join("\n\n");
+    const judicialDocument = this.config.judicialIngest?.enabled !== false
+      ? detectJudicialDocument(extractionMarkdown || parsedDocument.normalizedMarkdown, extractionSections)
+      : { matched: false as const, sections: {} };
+    if (!judicialDocument.matched && judicialDocument.reason === "sensitive-material") {
+      throw new Error("司法文书包含未脱敏敏感信息，已停止自动入库");
+    }
     const qaDocument = detectStructuredQaDocument(extractionMarkdown, extractionSections);
     let rawExtractedCount = 0;
     let dedupedCount = 0;
@@ -397,7 +415,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     }
 
     const maxQas = options?.maxQas ?? this.config.ingest.maxExtractQas;
-    if (finalCandidates.length > maxQas) {
+    if (isExtractQaLimitEnabled(maxQas) && finalCandidates.length > maxQas) {
       finalCandidates = [...finalCandidates]
         .sort((left, right) => scoreExtractedCandidate(right) - scoreExtractedCandidate(left))
         .slice(0, maxQas);
@@ -507,6 +525,12 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
       ? chapterGrouping.chapters.filter((chapter) => !chapter.skipped).flatMap((chapter) => chapter.sections)
       : parsedDocument.sections;
     const extractionMarkdown = extractionSections.map((section) => section.text).join("\n\n");
+    const judicialDocument = this.config.judicialIngest?.enabled !== false
+      ? detectJudicialDocument(extractionMarkdown || parsedDocument.normalizedMarkdown, extractionSections)
+      : { matched: false as const, sections: {} };
+    if (!judicialDocument.matched && judicialDocument.reason === "sensitive-material") {
+      throw new Error("司法文书包含未脱敏敏感信息，已停止自动入库");
+    }
     const qaDocument = detectStructuredQaDocument(extractionMarkdown, extractionSections);
     const concurrency = this.config.ingest.concurrency;
     let rawExtractedCount = 0;
@@ -516,7 +540,18 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
       chapterGrouping.skippedTitles.length > 0 ? buildSkippedChaptersWarning(chapterGrouping.skippedTitles) : undefined,
     );
 
-    if (qaDocument.matched) {
+    if (judicialDocument.matched) {
+      this.db.clearExtractedChunks(document.id);
+      await this.reportProgress(options, {
+        step: "extract",
+        status: "running",
+        detail: `已识别司法文书（${judicialDocument.caseNumber}），正在提取类案要旨`,
+      });
+      const caseDigestCandidates = await this.extractCaseDigests(input.fileName, judicialDocument, extractionMarkdown);
+      rawExtractedCount = caseDigestCandidates.length;
+      finalCandidates = caseDigestCandidates;
+      dedupedCount = 0;
+    } else if (qaDocument.matched) {
       this.db.clearExtractedChunks(document.id);
       await this.reportProgress(options, {
         step: "extract",
@@ -625,12 +660,16 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
       dedupedCount = rawExtractedCount - finalCandidates.length;
     }
 
-    if (finalCandidates.length > this.config.ingest.maxExtractQas) {
+    if (isExtractQaLimitEnabled(this.config.ingest.maxExtractQas) && finalCandidates.length > this.config.ingest.maxExtractQas) {
       finalCandidates = [...finalCandidates]
         .sort((left, right) => scoreExtractedCandidate(right) - scoreExtractedCandidate(left))
         .slice(0, this.config.ingest.maxExtractQas);
       warning = joinWarnings(warning, buildMaxExtractQasWarning(this.config.ingest.maxExtractQas));
     }
+
+    const beforeDedupKeyFilterCount = finalCandidates.length;
+    finalCandidates = this.filterExistingDedupKeyCandidates(finalCandidates);
+    dedupedCount += beforeDedupKeyFilterCount - finalCandidates.length;
 
     const totalExtracted = finalCandidates.length;
     this.db.updateDocumentStatus(document.id, totalExtracted > 0 ? "writing" : "extracted");
@@ -638,8 +677,8 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
       step: "extract",
       status: "completed",
       detail: totalExtracted > 0
-        ? `已提取 ${totalExtracted} 条问答（原始 ${rawExtractedCount} 条，去重合并 ${dedupedCount} 条）`
-        : "未提取到可入库问答",
+        ? `已提取 ${totalExtracted} 条知识（原始 ${rawExtractedCount} 条，去重合并 ${dedupedCount} 条）`
+        : "未提取到可入库知识",
     });
 
     const tagCounts = new Map<string, number>();
@@ -701,6 +740,12 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
           bitableRecordId,
           embedding,
           embeddingModel: this.embeddingClient.model,
+          entryType: item.entryType,
+          confidence: item.confidence,
+          reviewRequired: item.reviewRequired,
+          effectiveStatus: item.effectiveStatus,
+          dedupKey: item.dedupKey,
+          fieldsJson: item.fieldsJson,
         });
         writeCompleted += 1;
         for (const tag of item.tags) {
@@ -759,8 +804,8 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
       step: "write",
       status: "completed",
       detail: totalExtracted > 0
-        ? `已写入 ${writeCompleted} 条问答${obsidianPath ? "，已导出 Obsidian 笔记" : ""}`
-        : "没有可写入的问答",
+        ? `已写入 ${writeCompleted} 条知识${obsidianPath ? "，已导出 Obsidian 笔记" : ""}`
+        : "没有可写入的知识",
     });
 
     return {
@@ -948,6 +993,34 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     }
   }
 
+  /** 从司法文书中提取可检索的类案要旨。 */
+  private async extractCaseDigests(
+    fileName: string,
+    detection: Parameters<typeof buildCaseDigestPrompt>[0]["detection"],
+    sourceText: string,
+  ): Promise<CaseDigestCandidate[]> {
+    const session = await this.opencode.createSession("[bridge] knowledge-case-digest");
+    try {
+      const response = await this.opencode.postMessageSync(session.id, buildKnowledgePromptRequest(
+        [{
+          type: "text",
+          text: buildCaseDigestPrompt({
+            fileName,
+            detection,
+          }),
+        }],
+        resolveKnowledgeModel(this.config, "extract"),
+      ));
+      return normalizeCaseDigestItems({
+        rawItems: parseJsonArray(extractAssistantText(response)),
+        detection,
+        sourceText,
+      });
+    } finally {
+      await this.opencode.deleteSession(session.id).catch(() => undefined);
+    }
+  }
+
   /** 从单个文本分段中提取可入库的问答对。 */
   private async extractQa(fileName: string, pageSection: string, chunk: string, prevContext?: string | undefined): Promise<ExtractedQa[]> {
     const session = await this.opencode.createSession("[bridge] knowledge-extract");
@@ -1099,6 +1172,11 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     } finally {
       await this.opencode.deleteSession(session.id).catch(() => undefined);
     }
+  }
+
+  /** 已存在 dedupKey 的条目不再重复写入，保护同案同争议焦点不会堆出副本。 */
+  private filterExistingDedupKeyCandidates<T extends ExtractedQaCandidate>(candidates: T[]): T[] {
+    return candidates.filter((candidate) => !candidate.dedupKey || !this.db.findByDedupKey(candidate.dedupKey));
   }
 
   /** 用模型对候选检索结果做二次重排。 */
@@ -1460,6 +1538,10 @@ function shouldReportProgress(index: number, total: number): boolean {
   }
   const step = Math.max(1, Math.ceil(total / 5));
   return index === 0 || (index + 1) % step === 0;
+}
+
+function isExtractQaLimitEnabled(limit: number): boolean {
+  return limit > 0;
 }
 
 function validateUploadedFile(fileName: string, buffer: Buffer, allowedExtensions: string[], maxFileSizeMb: number): void {

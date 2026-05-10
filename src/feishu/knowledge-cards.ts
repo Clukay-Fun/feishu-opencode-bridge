@@ -61,7 +61,18 @@ export type KnowledgeIngestCompletedCardView = {
 /** 构建知识查询命中结果卡。 */
 export function buildKnowledgeQueryPayload(view: KnowledgeQueryResult): FeishuPostPayload {
   const results = view.results.slice(0, Math.max(1, view.results.length));
+  const answerResults = results.filter((result) => result.entryType !== "case_digest");
+  const caseResults = results.filter((result) => result.entryType === "case_digest");
   const tags = uniqueKnowledgeTags(results).slice(0, 2);
+  const bodyElements: Record<string, unknown>[] = [
+    questionBlock(view.question),
+    { tag: "hr", margin: "0px 0px 0px 0px" },
+    ...answerResults.flatMap((result, index) => answerBlock(result, index, index < answerResults.length - 1 || caseResults.length > 0)),
+  ];
+  if (caseResults.length > 0) {
+    bodyElements.push(sectionTitle("类案参考"));
+    bodyElements.push(...caseResults.flatMap((result, index) => caseDigestBlock(result, index, index < caseResults.length - 1)));
+  }
   const card = {
     schema: "2.0",
     config: {
@@ -82,11 +93,7 @@ export function buildKnowledgeQueryPayload(view: KnowledgeQueryResult): FeishuPo
       vertical_spacing: "8px",
       horizontal_align: "left",
       vertical_align: "top",
-      elements: [
-        questionBlock(view.question),
-        { tag: "hr", margin: "0px 0px 0px 0px" },
-        ...results.flatMap((result, index) => answerBlock(result, index, index < results.length - 1)),
-      ],
+      elements: bodyElements,
     },
     header: {
       title: {
@@ -102,10 +109,20 @@ export function buildKnowledgeQueryPayload(view: KnowledgeQueryResult): FeishuPo
           tag: "text_tag",
           text: {
             tag: "plain_text",
-            content: `${results.length} 条答案`,
+            content: `${answerResults.length} 条答案`,
           },
           color: "purple",
         },
+        ...(caseResults.length > 0
+          ? [{
+            tag: "text_tag",
+            text: {
+              tag: "plain_text",
+              content: `${caseResults.length} 条类案`,
+            },
+            color: "blue",
+          }]
+          : []),
         ...tags.map((tag) => ({
           tag: "text_tag",
           text: {
@@ -411,6 +428,58 @@ function answerBlock(result: KnowledgeQueryAnswer, index: number, withDivider: b
   ];
 }
 
+function caseDigestBlock(result: KnowledgeQueryAnswer, index: number, withDivider: boolean): Record<string, unknown>[] {
+  const meta = parseCaseDigestMeta(result.fieldsJson);
+  const title = [
+    meta.caseNumber,
+    meta.court,
+    meta.judgmentDate,
+  ].filter(Boolean).join(" · ") || result.sourceFile;
+  const sourceText = [result.sourceFile, result.pageSection].filter(Boolean).join(" · ") || "知识库记录";
+  const source = result.sourceUrl ? markdownLink(sourceText, result.sourceUrl) : sourceText;
+  const statutes = result.statute
+    ? result.statuteUrl ? markdownLink(result.statute, result.statuteUrl) : result.statute
+    : "未标注";
+  return [{
+    tag: "column_set",
+    flex_mode: "stretch",
+    horizontal_spacing: "12px",
+    horizontal_align: "left",
+    columns: [{
+      tag: "column",
+      width: "weighted",
+      elements: [
+        caseDigestLabel(index),
+        {
+          tag: "markdown",
+          content: [
+            `**${title}**`,
+            meta.issue ? `争议焦点：${meta.issue}` : "",
+            meta.rule ? `裁判规则：${meta.rule}` : formatAnswerParagraphs(result.answer),
+            meta.outcome ? `裁判结果：${meta.outcome}` : "",
+            "> 类案参考：仅供说理思路参考，非法律依据。",
+            `> 来源：${source}`,
+            `> 法条：${statutes}`,
+          ].filter(Boolean).join("\n\n"),
+          text_align: "left",
+          text_size: "normal_v2",
+          margin: "8px 0px 8px 0px",
+        },
+        ...(withDivider ? [{ tag: "hr", margin: "0px 0px 0px 0px" }] : []),
+      ],
+      padding: "0px 0px 0px 0px",
+      direction: "vertical",
+      horizontal_spacing: "8px",
+      vertical_spacing: "4px",
+      horizontal_align: "left",
+      vertical_align: "top",
+      margin: "0px 0px 0px 0px",
+      weight: 1,
+    }],
+    margin: "4px 0px 0px 0px",
+  }];
+}
+
 function answerLabel(index: number): Record<string, unknown> {
   return {
     tag: "column_set",
@@ -437,6 +506,60 @@ function answerLabel(index: number): Record<string, unknown> {
     }],
     margin: "0px 0px 0px 0px",
   };
+}
+
+function caseDigestLabel(index: number): Record<string, unknown> {
+  return {
+    tag: "column_set",
+    horizontal_spacing: "8px",
+    horizontal_align: "left",
+    columns: [{
+      tag: "column",
+      width: "auto",
+      background_style: "grey-50",
+      elements: [{
+        tag: "markdown",
+        content: `类案 ${index + 1}`,
+        text_align: "left",
+        text_size: "notation",
+        margin: "0px 0px 0px 0px",
+      }],
+      padding: "4px 8px 4px 8px",
+      direction: "vertical",
+      horizontal_spacing: "8px",
+      vertical_spacing: "8px",
+      horizontal_align: "left",
+      vertical_align: "top",
+      margin: "0px 0px 0px 0px",
+    }],
+    margin: "0px 0px 0px 0px",
+  };
+}
+
+function parseCaseDigestMeta(fieldsJson: string | undefined): {
+  caseNumber?: string | undefined;
+  court?: string | undefined;
+  judgmentDate?: string | undefined;
+  issue?: string | undefined;
+  rule?: string | undefined;
+  outcome?: string | undefined;
+} {
+  if (!fieldsJson) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(fieldsJson) as Record<string, unknown>;
+    return {
+      caseNumber: typeof parsed.caseNumber === "string" ? parsed.caseNumber : undefined,
+      court: typeof parsed.court === "string" ? parsed.court : undefined,
+      judgmentDate: typeof parsed.judgmentDate === "string" ? parsed.judgmentDate : undefined,
+      issue: typeof parsed.issue === "string" ? parsed.issue : undefined,
+      rule: typeof parsed.rule === "string" ? parsed.rule : undefined,
+      outcome: typeof parsed.outcome === "string" ? parsed.outcome : undefined,
+    };
+  } catch {
+    return {};
+  }
 }
 
 function formatKnowledgeReference(result: KnowledgeQueryAnswer): string {
