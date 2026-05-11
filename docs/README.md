@@ -4,8 +4,13 @@
 
 查阅时请优先使用现行文档。归档文件只用于补充背景，不应覆盖当前生效的架构基线或规范。
 
-`AGENTS.md` 是面向 coding agent 和其他仓库感知型助手的高优先级执行指南。
-它适合承载高频、强约束的操作规则，例如 runtime ownership、GitHub 交付约定、issue 写作规则、架构 guardrails，以及 framework freeze 之后的新功能自检摘要。
+`AGENTS.md` 是面向 coding agent 和其他仓库感知型助手的项目/运行时契约入口。
+它只承载 Bridge runtime ownership、Feishu 输出约束、架构 guardrails、skill runtime 产品行为和现行文档索引。
+
+`CODEX.md` 是 Codex 的开发执行准则。
+它承载本地命令、知识库 CLI fast path、issue/PR/release 流程、实现卫生、注释要求和检查清单。
+新增规则时，先判断它是产品/运行时契约还是开发执行习惯，避免再次把两类内容混进同一个文件。
+
 当你需要这些规则背后的长文解释、设计理由、模块背景或历史上下文时，再进入 `docs/` 查阅。
 
 ## 当前入口
@@ -47,9 +52,10 @@
 
 ## 与 AGENTS 的关系
 
-- `AGENTS.md`：面向 agent 的精简高频操作规则。
+- `AGENTS.md`：项目/运行时契约，不放 Codex 工作流细节。
+- `CODEX.md`：Codex 开发执行准则、issue/PR/release 流程、常用命令和检查清单。
 - `docs/architecture-baseline.md`：补充 `AGENTS.md` 中架构 guardrails 背后的完整契约。
-- `docs/guidelines/new-feature-checklist.md`：补充 `AGENTS.md` 中新功能规则的完整清单。
+- `docs/guidelines/new-feature-checklist.md`：补充新功能规则的完整清单。
 - `docs/modules/*`：模块背景和设计说明，细节程度高于 `AGENTS.md`。
 - `docs/archive/*`：历史资料，只提供背景，不覆盖当前规则。
 

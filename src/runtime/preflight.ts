@@ -30,7 +30,15 @@ export async function runStartupPreflight(
   });
 
   await runCheck("飞书鉴权", report, async () => {
-    await feishu.getTenantToken();
+    try {
+      await feishu.getTenantToken();
+    } catch (error) {
+      if (isTransientNetworkError(error)) {
+        report(`跳过 飞书鉴权：${formatErrorDetail(error)}。运行中会在连接和发送消息时重试。`);
+        return;
+      }
+      throw error;
+    }
   });
 
   await runCheck("OpenCode 健康检查", report, async () => {
@@ -76,6 +84,19 @@ async function runCheck(name: string, report: ReportFn, fn: () => Promise<void>)
     throw new Error(`启动检查失败：${name} · ${detail}`);
   }
   report(`已通过 ${name}`);
+}
+
+function isTransientNetworkError(error: unknown): boolean {
+  const detail = formatErrorDetail(error);
+  return /fetch failed|network|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|timeout|socket|TLS|certificate/i.test(detail);
+}
+
+function formatErrorDetail(error: unknown): string {
+  if (error instanceof Error) {
+    const cause = error.cause instanceof Error ? `: ${error.cause.message}` : "";
+    return `${error.message}${cause}`;
+  }
+  return String(error);
 }
 
 /** 检查目标目录当前是否具备可读写权限。 */

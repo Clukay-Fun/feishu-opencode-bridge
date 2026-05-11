@@ -36,6 +36,36 @@
 
 ## 事件名
 
+### `turn.checkpoint`
+
+在普通 turn 的关键阶段发出，用于拆分入站、模块判断、会话准备、OpenCode 请求和首帧延迟。
+
+必填字段：
+
+- `checkpoint`
+- `chatId`
+- `conversationKey`
+
+可选字段：
+
+- `turnId`
+- `sessionId`
+- `messageId`
+- `messageType`
+- `durationMs`
+- `claimed`
+- `eventType`
+- `replyLength`
+
+允许值：
+
+- `checkpoint`：`message_received`、`modules_finished`、`session_ready`、`prompt_async_accepted`、`first_opencode_event`、`first_text_delta`、`final_reply`
+
+触发点：
+
+- `BridgeApp` 收到消息、完成模块判断、准备好 session 时。
+- `TurnExecutor` 发送 OpenCode 请求、收到首个 OpenCode 事件、收到首个文本增量、收敛最终回复时。
+
 ### `turn.started`
 
 在排队中的 turn 开始执行时发出。
@@ -176,7 +206,7 @@
 
 允许值：
 
-- `hook`：`handleMessage`、`beforeTurn`、`afterTurn`、`stop`
+- `hook`：`handleMessage`、`claimFileInstruction`、`beforeTurn`、`afterTurn`、`handleCardAction`、`stop`
 - `result`：`claimed`、`ignored`、`completed`
 
 触发点：
