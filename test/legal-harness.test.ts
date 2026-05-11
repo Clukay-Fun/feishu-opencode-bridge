@@ -176,6 +176,7 @@ describe("legal harness helpers", () => {
       findings: [expect.objectContaining({ source: { type: null, ref: "demo" } })],
     }));
   });
+
 });
 
 function createLaborAnalyzeResult(): LaborAnalyzeResult {

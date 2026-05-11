@@ -44,7 +44,10 @@ export class CaseWorkbenchRuntimeModule implements RuntimeModule {
       if (routed.command.kind !== "passthrough" || routed.command.name.trim().toLowerCase() !== "案件工作台") {
         return { claimed: false };
       }
-      const title = routed.command.arguments.join(" ").trim() || undefined;
+      const title = routed.command.arguments
+        .filter((argument) => argument.trim() !== "新建" && argument.trim().toLowerCase() !== "new")
+        .join(" ")
+        .trim() || undefined;
       await this.startLaborFastPath(message, title);
       return { claimed: true };
     }

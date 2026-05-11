@@ -89,6 +89,7 @@ export type LaborFinalReviewCardView = {
   statusText: string;
   detail?: string | undefined;
   level: "info" | "warning" | "error" | "neutral";
+  steps?: ReadonlyArray<{ label: string; status: ReviewStepStatus }> | undefined;
   authorityStatus?: ReviewStepStatus | undefined;
   citationStatus?: ReviewStepStatus | undefined;
   modelReviewStatus?: ReviewStepStatus | undefined;
@@ -155,26 +156,16 @@ export function buildLaborReviewCompletedPayload(view: LaborReviewCompletedCardV
 
 export function buildLaborFinalReviewPayload(view: LaborFinalReviewCardView): FeishuPostPayload {
   if (view.level === "info") {
+    const steps = view.steps ?? [
+      { label: "整理审查材料", status: "completed" as const },
+      { label: "法条与案例溯源", status: view.authorityStatus ?? "running" },
+      { label: "二审模型审查", status: view.modelReviewStatus ?? "pending" },
+      { label: "汇总审查结论", status: "pending" as const },
+    ];
     return buildDesignerCardPayload("二次审查进行中", [
       { from: "张三违法解除劳动合同争议", to: view.title },
     ], (card) => {
-      applyReviewStepTemplateState(card, [
-        {
-          placeholder: "权威法规检索：已完成",
-          content: formatReviewStepLine("权威法规检索", view.authorityStatus ?? "running"),
-          status: view.authorityStatus ?? "running",
-        },
-        {
-          placeholder: "法条引用校验：进行中",
-          content: formatReviewStepLine("法条引用校验", view.citationStatus ?? "pending"),
-          status: view.citationStatus ?? "pending",
-        },
-        {
-          placeholder: "请求权基础校验：等待中",
-          content: formatReviewStepLine("二审模型审查", view.modelReviewStatus ?? "pending"),
-          status: view.modelReviewStatus ?? "pending",
-        },
-      ]);
+      applyReviewStepTemplateState(card, steps);
     });
   }
   return buildNoticeCardPayload({
@@ -560,11 +551,24 @@ function formatReviewStatusLabel(status: ReviewStepStatus): string {
 
 function applyReviewStepTemplateState(
   card: DesignerCard,
-  steps: ReadonlyArray<{ placeholder: string; content: string; status: ReviewStepStatus }>,
+  steps: ReadonlyArray<{ label: string; status: ReviewStepStatus }>,
 ): void {
-  steps.forEach((step) => {
-    updateDivByPlainText(card, step.placeholder, mapReviewStatus(step.status), step.content);
+  const placeholders = ["权威法规检索：已完成", "法条引用校验：进行中", "请求权基础校验：等待中"];
+  steps.slice(0, placeholders.length).forEach((step, index) => {
+    updateDivByPlainText(card, placeholders[index]!, mapReviewStatus(step.status), formatReviewStepLine(step.label, step.status));
   });
+  appendReviewExtraSteps(card, steps.slice(placeholders.length));
+}
+
+function appendReviewExtraSteps(card: DesignerCard, steps: ReadonlyArray<{ label: string; status: ReviewStepStatus }>): void {
+  if (steps.length === 0) {
+    return;
+  }
+  const target = findFirstColumnWithPlainText(card, "二审模型审查");
+  if (!target) {
+    return;
+  }
+  target.elements.push(...steps.map((step) => buildProgressStepDiv(formatReviewStepLine(step.label, step.status), mapReviewStatus(step.status))));
 }
 
 function mapReviewStatus(status: ReviewStepStatus): ToolUpdateView["status"] {
@@ -783,6 +787,45 @@ function findFirstColumnWithMarkdown(input: unknown, markdownContent: string): {
     }
   }
   return null;
+}
+
+function findFirstColumnWithPlainText(input: unknown, textContent: string): { elements: unknown[] } | null {
+  if (Array.isArray(input)) {
+    for (const item of input) {
+      const found = findFirstColumnWithPlainText(item, textContent);
+      if (found) {
+        return found;
+      }
+    }
+    return null;
+  }
+  if (!isRecord(input)) {
+    return null;
+  }
+  if (input.tag === "column" && Array.isArray(input.elements)
+    && input.elements.some((element) => containsPlainTextIncluding(element, textContent))) {
+    return { elements: input.elements };
+  }
+  for (const value of Object.values(input)) {
+    const found = findFirstColumnWithPlainText(value, textContent);
+    if (found) {
+      return found;
+    }
+  }
+  return null;
+}
+
+function containsPlainTextIncluding(input: unknown, textContent: string): boolean {
+  if (Array.isArray(input)) {
+    return input.some((item) => containsPlainTextIncluding(item, textContent));
+  }
+  if (!isRecord(input)) {
+    return false;
+  }
+  if (input.tag === "plain_text" && typeof input.content === "string" && input.content.includes(textContent)) {
+    return true;
+  }
+  return Object.values(input).some((value) => containsPlainTextIncluding(value, textContent));
 }
 
 function findElementParentByText(input: unknown, text: string): { parent: unknown[]; index: number } | null {
