@@ -68,12 +68,14 @@ export type EvidenceExtractRequest = {
   parseTextExtensions?: string[] | undefined;
   model?: OpenCodeModelRef | undefined;
   createSessionTitle?: string | undefined;
+  includeExtractedText?: boolean | undefined;
   buildPrompt(input: { fileName: string; localPath: string; extractedText?: string }): string;
 };
 
 export type PreparedEvidenceExtractRequest = {
   model?: OpenCodeModelRef | undefined;
   createSessionTitle?: string | undefined;
+  includeExtractedText?: boolean | undefined;
   buildPrompt(input: { fileName: string; localPath: string; extractedText?: string }): string;
 };
 
@@ -148,7 +150,7 @@ export class EvidenceExtractService {
     preparedFile: PreparedEvidenceFile,
     request: PreparedEvidenceExtractRequest,
   ): Promise<Record<string, unknown>> {
-    const promptInput = preparedFile.extractedText
+    const promptInput = request.includeExtractedText !== false && preparedFile.extractedText
       ? {
         fileName: preparedFile.fileName,
         localPath: preparedFile.localPath,
@@ -289,13 +291,29 @@ function isImageMimeType(mimeType: string | undefined): boolean {
 
 function extensionToMimeType(extension: string): string {
   switch (extension) {
+    case ".pdf":
+      return "application/pdf";
+    case ".docx":
+      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    case ".txt":
+      return "text/plain";
+    case ".md":
+      return "text/markdown";
+    case ".csv":
+      return "text/csv";
+    case ".xls":
+      return "application/vnd.ms-excel";
+    case ".xlsx":
+      return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    case ".png":
+      return "image/png";
     case ".jpg":
     case ".jpeg":
       return "image/jpeg";
     case ".webp":
       return "image/webp";
     default:
-      return "image/png";
+      return "application/octet-stream";
   }
 }
 
