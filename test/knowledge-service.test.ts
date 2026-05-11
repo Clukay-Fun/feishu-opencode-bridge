@@ -3,7 +3,7 @@
  * 关注点: 验证核心路径、边界条件和回归场景。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import PizZip from "pizzip";
@@ -1163,6 +1163,79 @@ describe("KnowledgeBaseService", () => {
     service.close();
   });
 
+  it("deletes exported Obsidian notes when their Bitable records are removed", async () => {
+    stubEmbeddingFetch();
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-obsidian-delete-"));
+    tempDirs.push(dir);
+    const filePath = join(dir, "劳动合同.txt");
+    writeFileSync(filePath, "试用期最长不超过六个月。劳动合同期限不满三个月的，不得约定试用期。", "utf8");
+    const obsidianVault = join(dir, "vault");
+    const createdRecordIds: string[] = [];
+    let remoteRecords: Array<{ recordId: string; fields: Record<string, unknown> }> = [];
+    const service = new KnowledgeBaseService(
+      {
+        enabled: true,
+        autoDetect: { enabled: true, minConfidence: 0.75 },
+        query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
+        storage: {
+          sqlitePath: join(dir, "knowledge.db"),
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+            documentTableId: "tbl_docs",
+          },
+        },
+        embeddingProvider: {
+          baseUrl: new URL("https://example.com/v1/"),
+          apiKey: "token",
+          model: "text-embedding",
+        },
+        models: {},
+        ingest: {
+          allowedExtensions: [".txt"],
+          maxFileSizeMb: 20,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+        },
+        obsidian: {
+          enabled: true,
+          vaultPath: obsidianVault,
+          baseDir: "knowledge",
+          enableWikiLinks: true,
+        },
+      },
+      {
+        async downloadMessageResource() {
+          throw new Error("not used");
+        },
+        async createBitableRecord(_appToken, tableId, fields) {
+          const recordId = `${tableId}_${createdRecordIds.length + 1}`;
+          createdRecordIds.push(recordId);
+          remoteRecords.push({ recordId, fields });
+          return recordId;
+        },
+        async listBitableRecords() {
+          return remoteRecords;
+        },
+      },
+      createOpenCodeStub(),
+      logger(),
+    );
+
+    await service.ingestLocalFile?.(filePath);
+    const document = await service.getDocument?.(1);
+    expect(document?.obsidianPath).toBeTruthy();
+    expect(existsSync(document!.obsidianPath!)).toBe(true);
+
+    remoteRecords = [];
+    await service.syncMirror();
+
+    expect(existsSync(document!.obsidianPath!)).toBe(false);
+    const stats = await service.getStats?.();
+    expect(stats?.documentCount).toBe(0);
+    expect(stats?.entryCount).toBe(0);
+    service.close();
+  });
+
   it("deduplicates equivalent query answers from the same source", async () => {
     stubEmbeddingFetch();
     const dir = mkdtempSync(join(tmpdir(), "knowledge-"));
@@ -1888,6 +1961,80 @@ describe("KnowledgeBaseService", () => {
 
     expect(result.extractedCount).toBe(3);
     expect(result.warning).toContain("已按质量评分保留前 3 条问答");
+    service.close();
+  });
+
+  it("treats maxExtractQas=0 as unlimited full ingest", async () => {
+    stubEmbeddingFetchSequence();
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-unlimited-"));
+    tempDirs.push(dir);
+    const service = new KnowledgeBaseService(
+      {
+        enabled: true,
+        autoDetect: { enabled: false, minConfidence: 0.75 },
+        query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
+        storage: {
+          sqlitePath: join(dir, "knowledge.db"),
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+            documentTableId: "tbl_docs",
+          },
+        },
+        embeddingProvider: {
+          baseUrl: new URL("https://example.com/v1/"),
+          apiKey: "token",
+          model: "text-embedding",
+        },
+        models: {},
+        ingest: {
+          allowedExtensions: [".txt"],
+          maxFileSizeMb: 20,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 0,
+        },
+      },
+      {
+        async downloadMessageResource() {
+          return {
+            fileName: "faq.txt",
+            mimeType: "text/plain",
+            buffer: Buffer.from([
+              "问：试用期最长多久？",
+              "答：最长不超过六个月。",
+              "",
+              "问：试用期工资可以低于最低工资吗？",
+              "答：不得低于本单位相同岗位最低档工资或者劳动合同约定工资的百分之八十，也不得低于最低工资标准。",
+              "",
+              "问：医疗期内能解除劳动合同吗？",
+              "答：一般不得解除。",
+              "",
+              "问：公司不续签要补偿吗？",
+              "答：符合条件的，应支付经济补偿。",
+              "",
+              "问：试用期可以随意辞退吗？",
+              "答：不可以，仍需符合法定条件。",
+            ].join("\n"), "utf8"),
+          };
+        },
+        async createBitableRecord(_appToken, tableId) {
+          return `${tableId}_${Date.now()}`;
+        },
+        async listBitableRecords() {
+          return [];
+        },
+      },
+      createOpenCodeStub(),
+      logger(),
+    );
+
+    const result = await service.ingestFile({
+      messageId: "om_file_unlimited",
+      fileKey: "file_unlimited",
+      fileName: "faq.txt",
+    });
+
+    expect(result.extractedCount).toBe(5);
+    expect(result.warning ?? "").not.toContain("已按质量评分保留前");
     service.close();
   });
 

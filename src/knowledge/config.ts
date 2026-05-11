@@ -64,7 +64,14 @@ const KnowledgeBaseIngestSchema = z.object({
   sessionIdleMs: z.number().int().positive().default(1_800_000),
   concurrency: z.number().int().positive().max(10).default(3),
   maxExtractChunks: z.number().int().positive().default(30),
-  maxExtractQas: z.number().int().positive().default(500),
+  maxExtractQas: z.number().int().min(0).default(500),
+}).default({});
+
+const KnowledgeBaseJudicialIngestSchema = z.object({
+  enabled: z.boolean().default(true),
+  batchEnabled: z.boolean().default(false),
+  sources: z.array(z.enum(["manual", "pkulaw", "court-publication"])).default(["manual"]),
+  batchSize: z.number().int().positive().default(20),
 }).default({});
 
 const DocumentParserProviderSchema = z.enum(["mineru-agent", "paddleocr-vl", "paddleocr-vl-aistudio", "pymupdf4llm", "docling", "pdf-parse", "tesseract"]);
@@ -173,6 +180,7 @@ const KnowledgeBaseConfigSchema = z.object({
   embeddingProvider: EmbeddingProviderSchema.optional(),
   models: KnowledgeBaseModelsSchema,
   ingest: KnowledgeBaseIngestSchema,
+  judicialIngest: KnowledgeBaseJudicialIngestSchema,
   parser: KnowledgeBaseParserSchema,
   obsidian: KnowledgeBaseObsidianSchema,
   authoritySources: KnowledgeBaseAuthoritySourcesSchema,
@@ -238,6 +246,12 @@ export type KnowledgeBaseConfig = {
     maxExtractChunks: number;
     maxExtractQas: number;
   };
+  judicialIngest?: {
+    enabled: boolean;
+    batchEnabled: boolean;
+    sources: Array<"manual" | "pkulaw" | "court-publication">;
+    batchSize: number;
+  } | undefined;
   parser?: {
     externalApiEnabled: boolean;
     pdfProviderOrder: Array<"mineru-agent" | "paddleocr-vl" | "paddleocr-vl-aistudio" | "pymupdf4llm" | "docling" | "pdf-parse" | "tesseract">;
@@ -416,6 +430,12 @@ function normalizeKnowledgeBaseConfig(
       concurrency: parsed.ingest.concurrency,
       maxExtractChunks: parsed.ingest.maxExtractChunks,
       maxExtractQas: parsed.ingest.maxExtractQas,
+    },
+    judicialIngest: {
+      enabled: parsed.judicialIngest.enabled,
+      batchEnabled: parsed.judicialIngest.batchEnabled,
+      sources: parsed.judicialIngest.sources,
+      batchSize: parsed.judicialIngest.batchSize,
     },
     parser: {
       externalApiEnabled: parsed.parser.externalApiEnabled,

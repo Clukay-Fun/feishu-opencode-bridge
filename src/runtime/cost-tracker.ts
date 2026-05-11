@@ -85,7 +85,7 @@ export class CostTracker {
       return null;
     }
 
-    const model = resolveModelLabel(input.model);
+    const model = resolveModelLabel(input.model, input.assistantMessage);
     const usage = extractUsage(input.assistantMessage) ?? estimateUsage(input.promptText, input.replyText);
     const price = this.resolvedConfig.modelPrices[`${model.provider}/${model.model}`];
     const estimatedCostCny = price
@@ -242,10 +242,39 @@ function summarizeEntries(entries: UsageLedgerEntry[]): CostWindowSummary {
   };
 }
 
-function resolveModelLabel(model: OpenCodeModelRef | Record<string, unknown> | undefined): { provider: string; model: string } {
-  const provider = typeof model?.providerID === "string" && model.providerID.trim() ? model.providerID.trim() : "opencode-default";
-  const modelId = typeof model?.modelID === "string" && model.modelID.trim() ? model.modelID.trim() : "default";
+function resolveModelLabel(
+  model: OpenCodeModelRef | Record<string, unknown> | undefined,
+  assistantMessage?: OpenCodeMessage | null | undefined,
+): { provider: string; model: string } {
+  const messageModel = extractModelLabel(assistantMessage);
+  const provider = typeof model?.providerID === "string" && model.providerID.trim()
+    ? model.providerID.trim()
+    : messageModel?.provider ?? "opencode-default";
+  const modelId = typeof model?.modelID === "string" && model.modelID.trim()
+    ? model.modelID.trim()
+    : messageModel?.model ?? "default";
   return { provider, model: modelId };
+}
+
+function extractModelLabel(message: OpenCodeMessage | null | undefined): { provider?: string; model?: string } | null {
+  if (!message) {
+    return null;
+  }
+  const candidates = [
+    message.info,
+    message.info.model,
+    message.info.provider,
+    ...message.parts,
+    ...message.parts.map((part) => part.model),
+  ].filter(isRecord);
+  for (const candidate of candidates) {
+    const provider = readString(candidate, ["providerID", "providerId", "provider_id", "provider"]);
+    const model = readString(candidate, ["modelID", "modelId", "model_id", "model"]);
+    if (provider || model) {
+      return { ...(provider ? { provider } : {}), ...(model ? { model } : {}) };
+    }
+  }
+  return null;
 }
 
 function estimateUsage(promptText: string, replyText: string): {
@@ -306,6 +335,16 @@ function readNumber(record: Record<string, unknown>, keys: string[]): number | u
     const value = record[key];
     if (typeof value === "number" && Number.isFinite(value)) {
       return Math.max(0, Math.round(value));
+    }
+  }
+  return undefined;
+}
+
+function readString(record: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
     }
   }
   return undefined;

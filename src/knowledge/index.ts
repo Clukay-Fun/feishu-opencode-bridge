@@ -6,7 +6,7 @@
  * - 作为运行时模块与存储层之间的业务接口。
  */
 import crypto from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 
 import { expandArchiveMaterialEntries, isArchiveFileName } from "../document-pipeline/archive.js";
@@ -20,10 +20,17 @@ import {
   parseKnowledgeFile,
   type KnowledgeParserUsed,
 } from "./parser.js";
+import {
+  buildCaseDigestPrompt,
+  detectJudicialDocument,
+  normalizeCaseDigestItems,
+  type CaseDigestCandidate,
+} from "./extractors/case-digest.js";
 import type { KnowledgeBaseConfig } from "./config.js";
-import { exportKnowledgeObsidianNote } from "./obsidian-export.js";
+import { exportKnowledgeObsidianNote, resolveKnowledgeObsidianNotePath } from "./obsidian-export.js";
 import {
   KnowledgeDb,
+  type KnowledgeDocumentRecord,
   type KnowledgeDocumentSummary,
   type KnowledgeEntryCandidate,
   type KnowledgeEntryRecord,
@@ -146,6 +153,12 @@ type ExtractedQa = {
 type ExtractedQaCandidate = ExtractedQa & {
   pageSection: string;
   embedding?: number[] | undefined;
+  entryType?: "article" | "case_digest" | "practice_note" | "case_reflow" | undefined;
+  confidence?: number | undefined;
+  reviewRequired?: boolean | undefined;
+  effectiveStatus?: "current" | "unknown" | "expired" | undefined;
+  dedupKey?: string | undefined;
+  fieldsJson?: string | undefined;
 };
 
 type ChunkExtractionState = {
@@ -332,6 +345,12 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
       ? chapterGrouping.chapters.filter((chapter) => !chapter.skipped).flatMap((chapter) => chapter.sections)
       : parsedDocument.sections;
     const extractionMarkdown = extractionSections.map((section) => section.text).join("\n\n");
+    const judicialDocument = this.config.judicialIngest?.enabled !== false
+      ? detectJudicialDocument(extractionMarkdown || parsedDocument.normalizedMarkdown, extractionSections)
+      : { matched: false as const, sections: {} };
+    if (!judicialDocument.matched && judicialDocument.reason === "sensitive-material") {
+      throw new Error("司法文书包含未脱敏敏感信息，已停止自动入库");
+    }
     const qaDocument = detectStructuredQaDocument(extractionMarkdown, extractionSections);
     let rawExtractedCount = 0;
     let dedupedCount = 0;
@@ -397,7 +416,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     }
 
     const maxQas = options?.maxQas ?? this.config.ingest.maxExtractQas;
-    if (finalCandidates.length > maxQas) {
+    if (isExtractQaLimitEnabled(maxQas) && finalCandidates.length > maxQas) {
       finalCandidates = [...finalCandidates]
         .sort((left, right) => scoreExtractedCandidate(right) - scoreExtractedCandidate(left))
         .slice(0, maxQas);
@@ -507,6 +526,12 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
       ? chapterGrouping.chapters.filter((chapter) => !chapter.skipped).flatMap((chapter) => chapter.sections)
       : parsedDocument.sections;
     const extractionMarkdown = extractionSections.map((section) => section.text).join("\n\n");
+    const judicialDocument = this.config.judicialIngest?.enabled !== false
+      ? detectJudicialDocument(extractionMarkdown || parsedDocument.normalizedMarkdown, extractionSections)
+      : { matched: false as const, sections: {} };
+    if (!judicialDocument.matched && judicialDocument.reason === "sensitive-material") {
+      throw new Error("司法文书包含未脱敏敏感信息，已停止自动入库");
+    }
     const qaDocument = detectStructuredQaDocument(extractionMarkdown, extractionSections);
     const concurrency = this.config.ingest.concurrency;
     let rawExtractedCount = 0;
@@ -516,7 +541,18 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
       chapterGrouping.skippedTitles.length > 0 ? buildSkippedChaptersWarning(chapterGrouping.skippedTitles) : undefined,
     );
 
-    if (qaDocument.matched) {
+    if (judicialDocument.matched) {
+      this.db.clearExtractedChunks(document.id);
+      await this.reportProgress(options, {
+        step: "extract",
+        status: "running",
+        detail: `已识别司法文书（${judicialDocument.caseNumber}），正在提取类案要旨`,
+      });
+      const caseDigestCandidates = await this.extractCaseDigests(input.fileName, judicialDocument, extractionMarkdown);
+      rawExtractedCount = caseDigestCandidates.length;
+      finalCandidates = caseDigestCandidates;
+      dedupedCount = 0;
+    } else if (qaDocument.matched) {
       this.db.clearExtractedChunks(document.id);
       await this.reportProgress(options, {
         step: "extract",
@@ -625,12 +661,16 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
       dedupedCount = rawExtractedCount - finalCandidates.length;
     }
 
-    if (finalCandidates.length > this.config.ingest.maxExtractQas) {
+    if (isExtractQaLimitEnabled(this.config.ingest.maxExtractQas) && finalCandidates.length > this.config.ingest.maxExtractQas) {
       finalCandidates = [...finalCandidates]
         .sort((left, right) => scoreExtractedCandidate(right) - scoreExtractedCandidate(left))
         .slice(0, this.config.ingest.maxExtractQas);
       warning = joinWarnings(warning, buildMaxExtractQasWarning(this.config.ingest.maxExtractQas));
     }
+
+    const beforeDedupKeyFilterCount = finalCandidates.length;
+    finalCandidates = this.filterExistingDedupKeyCandidates(finalCandidates);
+    dedupedCount += beforeDedupKeyFilterCount - finalCandidates.length;
 
     const totalExtracted = finalCandidates.length;
     this.db.updateDocumentStatus(document.id, totalExtracted > 0 ? "writing" : "extracted");
@@ -638,8 +678,8 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
       step: "extract",
       status: "completed",
       detail: totalExtracted > 0
-        ? `已提取 ${totalExtracted} 条问答（原始 ${rawExtractedCount} 条，去重合并 ${dedupedCount} 条）`
-        : "未提取到可入库问答",
+        ? `已提取 ${totalExtracted} 条知识（原始 ${rawExtractedCount} 条，去重合并 ${dedupedCount} 条）`
+        : "未提取到可入库知识",
     });
 
     const tagCounts = new Map<string, number>();
@@ -701,6 +741,12 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
           bitableRecordId,
           embedding,
           embeddingModel: this.embeddingClient.model,
+          entryType: item.entryType,
+          confidence: item.confidence,
+          reviewRequired: item.reviewRequired,
+          effectiveStatus: item.effectiveStatus,
+          dedupKey: item.dedupKey,
+          fieldsJson: item.fieldsJson,
         });
         writeCompleted += 1;
         for (const tag of item.tags) {
@@ -755,12 +801,15 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
       }, "warn");
       return null;
     });
+    if (obsidianPath) {
+      this.db.updateDocumentObsidianPath(document.id, obsidianPath);
+    }
     await this.reportProgress(options, {
       step: "write",
       status: "completed",
       detail: totalExtracted > 0
-        ? `已写入 ${writeCompleted} 条问答${obsidianPath ? "，已导出 Obsidian 笔记" : ""}`
-        : "没有可写入的问答",
+        ? `已写入 ${writeCompleted} 条知识${obsidianPath ? "，已导出 Obsidian 笔记" : ""}`
+        : "没有可写入的知识",
     });
 
     return {
@@ -901,7 +950,11 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     }
     const removedRecordIds = [...localRecordIds].filter((recordId) => !remoteRecordIds.has(recordId));
     if (removedRecordIds.length > 0) {
+      const affectedDocuments = this.db.listDocumentsByEntryBitableRecordIds(removedRecordIds);
       this.db.deleteEntriesByBitableRecordIds(removedRecordIds);
+      const orphanDocuments = this.db.listOrphanDocumentsByIds(affectedDocuments.map((document) => document.id));
+      await this.deleteObsidianNotesForDocuments(orphanDocuments);
+      this.db.deleteOrphanDocumentsByIds(orphanDocuments.map((document) => document.id));
       this.db.deleteOrphanSyncedDocuments();
     }
   }
@@ -909,6 +962,37 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
   /** 关闭知识库数据库连接。 */
   close(): void {
     this.db.close();
+  }
+
+  /** 删除由知识库自动导出的 Obsidian 笔记；只删除可由本地文档元数据反查的系统笔记。 */
+  private async deleteObsidianNotesForDocuments(documents: KnowledgeDocumentRecord[]): Promise<void> {
+    const config = this.config.obsidian;
+    if (!config?.enabled || !config.vaultPath) {
+      return;
+    }
+    const notePaths = new Set<string>();
+    for (const document of documents) {
+      notePaths.add(document.obsidianPath ?? resolveKnowledgeObsidianNotePath(config, {
+        fileName: document.fileName,
+        checksum: document.checksum,
+        sqliteDocumentId: document.id,
+      }));
+    }
+    for (const notePath of notePaths) {
+      if (!isPathInsideDirectory(notePath, path.join(config.vaultPath, config.baseDir))) {
+        this.logger.log("knowledge", "skip obsidian note delete outside knowledge dir", { notePath }, "warn");
+        continue;
+      }
+      await unlink(notePath).catch((error: unknown) => {
+        if (isNodeError(error) && error.code === "ENOENT") {
+          return;
+        }
+        this.logger.log("knowledge", "obsidian note delete failed", {
+          notePath,
+          detail: error instanceof Error ? error.message : String(error),
+        }, "warn");
+      });
+    }
   }
 
   // #endregion
@@ -943,6 +1027,34 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
         throw new Error(`OpenCode 未能读取网页：${markdown}`);
       }
       return markdown;
+    } finally {
+      await this.opencode.deleteSession(session.id).catch(() => undefined);
+    }
+  }
+
+  /** 从司法文书中提取可检索的类案要旨。 */
+  private async extractCaseDigests(
+    fileName: string,
+    detection: Parameters<typeof buildCaseDigestPrompt>[0]["detection"],
+    sourceText: string,
+  ): Promise<CaseDigestCandidate[]> {
+    const session = await this.opencode.createSession("[bridge] knowledge-case-digest");
+    try {
+      const response = await this.opencode.postMessageSync(session.id, buildKnowledgePromptRequest(
+        [{
+          type: "text",
+          text: buildCaseDigestPrompt({
+            fileName,
+            detection,
+          }),
+        }],
+        resolveKnowledgeModel(this.config, "extract"),
+      ));
+      return normalizeCaseDigestItems({
+        rawItems: parseJsonArray(extractAssistantText(response)),
+        detection,
+        sourceText,
+      });
     } finally {
       await this.opencode.deleteSession(session.id).catch(() => undefined);
     }
@@ -1099,6 +1211,11 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     } finally {
       await this.opencode.deleteSession(session.id).catch(() => undefined);
     }
+  }
+
+  /** 已存在 dedupKey 的条目不再重复写入，保护同案同争议焦点不会堆出副本。 */
+  private filterExistingDedupKeyCandidates<T extends ExtractedQaCandidate>(candidates: T[]): T[] {
+    return candidates.filter((candidate) => !candidate.dedupKey || !this.db.findByDedupKey(candidate.dedupKey));
   }
 
   /** 用模型对候选检索结果做二次重排。 */
@@ -1462,6 +1579,10 @@ function shouldReportProgress(index: number, total: number): boolean {
   return index === 0 || (index + 1) % step === 0;
 }
 
+function isExtractQaLimitEnabled(limit: number): boolean {
+  return limit > 0;
+}
+
 function validateUploadedFile(fileName: string, buffer: Buffer, allowedExtensions: string[], maxFileSizeMb: number): void {
   const extension = fileName.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? "";
   if (!allowedExtensions.includes(extension)) {
@@ -1471,6 +1592,15 @@ function validateUploadedFile(fileName: string, buffer: Buffer, allowedExtension
   if (sizeMb > maxFileSizeMb) {
     throw new Error(`文件过大，请控制在 ${maxFileSizeMb}MB 以内`);
   }
+}
+
+function isPathInsideDirectory(filePath: string, directory: string): boolean {
+  const relative = path.relative(path.resolve(directory), path.resolve(filePath));
+  return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }
 
 function resolveDownloadedKnowledgeFileName(downloadedFileName: string, messageFileName: string): string {

@@ -173,6 +173,14 @@
       "extract": "minimax-cn-coding-plan/MiniMax-M2.7",
       "rerank": "minimax-cn-coding-plan/MiniMax-M2.7"
     },
+    "judicialIngest": {
+      "enabled": true,
+      "batchEnabled": false,
+      "sources": [
+        "manual"
+      ],
+      "batchSize": 20
+    },
     "obsidian": {
       "enabled": false,
       "baseDir": "Legal Knowledge",

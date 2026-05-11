@@ -34,6 +34,39 @@ describe("detectLegalQuestion", () => {
     expect(result.matched).toBe(false);
     expect(result.confidence).toBeLessThan(0.5);
   });
+
+  it("does not treat demo scripts with embedded legal examples as real questions", () => {
+    const result = detectLegalQuestion(`# 演示视频脚本·最终版
+**全程语音输入，不动手敲 | 时长：约 4 分钟**
+
+---
+
+## 第一幕：普通聊天（0:00 - 0:40）
+
+🎙 语音：
+> "你好，我是一名法务专员，今天有几件事情要处理"
+
+🎙 语音：
+> "劳动合同里的竞业限制条款，最长可以约定几年"
+
+AI 回复，普通问答卡片呈现，内容简洁。
+
+---
+
+## 第四幕：法律问答（1:35 - 2:10）
+
+🎙 语音：
+> "/法律问答 员工被口头辞退没有书面通知，算违法吗"
+
+AI 回复，卡片展示召回的法条来源。`);
+    expect(result.matched).toBe(false);
+    expect(result.reasons).toContain("meta-document");
+  });
+
+  it("keeps explicit legal question command text detectable outside script context", () => {
+    const result = detectLegalQuestion("法律问答 员工被口头辞退没有书面通知，算违法吗");
+    expect(result.matched).toBe(true);
+  });
 });
 
 describe("detectKnowledgeWebIngest", () => {

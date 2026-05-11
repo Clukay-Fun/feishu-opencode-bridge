@@ -40,11 +40,17 @@ export async function exportKnowledgeObsidianNote(
     return null;
   }
 
-  const baseDir = path.join(config.vaultPath, config.baseDir);
-  await mkdir(baseDir, { recursive: true });
-  const notePath = path.join(baseDir, `${buildNoteFileStem(input)}.md`);
+  const notePath = resolveKnowledgeObsidianNotePath(config, input);
+  await mkdir(path.dirname(notePath), { recursive: true });
   await writeFile(notePath, buildKnowledgeObsidianMarkdown(config, input), "utf8");
   return notePath;
+}
+
+export function resolveKnowledgeObsidianNotePath(
+  config: Pick<KnowledgeObsidianConfig, "vaultPath" | "baseDir">,
+  input: Pick<KnowledgeObsidianExportInput, "fileName" | "checksum" | "sqliteDocumentId">,
+): string {
+  return path.join(config.vaultPath ?? "", config.baseDir, `${buildNoteFileStem(input)}.md`);
 }
 
 export function buildKnowledgeObsidianMarkdown(

@@ -93,6 +93,23 @@ type CaseDigestEntry = {
 - **caseNumber 是去重 key**：同一争议在同一案号下只能有一条
 - **statutes.valid 字段**：与现行法条对照后标注，便于检索时降权过期判决
 
+### 3.1 V1 落库映射
+
+V1 不新增独立 case 表，复用现有 `knowledge_entries`：
+
+| case_digest 字段 | knowledge_entries 映射 |
+|---|---|
+| `type` | `entry_type = "case_digest"` |
+| `issue` | `question` |
+| `rule + outcome + reasoning` | `answer` |
+| `cause + issue tags` | `tags_json` |
+| `statutes[]` | `statute` 合并文本 |
+| `caseNumber + issueHash` | `dedup_key = case_digest:{caseNumber}:{issueHash}` |
+| 司法文书专属字段 | `fields_json` |
+| 原文件名 / 飞书来源 | `source_file`，不得替换成案号 |
+
+写入前先查 `dedup_key`；命中则跳过，避免同案同争议焦点重复堆积。
+
 ---
 
 ## 4. 提取管线（6 步）
@@ -111,6 +128,18 @@ type CaseDigestEntry = {
 [校验通过的条目]
   ↓ ⑥ 入库（embedding + bitable + sqlite）
 ```
+
+实际接入顺序：
+
+```
+parseKnowledgeFile()
+  ↓
+detectJudicialDocument()
+  ├─ 命中：case_digest extractor
+  └─ 未命中：现有结构化 QA / 通用 extractQa 流程
+```
+
+司法文书 detector 必须在通用 QA 抽取前执行，否则判决书仍会被当成说明性材料而抽取 0 条。
 
 ### 4.1 步骤 ② 结构化分段
 
@@ -191,11 +220,12 @@ type CaseDigestEntry = {
 
 - `case_digest` 与 `article` 共用同一张 KB 表，通过 `type` 字段区分
 - embedding 用 `issue + rule + reasoning 前 100 字` 拼接（避免长文本稀释向量）
-- bitable 同步：在多维表格的「源文件」字段填 `caseNumber`，便于人工核查
+- bitable 同步：多维表格「源文件」字段继续保留真实文件名或来源链接，案号写入 `fields_json.caseNumber`
 
 ### 5.2 检索
 
 - 默认情况下 `case_digest` 与 `article` 一起返回，但**视觉上必须区隔**
+- 法律问答卡片中，普通知识 / 法条结果进入“答案”区；`case_digest` 进入“类案参考”区，不作为同级法律依据
 - 案件工作台分析时，按争议焦点**主动检索类案**：
   ```
   for each issue in 争议焦点:
@@ -217,6 +247,8 @@ type CaseDigestEntry = {
 | `statutes[].valid` | 任一为 false | 标注「⚠️ 引用法条已修订」+ 附现行版本对照 |
 | `consensusLevel` | low | 标注「裁判口径不一」+ 附其他法院相反观点示例 |
 | `weight` | reference | 排序降权 |
+
+V1 沿用现有 `effective_status` 字段，取值先使用 `current / unknown / expired`。自动识别一案多审级改判不在 V1 范围内，无法确认时统一写 `unknown`。
 
 ### 6.2 一案多审级关联
 
@@ -273,7 +305,16 @@ P0 提取管线上线前必须达到：
 - **复用** `src/knowledge/` 的 ingest 管线、embedding、bitable 同步——不改框架
 - **新增** `src/knowledge/extractors/case-digest.ts`：判决书专用抽取器
 - **复用** 已接入的 pkulaw（`config.extensions.knowledge-base.authoritySources.pkulaw`）做法条有效性校验和 R3 数据来源
-- **配置位**：`config.extensions.knowledge-base.judicialIngest.{enabled, sources, batchSize}`，默认关闭
+- **配置位**：配置可写在 `extensions["knowledge-base"].judicialIngest`，运行时归一化为 `knowledgeBase.judicialIngest`
+- **默认行为**：手动知识入库遇到明确司法文书会自动走 detector；批量外部来源入库默认关闭
+
+### 10.1 V1 非目标
+
+- 不做裁判文书网爬虫
+- 不做 pkulaw 批量抓取
+- 不做一案多审级自动关联
+- 不做类案采纳率统计
+- 不做案件工作台主动类案 UI 改造
 
 ---
 
