@@ -388,6 +388,51 @@ describe("group chat support", () => {
     });
   });
 
+  it("preserves markdown-like post input from rich text nodes", () => {
+    const content = {
+      zh_cn: {
+        title: "",
+        content: [
+          [{ tag: "text", text: "# 案件说明" }],
+          [{ tag: "text", text: "- 诉求：违法解除赔偿金" }],
+          [{
+            tag: "code_block",
+            content: [
+              [{ tag: "text", text: "```md" }],
+              [{ tag: "text", text: "| 项目 | 金额 |" }],
+              [{ tag: "text", text: "| --- | --- |" }],
+              [{ tag: "text", text: "```" }],
+            ],
+          }],
+        ],
+      },
+    };
+
+    const normalized = normalizeIncomingMessage({
+      message: {
+        chat_id: "oc_p2p_md",
+        chat_type: "p2p",
+        message_id: "om_md",
+        message_type: "post",
+        content: JSON.stringify(content),
+      },
+      sender: {
+        sender_id: {
+          open_id: "ou_123",
+        },
+      },
+    }, makeOptions());
+
+    expect(normalized?.plainText).toBe([
+      "# 案件说明",
+      "- 诉求：违法解除赔偿金",
+      "```md",
+      "| 项目 | 金额 |",
+      "| --- | --- |",
+      "```",
+    ].join("\n"));
+  });
+
   it("separates p2p mainline and thread windows while keeping prompts unchanged", () => {
     const normalized = normalizeIncomingMessage({
       message: {

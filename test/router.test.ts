@@ -42,6 +42,20 @@ describe("routeIncomingText", () => {
     });
   });
 
+  it("does not route multiline markdown text that contains slash-like content as a command", () => {
+    const text = [
+      "/文本不是指令",
+      "",
+      "这是用户粘贴的 Markdown 正文。",
+      "- 路径：/Users/example/demo.md",
+    ].join("\n");
+
+    expect(routeIncomingText(text)).toEqual({
+      kind: "message",
+      text,
+    });
+  });
+
   it("routes /sessions <index> without accepting bare numbers", () => {
     expect(routeIncomingText("/sessions 3")).toEqual({
       kind: "command",

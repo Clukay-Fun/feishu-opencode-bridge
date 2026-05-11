@@ -33,6 +33,22 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" ? value as Record<string, unknown> : null;
 }
 
+/** 将飞书可能传回的对象或 JSON 字符串统一成普通对象。 */
+function parseRecordLike(value: unknown): Record<string, unknown> | null {
+  const record = asRecord(value);
+  if (record) {
+    return record;
+  }
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+  try {
+    return asRecord(JSON.parse(value));
+  } catch {
+    return null;
+  }
+}
+
 /** 沿嵌套路径读取字符串字段。 */
 function readNestedString(value: unknown, ...path: string[]): string {
   let current: unknown = value;
@@ -81,7 +97,7 @@ export function normalizeCardActionCallback(event: unknown): NormalizedCardActio
 /** 优先读取标准 action.value；缺失时只查找权限按钮 value。 */
 function extractActionValue(event: unknown): Record<string, unknown> {
   const direct = asRecord(asRecord(event)?.action)?.value;
-  const directRecord = asRecord(direct);
+  const directRecord = parseRecordLike(direct);
   if (directRecord) {
     return directRecord;
   }
@@ -103,7 +119,7 @@ function findPermissionActionValue(value: unknown, depth: number): Record<string
     return null;
   }
 
-  const record = asRecord(value);
+  const record = parseRecordLike(value);
   if (!record) {
     return null;
   }
