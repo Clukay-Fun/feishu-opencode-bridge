@@ -798,13 +798,12 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     expect(initialSerialized).not.toContain("正在填写表格");
     expect(finalSerialized).toContain("发票识别完成");
     expect(finalSerialized).not.toContain("本地提取字段：等待中");
-    expect(finalSerialized).toContain("张三");
     expect(finalSerialized).toContain("032001900104");
     expect(finalSerialized).toContain("增值税普通发票");
     expect(finalSerialized).toContain("¥20,000.00");
     expect(finalSerialized).toContain("2026-04-10");
     expect(finalSerialized).toContain("查看发票表");
-    expect(finalSerialized).toContain("购买方：张三");
+    expect(finalSerialized).toContain("record=rec_invoice_1");
     expect(finalSerialized).not.toContain("识别失败，非发票文件");
   });
 

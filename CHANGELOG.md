@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.2.1 - 2026-05-12
+
+### Changed
+- Updated invoice recognition intake so `/识别发票` can collect one or more uploaded invoice files and only starts recognition after `/完成上传`.
+- Refined invoice and case reminder designer cards: invoice completion now removes stale failure rows, formats Base timestamp dates, links to Base records with the current `record` parameter, and renders case reminders as compact task items with urgency-aware backgrounds.
+- Suppressed per-file receipt notices during invoice collection so the user sees one pending card lifecycle instead of repeated chat noise.
+
+### Fixed
+- Preserved detector-derived invoice date and buyer fields when model repair extracts relaxed core invoice fields from weak detector input.
+- Avoided treating long invoice numbers as invoice amounts by only reading amount values from amount-labeled lines.
+- Updated permission handling so approval or denial decisions rewrite the original permission request card after OpenCode receives the decision.
+
 ## 0.2.0 - 2026-05-09
 
 ### Added
