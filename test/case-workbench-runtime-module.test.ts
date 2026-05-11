@@ -58,6 +58,19 @@ describe("CaseWorkbenchRuntimeModule", () => {
     expect(sendPayload).not.toHaveBeenCalled();
   });
 
+  it("does not pass the 新建 control word as the labor case title", async () => {
+    const { module, startCaseWorkbenchCollection } = createModule();
+    const message = createTextMessage("/案件工作台 新建 王某违法解除");
+
+    const result = await module.handleMessage({
+      message,
+      routed: routeIncomingText(message.plainText),
+    });
+
+    expect(result).toEqual({ claimed: true });
+    expect(startCaseWorkbenchCollection).toHaveBeenCalledWith(message, "王某违法解除");
+  });
+
   it("fast-paths explicit labor natural language to labor collection", async () => {
     const { module, startCaseWorkbenchCollection } = createModule();
     const message = createTextMessage("帮我整理这批劳动仲裁材料，生成劳动争议工作台");

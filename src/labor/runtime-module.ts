@@ -599,6 +599,12 @@ export class LaborRuntimeModule implements RuntimeModule {
       statusText: "二审模型审查中...",
       detail: "正在后台校验法条引用、请求权基础、证据支撑和高风险结论。",
       level: "info",
+      steps: [
+        { label: "整理审查材料", status: "running" },
+        { label: "法条与案例溯源", status: "pending" },
+        { label: "二审模型审查", status: "pending" },
+        { label: "汇总审查结论", status: "pending" },
+      ],
       authorityStatus: "running",
       citationStatus: "pending",
       modelReviewStatus: "pending",
@@ -664,6 +670,12 @@ export class LaborRuntimeModule implements RuntimeModule {
           ? "权威检索与引用线索已完成，正在进行二审模型审查。"
           : "权威检索不可用，正在使用一审结果与本地线索进行二审模型审查。",
         level: "info",
+        steps: [
+          { label: "整理审查材料", status: "completed" },
+          { label: "法条与案例溯源", status: authorityAvailable ? "completed" : "error" },
+          { label: "二审模型审查", status: "running" },
+          { label: "汇总审查结论", status: "pending" },
+        ],
         authorityStatus: authorityAvailable ? "completed" : "error",
         citationStatus: citationAvailable ? "completed" : authorityAvailable ? "skipped" : "error",
         modelReviewStatus: "running",
@@ -755,6 +767,7 @@ export class LaborRuntimeModule implements RuntimeModule {
   private clearRequesterInteractions(chatId: string, requesterOpenId: string): void {
     for (const [conversationKey, pending] of this.interactions.entries()) {
       if (pending.chatId === chatId && pending.requesterOpenId === requesterOpenId) {
+        this.checkpoints.updateStage(pending.caseId, "expired", "已新建案件，旧收集已关闭");
         this.clearInteraction(conversationKey);
       }
     }

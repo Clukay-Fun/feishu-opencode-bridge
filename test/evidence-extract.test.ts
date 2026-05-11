@@ -2,6 +2,10 @@
  * 职责: 覆盖证据提取工作流。
  * 关注点: 验证核心路径、边界条件和回归场景。
  */
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 
@@ -133,6 +137,99 @@ describe("EvidenceExtractService", () => {
       maxFileSizeMb: 1,
       buildPrompt: () => "noop",
     })).rejects.toThrow("文件内容不像有效 PDF");
+  });
+
+  it("does not send local PDF bytes as image parts", async () => {
+    let partTypes: string[] = [];
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "evidence-pdf-part-test-"));
+    const pdfPath = path.join(tempDir, "invoice.pdf");
+    const service = new EvidenceExtractService(
+      {
+        async downloadMessageResource() {
+          throw new Error("should use local path");
+        },
+      },
+      {
+        async createSession() {
+          return { id: "ses_pdf" };
+        },
+        async postMessageSync(_sessionId, request) {
+          partTypes = request.parts.map((part) => part.type);
+          return {
+            info: { role: "assistant" },
+            parts: [{ type: "text", text: "{\"summary\":\"ok\",\"record\":{}}" }],
+          };
+        },
+        async deleteSession() {
+          return true;
+        },
+      },
+      { log() {} } as never,
+    );
+
+    try {
+      await writeFile(pdfPath, "%PDF-1.4\n% fake invoice pdf fixture\n");
+      await service.extractJson({
+        file: {
+          localPath: pdfPath,
+          fileName: "invoice.pdf",
+        },
+        allowedExtensions: [".pdf"],
+        maxFileSizeMb: 1,
+        parseTextExtensions: [],
+        includeExtractedText: false,
+        buildPrompt: () => "noop",
+      });
+
+      expect(partTypes).toEqual(["text"]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("can ask the model to read the original file without extracted text", async () => {
+    let promptSeen = "";
+    const service = new EvidenceExtractService(
+      {
+        async downloadMessageResource() {
+          return {
+            fileName: "invoice.txt",
+            mimeType: "text/plain",
+            buffer: Buffer.from("本地解析文本不应该进入直读 prompt", "utf8"),
+          };
+        },
+      },
+      {
+        async createSession() {
+          return { id: "ses_direct_file" };
+        },
+        async postMessageSync(_sessionId, request) {
+          promptSeen = String(request.parts[0]?.text ?? "");
+          return {
+            info: { role: "assistant" },
+            parts: [{ type: "text", text: "{\"summary\":\"ok\",\"record\":{}}" }],
+          };
+        },
+        async deleteSession() {
+          return true;
+        },
+      },
+      { log() {} } as never,
+    );
+
+    await service.extractJson({
+      file: {
+        messageId: "om_invoice",
+        fileKey: "file_invoice",
+        fileName: "invoice.txt",
+      },
+      allowedExtensions: [".txt"],
+      maxFileSizeMb: 1,
+      includeExtractedText: false,
+      buildPrompt: ({ extractedText }) => `内容：${extractedText ?? "无"}`,
+    });
+
+    expect(promptSeen).toBe("内容：无");
   });
 
   it("parses spreadsheet evidence into table-like text", async () => {

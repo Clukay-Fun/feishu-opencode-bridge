@@ -5,6 +5,7 @@
  * - 从合同与发票文件中提取结构化信息。
  * - 处理案件台账与提醒类操作。
  */
+import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -90,6 +91,12 @@ export type InvoiceRecognizeResult = {
   record: Record<string, unknown>;
   recordId: string;
   matchedContract?: string | undefined;
+  cacheHit?: boolean | undefined;
+};
+
+export type InvoiceRecognizeProgressEvent = {
+  stage: "parse-file" | "local-extract" | "model-repair" | "write-record";
+  label: string;
 };
 
 export type InvoiceLedgerItem = {
@@ -209,6 +216,15 @@ type ContractTemplate = {
   name: string;
   docxPath: string;
   fieldGuidePath?: string | undefined;
+};
+
+type InvoiceRecognitionCachePayload = {
+  version: 1;
+  fileHash: string;
+  sourceFileName: string;
+  cachedAt: string;
+  summary: string;
+  record: Record<string, unknown>;
 };
 
 export type ContractDraftProgressStage =
@@ -339,12 +355,67 @@ export class ContractAssistantService {
   }
 
   // Recognize invoice fields from an uploaded invoice file and match related contract context.
-  async recognizeInvoice(file: ContractAssistantFileInput): Promise<InvoiceRecognizeResult> {
-    const extraction = await this.evidenceExtractor.extractJson({
-      file,
+  async recognizeInvoice(
+    file: ContractAssistantFileInput,
+    onProgress?: (event: InvoiceRecognizeProgressEvent) => Promise<void> | void,
+  ): Promise<InvoiceRecognizeResult> {
+    const prepareOptions = {
       allowedExtensions: this.config.ingest.invoiceAllowedExtensions,
       maxFileSizeMb: this.config.ingest.maxFileSizeMb,
       maxExtractedTextLength: 12_000,
+    };
+    await onProgress?.({ stage: "parse-file", label: "解析发票文件" });
+    const preparedFile = await this.evidenceExtractor.prepareFile(file, prepareOptions);
+    const fileHash = createFileHash(preparedFile.buffer);
+    const cached = await this.readInvoiceRecognitionCache(fileHash);
+    if (cached) {
+      await onProgress?.({ stage: "local-extract", label: "本地提取字段" });
+      const record = normalizeInvoiceRecord(cached.record);
+      record["文件名"] = preparedFile.fileName;
+      enrichInvoiceDisplayFields(record, preparedFile.fileName, cached.record);
+      await onProgress?.({ stage: "write-record", label: "写入发票表" });
+      const recordId = await this.resources.createBitableRecord(
+        this.config.storage.baseToken,
+        this.config.storage.invoiceTableId,
+        record,
+      );
+      this.logger.log("contract-assistant", "invoice cache hit", {
+        fileName: preparedFile.fileName,
+        fileHash: fileHash.slice(0, 16),
+      });
+      return {
+        summary: `${cached.summary}（命中本地缓存）`,
+        record,
+        recordId,
+        cacheHit: true,
+      };
+    }
+
+    await onProgress?.({ stage: "local-extract", label: "本地提取字段" });
+    const structured = preparedFile.extractedText.trim()
+      ? extractStructuredInvoice(preparedFile.extractedText)
+      : null;
+    if (structured?.detection.isInvoice && structured.missingFields.length === 0) {
+      const record = normalizeInvoiceRecord(structured.fields);
+      enrichInvoiceDisplayFields(record, preparedFile.fileName, structured.fields);
+      assertUsefulInvoiceRecord(record, structured);
+      await onProgress?.({ stage: "write-record", label: "写入发票表" });
+      const recordId = await this.resources.createBitableRecord(
+        this.config.storage.baseToken,
+        this.config.storage.invoiceTableId,
+        record,
+      );
+      const summary = buildStructuredInvoiceSummary(record);
+      await this.writeInvoiceRecognitionCache(fileHash, preparedFile.fileName, summary, record);
+      return {
+        summary,
+        record,
+        recordId,
+      };
+    }
+
+    await onProgress?.({ stage: "model-repair", label: "模型补全缺失字段" });
+    const result = await this.evidenceExtractor.extractPreparedJson(preparedFile, {
       model: resolveModel(this.config, "invoice"),
       createSessionTitle: "[bridge] invoice-recognize",
       buildPrompt: ({ fileName, localPath, extractedText }) => resolveInvoiceRecognizePrompt({
@@ -353,46 +424,33 @@ export class ContractAssistantService {
         extractedText: extractedText || undefined,
       }),
     });
-    const { result, structured } = await this.prepareInvoiceRecognitionResult(extraction);
-    const summary = readString(result, "summary") ?? "已识别发票信息。";
+    const preparedResult = await this.prepareInvoiceRecognitionResult({ result, preparedFile });
+    const summary = readString(preparedResult.result, "summary") ?? "已识别发票信息。";
+    const modelRecord = readRecord(preparedResult.result, "record");
     const record = normalizeInvoiceRecord({
-      ...structured?.fields,
-      ...readRecord(result, "record"),
+      ...modelRecord,
+      ...preparedResult.structured?.fields,
     }, {
-      matchHints: readRecord(result, "matchHints"),
+      matchHints: readRecord(preparedResult.result, "matchHints"),
       summary,
     });
-    assertUsefulInvoiceRecord(record, structured);
+    enrichInvoiceDisplayFields(record, preparedFile.fileName, {
+      ...preparedResult.structured?.fields,
+      ...readRecord(preparedResult.result, "record"),
+    });
+    assertUsefulInvoiceRecord(record, preparedResult.structured);
+    await onProgress?.({ stage: "write-record", label: "写入发票表" });
     const recordId = await this.resources.createBitableRecord(
       this.config.storage.baseToken,
       this.config.storage.invoiceTableId,
       record,
     );
+    await this.writeInvoiceRecognitionCache(fileHash, preparedFile.fileName, summary, record);
 
     return {
       summary,
       record,
       recordId,
-    };
-  }
-
-  // 只读取发票台账字段，供普通对话注入真实表格上下文，避免模型凭聊天记录猜测。
-  async listRecentInvoices(limit = 10): Promise<InvoiceLedgerListResult> {
-    const records = await this.resources.listBitableRecords(this.config.storage.baseToken, this.config.storage.invoiceTableId);
-    const items = records
-      .slice(-limit)
-      .reverse()
-      .map((item) => ({
-        recordId: item.recordId,
-        invoiceNo: readFieldString(item.fields, "发票号") ?? readFieldString(item.fields, "发票号码"),
-        invoiceType: readFieldString(item.fields, "发票类型"),
-        invoiceDate: readFieldDate(item.fields, "开票日期"),
-        amount: readFieldNumber(item.fields, "发票金额"),
-        payer: readFieldString(item.fields, "购买方") ?? readFieldString(item.fields, "付款方"),
-      }));
-    return {
-      items,
-      total: records.length,
     };
   }
 
@@ -417,8 +475,8 @@ export class ContractAssistantService {
       result: {
         ...extraction.result,
         record: {
-          ...repaired,
           ...readRecord(extraction.result, "record"),
+          ...repaired,
         },
       },
       structured: {
@@ -455,6 +513,68 @@ export class ContractAssistantService {
       ...allowedPatch,
     };
   }
+
+  private async readInvoiceRecognitionCache(fileHash: string): Promise<InvoiceRecognitionCachePayload | null> {
+    try {
+      const raw = await readFile(path.join(this.invoiceRecognitionCacheDir(), `${fileHash}.json`), "utf8");
+      const parsed = JSON.parse(raw) as unknown;
+      if (!isInvoiceRecognitionCachePayload(parsed) || parsed.fileHash !== fileHash) {
+        return null;
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  private async writeInvoiceRecognitionCache(
+    fileHash: string,
+    sourceFileName: string,
+    summary: string,
+    record: Record<string, unknown>,
+  ): Promise<void> {
+    const payload: InvoiceRecognitionCachePayload = {
+      version: 1,
+      fileHash,
+      sourceFileName,
+      cachedAt: new Date().toISOString(),
+      summary,
+      record,
+    };
+    try {
+      await mkdir(this.invoiceRecognitionCacheDir(), { recursive: true });
+      await writeFile(path.join(this.invoiceRecognitionCacheDir(), `${fileHash}.json`), JSON.stringify(payload, null, 2), "utf8");
+    } catch (error) {
+      this.logger.log("contract-assistant", "invoice cache write skipped", {
+        detail: error instanceof Error ? error.message : String(error),
+      }, "warn");
+    }
+  }
+
+  private invoiceRecognitionCacheDir(): string {
+    return path.join(this.dataDir, "invoice-recognition-cache");
+  }
+
+  // 只读取发票台账字段，供普通对话注入真实表格上下文，避免模型凭聊天记录猜测。
+  async listRecentInvoices(limit = 10): Promise<InvoiceLedgerListResult> {
+    const records = await this.resources.listBitableRecords(this.config.storage.baseToken, this.config.storage.invoiceTableId);
+    const items = records
+      .slice(-limit)
+      .reverse()
+      .map((item) => ({
+        recordId: item.recordId,
+        invoiceNo: readFieldString(item.fields, "发票号") ?? readFieldString(item.fields, "发票号码"),
+        invoiceType: readFieldString(item.fields, "发票类型"),
+        invoiceDate: readFieldDate(item.fields, "开票日期"),
+        amount: readFieldNumber(item.fields, "发票金额"),
+        payer: readFieldString(item.fields, "购买方") ?? readFieldString(item.fields, "付款方"),
+      }));
+    return {
+      items,
+      total: records.length,
+    };
+  }
+
   //#endregion
 
   //#region Case workflows
@@ -1427,17 +1547,44 @@ export function normalizeInvoiceRecord(
 ): Record<string, unknown> {
   const input = record ?? {};
   const fields: Record<string, unknown> = {};
+  copyString(input, fields, "文件名");
+  copyFirstAliasString(input, fields, ["发票类型", "票据类型", "文件类型"], "发票类型");
   copyInvoicePayer(input, fields, options);
-  copyString(input, fields, "发票号");
+  copyFirstAliasString(input, fields, ["发票号", "发票号码", "票号"], "发票号");
   copyDate(input, fields, "开票日期");
-  copyNumber(input, fields, "发票金额");
+  copyFirstAliasNumber(input, fields, [
+    "发票金额",
+    "金额",
+    "价税合计",
+    "价税合计（小写）",
+    "价税合计(小写)",
+    "小写",
+    "合计金额",
+    "金额合计",
+  ], "发票金额");
   return fields;
+}
+
+function enrichInvoiceDisplayFields(record: Record<string, unknown>, fileName: string, source: Record<string, unknown>): void {
+  if (!record["文件名"]) {
+    record["文件名"] = fileName;
+  }
+  if (!record["发票类型"]) {
+    const type = readFirstString(source, ["发票类型", "票据类型", "文件类型"]) ?? extractInvoiceTypeFromText(readFirstString(source, ["summary", "摘要"]) ?? "");
+    if (type) {
+      record["发票类型"] = type;
+    }
+  }
+}
+
+function extractInvoiceTypeFromText(text: string): string | undefined {
+  return text.match(/(增值税专用发票|增值税普通发票|电子发票[（(][^）)]+[）)]|电子发票|普通发票|数电票)/)?.[1];
 }
 
 function assertUsefulInvoiceRecord(record: Record<string, unknown>, structured: StructuredInvoiceExtraction | null): void {
   const hasCoreFields = Boolean(
     readFieldString(record, "发票号")
-    && readFieldString(record, "开票日期")
+    && hasFieldValue(record, "开票日期")
     && readFieldNumber(record, "发票金额") !== undefined
   );
   if (hasCoreFields) {
@@ -1447,6 +1594,20 @@ function assertUsefulInvoiceRecord(record: Record<string, unknown>, structured: 
     ? `${structured.detection.reason}；缺少字段：${structured.missingFields.join("、") || "核心字段"}`
     : "未提取到足够的发票核心字段";
   throw new Error(`发票识别结果不足，暂不写入发票台账：${reason}`);
+}
+
+function hasFieldValue(record: Record<string, unknown>, key: string): boolean {
+  const value = record[key];
+  return value !== undefined && value !== null && value !== "";
+}
+
+function buildStructuredInvoiceSummary(record: Record<string, unknown>): string {
+  const bits = [
+    readFieldString(record, "发票号") ? `发票号 ${readFieldString(record, "发票号")}` : undefined,
+    readFieldString(record, "购买方") ? `购买方 ${readFieldString(record, "购买方")}` : undefined,
+    readFieldNumber(record, "发票金额") !== undefined ? `价税合计 ${readFieldNumber(record, "发票金额")}` : undefined,
+  ].filter((item): item is string => Boolean(item));
+  return bits.length > 0 ? `已通过本地结构化解析识别发票信息：${bits.join("，")}。` : "已通过本地结构化解析识别发票信息。";
 }
 
 export function normalizeCaseRecord(record: Record<string, unknown> | null): Record<string, unknown> {
@@ -1496,17 +1657,30 @@ function copyAliasString(source: Record<string, unknown>, target: Record<string,
   }
 }
 
+function copyFirstAliasString(source: Record<string, unknown>, target: Record<string, unknown>, sourceKeys: string[], targetKey: string): void {
+  if (target[targetKey]) {
+    return;
+  }
+  for (const sourceKey of sourceKeys) {
+    const value = source[sourceKey];
+    if (typeof value === "string" && value.trim()) {
+      target[targetKey] = value.trim();
+      return;
+    }
+  }
+}
+
 function copyInvoicePayer(
   source: Record<string, unknown>,
   target: Record<string, unknown>,
   options: { matchHints?: Record<string, unknown> | null; summary?: string | undefined } = {},
 ): void {
-  const direct = readFirstString(source, ["付款方", "购买方", "购方名称", "购买方名称", "买方", "客户名称", "委托人"]);
-  const alias = readFirstString(source, ["购买方", "购方名称", "购买方名称", "买方", "客户名称", "委托人"]);
+  const direct = readFirstString(source, ["付款方", "购买方", "购买方信息", "购方名称", "购买方名称", "买方", "客户名称", "委托人"]);
+  const alias = readFirstString(source, ["购买方", "购买方信息", "购方名称", "购买方名称", "买方", "客户名称", "委托人"]);
   const hintClient = readFirstString(options.matchHints ?? {}, ["clientName", "payer", "buyerName", "customerName"]);
   const summaryClient = extractInvoiceClientFromSummary(options.summary ?? "");
-  const fallback = [alias, hintClient, summaryClient].find((item) => item && !isLawFirmName(item));
-  const payer = direct && isLawFirmName(direct) ? fallback : (direct ?? fallback);
+  const fallback = [alias, hintClient, summaryClient].find((item) => item && isUsableInvoicePayer(item));
+  const payer = direct && !isUsableInvoicePayer(direct) ? fallback : (direct ?? fallback);
   if (payer) {
     target["购买方"] = payer;
   }
@@ -1515,7 +1689,7 @@ function copyInvoicePayer(
 function extractInvoiceClientFromSummary(summary: string): string | undefined {
   const match = summary.match(/(?:付款方|购买方|购方|客户|委托人)\s*[：:]?\s*([^，,；;\n]+)/);
   const value = match?.[1]?.trim();
-  return value && !isLawFirmName(value) ? value : undefined;
+  return value && isUsableInvoicePayer(value) ? value : undefined;
 }
 
 function readFirstString(source: Record<string, unknown>, keys: string[]): string | undefined {
@@ -1530,6 +1704,14 @@ function readFirstString(source: Record<string, unknown>, keys: string[]): strin
 
 function isLawFirmName(value: string): boolean {
   return /律师事务所|律所|隆安/.test(value);
+}
+
+function isUsableInvoicePayer(value: string): boolean {
+  const normalized = value.trim();
+  if (!normalized || isLawFirmName(normalized)) {
+    return false;
+  }
+  return !/(诉讼代理|律师费|服务费|项目名称|规格型号|的诉讼|代理律师费)/.test(normalized);
 }
 
 function copyNormalizedString(
@@ -1549,17 +1731,36 @@ function copyNormalizedString(
 }
 
 function copyNumber(source: Record<string, unknown>, target: Record<string, unknown>, key: string): void {
-  const value = source[key];
-  if (typeof value === "number" && Number.isFinite(value)) {
-    target[key] = value;
+  const parsed = normalizeNumberValue(source[key]);
+  if (parsed !== undefined) {
+    target[key] = parsed;
+  }
+}
+
+function copyFirstAliasNumber(source: Record<string, unknown>, target: Record<string, unknown>, sourceKeys: string[], targetKey: string): void {
+  if (target[targetKey] !== undefined) {
     return;
   }
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) {
-      target[key] = parsed;
+  for (const sourceKey of sourceKeys) {
+    const parsed = normalizeNumberValue(source[sourceKey]);
+    if (parsed !== undefined) {
+      target[targetKey] = parsed;
+      return;
     }
   }
+}
+
+function normalizeNumberValue(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value.replace(/[,\s¥￥元]/g, ""));
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
 }
 
 function copyDate(source: Record<string, unknown>, target: Record<string, unknown>, key: string): void {
@@ -2660,6 +2861,25 @@ function inferIsCompany(clientName: string, clientIdCode: string, clientRepresen
     return false;
   }
   return /^[0-9A-Z]{18}$/i.test(normalizedId);
+}
+
+function createFileHash(buffer: Buffer): string {
+  return createHash("sha256").update(buffer).digest("hex");
+}
+
+function isInvoiceRecognitionCachePayload(input: unknown): input is InvoiceRecognitionCachePayload {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return false;
+  }
+  const record = input as Record<string, unknown>;
+  return record.version === 1
+    && typeof record.fileHash === "string"
+    && typeof record.sourceFileName === "string"
+    && typeof record.cachedAt === "string"
+    && typeof record.summary === "string"
+    && Boolean(record.record)
+    && typeof record.record === "object"
+    && !Array.isArray(record.record);
 }
 
 function normalizePartyForFileName(value: string): string {

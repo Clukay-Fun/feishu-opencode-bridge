@@ -218,6 +218,26 @@ async function cleanupModule(module: LaborRuntimeModule, tempDir: string): Promi
 }
 
 describe("LaborRuntimeModule", () => {
+  it("marks an active collection checkpoint expired when starting a new collection", async () => {
+      const { module, tempDir } = await createModule();
+    try {
+      const first = createTextMessage("/案件工作台");
+      await module.handleMessage({ message: first, routed: routeIncomingText(first.plainText) });
+      await module.handleMessage({ message: createFileMessage("旧材料.pdf"), routed: null });
+      const second = createTextMessage("/案件工作台", { messageId: "msg-second" });
+      await module.startCaseWorkbenchCollection(second);
+
+      const checkpoints = (module as unknown as {
+        checkpoints: {
+          findAllUnfinished(userId: string): unknown[];
+        };
+      }).checkpoints;
+      expect(checkpoints.findAllUnfinished("ou_user")).toHaveLength(0);
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
   it("shows a retirement notice for the legacy /labor-start alias", async () => {
     const { module, tempDir, sendPayload } = await createModule();
     try {

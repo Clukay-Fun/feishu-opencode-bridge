@@ -523,6 +523,7 @@ export class LaborSkillService {
     const reviewModel = resolveModel(this.config, "review");
     const session = await this.opencode.createSession("[bridge] labor-review");
     try {
+      await options?.onProgress?.("正在等待二审模型返回");
       const response = await this.opencode.postMessageSync(session.id, buildPromptRequest(prompt, reviewModel));
       const parsed = parseJsonObject(extractAssistantText(response));
       return normalizeReviewReport(parsed);

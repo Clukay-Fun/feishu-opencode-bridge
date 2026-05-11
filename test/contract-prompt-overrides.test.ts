@@ -192,4 +192,39 @@ describe("contract prompt overrides", () => {
       await rm(tempHome, { recursive: true, force: true });
     }
   });
+
+  it("lets invoice write flow skip model calls when local structure or cache is enough", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "invoice-direct-read-test-"));
+    const invoicePath = path.join(tempDir, "invoice.pdf");
+    let promptSeen = "";
+    const service = createService(async (_sessionId, request) => {
+      promptSeen = String(request.parts[0]?.text ?? "");
+      return {
+        parts: [{
+          type: "text",
+          text: JSON.stringify({
+            summary: "已直接读取原始 PDF 识别发票。",
+            record: {
+              发票号: "26952000001657386511",
+              开票日期: "2026-04-23",
+              发票金额: 8000,
+              购买方: "测试客户",
+            },
+          }),
+        }],
+      };
+    });
+
+    try {
+      await writeFile(invoicePath, "%PDF-1.4\n% text layer missing invoice fields\n");
+
+      const result = await service.recognizeInvoice({ localPath: invoicePath, fileName: "invoice.pdf" });
+
+      expect(promptSeen).toBe("");
+      expect(result.record["发票号"]).toBe("26952000001657386511");
+      expect(result.record["购买方"]).toBe("测试客户");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });
