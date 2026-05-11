@@ -235,6 +235,9 @@ export class BridgeApp {
       sendPayload: async (chatId, payload, options, delivery) => {
         return await this.sendPayload(chatId, payload, options, delivery);
       },
+      updatePayload: async (chatId, messageId, payload, options) => {
+        return await this.updatePayload(chatId, messageId, payload, options);
+      },
       toCardContent: (payload) => this.toCardContent(payload),
     }, this.config.permissions?.defaultPolicy ?? "ask");
     const transport = createFeishuTransport({
