@@ -6,6 +6,7 @@
  */
 import type { ModuleManager } from "../bridge/module.js";
 import { ModuleManager as RuntimeModuleManager } from "../bridge/module.js";
+import { CaseWorkbenchContextStore } from "../case-workbench/context-store.js";
 import { CaseWorkbenchRuntimeModule, type CaseWorkbenchLaborPort } from "../case-workbench/runtime-module.js";
 import type { AppConfig } from "../config/schema.js";
 import type { ExtensionDefinition } from "../extension-api/index.js";
@@ -64,6 +65,7 @@ export function createRuntimeModules(options: {
   });
 
   const moduleManager = new RuntimeModuleManager(options.logger);
+  const caseContextStore = new CaseWorkbenchContextStore(options.config.storage.dataDir, options.logger);
   let knowledgeModule: KnowledgeRuntimeModule | null = null;
   let laborPort: CaseWorkbenchLaborPort | null = null;
 
@@ -79,6 +81,7 @@ export function createRuntimeModules(options: {
       memory,
       knowledge,
       costTracker: options.costTracker,
+      caseContextStore,
       whitelist: options.whitelist,
       getSessionWindow: options.getSessionWindow,
       saveSessionWindow: options.saveSessionWindow,
@@ -105,6 +108,7 @@ export function createRuntimeModules(options: {
       logger: options.logger,
       transport: options.transport,
       labor: laborPort,
+      contextStore: caseContextStore,
     }));
   }
 

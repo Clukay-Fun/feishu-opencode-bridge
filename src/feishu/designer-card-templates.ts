@@ -2299,7 +2299,7 @@ export const DESIGNER_CARD_TEMPLATES = {
       "elements": [
         {
           "tag": "markdown",
-          "content": "请上传劳动相关材料，直接发送到聊天窗口即可。",
+          "content": "请上传案件相关材料，直接发送到聊天窗口即可。",
           "text_align": "left",
           "text_size": "heading",
           "margin": "0px 0px 0px 0px"
