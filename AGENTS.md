@@ -1,5 +1,13 @@
 # Bridge Runtime Rules
 
+## Scope
+
+- This file defines the project and runtime contract for Feishu OpenCode Bridge.
+- Codex-specific development workflow, local commands, and implementation hygiene live in `CODEX.md`.
+- Keep runtime/product behavior here; keep coding-agent execution habits in `CODEX.md`.
+- When modifying this repository, read `CODEX.md` after this file.
+- Do not add local command lists, temporary debugging notes, personal workflow preferences, or one-off implementation plans here.
+
 ## Runtime Ownership
 
 - The bridge owns session control for `/new`, `/sessions`, `/switch`, and `/status`.
@@ -16,19 +24,6 @@
 - Do not simulate session creation, switching, closing, or renaming inside the agent response.
 - Treat bridge-injected system state as authoritative for the current window, active session, and visible sessions.
 - Long-term user facts may be injected into `system` as a `[Memory Recall]` block; treat them as stable background context, not current window state.
-
-## Feishu And Lark Operations
-
-- Use `lark-cli` only when the user explicitly asks to operate on Feishu or Lark resources.
-- When the user asks to operate on Feishu or Lark resources, prefer `lark-cli` and the installed `lark-*` skills over ad-hoc code exploration or custom bridge-side implementations.
-- Knowledge CLI fast path:
-  - When the user asks to query the knowledge base, do not search the codebase for the entrypoint.
-  - Go straight to `npm run --silent kb -- query --question "<问题>"`.
-  - For local file ingest, go straight to `npm run --silent kb -- ingest file --path "<绝对路径>"`.
-  - For URL ingest, go straight to `npm run --silent kb -- ingest url --url "<URL>"`.
-  - For PDF parsing diagnostics, go straight to `npm run --silent kb -- parse pdf --path "<绝对路径>"`.
-  - For knowledge-base diagnostics, go straight to `npm run --silent kb -- doctor`.
-  - Prefer the CLI entrypoint over repository exploration unless the user explicitly asks to inspect or modify the knowledge-base implementation.
 
 ## Architecture Guardrails
 
@@ -90,31 +85,12 @@
 - Knowledge-base flows and labor-dispute material generation keep their own module semantics. Contract-assistant skill routing must not hijack knowledge ingestion/query commands or labor-specific generation workflows unless those modules explicitly expose a shared routing contract.
 - New or changed skill routing must include fixtures and tests. Cover positive and negative samples, noisy OCR text, slash-command forced entry, natural language with recent uploaded material, natural language with local path, detector confidence, anti-signals, and prompt override loading.
 
-## Feature Checklist
-
-- Automated coverage currently enforced by CI:
-  - `npm run lint:deps` enforces core, transport, and formatter dependency boundaries
-  - `npm run check:formatter-exports` pins the formatter compatibility export surface
-  - `npm run lint` enforces the common config direct-read restrictions
-  - `npm run check:docs-diff` warns when seam files change without `docs/architecture-baseline.md`
-- Reviewer-only checks still matter:
-  - module boundary: new modules must enter through the runtime module assembly seam
-  - state boundary: avoid copying timer + JSON persistence patterns
-  - command boundary: each action keeps one primary command and at most one compatibility alias
-- High-frequency implementation rules:
-  - do not add business-specific branching to `src/runtime/app.ts`, `src/runtime/turn-executor.ts`, or `src/bridge/router.ts` unless the architecture baseline is updated first
-  - new cards should use the card family entrypoints: `shared-primitives`, `runtime-cards`, `knowledge-cards`, `labor-cards`, `contract-cards`
-  - if a feature changes a seam, update `docs/architecture-baseline.md` in the same PR before merge
-  - 代码注释默认使用中文，除非注释内容是外部 API 原文、协议字段、错误码或必须保持英文的术语
-  - 为新增的重要文件添加文件头注释，沿用项目现有的 `职责 / 关注点` 模板
-  - 为非显而易见的代码路径添加简洁注释，尤其是兼容逻辑、fallback 行为、并发/定时器处理、外部 API 特殊行为和跨模块契约
-  - 注释应解释代码为什么存在、保护什么不变量、或规避什么历史问题；不要添加逐行复述代码的低价值注释
-
 ## Documentation References
 
 - The active architecture contract lives in `docs/architecture-baseline.md`.
 - Post-freeze feature PRs should follow `docs/guidelines/new-feature-checklist.md`.
 - Built-in business extension development should follow `docs/guidelines/business-extension-development.md`.
+- Codex development workflow lives in `CODEX.md`.
 - Active documentation index lives in `docs/README.md`.
 - Observability event naming and fields live in `docs/observability/event-schema.md`.
 - Current docs layout:

@@ -65,6 +65,8 @@ OpenCode turn 执行链抽象出 `prepareTurnExecution` / `handlePermissionAsked
 
 </details>
 
+</details>
+
 ## 💡 核心能力
 
 **会话窗口**：支持私聊、群聊、话题群的 session 绑定、切换、关闭、重命名
