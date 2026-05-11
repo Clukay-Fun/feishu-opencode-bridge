@@ -5,7 +5,7 @@
  * - 为桥接层的过程消息与系统通知提供一致的 UI 结构。
  */
 import { column, columnSet, markdown, standardIcon } from "./card-builder.js";
-import { buildDesignerCardPayload, setDesignerButtonValue } from "./designer-card-renderer.js";
+import { buildDesignerCardPayload, cloneDesignerCard, setDesignerButtonValue, type DesignerCard } from "./designer-card-renderer.js";
 import {
   buildDivider,
   buildFooterTipBlock,
@@ -160,9 +160,6 @@ export function buildStatusCommandCardPayload(view: StatusCommandCardView): Feis
 
 /** 构建 `/cost` 成本摘要卡。 */
 export function buildCostCommandCardPayload(view: CostCommandCardView): FeishuPostPayload {
-  const todayCost = view.todayCostCny === undefined ? "未配置价格" : `≈¥${view.todayCostCny.toFixed(4)}`;
-  const monthCost = view.monthCostCny === undefined ? "未配置价格" : `≈¥${view.monthCostCny.toFixed(4)}`;
-
   return buildInteractivePayload({
     title: "AI 成本摘要",
     template: "orange",
@@ -170,19 +167,15 @@ export function buildCostCommandCardPayload(view: CostCommandCardView): FeishuPo
     bodyElements: [
       columnSet([
         column([
-          markdown(`**今日**\n${view.todayTokens} tokens\n${todayCost}`, { icon: { token: "calendar_outlined", color: "orange" } }),
+          markdown(`**今日**\n${view.todayTokens} tokens`, { icon: { token: "calendar_outlined", color: "orange" } }),
         ], { bg: "orange-50", weight: 1 }),
         column([
-          markdown(`**本月**\n${view.monthTokens} tokens\n${monthCost}`, { icon: { token: "insert-chart_outlined", color: "blue" } }),
+          markdown(`**本月**\n${view.monthTokens} tokens`, { icon: { token: "insert-chart_outlined", color: "blue" } }),
         ], { bg: "wathet-50", weight: 1 }),
       ]),
       buildDivider(),
       buildCostLimitBlock(view),
-      buildDivider(),
-      buildRuntimeActionBlock([
-        runtimeCommandButton("查看完整账单", "/cost detail", "default", "send-message"),
-      ]),
-      buildFooterTipBlock("金额是本地估算，provider 账单以服务商为准。终端运行 `bridge cost` 查看更多。", "info-hollow_filled", "grey", "notation"),
+      buildFooterTipBlock("本页只展示本地 token 记录。终端运行 `bridge cost` 查看更多。", "info-hollow_filled", "grey", "notation"),
     ],
   });
 }
@@ -250,15 +243,9 @@ function buildSessionReviewBlock(review: NonNullable<SessionTransitionCardView["
 
 /** 构建模型列表卡。 */
 export function buildModelListCardPayload(view: ModelListCardView): FeishuPostPayload {
-  const firstProvider = view.providers[0];
-  const secondProvider = view.providers[1];
-  return buildDesignerCardPayload("可用模型", [
-    { from: "OpenAI", to: firstProvider?.name ?? "OpenAI" },
-    { from: "gpt-5.4", to: firstProvider?.models[0]?.id ?? view.currentModelLabel },
-    { from: "OpenCode Zen", to: secondProvider?.name ?? "OpenCode Zen" },
-    { from: "MiniMax-M2.7", to: secondProvider?.models[0]?.id ?? "MiniMax-M2.7" },
-    { from: "发送 `/model use <provider>/model` 切换模型。", to: view.footer },
-  ]);
+  return buildDesignerCardPayload("可用模型", [], (card) => {
+    applyModelListTemplateData(card, view);
+  });
 }
 
 /** 构建权限请求卡。 */
@@ -270,6 +257,157 @@ export function buildPermissionRequestCardPayload(view: PermissionRequestCardVie
       setDesignerButtonValue(card, resolvePermissionDesignerButtonLabel(button.label), button.value);
     }
   });
+}
+
+function applyModelListTemplateData(card: DesignerCard, view: ModelListCardView): void {
+  const header = getRuntimeDesignerRecord(card.header);
+  const subtitle = getRuntimeDesignerRecord(header?.subtitle);
+  if (subtitle) {
+    subtitle.content = `当前：${view.currentModelLabel}`;
+  }
+
+  const body = getRuntimeDesignerRecord(card.body);
+  const elements = Array.isArray(body?.elements) ? body.elements : [];
+  const providerRows = elements.filter((element) => isProviderModelRow(element));
+  const footer = elements.find((element) => getRuntimeDesignerRecord(element)?.tag === "markdown"
+    && typeof getRuntimeDesignerRecord(element)?.content === "string"
+    && (getRuntimeDesignerRecord(element)?.content as string).includes("/model use"));
+
+  const templateRow = providerRows[0] ? cloneDesignerCard(providerRows[0]) : null;
+  while (providerRows.length < view.providers.length && templateRow) {
+    const cloned = cloneDesignerCard(templateRow);
+    const insertAt = footer ? elements.indexOf(footer) : elements.length;
+    elements.splice(insertAt, 0, cloned);
+    providerRows.push(cloned);
+  }
+
+  providerRows.forEach((row, index) => {
+    const provider = view.providers[index];
+    if (!provider) {
+      const rowIndex = elements.indexOf(row);
+      if (rowIndex >= 0) elements.splice(rowIndex, 1);
+      return;
+    }
+    applyProviderModelRow(row, provider);
+  });
+
+  const footerRecord = getRuntimeDesignerRecord(footer);
+  if (footerRecord && typeof footerRecord.content === "string") {
+    footerRecord.content = view.footer;
+  }
+}
+
+function applyProviderModelRow(row: unknown, provider: ModelListCardView["providers"][number]): void {
+  const title = findFirstRuntimeMarkdown(row, (content) => /^(\*\*)?.+模型/.test(content));
+  if (title) {
+    title.content = `**${escapeText(provider.name)} 模型**`;
+  }
+
+  const modelColumnSet = findModelChipColumnSet(row);
+  if (modelColumnSet) {
+    const templateColumn = Array.isArray(modelColumnSet.columns) && modelColumnSet.columns[0]
+      ? cloneDesignerCard(modelColumnSet.columns[0])
+      : null;
+    modelColumnSet.columns = provider.models.length > 0 && templateColumn
+      ? provider.models.slice(0, 5).map((model) => buildModelChipColumn(templateColumn, model.id, Boolean(model.current)))
+      : [buildModelEmptyColumn(templateColumn)];
+  }
+
+  const example = findFirstRuntimeMarkdown(row, (content) => content.includes("切换示例"));
+  if (example) {
+    const sample = provider.models[0]?.id;
+    example.content = sample ? `>切换示例：${escapeText(sample)}` : ">暂无可切换模型";
+  }
+}
+
+function buildModelChipColumn(templateColumn: DesignerCard, label: string, current: boolean): DesignerCard {
+  const column = cloneDesignerCard(templateColumn);
+  column.background_style = current ? "blue-50" : "grey-50";
+  const markdownNode = findFirstRuntimeMarkdown(column);
+  if (markdownNode) {
+    markdownNode.content = escapeText(label);
+  }
+  return column;
+}
+
+function buildModelEmptyColumn(templateColumn: DesignerCard | null): DesignerCard {
+  const column = templateColumn ? cloneDesignerCard(templateColumn) : {
+    tag: "column",
+    width: "auto",
+    background_style: "grey-50",
+    elements: [{ tag: "markdown", content: "暂无模型", text_align: "left", text_size: "normal" }],
+    padding: "4px 8px 4px 8px",
+  };
+  const markdownNode = findFirstRuntimeMarkdown(column);
+  if (markdownNode) {
+    markdownNode.content = "暂无模型";
+  }
+  return column;
+}
+
+function isProviderModelRow(input: unknown): boolean {
+  const record = getRuntimeDesignerRecord(input);
+  if (!record || record.tag !== "column_set") {
+    return false;
+  }
+  return Boolean(findFirstRuntimeMarkdown(record, (content) => content.includes("模型"))
+    && findFirstRuntimeMarkdown(record, (content) => content.includes("切换示例")));
+}
+
+function findModelChipColumnSet(input: unknown): Record<string, unknown> | null {
+  if (Array.isArray(input)) {
+    for (const item of input) {
+      const found = findModelChipColumnSet(item);
+      if (found) return found;
+    }
+    return null;
+  }
+  const record = getRuntimeDesignerRecord(input);
+  if (!record) {
+    return null;
+  }
+  if (record.tag === "column_set"
+    && record.flex_mode === "stretch"
+    && Array.isArray(record.columns)
+    && record.columns.some((column) => Boolean(findFirstRuntimeMarkdown(column, (content) => !content.includes("模型") && !content.includes("切换示例"))))) {
+    return record;
+  }
+  for (const value of Object.values(record)) {
+    const found = findModelChipColumnSet(value);
+    if (found) return found;
+  }
+  return null;
+}
+
+function findFirstRuntimeMarkdown(
+  input: unknown,
+  predicate: (content: string) => boolean = () => true,
+): Record<string, unknown> | null {
+  if (Array.isArray(input)) {
+    for (const item of input) {
+      const found = findFirstRuntimeMarkdown(item, predicate);
+      if (found) return found;
+    }
+    return null;
+  }
+  const record = getRuntimeDesignerRecord(input);
+  if (!record) {
+    return null;
+  }
+  if (record.tag === "markdown" && typeof record.content === "string" && predicate(record.content)) {
+    return record;
+  }
+  for (const value of Object.values(record)) {
+    const found = findFirstRuntimeMarkdown(value, predicate);
+    if (found) return found;
+  }
+  return null;
+}
+
+function getRuntimeDesignerRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }
 
 function resolvePermissionDesignerButtonLabel(label: string): string {
@@ -528,27 +666,29 @@ function buildCostTableHeader(): Record<string, unknown> {
     ...columnSet([
       column([markdown("模型", { size: "notation" })], { bg: "grey-100", weight: 2 }),
       column([markdown("Tokens", { size: "notation" })], { bg: "grey-100", weight: 1 }),
-      column([markdown("费用", { size: "notation" })], { bg: "grey-100", weight: 1 }),
-      column([markdown("来源", { size: "notation" })], { bg: "grey-100", weight: 1 }),
     ]),
     flex_mode: "stretch",
   };
 }
 
 function buildCostTableRow(entry: CostCommandCardView["recent"][number]): Record<string, unknown> {
-  const cost = entry.estimatedCostCny === undefined ? "未配置" : `¥${entry.estimatedCostCny.toFixed(4)}`;
-  const source = entry.source === "external-call"
-    ? `${entry.tool ?? entry.model}/${entry.operation ?? "call"}`
-    : (entry.source === "provider" ? "provider" : "估算");
   return {
     ...columnSet([
-      column([markdown(`${escapeText(entry.provider)}/${escapeText(entry.model)}`, { size: "notation" })], { bg: "bg-white", weight: 2 }),
+      column([markdown(formatCostModelLabel(entry), { size: "notation" })], { bg: "bg-white", weight: 2 }),
       column([markdown(String(entry.totalTokens), { size: "notation" })], { bg: "bg-white", weight: 1 }),
-      column([markdown(cost, { size: "notation" })], { bg: "bg-white", weight: 1 }),
-      column([markdown(escapeText(source), { size: "notation" })], { bg: "bg-white", weight: 1 }),
     ]),
     flex_mode: "stretch",
   };
+}
+
+function formatCostModelLabel(entry: CostCommandCardView["recent"][number]): string {
+  if (entry.source === "external-call") {
+    return escapeText(`${entry.provider}/${entry.tool ?? entry.model}`);
+  }
+  if (entry.provider === "opencode-default" && entry.model === "default") {
+    return "OpenCode 默认模型";
+  }
+  return `${escapeText(entry.provider)}/${escapeText(entry.model)}`;
 }
 
 function buildStatusChip(text: string, backgroundStyle: string): Record<string, unknown> {

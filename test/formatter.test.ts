@@ -27,7 +27,7 @@ import {
   buildStatusCommandCardPayload,
   buildTurnStatusCardPayload,
 } from "../src/feishu/formatter.js";
-import { buildButtonCallbackTestCardPayload } from "../src/feishu/runtime-cards.js";
+import { buildButtonCallbackTestCardPayload, buildCostCommandCardPayload } from "../src/feishu/runtime-cards.js";
 import { buildAssistantMarkdownPayload } from "../src/feishu/shared-primitives.js";
 
 describe("buildPostPayload", () => {
@@ -251,6 +251,32 @@ describe("buildPostPayload", () => {
     expect(content.body.elements).toHaveLength(4);
   });
 
+  it("renders cost card without price/source columns and normalizes default model labels", () => {
+    const payload = buildCostCommandCardPayload({
+      todayTokens: 58,
+      monthTokens: 6605,
+      recent: [
+        {
+          createdAt: "2026-05-11T00:00:00.000Z",
+          provider: "opencode-default",
+          model: "default",
+          totalTokens: 58,
+          source: "estimated",
+        },
+      ],
+    });
+    const content = JSON.parse(payload.content) as any;
+    const serialized = JSON.stringify(content);
+
+    expect(serialized).toContain("AI 成本摘要");
+    expect(serialized).toContain("OpenCode 默认模型");
+    expect(serialized).toContain("58");
+    expect(serialized).not.toContain("未配置价格");
+    expect(serialized).not.toContain("费用");
+    expect(serialized).not.toContain("来源");
+    expect(serialized).not.toContain("查看完整账单");
+  });
+
   it("renders a guide card with reproducible hero actions", () => {
     const payload = buildGuideCardPayload({ windowLabel: "日常会话" });
     const content = JSON.parse(payload.content) as any;
@@ -283,6 +309,9 @@ describe("buildPostPayload", () => {
     expect(content.header.title.content).toBe("可用模型");
     expect(content.header.template).toBe("indigo");
     expect(serialized).toContain("gpt-5.4-mini");
+    expect(serialized).toContain("openai/gpt-5.2");
+    expect(serialized).not.toContain("gpt-5.3-codex");
+    expect(serialized).not.toContain("openai/gpt-5.5");
     expect(serialized).toContain("/model reset");
   });
 

@@ -84,6 +84,34 @@ describe("CostTracker", () => {
     await expect(tracker.isDailyLimitExceeded()).resolves.toBe(true);
   });
 
+  it("uses assistant message model metadata when no window override is set", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-cost-model-meta-"));
+    const tracker = new CostTracker({
+      enabled: true,
+      currency: "CNY",
+      modelPrices: {},
+    }, dir, fakeLogger());
+
+    await tracker.recordTurn({
+      turnId: "turn_model",
+      sessionId: "ses_model",
+      promptText: "用户输入",
+      replyText: "模型回复",
+      assistantMessage: {
+        info: {
+          role: "assistant",
+          providerID: "minimax-coding-plan",
+          modelID: "minimax2.7",
+        },
+        parts: [],
+      },
+    });
+
+    const ledger = await readFile(path.join(dir, "usage-ledger.jsonl"), "utf8");
+    expect(ledger).toContain("\"provider\":\"minimax-coding-plan\"");
+    expect(ledger).toContain("\"model\":\"minimax2.7\"");
+  });
+
   it("records external tool calls without persisting user text", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-cost-external-"));
     const tracker = new CostTracker({
