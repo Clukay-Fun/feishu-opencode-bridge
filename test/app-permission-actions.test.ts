@@ -25,6 +25,12 @@ describe("BridgeApp permission card actions", () => {
 
     expect(replyPermission).toHaveBeenCalledWith(interaction.sessionId, interaction.permissionId, "once", false);
     expect(JSON.stringify(card)).toContain("已授权");
+    expect(outbound.updateMessage).toHaveBeenCalledWith(
+      interaction.permissionMessageId,
+      expect.objectContaining({ msg_type: "interactive" }),
+    );
+    const updatedPayload = (outbound.updateMessage.mock.calls as unknown[][]).at(-1)?.[1];
+    expect(JSON.stringify(updatedPayload)).toContain("已授权");
     expect((app as unknown as { pendingInteractions: Map<string, unknown> }).pendingInteractions.has(interaction.conversationKey)).toBe(false);
   });
 
@@ -43,6 +49,10 @@ describe("BridgeApp permission card actions", () => {
 
     expect(replyPermission).toHaveBeenCalledWith(interaction.sessionId, interaction.permissionId, "always", true);
     expect(JSON.stringify(card)).toContain("已授权");
+    expect(outbound.updateMessage).toHaveBeenCalledWith(
+      interaction.permissionMessageId,
+      expect.objectContaining({ msg_type: "interactive" }),
+    );
     expect((app as unknown as { pendingInteractions: Map<string, unknown> }).pendingInteractions.has(interaction.conversationKey)).toBe(false);
   });
 
@@ -61,6 +71,12 @@ describe("BridgeApp permission card actions", () => {
 
     expect(replyPermission).toHaveBeenCalledWith(interaction.sessionId, interaction.permissionId, "reject", false);
     expect(JSON.stringify(card)).toContain("已拒绝");
+    expect(outbound.updateMessage).toHaveBeenCalledWith(
+      interaction.permissionMessageId,
+      expect.objectContaining({ msg_type: "interactive" }),
+    );
+    const updatedPayload = (outbound.updateMessage.mock.calls as unknown[][]).at(-1)?.[1];
+    expect(JSON.stringify(updatedPayload)).toContain("已拒绝");
     expect((app as unknown as { pendingInteractions: Map<string, unknown> }).pendingInteractions.has(interaction.conversationKey)).toBe(false);
   });
 

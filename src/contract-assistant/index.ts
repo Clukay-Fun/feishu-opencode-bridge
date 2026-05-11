@@ -463,6 +463,13 @@ export class ContractAssistantService {
     }
     const structured = extractStructuredInvoice(text);
     if (!structured.detection.isInvoice) {
+      const modelRecord = normalizeInvoiceRecord(readRecord(extraction.result, "record"), {
+        matchHints: readRecord(extraction.result, "matchHints"),
+        summary: readString(extraction.result, "summary"),
+      });
+      if (hasRelaxedInvoiceCoreFields(modelRecord)) {
+        return { result: extraction.result, structured: null };
+      }
       throw new Error(`这份文件不像发票，暂不写入发票台账：${structured.detection.reason}`);
     }
     const repaired = await this.repairStructuredInvoiceFields(text, structured).catch((error) => {
@@ -1582,18 +1589,28 @@ function extractInvoiceTypeFromText(text: string): string | undefined {
 }
 
 function assertUsefulInvoiceRecord(record: Record<string, unknown>, structured: StructuredInvoiceExtraction | null): void {
-  const hasCoreFields = Boolean(
-    readFieldString(record, "发票号")
-    && hasFieldValue(record, "开票日期")
+  if (hasRelaxedInvoiceCoreFields(record)) {
+    return;
+  }
+  const hasDetectorBackedFields = Boolean(
+    structured?.detection.isInvoice
     && readFieldNumber(record, "发票金额") !== undefined
+    && (hasFieldValue(record, "开票日期") || readFieldString(record, "购买方"))
   );
-  if (hasCoreFields) {
+  if (hasDetectorBackedFields) {
     return;
   }
   const reason = structured
     ? `${structured.detection.reason}；缺少字段：${structured.missingFields.join("、") || "核心字段"}`
     : "未提取到足够的发票核心字段";
   throw new Error(`发票识别结果不足，暂不写入发票台账：${reason}`);
+}
+
+function hasRelaxedInvoiceCoreFields(record: Record<string, unknown>): boolean {
+  return Boolean(
+    readFieldString(record, "发票号")
+    && (hasFieldValue(record, "开票日期") || readFieldNumber(record, "发票金额") !== undefined)
+  );
 }
 
 function hasFieldValue(record: Record<string, unknown>, key: string): boolean {

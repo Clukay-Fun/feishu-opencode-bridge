@@ -35,6 +35,12 @@ type PermissionManagerCallbacks = {
     options: SendPayloadOptions,
     delivery?: { replyToMessageId: string; replyInThread?: boolean },
   ): Promise<{ messageId: string }>;
+  updatePayload(
+    chatId: string,
+    messageId: string,
+    payload: FeishuPostPayload,
+    options: SendPayloadOptions,
+  ): Promise<{ messageId: string }>;
   toCardContent(payload: FeishuPostPayload): Record<string, unknown>;
 };
 
@@ -201,6 +207,7 @@ export class PermissionManager {
           detail,
         }, "warn");
       }
+      await this.updatePermissionRequestCard(interaction, finalResolution);
       logEvent(this.logger, "bridge/permission", "permission.decided", {
         turnId: interaction.turnId,
         sessionId: interaction.sessionId,
@@ -215,6 +222,36 @@ export class PermissionManager {
       });
     } finally {
       this.processing.delete(interaction.permissionVersion);
+    }
+  }
+
+  private async updatePermissionRequestCard(
+    interaction: PendingPermissionInteraction,
+    resolution: PermissionResolution,
+  ): Promise<void> {
+    if (!interaction.permissionMessageId) {
+      return;
+    }
+    const payload = this.buildResolutionPayload(resolution);
+    const textPreview = resolution === "deny" || resolution === "timeout" || resolution === "upstream-expired"
+      ? "权限请求已拒绝。"
+      : "权限请求已授权。";
+    try {
+      await this.callbacks.updatePayload(interaction.chatId, interaction.permissionMessageId, payload, {
+        event: "permission card updated",
+        transcriptType: "outbound-final",
+        textPreview,
+        len: textPreview.length,
+      });
+    } catch (error) {
+      this.logger.log("bridge/permission", "permission card update failed after decision", {
+        chatId: interaction.chatId,
+        messageId: interaction.permissionMessageId,
+        permissionId: interaction.permissionId,
+        nonce: interaction.permissionVersion,
+        resolution,
+        detail: error instanceof Error ? error.message : String(error),
+      }, "warn");
     }
   }
 

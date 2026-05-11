@@ -68,16 +68,10 @@ export type CaseTodoReminderCardView = {
 /** 构建案件录入进行中卡。 */
 export function buildCaseCreateProcessingPayload(view: CaseCreateProgressView | string): FeishuPostPayload {
   const progressView = typeof view === "string" ? createCaseCreateProgressState(view) : view;
-  const preview = parseCaseCreateRequestPreview(progressView.request);
   return buildDesignerCardPayload("案件信息录入中", [
-    { from: "委托人：张三", to: `委托人：${preview.clientName ?? "待识别"}` },
-    { from: "对方当事人：某科技公司", to: `对方当事人：${preview.counterpartyName ?? "待识别"}` },
-    { from: "案由：劳动争议", to: `案由：${preview.cause ?? preview.type ?? "待识别"}` },
-    { from: "程序阶段：劳动仲裁", to: `程序阶段：${preview.stage ?? preview.status ?? "待识别"}` },
-    { from: "案号：xxx", to: `案号：${preview.caseNo ?? "待识别"}` },
-    { from: "审理法院：xx法院", to: `审理法院：${preview.court ?? "待识别"}` },
     ...renderCaseCreateStepReplacements(progressView),
   ], (card) => {
+    removeCaseCreatePreviewBlock(card);
     applyCaseCreateStepStyles(card, progressView);
   });
 }
@@ -216,13 +210,14 @@ export function buildInvoiceRecognizeCompletedPayload(
     { from: "服务", to: invoiceType ?? "未识别" },
     { from: "291.94", to: amount ?? "未识别" },
     { from: "2026/03/24", to: invoiceDate ?? "未识别" },
-    { from: "xx合同.pdf", to: payer ?? "非发票文件" },
+    { from: "**xx合同.pdf**   识别失败，非发票文件", to: `购买方：${payer ?? "未识别"}` },
     { from: "耗时 32s", to: `耗时 ${formatDurationSeconds(options.elapsedMs)}` },
   ], (card) => {
     if (options.batchResults && options.batchResults.length > 1) {
       renderInvoiceBatchDetails(card, options.batchResults);
     }
     setDesignerButtonValue(card, "查看发票表", { kind: "invoice-action", action: "open-invoice-table", url: options.recordUrl });
+    setDesignerButtonUrl(card, "查看发票表", options.recordUrl);
   });
 }
 
@@ -344,6 +339,24 @@ function resolveTodoRowBackground(index: number, line: string): string {
 
 function formatDurationSeconds(elapsedMs: number): string {
   return `${Math.max(1, Math.round(elapsedMs / 1000))}s`;
+}
+
+function removeCaseCreatePreviewBlock(card: Record<string, unknown>): void {
+  const body = getDesignerRecord(card.body);
+  const elements = Array.isArray(body?.elements) ? body.elements : null;
+  if (!elements) {
+    return;
+  }
+  for (let index = elements.length - 1; index >= 0; index -= 1) {
+    const element = elements[index];
+    if (
+      designerElementContainsText(element, "委托人：")
+      || designerElementContainsText(element, "案号：")
+      || getDesignerRecord(element)?.tag === "hr"
+    ) {
+      elements.splice(index, 1);
+    }
+  }
 }
 
 function getDesignerBodyElements(card: Record<string, unknown>): Array<Record<string, unknown>> {
