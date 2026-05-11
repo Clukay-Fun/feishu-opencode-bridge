@@ -11,6 +11,8 @@ import { buildNoticeCardPayload } from "../feishu/shared-primitives.js";
 import { createTextPreview, type Logger } from "../logging/logger.js";
 import type { IncomingChatMessage } from "../runtime/app.js";
 import type { FeishuTransport } from "../runtime/feishu-transport.js";
+import { renderCaseWorkbenchContextBlock, type CaseWorkbenchContextStore } from "./context-store.js";
+import { readReferencedFeishuDocuments } from "./feishu-doc-reader.js";
 
 export type CaseWorkbenchLaborPort = {
   startCaseWorkbenchCollection(
@@ -24,15 +26,41 @@ type CaseWorkbenchRuntimeModuleDeps = {
   logger: Logger;
   transport: FeishuTransport;
   labor: CaseWorkbenchLaborPort;
+  contextStore?: CaseWorkbenchContextStore | undefined;
+  docReader?: ((text: string, logger: Logger) => Promise<string[]>) | undefined;
 };
-
-type CaseWorkbenchIntent = "labor" | "workbench" | null;
 
 export class CaseWorkbenchRuntimeModule implements RuntimeModule {
   readonly name = "case-workbench";
   readonly priority = 35;
 
   constructor(private readonly deps: CaseWorkbenchRuntimeModuleDeps) {}
+
+  async start(): Promise<void> {
+    await this.deps.contextStore?.restore();
+  }
+
+  async stop(): Promise<void> {
+    await this.deps.contextStore?.stop();
+  }
+
+  async beforeTurn(context: { turn: { plainText: string; senderOpenId: string; conversationKey: string; chatId: string } }): Promise<{ systemBlocks?: string[] } | void> {
+    const blocks: string[] = [];
+    const docReader = this.deps.docReader ?? readReferencedFeishuDocuments;
+    blocks.push(...await docReader(context.turn.plainText, this.deps.logger));
+
+    if (this.deps.contextStore && shouldRecallCaseContext(context.turn.plainText)) {
+      const current = this.deps.contextStore.findRecent({
+        userId: context.turn.senderOpenId,
+        conversationKey: context.turn.conversationKey,
+        chatId: context.turn.chatId,
+      });
+      if (current) {
+        blocks.push(renderCaseWorkbenchContextBlock(current));
+      }
+    }
+    return blocks.length > 0 ? { systemBlocks: blocks } : undefined;
+  }
 
   async handleMessage(context: RuntimeModuleMessageContext): Promise<RuntimeModuleHandleResult> {
     const { message, routed } = context;
@@ -48,21 +76,11 @@ export class CaseWorkbenchRuntimeModule implements RuntimeModule {
         .filter((argument) => argument.trim() !== "新建" && argument.trim().toLowerCase() !== "new")
         .join(" ")
         .trim() || undefined;
-      await this.startLaborFastPath(message, title);
+      await this.sendWorkbenchEntryCard(message, title);
       return { claimed: true };
     }
 
-    const intent = detectCaseWorkbenchIntent(message.plainText);
-    if (!intent) {
-      return { claimed: false };
-    }
-    if (intent === "labor") {
-      await this.startLaborFastPath(message, extractCaseWorkbenchTitle(message.plainText));
-      return { claimed: true };
-    }
-
-    await this.sendWorkbenchEntryCard(message);
-    return { claimed: true };
+    return { claimed: false };
   }
 
   async handleCardAction(
@@ -92,6 +110,7 @@ export class CaseWorkbenchRuntimeModule implements RuntimeModule {
     const chatId = typeof value.chatId === "string" ? value.chatId : "";
     const conversationKey = typeof value.conversationKey === "string" ? value.conversationKey : "";
     const chatType = typeof value.chatType === "string" ? value.chatType : "group";
+    const title = typeof value.title === "string" && value.title.trim() ? value.title.trim() : undefined;
     if (!chatId || !conversationKey) {
       return buildCaseWorkbenchToast("入口卡片缺少上下文，请重新发送 /案件工作台。", "warning");
     }
@@ -102,23 +121,14 @@ export class CaseWorkbenchRuntimeModule implements RuntimeModule {
       openMessageId,
       conversationKey,
       actorOpenId,
+      title,
     });
     return buildCaseWorkbenchToast("已进入材料收集。", "success");
   }
 
-  private async startLaborFastPath(
-    message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "senderOpenId">,
-    title?: string | undefined,
-  ): Promise<void> {
-    this.deps.logger.log("case-workbench/runtime", "case workbench fast-path to labor", {
-      conversationKey: message.conversationKey,
-      hasTitle: Boolean(title),
-    });
-    await this.deps.labor.startCaseWorkbenchCollection(message, title);
-  }
-
   private async sendWorkbenchEntryCard(
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey" | "senderOpenId">,
+    title?: string | undefined,
   ): Promise<void> {
     const payload = buildCaseWorkbenchPayload({
       domains: ["劳动争议分析"],
@@ -126,6 +136,7 @@ export class CaseWorkbenchRuntimeModule implements RuntimeModule {
       chatType: message.chatType,
       conversationKey: message.conversationKey,
       requesterOpenId: message.senderOpenId,
+      title,
     });
     await this.deps.transport.sendPayload(message.chatId, payload, {
       event: "case workbench entry sent",
@@ -141,6 +152,7 @@ export class CaseWorkbenchRuntimeModule implements RuntimeModule {
     openMessageId: string;
     conversationKey: string;
     actorOpenId: string;
+    title?: string | undefined;
   }): void {
     setTimeout(() => {
       void (async () => {
@@ -160,13 +172,18 @@ export class CaseWorkbenchRuntimeModule implements RuntimeModule {
         } catch (error) {
           this.logCardUpdateFailure(error);
         } finally {
-          await this.deps.labor.startCaseWorkbenchCollection({
+          const collectionMessage = {
             chatId: input.chatId,
             chatType: input.chatType,
             messageId: input.openMessageId,
             conversationKey: input.conversationKey,
             senderOpenId: input.actorOpenId,
-          });
+          };
+          if (input.title) {
+            await this.deps.labor.startCaseWorkbenchCollection(collectionMessage, input.title);
+          } else {
+            await this.deps.labor.startCaseWorkbenchCollection(collectionMessage);
+          }
         }
       })();
     }, 0);
@@ -207,30 +224,15 @@ function chatIdFromValue(value: Record<string, unknown>): string {
   return typeof value.chatId === "string" ? value.chatId : "";
 }
 
-function detectCaseWorkbenchIntent(text: string): CaseWorkbenchIntent {
-  const normalized = text.replace(/\s+/g, " ").trim().toLowerCase();
-  if (!normalized || /(不要|不用|先别|取消).{0,8}(工作台|分析|整理|生成)/.test(normalized)) {
-    return null;
+function shouldRecallCaseContext(text: string): boolean {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return false;
   }
-  const hasLaborDomain = /(劳动|仲裁|工资|加班|工伤|社保|解除|辞退|离职|赔偿|补偿|用人单位|员工)/.test(normalized);
-  const hasLaborWorkflowNoun = /(劳动分析|劳动争议工作台|劳动仲裁材料|劳动.{0,8}(材料|证据|工作台|证据链)|仲裁材料|证据链|工作台)/.test(normalized);
-  const hasProductionAction = /(做|整理|梳理|生成|输出|形成|编写|起草|录入)/.test(normalized);
-  if (hasLaborDomain && hasLaborWorkflowNoun && (hasProductionAction || /劳动分析|工作台|证据链/.test(normalized))) {
-    return "labor";
-  }
-  const hasCaseWorkbench = /(案件工作台|办案工作台|新建案子|新建案件|打开工作台|进入工作台)/.test(normalized);
-  if (hasCaseWorkbench) {
-    return "workbench";
-  }
-  return null;
-}
-
-function extractCaseWorkbenchTitle(text: string): string | undefined {
-  const normalized = text
-    .replace(/[，。；、,.!?！？]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  return normalized.length > 6 ? normalized.slice(0, 60) : undefined;
+  const refersCurrentCase = /(当前|这个|该|刚才|上面|前面).{0,12}(案件|案子|工作台|分析结果|材料|证据)/.test(normalized)
+    || /(案件分析结果|工作台结果|劳动分析结果)/.test(normalized);
+  const asksCaseOutput = /(仲裁申请书|起诉状|证据目录|证据清单|代理意见|答辩状|质证意见|文书|补证|诉请|请求事项)/.test(normalized);
+  return refersCurrentCase || asksCaseOutput;
 }
 
 function buildCaseWorkbenchToast(content: string, type: "success" | "warning"): Record<string, unknown> {

@@ -137,6 +137,40 @@ describe("startBridgeHttpServer", () => {
     expect(await response.json()).toEqual({ card: { title: "权限已处理" } });
   });
 
+  it("delegates permission callbacks when action value is a JSON string", async () => {
+    const port = await reservePort();
+    const handlePermissionCardAction = vi.fn(async () => ({ card: { title: "权限已处理" } }));
+    const server = await startBridgeHttpServer(
+      createConfig(port, { enabled: true }),
+      { handlePermissionCardAction },
+      logger(),
+    );
+    servers.push(server);
+
+    const value = {
+      kind: "permission",
+      conversationKey: "oc_p2p_1:main",
+      turnId: "turn_1",
+      sessionId: "ses_1",
+      permissionId: "perm_1",
+      policy: "once",
+      nonce: "nonce_1",
+    };
+    const response = await fetch(`http://127.0.0.1:${port}/webhook/card`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        operator: { operator_id: { open_id: "ou_requester" } },
+        context: { open_message_id: "om_permission_1" },
+        action: { value: JSON.stringify(value) },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(handlePermissionCardAction).toHaveBeenCalledWith("ou_requester", "om_permission_1", value);
+    expect(await response.json()).toEqual({ card: { title: "权限已处理" } });
+  });
+
   it("delegates non-permission card actions to the generic handler", async () => {
     const port = await reservePort();
     const handlePermissionCardAction = vi.fn(async () => ({ card: { title: "权限已处理" } }));

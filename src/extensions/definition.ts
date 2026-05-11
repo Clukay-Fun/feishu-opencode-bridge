@@ -20,6 +20,7 @@ import type { CostTracker } from "../runtime/cost-tracker.js";
 import type { FeishuTransport } from "../runtime/feishu-transport.js";
 import type { SessionBindingRecord, SessionWindowRecord } from "../store/mappings.js";
 import type { WhitelistStore } from "../store/whitelist.js";
+import type { CaseWorkbenchContextStore } from "../case-workbench/context-store.js";
 
 export type RuntimeModuleOutboundPort = ExtensionOutboundPort;
 
@@ -41,6 +42,7 @@ export type RuntimeExtensionContext = {
   memory?: unknown;
   knowledge: KnowledgeBasePort | null;
   costTracker?: Pick<CostTracker, "recordExternalCall"> | undefined;
+  caseContextStore?: CaseWorkbenchContextStore | undefined;
   whitelist: Pick<WhitelistStore, "bind">;
   getSessionWindow(conversationKey: string, chatType?: string): SessionWindowRecord;
   saveSessionWindow(conversationKey: string, window: SessionWindowRecord): Promise<void>;

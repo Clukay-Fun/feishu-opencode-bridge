@@ -25,10 +25,11 @@ import {
 } from "../feishu/labor-cards.js";
 import { createTextPreview, type Logger } from "../logging/logger.js";
 import type { KnowledgeBasePort } from "../knowledge/index.js";
-import type { IncomingChatMessage, IncomingFileMessage } from "../runtime/app.js";
+import type { IncomingChatMessage } from "../runtime/app.js";
 import type { RoutedText } from "../bridge/router.js";
 import type { FeishuTransport } from "../runtime/feishu-transport.js";
 import { PersistedInteractionManager } from "../runtime/persisted-interaction-manager.js";
+import type { CaseWorkbenchContextStore } from "../case-workbench/context-store.js";
 import type {
   LaborAnalyzeResult,
   LaborSkillService,
@@ -45,6 +46,7 @@ type LaborRuntimeModuleDeps = {
   knowledge: KnowledgeBasePort | null;
   service: LaborSkillService | null;
   transport: FeishuTransport;
+  caseContextStore?: CaseWorkbenchContextStore | undefined;
 };
 
 type LaborCommand = Extract<RoutedText, { kind: "command" }>["command"];
@@ -89,20 +91,6 @@ type LaborProgressState = {
   }>;
 };
 
-type RecentLaborMaterial = {
-  chatId: string;
-  conversationKey: string;
-  requesterOpenId: string;
-  messageId: string;
-  fileKey: string;
-  fileName: string;
-  size?: number | undefined;
-  resourceType?: "file" | "image" | "folder" | undefined;
-  createdAt: number;
-};
-
-const MAX_RECENT_LABOR_MATERIALS = 10;
-
 export class LaborRuntimeModule implements RuntimeModule {
   readonly name = "labor";
   readonly priority = 40;
@@ -110,7 +98,6 @@ export class LaborRuntimeModule implements RuntimeModule {
   private readonly featureConfig;
   private readonly interactions: PersistedInteractionManager<PendingLaborInteraction>;
   private readonly checkpoints: LaborCaseCheckpointStore;
-  private readonly recentMaterials = new Map<string, RecentLaborMaterial[]>();
   private readonly finishingCollections = new Set<string>();
 
   constructor(private readonly deps: LaborRuntimeModuleDeps) {
@@ -138,7 +125,6 @@ export class LaborRuntimeModule implements RuntimeModule {
 
   /** 停止交互状态管理器并刷新断点。 */
   async stop(): Promise<void> {
-    this.recentMaterials.clear();
     await this.interactions.stop();
     await this.checkpoints.stop();
   }
@@ -149,11 +135,6 @@ export class LaborRuntimeModule implements RuntimeModule {
     const pending = this.findInteraction(message);
 
     if (pending) {
-      if (routed?.kind === "command" && isLegacyLaborCommand(routed.command)) {
-        await this.sendLegacyMigrationNotice(message);
-        return { claimed: true };
-      }
-
       if (routed?.kind === "command" && isLaborFinishCommand(routed.command)) {
         await this.startFinishCollection(message, pending);
         return { claimed: true };
@@ -161,7 +142,7 @@ export class LaborRuntimeModule implements RuntimeModule {
 
       if (message.senderOpenId !== pending.requesterOpenId) {
         await this.sendNotice(message, {
-          title: "当前劳动分析任务仅限发起人继续",
+          title: "当前材料收集任务仅限发起人继续",
           template: "yellow",
           icon: "maybe_outlined",
           message: "请由当前发起人继续补充材料或说明。",
@@ -169,14 +150,9 @@ export class LaborRuntimeModule implements RuntimeModule {
         return { claimed: true };
       }
 
-      if (isLaborFinishText(message.plainText)) {
-        await this.startFinishCollection(message, pending);
-        return { claimed: true };
-      }
-
       if (routed?.kind === "command" && isCaseWorkbenchStartCommand(routed.command)) {
         await this.sendNotice(message, {
-          title: "已有劳动分析正在收集",
+          title: "已有材料收集正在进行",
           template: "yellow",
           icon: "maybe_outlined",
           message: "请继续上传材料，或发送 `/完成上传` 开始分析。",
@@ -192,14 +168,7 @@ export class LaborRuntimeModule implements RuntimeModule {
       return { claimed: true };
     }
 
-    if (this.captureRecentMaterial(message)) {
-      return { claimed: false };
-    }
-
     if (routed?.kind !== "command") {
-      if (await this.handleRecentMaterialIntent(message)) {
-        return { claimed: true };
-      }
       return { claimed: false };
     }
 
@@ -214,21 +183,9 @@ export class LaborRuntimeModule implements RuntimeModule {
     if (command.kind !== "passthrough") {
       return false;
     }
-    if (isLegacyLaborCommand(command)) {
-      await this.sendLegacyMigrationNotice(message);
-      return true;
-    }
 
-    if (!isCaseWorkbenchStartCommand(command) && !isLaborFinishCommand(command)) {
+    if (!isLaborFinishCommand(command)) {
       return false;
-    }
-
-    if (isCaseWorkbenchStartCommand(command)) {
-      const title = command.arguments
-        .join(" ")
-        .trim() || undefined;
-      await this.startCaseWorkbenchCollection(message, title);
-      return true;
     }
 
     await this.sendNotice(message, {
@@ -248,10 +205,10 @@ export class LaborRuntimeModule implements RuntimeModule {
   ): Promise<void> {
     if (!this.featureConfig.enabled || !this.deps.service) {
       await this.sendNotice(message, {
-        title: "劳动 skill 未启用",
+        title: "当前分析领域未启用",
         template: "yellow",
         icon: "maybe_outlined",
-        message: "当前未启用 laborSkill，请先补充 `laborSkill` 配置。",
+        message: "当前未启用所选分析领域，请先补充对应配置。",
       });
       return;
     }
@@ -271,17 +228,6 @@ export class LaborRuntimeModule implements RuntimeModule {
       collectionOptions.suppressInitialCard = options.suppressInitialCard;
     }
     await this.startCollection(message, title, collectionOptions);
-  }
-
-  private async sendLegacyMigrationNotice(
-    message: Pick<IncomingChatMessage, "chatId" | "messageId">,
-  ): Promise<void> {
-    await this.sendNotice(message, {
-      title: "劳动分析入口已更新",
-      template: "yellow",
-      icon: "maybe_outlined",
-      message: "该命令已并入 `/案件工作台`，请使用新入口；上传完成后点击卡片按钮或发送 `/完成上传`。",
-    });
   }
 
   /** 创建新的劳动分析收集态交互。 */
@@ -578,6 +524,7 @@ export class LaborRuntimeModule implements RuntimeModule {
       if (!result.docUrl) {
         await this.sendLaborMarkdownFallback(message, pending, result);
       }
+      this.saveCaseWorkbenchContext(pending, result);
 
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -743,6 +690,35 @@ export class LaborRuntimeModule implements RuntimeModule {
     this.clearInteraction(pending.conversationKey);
   }
 
+  private saveCaseWorkbenchContext(pending: PendingLaborInteraction, result: LaborAnalyzeResult): void {
+    this.deps.caseContextStore?.upsert({
+      caseId: pending.caseId,
+      title: result.title,
+      userId: pending.requesterOpenId,
+      chatId: pending.chatId,
+      conversationKey: pending.conversationKey,
+      source: "labor",
+      docUrl: result.docUrl,
+      markdown: result.markdown,
+      summary: result.aggregate.summary,
+      issues: result.aggregate.keyIssues.length > 0
+        ? result.aggregate.keyIssues
+        : result.aggregate.issues.map((item) => item.issue),
+      claimBasis: result.aggregate.claimBasis.map((item) => [
+        item.claim,
+        item.basis,
+        item.evidence.length > 0 ? `证据：${item.evidence.join("、")}` : "",
+      ].filter(Boolean).join("｜")),
+      evidence: result.aggregate.evidenceRows.map((item) => [
+        item.name,
+        item.proves,
+        item.support ? `支持方向：${item.support}` : "",
+      ].filter(Boolean).join("｜")),
+      missingEvidence: result.aggregate.missingEvidence,
+      updatedAt: Date.now(),
+    });
+  }
+
   private async sendLaborMarkdownFallback(
     triggerMessage: Pick<IncomingChatMessage, "messageId">,
     pending: Pick<PendingLaborInteraction, "chatId">,
@@ -771,102 +747,6 @@ export class LaborRuntimeModule implements RuntimeModule {
         this.clearInteraction(conversationKey);
       }
     }
-  }
-
-  private captureRecentMaterial(message: IncomingChatMessage): boolean {
-    if (message.messageType !== "file" || !this.featureConfig.enabled || !this.deps.service) {
-      return false;
-    }
-    if (!this.isSupportedRecentMaterial(message)) {
-      return false;
-    }
-    const key = this.getRecentMaterialKey(message);
-    const expiresBefore = Date.now() - this.featureConfig.ingest.pendingTtlMs;
-    const existing = (this.recentMaterials.get(key) ?? [])
-      .filter((item) => item.createdAt >= expiresBefore && item.messageId !== message.messageId);
-    existing.push({
-      chatId: message.chatId,
-      conversationKey: message.conversationKey,
-      requesterOpenId: message.senderOpenId,
-      messageId: message.messageId,
-      fileKey: message.file.fileKey,
-      fileName: message.file.fileName,
-      size: message.file.size,
-      resourceType: message.resourceType,
-      createdAt: Date.now(),
-    });
-    this.recentMaterials.set(key, existing.slice(-MAX_RECENT_LABOR_MATERIALS));
-    return true;
-  }
-
-  private async handleRecentMaterialIntent(message: IncomingChatMessage): Promise<boolean> {
-    if (message.messageType !== "text" || !this.featureConfig.enabled || !this.deps.service) {
-      return false;
-    }
-    const materials = this.getRecentMaterials(message);
-    if (materials.length === 0) {
-      return false;
-    }
-    const detection = detectLaborRecentMaterialIntent(message.plainText);
-    if (!detection.matched) {
-      return false;
-    }
-    this.deps.logger.log("labor/runtime", "recent material labor analysis claimed", {
-      confidence: detection.confidence,
-      reasons: detection.reasons.join(","),
-      materialCount: materials.length,
-    });
-    const pending = await this.startCollection(message, undefined);
-    for (const material of materials) {
-      pending.files.push({
-        messageId: material.messageId,
-        fileKey: material.fileKey,
-        fileName: material.fileName,
-        size: material.size,
-        resourceType: material.resourceType,
-      });
-    }
-    const note = message.plainText.trim();
-    if (note) {
-      pending.notes.push(note);
-    }
-    this.clearRecentMaterials(message);
-    await this.finishCollection(message, pending);
-    return true;
-  }
-
-  private getRecentMaterials(message: Pick<IncomingChatMessage, "chatId" | "senderOpenId">): RecentLaborMaterial[] {
-    const key = this.getRecentMaterialKey(message);
-    const expiresBefore = Date.now() - this.featureConfig.ingest.pendingTtlMs;
-    const materials = (this.recentMaterials.get(key) ?? []).filter((item) => item.createdAt >= expiresBefore);
-    if (materials.length === 0) {
-      this.recentMaterials.delete(key);
-      return [];
-    }
-    this.recentMaterials.set(key, materials);
-    return materials;
-  }
-
-  private clearRecentMaterials(message: Pick<IncomingChatMessage, "chatId" | "senderOpenId">): void {
-    this.recentMaterials.delete(this.getRecentMaterialKey(message));
-  }
-
-  private getRecentMaterialKey(message: Pick<IncomingChatMessage, "chatId" | "senderOpenId">): string {
-    return `${message.chatId}:${message.senderOpenId}`;
-  }
-
-  private isSupportedRecentMaterial(message: IncomingFileMessage): boolean {
-    const extension = message.file.fileName.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? "";
-    if (!this.featureConfig.ingest.allowedExtensions.includes(extension)) {
-      return false;
-    }
-    if (typeof message.file.size !== "number") {
-      return true;
-    }
-    if (message.file.size <= 0) {
-      return false;
-    }
-    return message.file.size <= this.featureConfig.ingest.maxFileSizeMb * 1024 * 1024;
   }
 
   private findInteraction(message: IncomingChatMessage): PendingLaborInteraction | null {
@@ -1017,16 +897,6 @@ function isLaborFinishCommand(command: LaborCommand): boolean {
   return normalized === "完成上传" || normalized === "材料收集完成";
 }
 
-function isLaborFinishText(text: string): boolean {
-  const normalized = text
-    .replace(/^[\s\-*•·●▪▫]+/g, "")
-    .replace(/\s+/g, "")
-    .replace(/[，。；、,.!?！？～~]+$/g, "")
-    .trim()
-    .toLowerCase();
-  return normalized === "完成上传" || normalized === "材料收集完成";
-}
-
 function shouldCollectLaborInput(message: IncomingChatMessage): boolean {
   if (message.messageType === "file") {
     return true;
@@ -1056,63 +926,6 @@ function shouldCollectLaborInput(message: IncomingChatMessage): boolean {
 function isCaseWorkbenchStartCommand(command: LaborCommand): boolean {
   return command.kind === "passthrough"
     && command.name.trim().toLowerCase() === "案件工作台";
-}
-
-function isLegacyLaborCommand(command: LaborCommand): boolean {
-  if (command.kind !== "passthrough") {
-    return false;
-  }
-  const normalized = command.name.trim().toLowerCase();
-  return normalized === "劳动分析"
-    || normalized === "劳动分析结束"
-    || normalized === "labor-start"
-    || normalized === "labor-end";
-}
-
-type LaborRecentMaterialIntentResult = {
-  matched: boolean;
-  confidence: number;
-  reasons: string[];
-};
-
-function detectLaborRecentMaterialIntent(text: string): LaborRecentMaterialIntentResult {
-  const normalized = text.replace(/\s+/g, " ").trim().toLowerCase();
-  if (!normalized) {
-    return { matched: false, confidence: 0, reasons: [] };
-  }
-  if (/(不要|不用|先别|取消).{0,8}(分析|生成|整理|工作台)/.test(normalized)) {
-    return { matched: false, confidence: 0, reasons: ["negative-labor-intent"] };
-  }
-
-  const reasons: string[] = [];
-  let confidence = 0;
-  if (/(劳动|仲裁|工资|社保|解除|辞退|离职|赔偿|补偿)/.test(normalized)) {
-    confidence += 0.3;
-    reasons.push("labor-domain");
-  }
-  if (/(劳动分析|劳动争议|证据链|工作台|证据清单)/.test(normalized)) {
-    confidence += 0.35;
-    reasons.push("labor-output");
-  }
-  if (/(分析|生成|整理|梳理|输出|起草)/.test(normalized)) {
-    confidence += 0.25;
-    reasons.push("analysis-action");
-  }
-  if (/(刚才|这些|这个|文件|材料|证据)/.test(normalized)) {
-    confidence += 0.15;
-    reasons.push("material-reference");
-  }
-  if (/^劳动分析$/.test(normalized)) {
-    confidence += 0.65;
-    reasons.push("short-strong-intent");
-  }
-
-  const bounded = Math.min(1, Number(confidence.toFixed(2)));
-  return {
-    matched: bounded >= 0.65,
-    confidence: bounded,
-    reasons,
-  };
 }
 
 function renderProcessingMessage(state: LaborProgressState): string {

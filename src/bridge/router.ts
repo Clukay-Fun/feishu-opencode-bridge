@@ -42,6 +42,9 @@ export function routeIncomingText(text: string): RoutedText {
   if (!normalized.startsWith("/")) {
     return { kind: "message", text };
   }
+  if (normalized.includes("\n")) {
+    return { kind: "message", text };
+  }
 
   const parts = normalized.split(/\s+/);
   const rawCommand = parts[0]?.slice(1) ?? "";

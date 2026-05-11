@@ -40,7 +40,6 @@ import type {
   ContractClause,
   ContractAssistantFileInput,
   ContractAssistantFileRef,
-  ContractAssistantIntentResult,
   ContractState,
   ContractWorkbenchModelResult,
   InvoiceRecognizeProgressEvent,
@@ -98,14 +97,6 @@ type PendingUploadInteraction = {
   expiresAt: number;
 };
 
-type RecentMaterialEntry = {
-  kind: PendingUploadKind;
-  conversationKey: string;
-  requesterOpenId: string;
-  file: ContractAssistantFileRef;
-  expiresAt: number;
-};
-
 type PendingDraftInteraction = {
   kind: "contract-draft-onboard";
   chatId: string;
@@ -133,7 +124,6 @@ type PendingInteraction = PendingUploadInteraction | PendingDraftInteraction | P
 
 const CONTRACT_EXTRACT_COMMAND_ALIASES = new Set(["contract-extract", "合同录入"]);
 const INVOICE_RECOGNIZE_COMMAND_ALIASES = new Set(["invoice-recognize", "识别发票"]);
-const SKILL_INTENT_CONFIDENCE_THRESHOLD = 0.72;
 
 export class ContractAssistantRuntimeModule implements RuntimeModule {
   readonly name = "contract-assistant";
@@ -141,7 +131,6 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
 
   private readonly interactions: PersistedInteractionManager<PendingInteraction>;
   private readonly featureConfig: ContractAssistantConfig;
-  private readonly recentMaterials = new Map<string, RecentMaterialEntry[]>();
 
   constructor(private readonly deps: ContractAssistantRuntimeModuleDeps) {
     this.featureConfig = deps.config.contractAssistant ?? DEFAULT_CONTRACT_ASSISTANT_CONFIG;
@@ -233,8 +222,6 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       return { claimed: true };
     }
 
-    this.rememberRecentMaterial(message);
-
     if (pending && routed?.kind === "command" && isContractReentryCommand(routed.command, pending.kind)) {
       await this.sendNotice(message, {
         title: pending.kind === "contract-workbench" ? "已有合同起草会话" : "已有合同起草引导",
@@ -253,8 +240,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     }
 
     if (!pending) {
-      const claimed = await this.handleNaturalLanguageIntent(message);
-      return { claimed };
+      return { claimed: false };
     }
 
     if (pending.kind === "contract-draft-onboard") {
@@ -278,8 +264,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     if (message.messageType === "file" || message.senderOpenId !== pending.requesterOpenId) {
       return false;
     }
-    const forcedKind = detectPendingUploadKind(message.plainText);
-    const pendingKind = forcedKind ?? await this.classifyPendingUploadKind(message.plainText, pending.file.fileName);
+    const pendingKind = detectPendingUploadKind(message.plainText);
     if (!pendingKind) {
       return false;
     }
@@ -556,152 +541,6 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     return true;
   }
 
-  private async handleNaturalLanguageIntent(message: IncomingChatMessage): Promise<boolean> {
-    if (message.messageType === "file" || message.messageType === "image" || !this.featureConfig.enabled || !this.deps.service) {
-      return false;
-    }
-    const text = message.plainText.trim();
-    if (!text || looksLikeKnowledgeOrLaborRequest(text)) {
-      return false;
-    }
-    if (isCaseWorkbenchEntrypoint(text)) {
-      return false;
-    }
-    if (isCaseTodoQuery(text)) {
-      await this.handleCaseTodos(message, text);
-      return true;
-    }
-    const localInvoiceFiles = await this.resolveLocalInvoiceFilesFromText(text);
-    if (localInvoiceFiles.length > 0) {
-      if (localInvoiceFiles.length === 1) {
-        await this.handleInvoiceRecognize(message, buildLocalContractFileInput(localInvoiceFiles[0]!));
-      } else {
-        await this.handleInvoiceRecognizeBatch(message, localInvoiceFiles.map(buildLocalContractFileInput));
-      }
-      return true;
-    }
-    const recentInvoice = this.findRecentMaterial(message, "invoice-recognize");
-    if (recentInvoice && isInvoiceActionRequest(text)) {
-      await this.handleInvoiceRecognize(message, recentInvoice.file);
-      return true;
-    }
-    if (isExactInvoiceStart(text)) {
-      await this.startPendingUpload(message, "invoice-recognize", "请直接上传 1 份发票文件，我会识别字段并写入发票记录。");
-      return true;
-    }
-    const localPath = extractLocalPath(text) ?? undefined;
-    const intent = await this.classifyIntentSafely({
-      userText: text,
-      localPath,
-      hasRecentFile: Boolean(localPath || recentInvoice),
-    });
-    if (!isConfidentIntent(intent)) {
-      return false;
-    }
-    if (intent.skill === "invoice-recognize" || intent.skill === "contract-extract") {
-      if (!localPath) {
-        const recentFile = this.findRecentMaterial(message, intent.skill);
-        if (recentFile) {
-          if (intent.skill === "invoice-recognize") {
-            await this.handleInvoiceRecognize(message, recentFile.file);
-            return true;
-          }
-          await this.handleContractExtract(message, recentFile.file);
-          return true;
-        }
-        await this.startPendingUpload(
-          message,
-          intent.skill,
-          intent.skill === "invoice-recognize"
-            ? "我已识别到你想执行发票识别。请上传发票文件，或在同一句里提供本地文件路径；也可以用 `/识别发票` 强制进入发票识别。"
-            : "我已识别到你想执行合同录入。请上传合同文件，或在同一句里提供本地文件路径；也可以用 `/合同录入` 强制进入合同录入。",
-        );
-        return true;
-      }
-      const file = buildLocalContractFileInput(localPath);
-      if (intent.skill === "invoice-recognize") {
-        await this.handleInvoiceRecognize(message, file);
-        return true;
-      }
-      await this.handleContractExtract(message, file);
-      return true;
-    }
-    if (intent.skill === "case-manage") {
-      await this.handleCaseCreate(message, text);
-      return true;
-    }
-    if (intent.skill === "contract-draft") {
-      await this.handleContractDraft(message, text);
-      return true;
-    }
-    return false;
-  }
-
-  private rememberRecentMaterial(message: IncomingChatMessage): void {
-    if (message.messageType !== "file" && message.messageType !== "image") {
-      return;
-    }
-    const kind = this.isFileAcceptableFor("invoice-recognize", message.file.fileName)
-      ? "invoice-recognize"
-      : this.isFileAcceptableFor("contract-extract", message.file.fileName)
-        ? "contract-extract"
-        : null;
-    if (!kind) {
-      return;
-    }
-    const expiresAt = Date.now() + this.featureConfig.ingest.pendingTtlMs;
-    const entry: RecentMaterialEntry = {
-      kind,
-      conversationKey: message.conversationKey,
-      requesterOpenId: message.senderOpenId,
-      file: {
-        messageId: message.messageId,
-        fileKey: message.file.fileKey,
-        fileName: message.file.fileName,
-        size: message.file.size,
-      },
-      expiresAt,
-    };
-    const existing = this.recentMaterials.get(message.conversationKey) ?? [];
-    const next = [
-      entry,
-      ...existing.filter((item) => item.expiresAt > Date.now() && item.file.messageId !== message.messageId),
-    ].slice(0, 8);
-    this.recentMaterials.set(message.conversationKey, next);
-  }
-
-  private findRecentMaterial(
-    message: Pick<IncomingChatMessage, "conversationKey" | "senderOpenId">,
-    kind: PendingUploadKind,
-  ): RecentMaterialEntry | null {
-    const entries = this.recentMaterials.get(message.conversationKey) ?? [];
-    const now = Date.now();
-    const alive = entries.filter((entry) => entry.expiresAt > now);
-    if (alive.length !== entries.length) {
-      if (alive.length === 0) {
-        this.recentMaterials.delete(message.conversationKey);
-      } else {
-        this.recentMaterials.set(message.conversationKey, alive);
-      }
-    }
-    return alive.find((entry) => entry.kind === kind && entry.requesterOpenId === message.senderOpenId) ?? null;
-  }
-
-  private async classifyPendingUploadKind(text: string, fileName: string): Promise<PendingUploadKind | null> {
-    const intent = await this.classifyIntentSafely({
-      userText: text,
-      fileName,
-      hasRecentFile: true,
-    });
-    if (!isConfidentIntent(intent)) {
-      return null;
-    }
-    if (intent.skill === "invoice-recognize" || intent.skill === "contract-extract") {
-      return intent.skill;
-    }
-    return null;
-  }
-
   private async resolveLocalInvoiceFilesFromText(text: string): Promise<string[]> {
     if (!/(发票|票据)/.test(text) || !/(识别|录入|写入|填入|填写|处理)/.test(text)) {
       return [];
@@ -726,22 +565,6 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       .filter((entry) => entry.isFile() && this.isFileAcceptableFor("invoice-recognize", entry.name))
       .map((entry) => path.join(candidatePath, entry.name))
       .sort((left, right) => path.basename(left).localeCompare(path.basename(right), "zh-Hans-CN"));
-  }
-
-  private async classifyIntentSafely(input: {
-    userText: string;
-    fileName?: string | undefined;
-    localPath?: string | undefined;
-    hasRecentFile?: boolean | undefined;
-  }): Promise<ContractAssistantIntentResult | null> {
-    try {
-      return await this.deps.service!.classifyIntent(input);
-    } catch (error) {
-      this.deps.logger.log("contract-assistant", "skill intent router skipped", {
-        detail: error instanceof Error ? error.message : String(error),
-      }, "warn");
-      return null;
-    }
   }
 
   private async startContractDraftOnboard(
@@ -2260,18 +2083,7 @@ function detectPendingUploadKind(text: string): PendingUploadKind | null {
       return "invoice-recognize";
     }
   }
-  const normalizedText = text.trim().replace(/^\/+/, "").toLowerCase();
-  if (CONTRACT_EXTRACT_COMMAND_ALIASES.has(normalizedText)) {
-    return "contract-extract";
-  }
-  if (INVOICE_RECOGNIZE_COMMAND_ALIASES.has(normalizedText)) {
-    return "invoice-recognize";
-  }
   return null;
-}
-
-function isConfidentIntent(intent: ContractAssistantIntentResult | null): intent is ContractAssistantIntentResult {
-  return Boolean(intent && intent.skill !== "none" && intent.confidence >= SKILL_INTENT_CONFIDENCE_THRESHOLD);
 }
 
 function extractLocalPath(text: string): string | null {
@@ -2314,47 +2126,6 @@ function buildLocalContractFileInput(localPath: string): ContractAssistantFileIn
 
 function getContractFileName(file: ContractAssistantFileInput): string {
   return file.fileName?.trim() || ("localPath" in file ? path.basename(file.localPath) : "上传文件");
-}
-
-function looksLikeKnowledgeOrLaborRequest(text: string): boolean {
-  const normalized = text.replace(/\s+/g, "");
-  return /(知识库|入库|检索知识|查询知识|劳动争议工作台|劳动案件工作台|证据链|生成材料|劳动分析)/.test(normalized);
-}
-
-function isCaseTodoQuery(text: string): boolean {
-  const normalized = text.replace(/\s+/g, "");
-  if (!/(待办|提醒|事项)/.test(normalized)) {
-    return false;
-  }
-  if (/(新增|录入|写入|添加|设置|更新|修改|改成|完成|删除)/.test(normalized)) {
-    return false;
-  }
-  return /(查看|查询|列出|看看|展示|今日|今天|案件)/.test(normalized);
-}
-
-function isCaseWorkbenchEntrypoint(text: string): boolean {
-  const normalized = text.replace(/\s+/g, "");
-  return /^(启动|打开|进入|开启)?(案件|办案)工作台$/.test(normalized)
-    || /^case-workbench$/i.test(text.trim());
-}
-
-function isExactInvoiceStart(text: string): boolean {
-  const normalized = text.trim().replace(/^\/+/, "").replace(/\s+/g, "");
-  return normalized === "发票识别" || normalized === "识别发票" || normalized.toLowerCase() === "invoice-recognize";
-}
-
-function isInvoiceActionRequest(text: string): boolean {
-  const normalized = text.replace(/\s+/g, "");
-  if (!/(发票|票据)/.test(normalized)) {
-    return false;
-  }
-  if (isExactInvoiceStart(text)) {
-    return true;
-  }
-  if (/(为什么|为何|原因|怎么回事|如何解决|能不能|可以吗|是否|吗[？?]?|[？?])/.test(normalized)) {
-    return false;
-  }
-  return /(识别|录入|录一下|写入|填入|填写|入账|记账|登记|处理)/.test(normalized);
 }
 
 function isInvoiceLedgerQuery(text: string): boolean {

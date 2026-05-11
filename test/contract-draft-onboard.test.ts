@@ -258,7 +258,7 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     }
   });
 
-  it("routes natural language case todo queries without calling OpenCode intent classification", async () => {
+  it("does not route natural language case todo queries", async () => {
     const { module, sendPayload, classifyIntent, listCaseTodos, tempDir } = createModule();
     try {
       const message = createTextMessage("查看今日待办");
@@ -267,13 +267,10 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
         routed: routeIncomingText(message.plainText),
       });
 
-      expect(result).toEqual({ claimed: true });
-      expect(listCaseTodos).toHaveBeenCalledWith("查看今日待办");
+      expect(result).toEqual({ claimed: false });
+      expect(listCaseTodos).not.toHaveBeenCalled();
       expect(classifyIntent).not.toHaveBeenCalled();
-      const payload = JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {});
-      expect(payload).toContain("案件提醒");
-      expect(payload).toContain("今日提交证据目录");
-      expect(payload).toContain("rec_case_todo_1");
+      expect(sendPayload).not.toHaveBeenCalled();
     } finally {
       await cleanupModule(module, tempDir);
     }
@@ -294,7 +291,7 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
           fileName: "invoice.pdf",
           size: 1024,
         },
-      }, createTextMessage("识别发票"));
+      }, createTextMessage("/识别发票"));
 
       expect(claimed).toBe(true);
       expect(recognizeInvoice).toHaveBeenCalledTimes(1);
@@ -308,7 +305,7 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     }
   });
 
-  it("uses skill intent routing to claim an uploaded invoice without fixed wording", async () => {
+  it("does not use natural language skill intent routing to claim an uploaded invoice", async () => {
     const { module, sendPayload, recognizeInvoice, classifyIntent, tempDir } = createModule(undefined, {
       classifyIntent: async () => ({
         skill: "invoice-recognize",
@@ -332,25 +329,16 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
         },
       }, createTextMessage("处理一下，录进去"));
 
-      expect(claimed).toBe(true);
-      expect(classifyIntent).toHaveBeenCalledWith(expect.objectContaining({
-        userText: "处理一下，录进去",
-        fileName: "invoice.pdf",
-        hasRecentFile: true,
-      }));
-      expect(recognizeInvoice).toHaveBeenCalledWith(expect.objectContaining({
-        messageId: "msg-file",
-        fileName: "invoice.pdf",
-      }), expect.any(Function));
-      const progressSerialized = JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {});
-      expect(progressSerialized).toContain("发票识别");
-      expect(progressSerialized).toContain("本地提取字段：等待中");
+      expect(claimed).toBe(false);
+      expect(classifyIntent).not.toHaveBeenCalled();
+      expect(recognizeInvoice).not.toHaveBeenCalled();
+      expect(sendPayload).not.toHaveBeenCalled();
     } finally {
       await cleanupModule(module, tempDir);
     }
   });
 
-  it("starts upload card from natural invoice intent and then runs invoice progress card", async () => {
+  it("does not start upload card from natural invoice intent", async () => {
     const { module, sendPayload, recognizeInvoice, classifyIntent, tempDir } = createModule(undefined, {
       classifyIntent: async () => ({
         skill: "invoice-recognize",
@@ -366,12 +354,9 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
         routed: routeIncomingText(request.plainText),
       });
 
-      expect(first).toEqual({ claimed: true });
-      expect(classifyIntent).toHaveBeenCalledWith(expect.objectContaining({
-        userText: "这张发票录一下",
-        hasRecentFile: false,
-      }));
-      expect(JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {})).toContain("等待上传发票文件");
+      expect(first).toEqual({ claimed: false });
+      expect(classifyIntent).not.toHaveBeenCalled();
+      expect(sendPayload).not.toHaveBeenCalled();
 
       const file = createFileMessage("invoice.pdf");
       const second = await module.handleMessage({
@@ -380,19 +365,14 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
         pendingInteraction: null,
       });
 
-      expect(second).toEqual({ claimed: true });
-      expect(recognizeInvoice).toHaveBeenCalledWith(expect.objectContaining({
-        fileName: "invoice.pdf",
-      }), expect.any(Function));
-      const progressSerialized = JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {});
-      expect(progressSerialized).toContain("发票识别");
-      expect(progressSerialized).toContain("本地提取字段：等待中");
+      expect(second).toEqual({ claimed: false });
+      expect(recognizeInvoice).not.toHaveBeenCalled();
     } finally {
       await cleanupModule(module, tempDir);
     }
   });
 
-  it("reuses the recent uploaded invoice when the next message asks to write the ledger", async () => {
+  it("does not reuse recent uploaded invoice from a natural language request", async () => {
     const { module, sendPayload, recognizeInvoice, classifyIntent, tempDir } = createModule();
     try {
       const file = createFileMessage("invoice.pdf");
@@ -409,16 +389,10 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
         routed: routeIncomingText(request.plainText),
       });
 
-      expect(result).toEqual({ claimed: true });
+      expect(result).toEqual({ claimed: false });
       expect(classifyIntent).not.toHaveBeenCalled();
-      expect(recognizeInvoice).toHaveBeenCalledWith(expect.objectContaining({
-        messageId: file.messageId,
-        fileKey: "file_1",
-        fileName: "invoice.pdf",
-      }), expect.any(Function));
-      const allPayloads = JSON.stringify(sendPayload.mock.calls.map((call) => call[1]));
-      expect(allPayloads).toContain("发票识别");
-      expect(allPayloads).not.toContain("等待上传发票文件");
+      expect(recognizeInvoice).not.toHaveBeenCalled();
+      expect(sendPayload).not.toHaveBeenCalled();
     } finally {
       await cleanupModule(module, tempDir);
     }
@@ -449,7 +423,7 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     }
   });
 
-  it("routes natural language with a local invoice path to invoice recognize", async () => {
+  it("does not route natural language with a local invoice path to invoice recognize", async () => {
     const { module, recognizeInvoice, classifyIntent, tempDir } = createModule(undefined, {
       classifyIntent: async () => ({
         skill: "invoice-recognize",
@@ -465,20 +439,15 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
         routed: routeIncomingText(message.plainText),
       });
 
-      expect(result).toEqual({ claimed: true });
-      expect(classifyIntent).toHaveBeenCalledWith(expect.objectContaining({
-        localPath: "/tmp/invoice.pdf",
-      }));
-      expect(recognizeInvoice).toHaveBeenCalledWith(expect.objectContaining({
-        localPath: "/tmp/invoice.pdf",
-        fileName: "invoice.pdf",
-      }), expect.any(Function));
+      expect(result).toEqual({ claimed: false });
+      expect(classifyIntent).not.toHaveBeenCalled();
+      expect(recognizeInvoice).not.toHaveBeenCalled();
     } finally {
       await cleanupModule(module, tempDir);
     }
   });
 
-  it("routes natural language desktop invoice folder directly to invoice recognition", async () => {
+  it("does not route natural language desktop invoice folder directly to invoice recognition", async () => {
     const { module, recognizeInvoice, classifyIntent, sendPayload, updatePayload, tempDir } = createModule();
     const previousHome = process.env.HOME;
     process.env.HOME = tempDir;
@@ -494,15 +463,11 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
         routed: routeIncomingText(message.plainText),
       });
 
-      expect(result).toEqual({ claimed: true });
+      expect(result).toEqual({ claimed: false });
       expect(classifyIntent).not.toHaveBeenCalled();
-      expect(recognizeInvoice).toHaveBeenCalledWith(expect.objectContaining({
-        localPath: invoicePath,
-        fileName: "invoice.pdf",
-      }), expect.any(Function));
-      expect(JSON.stringify(sendPayload.mock.calls[0]?.[1] ?? {})).toContain("invoice.pdf");
-      expect(JSON.stringify(sendPayload.mock.calls[0]?.[1] ?? {})).not.toContain("等待上传发票文件");
-      expect(updatePayload).toHaveBeenCalled();
+      expect(recognizeInvoice).not.toHaveBeenCalled();
+      expect(sendPayload).not.toHaveBeenCalled();
+      expect(updatePayload).not.toHaveBeenCalled();
     } finally {
       if (previousHome === undefined) {
         delete process.env.HOME;
@@ -513,7 +478,7 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     }
   });
 
-  it("lets pending invoice upload state consume desktop invoice folder text", async () => {
+  it("does not let natural language create pending invoice upload state", async () => {
     const { module, recognizeInvoice, classifyIntent, sendPayload, tempDir } = createModule(undefined, {
       classifyIntent: async () => ({
         skill: "invoice-recognize",
@@ -542,13 +507,10 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
         routed: routeIncomingText(second.plainText),
       });
 
-      expect(result).toEqual({ claimed: true });
-      expect(classifyIntent).toHaveBeenCalledTimes(1);
-      expect(recognizeInvoice).toHaveBeenCalledWith(expect.objectContaining({
-        localPath: invoicePath,
-        fileName: "invoice.pdf",
-      }), expect.any(Function));
-      expect(JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {})).not.toContain("当前正在等待文件");
+      expect(result).toEqual({ claimed: false });
+      expect(classifyIntent).not.toHaveBeenCalled();
+      expect(recognizeInvoice).not.toHaveBeenCalled();
+      expect(sendPayload).not.toHaveBeenCalled();
     } finally {
       if (previousHome === undefined) {
         delete process.env.HOME;
@@ -559,7 +521,7 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     }
   });
 
-  it("routes natural case creation through the skill intent router", async () => {
+  it("does not route natural case creation through the skill intent router", async () => {
     const { module, createCase, tempDir } = createModule(undefined, {
       classifyIntent: async () => ({
         skill: "case-manage",
@@ -575,8 +537,8 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
         routed: routeIncomingText(message.plainText),
       });
 
-      expect(result).toEqual({ claimed: true });
-      expect(createCase).toHaveBeenCalledWith(message.plainText, expect.any(Function));
+      expect(result).toEqual({ claimed: false });
+      expect(createCase).not.toHaveBeenCalled();
     } finally {
       await cleanupModule(module, tempDir);
     }

@@ -44,6 +44,7 @@ export const laborSkillExtension: BuiltinExtensionDefinition = {
       knowledge: context.knowledge,
       service,
       transport: context.transport,
+      caseContextStore: context.caseContextStore,
     });
   },
 };

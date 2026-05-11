@@ -43,6 +43,7 @@ export type CaseWorkbenchCardView = {
   chatType?: string | undefined;
   conversationKey?: string | undefined;
   requesterOpenId?: string | undefined;
+  title?: string | undefined;
 };
 
 export type CaseCreateProgressView = {
@@ -319,6 +320,7 @@ function buildCaseWorkbenchActionValue(view: CaseWorkbenchCardView, action: "sta
     chatType: view.chatType,
     conversationKey: view.conversationKey,
     requesterOpenId: view.requesterOpenId,
+    title: view.title,
   };
 }
 

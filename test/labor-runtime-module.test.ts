@@ -166,6 +166,7 @@ async function createModule(existingTempDir?: string) {
       durationMs: 10,
     },
   }));
+  const caseContextUpsert = vi.fn();
 
   const logger = { log: vi.fn() };
   const module = new LaborRuntimeModule({
@@ -195,6 +196,7 @@ async function createModule(existingTempDir?: string) {
       sendPayload: sendPayload as never,
       updatePayload: updatePayload as never,
     }),
+    caseContextStore: { upsert: caseContextUpsert } as never,
   });
 
   return {
@@ -208,6 +210,7 @@ async function createModule(existingTempDir?: string) {
     finalizeReviewOnly,
     buildAuthoritySearchDraft,
     appendAuthoritySearch,
+    caseContextUpsert,
     logger,
   };
 }
@@ -217,12 +220,20 @@ async function cleanupModule(module: LaborRuntimeModule, tempDir: string): Promi
   await rm(tempDir, { recursive: true, force: true });
 }
 
+async function startCollectionFromWorkbench(
+  module: LaborRuntimeModule,
+  message: IncomingChatMessage,
+  title?: string,
+): Promise<void> {
+  await module.startCaseWorkbenchCollection(message, title);
+}
+
 describe("LaborRuntimeModule", () => {
   it("marks an active collection checkpoint expired when starting a new collection", async () => {
       const { module, tempDir } = await createModule();
     try {
       const first = createTextMessage("/案件工作台");
-      await module.handleMessage({ message: first, routed: routeIncomingText(first.plainText) });
+      await startCollectionFromWorkbench(module, first);
       await module.handleMessage({ message: createFileMessage("旧材料.pdf"), routed: null });
       const second = createTextMessage("/案件工作台", { messageId: "msg-second" });
       await module.startCaseWorkbenchCollection(second);
@@ -238,7 +249,7 @@ describe("LaborRuntimeModule", () => {
     }
   });
 
-  it("shows a retirement notice for the legacy /labor-start alias", async () => {
+  it("ignores the legacy /labor-start alias", async () => {
     const { module, tempDir, sendPayload } = await createModule();
     try {
       const start = createTextMessage("/labor-start 劳动争议演示");
@@ -247,9 +258,8 @@ describe("LaborRuntimeModule", () => {
         routed: routeIncomingText(start.plainText),
       });
 
-      expect(result).toEqual({ claimed: true });
-      const payloadCalls = sendPayload.mock.calls as unknown as Array<[string, unknown]>;
-      expect(JSON.stringify(payloadCalls[0]?.[1] ?? {})).toContain("劳动分析入口已更新");
+      expect(result).toEqual({ claimed: false });
+      expect(sendPayload).not.toHaveBeenCalled();
       const interactions = (module as unknown as {
         interactions: { get(key: string): unknown };
       }).interactions;
@@ -259,7 +269,7 @@ describe("LaborRuntimeModule", () => {
     }
   });
 
-  it("shows a migration notice for the legacy /劳动分析 command", async () => {
+  it("ignores the legacy /劳动分析 command", async () => {
     const { module, tempDir, sendPayload, extractMaterial } = await createModule();
     try {
       const start = createTextMessage("/劳动分析 劳动争议演示");
@@ -268,11 +278,9 @@ describe("LaborRuntimeModule", () => {
         routed: routeIncomingText(start.plainText),
       });
 
-      expect(result).toEqual({ claimed: true });
+      expect(result).toEqual({ claimed: false });
       expect(extractMaterial).not.toHaveBeenCalled();
-      const payloadCalls = sendPayload.mock.calls as unknown as Array<[string, unknown]>;
-      expect(JSON.stringify(payloadCalls[0]?.[1] ?? {})).toContain("该命令已并入");
-      expect(JSON.stringify(payloadCalls[0]?.[1] ?? {})).toContain("/案件工作台");
+      expect(sendPayload).not.toHaveBeenCalled();
     } finally {
       await cleanupModule(module, tempDir);
     }
@@ -300,15 +308,10 @@ describe("LaborRuntimeModule", () => {
   });
 
   it("collects files and notes silently, and only starts analysis after /完成上传", async () => {
-    const { module, tempDir, sendPayload, updatePayload, extractMaterial, finalizeAnalysis, finalizeReviewOnly } = await createModule();
+    const { module, tempDir, sendPayload, updatePayload, extractMaterial, finalizeAnalysis, finalizeReviewOnly, caseContextUpsert } = await createModule();
     try {
       const start = createTextMessage("/案件工作台 劳动争议演示");
-      const startResult = await module.handleMessage({
-        message: start,
-        routed: routeIncomingText(start.plainText),
-      });
-
-      expect(startResult).toEqual({ claimed: true });
+      await startCollectionFromWorkbench(module, start, "劳动争议演示");
       expect(sendPayload).toHaveBeenCalledTimes(1);
 
       const interactionBefore = (module as unknown as {
@@ -386,6 +389,16 @@ describe("LaborRuntimeModule", () => {
       expect(JSON.stringify(updatedPayloads.map((call) => call[2]))).toContain("证据1.pdf｜耗时");
       expect(JSON.stringify(updatedPayloads.map((call) => call[2]))).not.toContain("命中缓存");
       expect(JSON.stringify(updatedPayloads.map((call) => call[2]))).not.toContain("进展：《证据1.pdf》已完成");
+      expect(caseContextUpsert).toHaveBeenCalledWith(expect.objectContaining({
+        title: "劳动争议分析",
+        userId: "ou_user",
+        conversationKey: start.conversationKey,
+        docUrl: "https://example.com/doc",
+        markdown: "### 劳动争议分析",
+        issues: expect.arrayContaining(["解除是否合法"]),
+        claimBasis: expect.arrayContaining([expect.stringContaining("经济补偿或赔偿金")]),
+        evidence: expect.arrayContaining([expect.stringContaining("解除通知")]),
+      }));
     } finally {
       await cleanupModule(module, tempDir);
     }
@@ -395,7 +408,7 @@ describe("LaborRuntimeModule", () => {
     const { module, tempDir, extractMaterial, expandMaterialFile, finalizeAnalysis } = await createModule();
     try {
       const start = createTextMessage("/案件工作台");
-      await module.handleMessage({ message: start, routed: routeIncomingText(start.plainText) });
+      await startCollectionFromWorkbench(module, start);
       const folderMessage = createFileMessage("发票.zip", { resourceType: "folder" });
       await module.handleMessage({ message: folderMessage, routed: null });
       expandMaterialFile.mockResolvedValueOnce([
@@ -425,10 +438,7 @@ describe("LaborRuntimeModule", () => {
     const { module, tempDir, sendPayload, extractMaterial } = await createModule();
     try {
       const start = createTextMessage("/案件工作台 劳动争议演示");
-      await module.handleMessage({
-        message: start,
-        routed: routeIncomingText(start.plainText),
-      });
+      await startCollectionFromWorkbench(module, start, "劳动争议演示");
 
       const chat = createTextMessage("你好");
       const result = await module.handleMessage({
@@ -452,10 +462,7 @@ describe("LaborRuntimeModule", () => {
     const { module, tempDir, extractMaterial, finalizeAnalysis } = await createModule();
     try {
       const start = createTextMessage("/案件工作台 劳动争议演示");
-      await module.handleMessage({
-        message: start,
-        routed: routeIncomingText(start.plainText),
-      });
+      await startCollectionFromWorkbench(module, start, "劳动争议演示");
       await module.handleMessage({
         message: createFileMessage("证据1.pdf"),
         routed: null,
@@ -477,14 +484,11 @@ describe("LaborRuntimeModule", () => {
     }
   });
 
-  it("accepts exact natural language finish text while collecting", async () => {
+  it("does not accept natural language finish text while collecting", async () => {
     const { module, tempDir, extractMaterial, finalizeAnalysis, finalizeReviewOnly } = await createModule();
     try {
       const start = createTextMessage("/案件工作台 劳动争议演示");
-      await module.handleMessage({
-        message: start,
-        routed: routeIncomingText(start.plainText),
-      });
+      await startCollectionFromWorkbench(module, start, "劳动争议演示");
       await module.handleMessage({
         message: createFileMessage("证据1.pdf"),
         routed: null,
@@ -496,12 +500,10 @@ describe("LaborRuntimeModule", () => {
         routed: routeIncomingText(finish.plainText),
       });
 
-      expect(result).toEqual({ claimed: true });
-      await vi.waitFor(() => {
-        expect(extractMaterial).toHaveBeenCalledTimes(1);
-        expect(finalizeAnalysis).toHaveBeenCalledTimes(1);
-        expect(finalizeReviewOnly).toHaveBeenCalledTimes(1);
-      });
+      expect(result).toEqual({ claimed: false });
+      expect(extractMaterial).not.toHaveBeenCalled();
+      expect(finalizeAnalysis).not.toHaveBeenCalled();
+      expect(finalizeReviewOnly).not.toHaveBeenCalled();
     } finally {
       await cleanupModule(module, tempDir);
     }
@@ -511,10 +513,7 @@ describe("LaborRuntimeModule", () => {
     const { module, tempDir, extractMaterial } = await createModule();
     try {
       const start = createTextMessage("/案件工作台 劳动争议演示");
-      await module.handleMessage({
-        message: start,
-        routed: routeIncomingText(start.plainText),
-      });
+      await startCollectionFromWorkbench(module, start, "劳动争议演示");
 
       const note = createTextMessage("完成上传了");
       const result = await module.handleMessage({
@@ -537,10 +536,7 @@ describe("LaborRuntimeModule", () => {
     const { module, tempDir, extractMaterial } = await createModule();
     try {
       const start = createTextMessage("/案件工作台 劳动争议演示");
-      await module.handleMessage({
-        message: start,
-        routed: routeIncomingText(start.plainText),
-      });
+      await startCollectionFromWorkbench(module, start, "劳动争议演示");
 
       const note = createTextMessage("还没完成上传，等我继续补材料");
       const result = await module.handleMessage({
@@ -559,7 +555,7 @@ describe("LaborRuntimeModule", () => {
     }
   });
 
-  it("starts labor analysis from recently uploaded materials when the next message asks for a labor workbench", async () => {
+  it("does not start labor analysis from recently uploaded materials via natural language", async () => {
     const { module, tempDir, sendPayload, updatePayload, extractMaterial, finalizeAnalysis } = await createModule();
     try {
       const fileOne = createFileMessage("解除通知.pdf");
@@ -584,30 +580,17 @@ describe("LaborRuntimeModule", () => {
         routed: routeIncomingText(trigger.plainText),
       });
 
-      expect(triggerResult).toEqual({ claimed: true });
-      expect(extractMaterial).toHaveBeenCalledTimes(2);
-      const extractCalls = extractMaterial.mock.calls as unknown as Array<[file: { fileName: string }]>;
-      expect(extractCalls.map((call) => call[0].fileName)).toEqual(["解除通知.pdf", "工资流水.pdf"]);
-      expect(finalizeAnalysis).toHaveBeenCalledTimes(1);
-      const finalizeCalls = finalizeAnalysis.mock.calls as unknown as Array<[input: { materialCount: number; notes: string[] }]>;
-      const finalizeInput = finalizeCalls[0]?.[0];
-      expect(finalizeInput).toEqual(expect.objectContaining({
-        materialCount: 2,
-        notes: ["把刚才这些证据生成劳动争议证据链工作台"],
-      }));
-      const payloadCalls = sendPayload.mock.calls as unknown as Array<[string, unknown]>;
-      expect(JSON.stringify(payloadCalls[0]?.[1] ?? {})).toContain("材料收集中");
-      expect(JSON.stringify(payloadCalls[1]?.[1] ?? {})).toContain("材料分析进行中");
-      const updatedPayloads = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
-      const completedSerialized = JSON.stringify(updatedPayloads.find((call) => JSON.stringify(call[2]).includes("材料分析完成"))?.[2] ?? {});
-      expect(completedSerialized).toContain("材料分析完成");
-      expect(completedSerialized).toContain("材料 2");
+      expect(triggerResult).toEqual({ claimed: false });
+      expect(extractMaterial).not.toHaveBeenCalled();
+      expect(finalizeAnalysis).not.toHaveBeenCalled();
+      expect(sendPayload).not.toHaveBeenCalled();
+      expect(updatePayload).not.toHaveBeenCalled();
     } finally {
       await cleanupModule(module, tempDir);
     }
   });
 
-  it("starts labor workflow from recent materials when asked for an evidence list Word", async () => {
+  it("does not start labor workflow from recent materials via natural language", async () => {
     const { module, tempDir, sendPayload, updatePayload, extractMaterial, finalizeAnalysis } = await createModule();
     try {
       const file = createFileMessage("劳动仲裁材料.pdf");
@@ -624,19 +607,11 @@ describe("LaborRuntimeModule", () => {
         routed: routeIncomingText(trigger.plainText),
       });
 
-      expect(triggerResult).toEqual({ claimed: true });
-      expect(extractMaterial).toHaveBeenCalledTimes(1);
-      expect(finalizeAnalysis).toHaveBeenCalledTimes(1);
-      const finalizeCalls = finalizeAnalysis.mock.calls as unknown as Array<[input: { materialCount: number; notes: string[]; preferredTitle?: string }]>;
-      expect(finalizeCalls[0]?.[0]).toEqual(expect.objectContaining({
-        materialCount: 1,
-        notes: [trigger.plainText],
-      }));
-      const payloadCalls = sendPayload.mock.calls as unknown as Array<[string, unknown]>;
-      expect(JSON.stringify(payloadCalls[0]?.[1] ?? {})).toContain("材料收集中");
-      expect(JSON.stringify(payloadCalls[1]?.[1] ?? {})).toContain("材料分析进行中");
-      const updatedPayloads = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
-      expect(JSON.stringify(updatedPayloads.find((call) => JSON.stringify(call[2]).includes("材料分析完成"))?.[2] ?? {})).toContain("材料分析完成");
+      expect(triggerResult).toEqual({ claimed: false });
+      expect(extractMaterial).not.toHaveBeenCalled();
+      expect(finalizeAnalysis).not.toHaveBeenCalled();
+      expect(sendPayload).not.toHaveBeenCalled();
+      expect(updatePayload).not.toHaveBeenCalled();
     } finally {
       await cleanupModule(module, tempDir);
     }
@@ -646,7 +621,7 @@ describe("LaborRuntimeModule", () => {
     const { module, tempDir, sendPayload, updatePayload, appendAuthoritySearch, finalizeReviewOnly } = await createModule();
     try {
       const start = createTextMessage("/案件工作台 劳动争议演示");
-      await module.handleMessage({ message: start, routed: routeIncomingText(start.plainText) });
+      await startCollectionFromWorkbench(module, start, "劳动争议演示");
       await module.handleMessage({ message: createFileMessage("证据1.pdf"), routed: null });
       const end = createTextMessage("/完成上传");
       await module.handleMessage({ message: end, routed: routeIncomingText(end.plainText) });
@@ -696,7 +671,7 @@ describe("LaborRuntimeModule", () => {
     appendAuthoritySearch.mockRejectedValueOnce(new Error("pkulaw timeout"));
     try {
       const start = createTextMessage("/案件工作台 劳动争议演示");
-      await module.handleMessage({ message: start, routed: routeIncomingText(start.plainText) });
+      await startCollectionFromWorkbench(module, start, "劳动争议演示");
       await module.handleMessage({ message: createFileMessage("证据1.pdf"), routed: null });
 
       await module.handleMessage({ message: createTextMessage("/完成上传"), routed: routeIncomingText("/完成上传") });
@@ -750,10 +725,7 @@ describe("LaborRuntimeModule", () => {
     const { module, tempDir, sendPayload, extractMaterial, finalizeAnalysis } = await createModule();
     try {
       const start = createTextMessage("/案件工作台 劳动争议演示");
-      await module.handleMessage({
-        message: start,
-        routed: routeIncomingText(start.plainText),
-      });
+      await startCollectionFromWorkbench(module, start, "劳动争议演示");
 
       const end = createTextMessage("/完成上传");
       const result = await module.handleMessage({
@@ -780,10 +752,7 @@ describe("LaborRuntimeModule", () => {
     const { module, tempDir, sendPayload, extractMaterial } = await createModule();
     try {
       const firstStart = createTextMessage("/案件工作台 第一次");
-      await module.handleMessage({
-        message: firstStart,
-        routed: routeIncomingText(firstStart.plainText),
-      });
+      await startCollectionFromWorkbench(module, firstStart, "第一次");
       await module.handleMessage({
         message: createFileMessage("旧材料.pdf"),
         routed: null,
@@ -805,7 +774,7 @@ describe("LaborRuntimeModule", () => {
         files: [expect.objectContaining({ fileName: "旧材料.pdf" })],
       }));
       const payloadCalls = sendPayload.mock.calls as unknown as Array<[string, unknown]>;
-      expect(JSON.stringify(payloadCalls.at(-1)?.[1] ?? {})).toContain("已有劳动分析正在收集");
+      expect(JSON.stringify(payloadCalls.at(-1)?.[1] ?? {})).toContain("已有材料收集正在进行");
       expect(extractMaterial).not.toHaveBeenCalled();
     } finally {
       await cleanupModule(module, tempDir);
@@ -816,10 +785,7 @@ describe("LaborRuntimeModule", () => {
     const { module, tempDir, sendPayload } = await createModule();
     try {
       const start = createTextMessage("/案件工作台 第一次");
-      await module.handleMessage({
-        message: start,
-        routed: routeIncomingText(start.plainText),
-      });
+      await startCollectionFromWorkbench(module, start, "第一次");
 
       const secondStart = createTextMessage("/案件工作台 第二次", { senderOpenId: "ou_other" });
       const result = await module.handleMessage({
@@ -829,7 +795,7 @@ describe("LaborRuntimeModule", () => {
 
       expect(result).toEqual({ claimed: true });
       const payloadCalls = sendPayload.mock.calls as unknown as Array<[string, unknown]>;
-      expect(JSON.stringify(payloadCalls.at(-1)?.[1] ?? {})).toContain("当前劳动分析任务仅限发起人继续");
+      expect(JSON.stringify(payloadCalls.at(-1)?.[1] ?? {})).toContain("当前材料收集任务仅限发起人继续");
     } finally {
       await cleanupModule(module, tempDir);
     }
@@ -840,10 +806,7 @@ describe("LaborRuntimeModule", () => {
     extractMaterial.mockRejectedValueOnce(new Error("OpenCode crashed"));
     try {
       const start = createTextMessage("/案件工作台 劳动争议演示");
-      await module.handleMessage({
-        message: start,
-        routed: routeIncomingText(start.plainText),
-      });
+      await startCollectionFromWorkbench(module, start, "劳动争议演示");
       await module.handleMessage({
         message: createFileMessage("证据1.pdf"),
         routed: null,
@@ -872,10 +835,7 @@ describe("LaborRuntimeModule", () => {
     finalizeAnalysis.mockRejectedValueOnce(new Error("analysis timeout"));
     try {
       const start = createTextMessage("/案件工作台 劳动争议演示");
-      await module.handleMessage({
-        message: start,
-        routed: routeIncomingText(start.plainText),
-      });
+      await startCollectionFromWorkbench(module, start, "劳动争议演示");
       await module.handleMessage({
         message: createFileMessage("证据1.pdf"),
         routed: null,
@@ -912,10 +872,7 @@ describe("LaborRuntimeModule", () => {
     const { module, tempDir } = await createModule();
     try {
       const start = createTextMessage("/案件工作台 劳动争议演示");
-      await module.handleMessage({
-        message: start,
-        routed: routeIncomingText(start.plainText),
-      });
+      await startCollectionFromWorkbench(module, start, "劳动争议演示");
       await module.handleMessage({
         message: createFileMessage("证据1.pdf"),
         routed: null,

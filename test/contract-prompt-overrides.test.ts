@@ -194,8 +194,6 @@ describe("contract prompt overrides", () => {
   });
 
   it("lets invoice write flow skip model calls when local structure or cache is enough", async () => {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), "invoice-direct-read-test-"));
-    const invoicePath = path.join(tempDir, "invoice.pdf");
     let promptSeen = "";
     const service = createService(async (_sessionId, request) => {
       promptSeen = String(request.parts[0]?.text ?? "");
@@ -214,17 +212,37 @@ describe("contract prompt overrides", () => {
         }],
       };
     });
+    (service as unknown as {
+      evidenceExtractor: {
+        prepareFile: () => Promise<{
+          fileName: string;
+          mimeType: string;
+          buffer: Buffer;
+          extension: string;
+          localPath: string;
+          extractedText: string;
+        }>;
+      };
+    }).evidenceExtractor.prepareFile = async () => ({
+      fileName: "invoice.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("invoice fixture"),
+      extension: ".pdf",
+      localPath: "/tmp/invoice.pdf",
+      extractedText: [
+        "电子发票（普通发票）",
+        "发票号码 26952000001657386511",
+        "开票日期 2026年04月23日",
+        "购买方名称 测试客户",
+        "销售方名称 北京市隆安（深圳）律师事务所",
+        "价税合计（小写） ¥8000.00",
+      ].join("\n"),
+    });
 
-    try {
-      await writeFile(invoicePath, "%PDF-1.4\n% text layer missing invoice fields\n");
+    const result = await service.recognizeInvoice({ localPath: "/tmp/invoice.pdf", fileName: "invoice.pdf" });
 
-      const result = await service.recognizeInvoice({ localPath: invoicePath, fileName: "invoice.pdf" });
-
-      expect(promptSeen).toBe("");
-      expect(result.record["发票号"]).toBe("26952000001657386511");
-      expect(result.record["购买方"]).toBe("测试客户");
-    } finally {
-      await rm(tempDir, { recursive: true, force: true });
-    }
+    expect(promptSeen).toBe("");
+    expect(result.record["发票号"]).toBe("26952000001657386511");
+    expect(result.record["购买方"]).toBe("测试客户");
   });
 });

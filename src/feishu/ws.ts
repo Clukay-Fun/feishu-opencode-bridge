@@ -639,14 +639,6 @@ function parsePostMessage(rawContent: string, mentions: NormalizedMention[], bot
       for (const element of row) {
         if (!isRecord(element)) continue;
         const tag = typeof element.tag === "string" ? element.tag : "";
-        if (tag === "text" || tag === "a") {
-          const text = typeof element.text === "string" ? element.text : "";
-          if (text) {
-            rowParts.push(text);
-          }
-          continue;
-        }
-
         if (tag === "at") {
           hasAnyMention = true;
           const mention = {
@@ -660,6 +652,12 @@ function parsePostMessage(rawContent: string, mentions: NormalizedMention[], bot
             continue;
           }
           rowParts.push(formatVisibleMention(mention.name));
+          continue;
+        }
+
+        const text = extractPostElementText(element);
+        if (text) {
+          rowParts.push(text);
         }
       }
 
@@ -676,6 +674,54 @@ function parsePostMessage(rawContent: string, mentions: NormalizedMention[], bot
   } catch {
     return { plainText: "", hasAnyMention: false, hasExactBotMention: false };
   }
+}
+
+function extractPostElementText(value: unknown, seen = new Set<unknown>()): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (!value || typeof value !== "object" || seen.has(value)) {
+    return "";
+  }
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => extractPostElementText(item, seen))
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  const record = value as Record<string, unknown>;
+  const tag = typeof record.tag === "string" ? record.tag : "";
+  if (tag === "img" || tag === "media") {
+    return "";
+  }
+
+  const directText = firstStringFromKeys(record, ["text", "un_escape", "href", "url"]);
+  const nestedText = firstTextFromKeys(record, ["content", "elements", "children", "lines"], seen);
+  return [directText, nestedText].filter(Boolean).join(nestedText ? "\n" : "");
+}
+
+function firstStringFromKeys(record: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+  }
+  return "";
+}
+
+function firstTextFromKeys(record: Record<string, unknown>, keys: string[], seen: Set<unknown>): string {
+  for (const key of keys) {
+    const value = record[key];
+    const text = extractPostElementText(value, seen);
+    if (text.trim()) {
+      return text;
+    }
+  }
+  return "";
 }
 
 function parseFileMessage(rawContent: string): TextParseResult {
