@@ -109,6 +109,20 @@ describe("runStartupPreflight", () => {
     }, () => {})).rejects.toThrow(/飞书鉴权/i);
   });
 
+  it("continues when Feishu token preflight hits a transient network error", async () => {
+    stubHealthyFetch();
+
+    const report = vi.fn();
+    await expect(runStartupPreflight(baseConfig(), {
+      getTenantToken: async () => {
+        throw new TypeError("fetch failed");
+      },
+    }, report)).resolves.toBeUndefined();
+
+    expect(report).toHaveBeenCalledWith(expect.stringContaining("跳过 飞书鉴权"));
+    expect(report).toHaveBeenCalledWith("已通过 飞书鉴权");
+  });
+
   it("fails when OpenCode is unavailable", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input.toString();
