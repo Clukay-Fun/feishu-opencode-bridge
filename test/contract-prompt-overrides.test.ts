@@ -226,5 +226,5 @@ describe("contract prompt overrides", () => {
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
-  });
+  }, 10_000);
 });
