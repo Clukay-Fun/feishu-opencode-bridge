@@ -68,6 +68,17 @@ const LEGAL_KEYWORDS = [
 ];
 
 const QUESTION_MARKERS = ["吗", "么", "如何", "怎么", "怎么办", "是否", "能否", "可以", "多久", "多长", "合法么"];
+const LEGAL_QUERY_FORCE_PATTERN = /^\/?法律问答(?:\s+|[：:])/;
+const META_DOCUMENT_PATTERNS = [
+  /演示视频脚本|视频脚本|最终版|分镜|画面说明|时长[:：]|第[一二三四五六七八九十]+幕/,
+  /AI\s*回复|用户(?:打开|把|说|输入)|语音[:：]|命令示例|示例[:：]/i,
+  /测试用例|验收清单|开发计划|修复计划|需求文档|方案|脚本/,
+];
+const META_STRUCTURE_PATTERNS = [
+  /^#{1,6}\s+/m,
+  /\n---\n/,
+  />\s*["“]?[^"\n“”]*(?:法律问答|劳动合同|竞业限制|解除劳动合同)[^"\n“”]*["”]?/,
+];
 const MATERIAL_INGEST_NEGATIVE_PATTERN = /不要入库|别入库|不用入库|不入库|先别入库|不要写入知识库|不要保存到知识库/;
 const MATERIAL_INGEST_TARGET_PATTERN = /知识库|知识|库/;
 const MATERIAL_INGEST_ACTION_PATTERN = /入库|导入|收录|收入|整理|保存|写入|同步|加入|添加|放进|放到|归档/;
@@ -78,6 +89,9 @@ export function detectLegalQuestion(text: string): KnowledgeAutoDetectResult {
   const normalized = text.replace(/\s+/g, " ").trim().toLowerCase();
   if (!normalized) {
     return { matched: false, confidence: 0, reasons: [] };
+  }
+  if (isMetaDocumentWithEmbeddedLegalExample(text)) {
+    return { matched: false, confidence: 0, reasons: ["meta-document"] };
   }
 
   const reasons: string[] = [];
@@ -108,6 +122,23 @@ export function detectLegalQuestion(text: string): KnowledgeAutoDetectResult {
     confidence: bounded,
     reasons,
   };
+}
+
+/** 避免把演示稿、测试方案等长文本里的法律问题示例误判成真实咨询。 */
+function isMetaDocumentWithEmbeddedLegalExample(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed || LEGAL_QUERY_FORCE_PATTERN.test(trimmed)) {
+    return false;
+  }
+
+  const metaHits = META_DOCUMENT_PATTERNS.filter((pattern) => pattern.test(trimmed)).length;
+  const structureHits = META_STRUCTURE_PATTERNS.filter((pattern) => pattern.test(trimmed)).length;
+  if (trimmed.length < 120 || metaHits < 1 || structureHits < 1) {
+    return false;
+  }
+
+  const legalExampleCount = (trimmed.match(/法律问答|劳动合同|竞业限制|解除劳动合同|法条|诉讼|仲裁/g) ?? []).length;
+  return legalExampleCount >= 2;
 }
 
 /** 检测消息中是否包含网页入库意图与 URL。 */

@@ -25,6 +25,7 @@ export type KnowledgeDocumentRecord = {
   checksum: string;
   status: string;
   bitableRecordId?: string | undefined;
+  obsidianPath?: string | undefined;
   createdAt: number;
 };
 
@@ -106,6 +107,7 @@ type KnowledgeDocumentRow = {
   checksum: string;
   status: string;
   bitable_record_id: string | null;
+  obsidian_path: string | null;
   created_at: number;
 };
 
@@ -189,6 +191,7 @@ export class KnowledgeDb {
         checksum,
         status,
         bitable_record_id AS bitableRecordId,
+        obsidian_path AS obsidianPath,
         created_at AS createdAt
       FROM knowledge_documents
       WHERE checksum = @checksum
@@ -337,6 +340,15 @@ export class KnowledgeDb {
     `).run({ id, status });
   }
 
+  /** 记录知识库文档导出的 Obsidian 笔记路径，便于远端删除后同步清理。 */
+  updateDocumentObsidianPath(id: number, obsidianPath: string): void {
+    this.db.prepare(`
+      UPDATE knowledge_documents
+      SET obsidian_path = @obsidianPath
+      WHERE id = @id
+    `).run({ id, obsidianPath });
+  }
+
   // List all mirrored Bitable record ids that already exist in the local entry table.
   listEntryBitableRecordIds(): string[] {
     const rows = this.db.prepare(`
@@ -360,6 +372,74 @@ export class KnowledgeDb {
     const result = this.db.prepare(`
       DELETE FROM knowledge_entries
       WHERE bitable_record_id IN (${placeholders})
+    `).run(params);
+    return result.changes;
+  }
+
+  /** 按 Bitable record id 找到受影响的本地文档。 */
+  listDocumentsByEntryBitableRecordIds(recordIds: string[]): KnowledgeDocumentRecord[] {
+    const normalized = [...new Set(recordIds.filter((value) => value.length > 0))];
+    if (normalized.length === 0) {
+      return [];
+    }
+    const placeholders = normalized.map((_, index) => `@recordId${index}`).join(", ");
+    const params = Object.fromEntries(normalized.map((recordId, index) => [`recordId${index}`, recordId]));
+    const rows = this.db.prepare(`
+      SELECT DISTINCT d.*
+      FROM knowledge_documents d
+      JOIN knowledge_entries e ON e.document_id = d.id
+      WHERE e.bitable_record_id IN (${placeholders})
+    `).all(params) as KnowledgeDocumentRow[];
+    return rows.map((row) => toDocumentRecord(row));
+  }
+
+  /** 找出指定文档中已经没有条目和提取缓存的孤儿文档。 */
+  listOrphanDocumentsByIds(documentIds: number[]): KnowledgeDocumentRecord[] {
+    const normalized = [...new Set(documentIds.filter((value) => Number.isInteger(value) && value > 0))];
+    if (normalized.length === 0) {
+      return [];
+    }
+    const placeholders = normalized.map((_, index) => `@documentId${index}`).join(", ");
+    const params = Object.fromEntries(normalized.map((documentId, index) => [`documentId${index}`, documentId]));
+    const rows = this.db.prepare(`
+      SELECT *
+      FROM knowledge_documents
+      WHERE id IN (${placeholders})
+        AND NOT EXISTS (
+          SELECT 1
+          FROM knowledge_entries e
+          WHERE e.document_id = knowledge_documents.id
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM knowledge_extract_chunks c
+          WHERE c.document_id = knowledge_documents.id
+        )
+    `).all(params) as KnowledgeDocumentRow[];
+    return rows.map((row) => toDocumentRecord(row));
+  }
+
+  /** 删除指定范围内已经确认没有条目和缓存的孤儿文档。 */
+  deleteOrphanDocumentsByIds(documentIds: number[]): number {
+    const normalized = [...new Set(documentIds.filter((value) => Number.isInteger(value) && value > 0))];
+    if (normalized.length === 0) {
+      return 0;
+    }
+    const placeholders = normalized.map((_, index) => `@documentId${index}`).join(", ");
+    const params = Object.fromEntries(normalized.map((documentId, index) => [`documentId${index}`, documentId]));
+    const result = this.db.prepare(`
+      DELETE FROM knowledge_documents
+      WHERE id IN (${placeholders})
+        AND NOT EXISTS (
+          SELECT 1
+          FROM knowledge_entries e
+          WHERE e.document_id = knowledge_documents.id
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM knowledge_extract_chunks c
+          WHERE c.document_id = knowledge_documents.id
+        )
     `).run(params);
     return result.changes;
   }
@@ -665,6 +745,7 @@ export class KnowledgeDb {
         checksum TEXT NOT NULL UNIQUE,
         status TEXT NOT NULL,
         bitable_record_id TEXT,
+        obsidian_path TEXT,
         created_at INTEGER NOT NULL
       );
 
@@ -741,13 +822,22 @@ export class KnowledgeDb {
   }
 
   private migrateKnowledgeEntriesSchema(): void {
-    const columns = new Set(
+    const entryColumns = new Set(
       (this.db.prepare("PRAGMA table_info(knowledge_entries)").all() as Array<{ name: string }>).map((column) => column.name),
     );
+    const documentColumns = new Set(
+      (this.db.prepare("PRAGMA table_info(knowledge_documents)").all() as Array<{ name: string }>).map((column) => column.name),
+    );
     const addColumn = (name: string, ddl: string): void => {
-      if (!columns.has(name)) {
+      if (!entryColumns.has(name)) {
         this.db.exec(`ALTER TABLE knowledge_entries ADD COLUMN ${ddl}`);
-        columns.add(name);
+        entryColumns.add(name);
+      }
+    };
+    const addDocumentColumn = (name: string, ddl: string): void => {
+      if (!documentColumns.has(name)) {
+        this.db.exec(`ALTER TABLE knowledge_documents ADD COLUMN ${ddl}`);
+        documentColumns.add(name);
       }
     };
 
@@ -761,6 +851,7 @@ export class KnowledgeDb {
     addColumn("fields_json", "fields_json TEXT");
     addColumn("source_url", "source_url TEXT");
     addColumn("statute_url", "statute_url TEXT");
+    addDocumentColumn("obsidian_path", "obsidian_path TEXT");
 
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_knowledge_entries_dedup_key
@@ -877,6 +968,7 @@ function toDocumentRecord(row: KnowledgeDocumentRow): KnowledgeDocumentRecord {
     checksum: row.checksum,
     status: row.status,
     bitableRecordId: row.bitable_record_id ?? undefined,
+    obsidianPath: row.obsidian_path ?? undefined,
     createdAt: row.created_at,
   };
 }

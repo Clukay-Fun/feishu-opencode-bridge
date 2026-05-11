@@ -3,7 +3,7 @@
  * 关注点: 验证核心路径、边界条件和回归场景。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import PizZip from "pizzip";
@@ -1160,6 +1160,79 @@ describe("KnowledgeBaseService", () => {
     expect(stats?.entryCount).toBe(1);
     documents = await service.listDocuments?.({ limit: 10 });
     expect(documents?.some((item) => item.fileName === "经济补偿指引.pdf")).toBe(false);
+    service.close();
+  });
+
+  it("deletes exported Obsidian notes when their Bitable records are removed", async () => {
+    stubEmbeddingFetch();
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-obsidian-delete-"));
+    tempDirs.push(dir);
+    const filePath = join(dir, "劳动合同.txt");
+    writeFileSync(filePath, "试用期最长不超过六个月。劳动合同期限不满三个月的，不得约定试用期。", "utf8");
+    const obsidianVault = join(dir, "vault");
+    const createdRecordIds: string[] = [];
+    let remoteRecords: Array<{ recordId: string; fields: Record<string, unknown> }> = [];
+    const service = new KnowledgeBaseService(
+      {
+        enabled: true,
+        autoDetect: { enabled: true, minConfidence: 0.75 },
+        query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
+        storage: {
+          sqlitePath: join(dir, "knowledge.db"),
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+            documentTableId: "tbl_docs",
+          },
+        },
+        embeddingProvider: {
+          baseUrl: new URL("https://example.com/v1/"),
+          apiKey: "token",
+          model: "text-embedding",
+        },
+        models: {},
+        ingest: {
+          allowedExtensions: [".txt"],
+          maxFileSizeMb: 20,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+        },
+        obsidian: {
+          enabled: true,
+          vaultPath: obsidianVault,
+          baseDir: "knowledge",
+          enableWikiLinks: true,
+        },
+      },
+      {
+        async downloadMessageResource() {
+          throw new Error("not used");
+        },
+        async createBitableRecord(_appToken, tableId, fields) {
+          const recordId = `${tableId}_${createdRecordIds.length + 1}`;
+          createdRecordIds.push(recordId);
+          remoteRecords.push({ recordId, fields });
+          return recordId;
+        },
+        async listBitableRecords() {
+          return remoteRecords;
+        },
+      },
+      createOpenCodeStub(),
+      logger(),
+    );
+
+    await service.ingestLocalFile?.(filePath);
+    const document = await service.getDocument?.(1);
+    expect(document?.obsidianPath).toBeTruthy();
+    expect(existsSync(document!.obsidianPath!)).toBe(true);
+
+    remoteRecords = [];
+    await service.syncMirror();
+
+    expect(existsSync(document!.obsidianPath!)).toBe(false);
+    const stats = await service.getStats?.();
+    expect(stats?.documentCount).toBe(0);
+    expect(stats?.entryCount).toBe(0);
     service.close();
   });
 

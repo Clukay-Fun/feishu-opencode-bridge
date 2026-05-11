@@ -6,7 +6,7 @@
  * - 作为运行时模块与存储层之间的业务接口。
  */
 import crypto from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 
 import { expandArchiveMaterialEntries, isArchiveFileName } from "../document-pipeline/archive.js";
@@ -27,9 +27,10 @@ import {
   type CaseDigestCandidate,
 } from "./extractors/case-digest.js";
 import type { KnowledgeBaseConfig } from "./config.js";
-import { exportKnowledgeObsidianNote } from "./obsidian-export.js";
+import { exportKnowledgeObsidianNote, resolveKnowledgeObsidianNotePath } from "./obsidian-export.js";
 import {
   KnowledgeDb,
+  type KnowledgeDocumentRecord,
   type KnowledgeDocumentSummary,
   type KnowledgeEntryCandidate,
   type KnowledgeEntryRecord,
@@ -800,6 +801,9 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
       }, "warn");
       return null;
     });
+    if (obsidianPath) {
+      this.db.updateDocumentObsidianPath(document.id, obsidianPath);
+    }
     await this.reportProgress(options, {
       step: "write",
       status: "completed",
@@ -946,7 +950,11 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     }
     const removedRecordIds = [...localRecordIds].filter((recordId) => !remoteRecordIds.has(recordId));
     if (removedRecordIds.length > 0) {
+      const affectedDocuments = this.db.listDocumentsByEntryBitableRecordIds(removedRecordIds);
       this.db.deleteEntriesByBitableRecordIds(removedRecordIds);
+      const orphanDocuments = this.db.listOrphanDocumentsByIds(affectedDocuments.map((document) => document.id));
+      await this.deleteObsidianNotesForDocuments(orphanDocuments);
+      this.db.deleteOrphanDocumentsByIds(orphanDocuments.map((document) => document.id));
       this.db.deleteOrphanSyncedDocuments();
     }
   }
@@ -954,6 +962,37 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
   /** 关闭知识库数据库连接。 */
   close(): void {
     this.db.close();
+  }
+
+  /** 删除由知识库自动导出的 Obsidian 笔记；只删除可由本地文档元数据反查的系统笔记。 */
+  private async deleteObsidianNotesForDocuments(documents: KnowledgeDocumentRecord[]): Promise<void> {
+    const config = this.config.obsidian;
+    if (!config?.enabled || !config.vaultPath) {
+      return;
+    }
+    const notePaths = new Set<string>();
+    for (const document of documents) {
+      notePaths.add(document.obsidianPath ?? resolveKnowledgeObsidianNotePath(config, {
+        fileName: document.fileName,
+        checksum: document.checksum,
+        sqliteDocumentId: document.id,
+      }));
+    }
+    for (const notePath of notePaths) {
+      if (!isPathInsideDirectory(notePath, path.join(config.vaultPath, config.baseDir))) {
+        this.logger.log("knowledge", "skip obsidian note delete outside knowledge dir", { notePath }, "warn");
+        continue;
+      }
+      await unlink(notePath).catch((error: unknown) => {
+        if (isNodeError(error) && error.code === "ENOENT") {
+          return;
+        }
+        this.logger.log("knowledge", "obsidian note delete failed", {
+          notePath,
+          detail: error instanceof Error ? error.message : String(error),
+        }, "warn");
+      });
+    }
   }
 
   // #endregion
@@ -1553,6 +1592,15 @@ function validateUploadedFile(fileName: string, buffer: Buffer, allowedExtension
   if (sizeMb > maxFileSizeMb) {
     throw new Error(`文件过大，请控制在 ${maxFileSizeMb}MB 以内`);
   }
+}
+
+function isPathInsideDirectory(filePath: string, directory: string): boolean {
+  const relative = path.relative(path.resolve(directory), path.resolve(filePath));
+  return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }
 
 function resolveDownloadedKnowledgeFileName(downloadedFileName: string, messageFileName: string): string {
