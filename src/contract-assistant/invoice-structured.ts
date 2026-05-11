@@ -210,11 +210,14 @@ function extractBuyerName(text: string): string | undefined {
 }
 
 function extractInvoiceAmount(text: string): number | undefined {
-  const value = matchFirst(text, [
-    /价税合计[^\d¥￥-]{0,12}[¥￥]?\s*([0-9,]+(?:\.\d{1,2})?)/,
-    /小写[^\d¥￥-]{0,12}[¥￥]?\s*([0-9,]+(?:\.\d{1,2})?)/,
-    /合计金额[^\d¥￥-]{0,12}[¥￥]?\s*([0-9,]+(?:\.\d{1,2})?)/,
-  ]);
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const labeledLine = lines.find((line) => /价税合计|小写|合计金额/.test(line));
+  const value = labeledLine
+    ? matchFirst(labeledLine, [
+      /(?:价税合计|小写|合计金额)[^\d¥￥-]{0,30}[¥￥]?\s*([0-9,]+(?:\.\d{1,2})?)/,
+      /[¥￥]\s*([0-9,]+(?:\.\d{1,2})?)/,
+    ])
+    : undefined;
   if (!value) {
     return undefined;
   }

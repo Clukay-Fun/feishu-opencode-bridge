@@ -95,6 +95,7 @@ type PendingUploadInteraction = {
   requesterOpenId: string;
   anchorMessageId: string;
   expiresAt: number;
+  files?: ContractAssistantFileRef[] | undefined;
 };
 
 type PendingDraftInteraction = {
@@ -234,6 +235,11 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       return { claimed: true };
     }
 
+    if (pending?.kind === "invoice-recognize" && routed?.kind === "command" && isUploadFinishCommand(routed.command)) {
+      const handled = await this.handlePendingUpload(message, pending, routed);
+      return { claimed: handled };
+    }
+
     if (routed?.kind === "command") {
       const claimed = await this.handleCommand(message, routed.command, workbench);
       return { claimed };
@@ -253,7 +259,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       return { claimed: handled };
     }
 
-    const handled = await this.handlePendingUpload(message, pending);
+    const handled = await this.handlePendingUpload(message, pending, routed);
     return { claimed: handled };
   }
 
@@ -283,7 +289,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         pendingKind,
         pendingKind === "contract-extract"
           ? `最近上传的《${pending.file.fileName}》不像合同文件，请重新上传 1 份合同文件，我会提取字段并写入合同台账。`
-          : `最近上传的《${pending.file.fileName}》不像发票文件，请重新上传 1 份发票文件，我会识别字段并写入发票记录。`,
+          : `最近上传的《${pending.file.fileName}》不像发票文件，请重新上传发票文件；可连续上传多份，完成后发送 /完成上传。`,
       );
       return true;
     }
@@ -442,7 +448,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         await this.handleInvoiceRecognize(message, buildLocalContractFileInput(localPath));
         return true;
       }
-      await this.startPendingUpload(message, "invoice-recognize", "请直接上传 1 份发票文件，我会识别字段并写入发票记录。");
+      await this.startPendingUpload(message, "invoice-recognize", "可连续上传一份或多份发票文件。上传完成后发送 `/完成上传`，我会统一识别字段并写入发票记录。");
       return true;
     }
 
@@ -497,7 +503,28 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
   private async handlePendingUpload(
     message: IncomingChatMessage,
     pending: PendingUploadInteraction,
+    routed: RoutedText | null | undefined,
   ): Promise<boolean> {
+    if (pending.kind === "invoice-recognize" && routed?.kind === "command" && isUploadFinishCommand(routed.command)) {
+      const files = pending.files ?? [];
+      if (files.length === 0) {
+        await this.sendNotice(message, {
+          title: "还没有收到发票文件",
+          template: "yellow",
+          icon: "maybe_outlined",
+          message: "请先上传一份或多份发票文件，再发送 `/完成上传`。",
+        });
+        return true;
+      }
+      this.clearInteraction(message.conversationKey);
+      if (files.length === 1) {
+        await this.handleInvoiceRecognize(message, files[0]!);
+      } else {
+        await this.handleInvoiceRecognizeBatch(message, files);
+      }
+      return true;
+    }
+
     if (message.messageType !== "file") {
       if (pending.kind === "invoice-recognize") {
         const localInvoiceFiles = await this.resolveLocalInvoiceFilesFromText(message.plainText);
@@ -517,13 +544,13 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
         icon: "file-link-docx_outlined",
         message: pending.kind === "contract-extract"
           ? "请上传合同文件，我会提取字段并写入合同台账。"
-          : "请上传发票文件，我会识别字段并写入发票记录。",
+          : "请继续上传发票文件；上传完成后发送 `/完成上传`，我会统一识别字段并写入发票记录。",
       });
       return true;
     }
 
-    this.clearInteraction(message.conversationKey);
     if (pending.kind === "contract-extract") {
+      this.clearInteraction(message.conversationKey);
       await this.handleContractExtract(message, {
         messageId: message.messageId,
         fileKey: message.file.fileKey,
@@ -532,11 +559,38 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       });
       return true;
     }
-    await this.handleInvoiceRecognize(message, {
-      messageId: message.messageId,
-      fileKey: message.file.fileKey,
-      fileName: message.file.fileName,
-      size: message.file.size,
+
+    if (!this.isFileAcceptableFor("invoice-recognize", message.file.fileName)) {
+      await this.sendNotice(message, {
+        title: "发票文件格式暂不支持",
+        template: "yellow",
+        icon: "maybe_outlined",
+        message: `已忽略《${message.file.fileName}》。请上传支持的发票文件格式：${this.featureConfig.ingest.invoiceAllowedExtensions.join(" / ")}。`,
+      });
+      return true;
+    }
+
+    const nextFiles = [
+      ...(pending.files ?? []),
+      {
+        messageId: message.messageId,
+        fileKey: message.file.fileKey,
+        fileName: message.file.fileName,
+        size: message.file.size,
+      },
+    ];
+    pending.files = nextFiles;
+    pending.expiresAt = Date.now() + this.featureConfig.ingest.pendingTtlMs;
+    this.interactions.touch(pending.conversationKey, pending.expiresAt);
+    await this.sendNotice(message, {
+      title: "已收到发票文件",
+      template: "green",
+      icon: "yes_outlined",
+      message: [
+        `已加入队列：${message.file.fileName}`,
+        `当前共 ${nextFiles.length} 份发票文件。`,
+        "可以继续上传；上传完成后发送 `/完成上传` 开始识别。",
+      ].join("\n"),
     });
     return true;
   }
@@ -1380,6 +1434,7 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
       requesterOpenId: message.senderOpenId,
       anchorMessageId: message.messageId,
       expiresAt: Date.now() + this.featureConfig.ingest.pendingTtlMs,
+      files: [],
     };
     this.interactions.set(interaction);
     await this.sendNotice(message, {
@@ -2025,7 +2080,7 @@ function formatMoney(value: number | undefined): string {
 
 function buildBitableRecordUrl(baseToken: string, tableId: string, recordId: string): string {
   const base = `https://feishu.cn/base/${encodeURIComponent(baseToken)}?table=${encodeURIComponent(tableId)}`;
-  return `${base}&recordId=${encodeURIComponent(recordId)}`;
+  return `${base}&record=${encodeURIComponent(recordId)}`;
 }
 
 function renderWorkbenchSummaryMessage(state: ContractState | null): string {
@@ -2084,6 +2139,11 @@ function detectPendingUploadKind(text: string): PendingUploadKind | null {
     }
   }
   return null;
+}
+
+function isUploadFinishCommand(command: ContractAssistantCommand): boolean {
+  return command.kind === "passthrough"
+    && command.name.trim().toLowerCase() === "完成上传";
 }
 
 function extractLocalPath(text: string): string | null {

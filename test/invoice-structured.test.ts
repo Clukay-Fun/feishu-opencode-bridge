@@ -41,6 +41,20 @@ describe("invoice structured detector", () => {
     expect(result.missingFields).toEqual([]);
   });
 
+  it("does not treat the invoice number as the invoice amount", () => {
+    const text = [
+      "电子发票（普通发票）",
+      "发票号码：26952000001657386511",
+      "开票日期：2026年04月23日",
+      "购买方名称：北京市隆安（深圳）律师事务所",
+      "价税合计（小写） ¥8,000.00",
+    ].join("\n");
+    const result = extractStructuredInvoice(text);
+
+    expect(result.fields["发票号"]).toBe("26952000001657386511");
+    expect(result.fields["发票金额"]).toBe(8000);
+  });
+
   it("detects noisy photo OCR invoice text through fuzzy signals", async () => {
     const text = await readFile(fixture("invoices/noisy-photo-invoice.txt"), "utf8");
     const detection = detectInvoiceDocument(text);

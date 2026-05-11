@@ -390,7 +390,8 @@ describe("buildPostPayload", () => {
 
     expect(content.header.title.content).toBe("案件信息录入中");
     expect(serialized).toContain("案件信息录入中");
-    expect(serialized).toContain("劳动争议");
+    expect(serialized).toContain("提取案件字段");
+    expect(serialized).not.toContain("劳动争议");
   });
 
   it("renders a notice card", () => {

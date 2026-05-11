@@ -417,7 +417,7 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
 
       expect(claimed).toBe(true);
       expect(recognizeInvoice).not.toHaveBeenCalled();
-      expect(JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {})).toContain("重新上传 1 份发票文件");
+      expect(JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {})).toContain("请重新上传发票文件");
     } finally {
       await cleanupModule(module, tempDir);
     }
@@ -659,19 +659,17 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
       expect(processingSerialized).toContain("案件信息录入中");
       expect(processingSerialized).toContain("提取案件字段：正在根据案情提取案件字段");
       expect(processingSerialized).toContain("写入案件管理表：等待中");
-      expect(processingSerialized).toContain("案由：待识别");
-      expect(processingSerialized).toContain("程序阶段：待识别");
-      expect(processingSerialized).toContain("案号：待识别");
-      expect(processingSerialized).toContain("审理法院：待识别");
-      expect(processingSerialized.match(/案由：/g)?.length).toBe(1);
-      expect(processingSerialized.match(/程序阶段：/g)?.length).toBe(1);
+      expect(processingSerialized).not.toContain("案由：待识别");
+      expect(processingSerialized).not.toContain("程序阶段：待识别");
+      expect(processingSerialized).not.toContain("案号：待识别");
+      expect(processingSerialized).not.toContain("审理法院：待识别");
       expect(progressSerialized).toContain("提取案件字段：已完成");
       expect(progressSerialized).toContain("写入案件管理表：正在写入案件管理表");
       expect(completedSerialized).toContain("案件已录入");
       expect(completedSerialized).toContain("张三 vs 北京XX科技有限公司");
       expect(completedSerialized).toContain("劳动争议");
       expect(completedSerialized).toContain("打开案件管理表");
-      expect(JSON.stringify(completedCard)).toContain("\"url\":\"https://feishu.cn/base/app_token?table=tbl_case&recordId=rec_case_1\"");
+      expect(JSON.stringify(completedCard)).toContain("\"url\":\"https://feishu.cn/base/app_token?table=tbl_case&record=rec_case_1\"");
       expect((completedCard.body?.elements ?? []).some((item: { tag?: string }) => item.tag === "column")).toBe(false);
     } finally {
       await cleanupModule(module, tempDir);
@@ -684,7 +682,7 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
       await expect(module.handleCardAction?.("ou_user", "om_card", {
         kind: "contract-case-action",
         action: "open-case-table",
-        url: "https://feishu.cn/base/app_token?table=tbl_case&recordId=rec_case_1",
+        url: "https://feishu.cn/base/app_token?table=tbl_case&record=rec_case_1",
       })).resolves.toEqual({ toast: { type: "success", content: "正在打开案件管理表。" } });
 
       await expect(module.handleCardAction?.("ou_user", "om_card", {
@@ -765,7 +763,7 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     expect(updatePayload.mock.calls.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("merges invoice processing and completed card", async () => {
+  it("collects invoice uploads until finish command and then updates the card", async () => {
     const { module, sendPayload, updatePayload, recognizeInvoice } = createModule();
     const start = createTextMessage("/识别发票");
     await module.handleMessage({
@@ -781,6 +779,15 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     });
 
     expect(result).toEqual({ claimed: true });
+    expect(recognizeInvoice).not.toHaveBeenCalled();
+
+    const finish = createTextMessage("/完成上传");
+    const finishResult = await module.handleMessage({
+      message: finish,
+      routed: routeIncomingText(finish.plainText),
+    });
+
+    expect(finishResult).toEqual({ claimed: true });
     expect(recognizeInvoice).toHaveBeenCalledTimes(1);
 
     const initialSerialized = JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {});
@@ -797,6 +804,8 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     expect(finalSerialized).toContain("¥20,000.00");
     expect(finalSerialized).toContain("2026-04-10");
     expect(finalSerialized).toContain("查看发票表");
+    expect(finalSerialized).toContain("购买方：张三");
+    expect(finalSerialized).not.toContain("识别失败，非发票文件");
   });
 
   it("falls back to request fields when case create response misses display fields", async () => {
