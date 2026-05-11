@@ -2,7 +2,7 @@
  * 职责: 覆盖合同起草引导流程。
  * 关注点: 验证核心路径、边界条件和回归场景。
  */
-import { rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -302,7 +302,7 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
         messageId: "msg-file",
         fileKey: "file_1",
         fileName: "invoice.pdf",
-      }));
+      }), expect.any(Function));
     } finally {
       await cleanupModule(module, tempDir);
     }
@@ -341,10 +341,10 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
       expect(recognizeInvoice).toHaveBeenCalledWith(expect.objectContaining({
         messageId: "msg-file",
         fileName: "invoice.pdf",
-      }));
+      }), expect.any(Function));
       const progressSerialized = JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {});
       expect(progressSerialized).toContain("发票识别");
-      expect(progressSerialized).toContain("正在 OCR 识别发票内容");
+      expect(progressSerialized).toContain("本地提取字段：等待中");
     } finally {
       await cleanupModule(module, tempDir);
     }
@@ -383,10 +383,42 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
       expect(second).toEqual({ claimed: true });
       expect(recognizeInvoice).toHaveBeenCalledWith(expect.objectContaining({
         fileName: "invoice.pdf",
-      }));
+      }), expect.any(Function));
       const progressSerialized = JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {});
       expect(progressSerialized).toContain("发票识别");
-      expect(progressSerialized).toContain("正在 OCR 识别发票内容");
+      expect(progressSerialized).toContain("本地提取字段：等待中");
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("reuses the recent uploaded invoice when the next message asks to write the ledger", async () => {
+    const { module, sendPayload, recognizeInvoice, classifyIntent, tempDir } = createModule();
+    try {
+      const file = createFileMessage("invoice.pdf");
+      const fileResult = await module.handleMessage({
+        message: file,
+        routed: null,
+      });
+
+      expect(fileResult).toEqual({ claimed: false });
+
+      const request = createTextMessage("将这个发票录入发票台账");
+      const result = await module.handleMessage({
+        message: request,
+        routed: routeIncomingText(request.plainText),
+      });
+
+      expect(result).toEqual({ claimed: true });
+      expect(classifyIntent).not.toHaveBeenCalled();
+      expect(recognizeInvoice).toHaveBeenCalledWith(expect.objectContaining({
+        messageId: file.messageId,
+        fileKey: "file_1",
+        fileName: "invoice.pdf",
+      }), expect.any(Function));
+      const allPayloads = JSON.stringify(sendPayload.mock.calls.map((call) => call[1]));
+      expect(allPayloads).toContain("发票识别");
+      expect(allPayloads).not.toContain("等待上传发票文件");
     } finally {
       await cleanupModule(module, tempDir);
     }
@@ -440,8 +472,89 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
       expect(recognizeInvoice).toHaveBeenCalledWith(expect.objectContaining({
         localPath: "/tmp/invoice.pdf",
         fileName: "invoice.pdf",
-      }));
+      }), expect.any(Function));
     } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("routes natural language desktop invoice folder directly to invoice recognition", async () => {
+    const { module, recognizeInvoice, classifyIntent, sendPayload, updatePayload, tempDir } = createModule();
+    const previousHome = process.env.HOME;
+    process.env.HOME = tempDir;
+    const invoiceDir = path.join(tempDir, "Desktop", "发票");
+    try {
+      await mkdir(invoiceDir, { recursive: true });
+      const invoicePath = path.join(invoiceDir, "invoice.pdf");
+      await writeFile(invoicePath, "%PDF-1.4\ninvoice");
+
+      const message = createTextMessage("识别桌面上发票文件夹里面的发票");
+      const result = await module.handleMessage({
+        message,
+        routed: routeIncomingText(message.plainText),
+      });
+
+      expect(result).toEqual({ claimed: true });
+      expect(classifyIntent).not.toHaveBeenCalled();
+      expect(recognizeInvoice).toHaveBeenCalledWith(expect.objectContaining({
+        localPath: invoicePath,
+        fileName: "invoice.pdf",
+      }), expect.any(Function));
+      expect(JSON.stringify(sendPayload.mock.calls[0]?.[1] ?? {})).toContain("invoice.pdf");
+      expect(JSON.stringify(sendPayload.mock.calls[0]?.[1] ?? {})).not.toContain("等待上传发票文件");
+      expect(updatePayload).toHaveBeenCalled();
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("lets pending invoice upload state consume desktop invoice folder text", async () => {
+    const { module, recognizeInvoice, classifyIntent, sendPayload, tempDir } = createModule(undefined, {
+      classifyIntent: async () => ({
+        skill: "invoice-recognize",
+        confidence: 0.9,
+        needsFile: true,
+        reason: "自然语言要求录入发票",
+      }),
+    });
+    const previousHome = process.env.HOME;
+    process.env.HOME = tempDir;
+    const invoiceDir = path.join(tempDir, "Desktop", "发票");
+    try {
+      await mkdir(invoiceDir, { recursive: true });
+      const invoicePath = path.join(invoiceDir, "invoice.pdf");
+      await writeFile(invoicePath, "%PDF-1.4\ninvoice");
+
+      const first = createTextMessage("这张发票录一下");
+      await module.handleMessage({
+        message: first,
+        routed: routeIncomingText(first.plainText),
+      });
+
+      const second = createTextMessage("识别桌面上发票文件夹里面的发票");
+      const result = await module.handleMessage({
+        message: second,
+        routed: routeIncomingText(second.plainText),
+      });
+
+      expect(result).toEqual({ claimed: true });
+      expect(classifyIntent).toHaveBeenCalledTimes(1);
+      expect(recognizeInvoice).toHaveBeenCalledWith(expect.objectContaining({
+        localPath: invoicePath,
+        fileName: "invoice.pdf",
+      }), expect.any(Function));
+      expect(JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {})).not.toContain("当前正在等待文件");
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
       await cleanupModule(module, tempDir);
     }
   });
@@ -596,7 +709,26 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
       expect(completedSerialized).toContain("张三 vs 北京XX科技有限公司");
       expect(completedSerialized).toContain("劳动争议");
       expect(completedSerialized).toContain("打开案件管理表");
+      expect(JSON.stringify(completedCard)).toContain("\"url\":\"https://feishu.cn/base/app_token?table=tbl_case&recordId=rec_case_1\"");
       expect((completedCard.body?.elements ?? []).some((item: { tag?: string }) => item.tag === "column")).toBe(false);
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("handles case card actions and rejects missing links", async () => {
+    const { module, tempDir } = createModule();
+    try {
+      await expect(module.handleCardAction?.("ou_user", "om_card", {
+        kind: "contract-case-action",
+        action: "open-case-table",
+        url: "https://feishu.cn/base/app_token?table=tbl_case&recordId=rec_case_1",
+      })).resolves.toEqual({ toast: { type: "success", content: "正在打开案件管理表。" } });
+
+      await expect(module.handleCardAction?.("ou_user", "om_card", {
+        kind: "contract-case-action",
+        action: "open-case-table",
+      })).resolves.toEqual({ toast: { type: "warning", content: "案件链接缺失，请从案件管理表中打开。" } });
     } finally {
       await cleanupModule(module, tempDir);
     }
@@ -692,11 +824,11 @@ describe("ContractAssistantRuntimeModule onboard draft", () => {
     const initialSerialized = JSON.stringify(sendPayload.mock.calls.at(-1)?.[1] ?? {});
     const finalSerialized = JSON.stringify(updatePayload.mock.calls.at(-1)?.[2] ?? {});
     expect(initialSerialized).toContain("发票识别");
-    expect(initialSerialized).toContain("正在 OCR 识别发票内容");
-    expect(initialSerialized).toContain("等待填写表格");
+    expect(initialSerialized).toContain("本地提取字段：等待中");
+    expect(initialSerialized).toContain("写入发票表：等待中");
     expect(initialSerialized).not.toContain("正在填写表格");
     expect(finalSerialized).toContain("发票识别完成");
-    expect(finalSerialized).not.toContain("正在 OCR 识别发票内容");
+    expect(finalSerialized).not.toContain("本地提取字段：等待中");
     expect(finalSerialized).toContain("张三");
     expect(finalSerialized).toContain("032001900104");
     expect(finalSerialized).toContain("增值税普通发票");

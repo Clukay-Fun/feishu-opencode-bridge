@@ -12,7 +12,7 @@ import type {
   ContractDraftProgressStage,
   InvoiceRecognizeResult,
 } from "../contract-assistant/index.js";
-import { buildDesignerCardPayload, setDesignerButtonValue } from "./designer-card-renderer.js";
+import { buildDesignerCardPayload, removeDesignerCardElements, setDesignerButtonValue } from "./designer-card-renderer.js";
 import { type FeishuPostPayload } from "./shared-primitives.js";
 
 export type ContractDraftProgressView = {
@@ -105,6 +105,7 @@ export function buildContractDraftCompletedPayload(
     { from: "/contract-drafts/委托代理合同（张三vs相关单位）.docx", to: shortProjectPath(result.wordPath) },
   ], (card) => {
     setDesignerButtonValue(card, "打开合同台账", { kind: "contract-draft-action", action: "open-contract-record", url: options.recordUrl });
+    setDesignerButtonUrl(card, "打开合同台账", options.recordUrl);
   });
 }
 
@@ -125,6 +126,7 @@ export function buildCaseCreateCompletedPayload(result: CaseCreateResult, record
     { from: "仲裁阶段", to: stage ?? tagLine ?? "已录入" },
   ], (card) => {
     setDesignerButtonValue(card, "打开案件管理表", { kind: "contract-case-action", action: "open-case-table", url: recordUrl });
+    setDesignerButtonUrl(card, "打开案件管理表", recordUrl);
   });
 }
 
@@ -132,17 +134,72 @@ export function buildCaseCreateCompletedPayload(result: CaseCreateResult, record
 export function buildInvoiceRecognizeProgressPayload(view: InvoiceRecognizeProgressView): FeishuPostPayload {
   const completedFiles = view.completedFiles ?? [];
   const failedFiles = view.failedFiles ?? [];
+  const completedTemplateFile = "260405_635.00_深圳市南山区肖三胖甲鱼院子.pdf";
+  const failedTemplateFile = "260415_875.00_广东徐记海鲜餐饮有限公司.pdf";
   return buildDesignerCardPayload("发票识别", [
     { from: "260324_291.94_上海稀宇科技有限公司.pdf", to: view.currentFile ?? "发票文件.pdf" },
-    { from: "260405_635.00_深圳市南山区肖三胖甲鱼院子.pdf", to: completedFiles[0] ?? "已完成发票.pdf" },
-    { from: "260415_875.00_广东徐记海鲜餐饮有限公司.pdf", to: failedFiles[0]?.fileName ?? "识别失败发票.pdf" },
-  ]);
+    ...(completedFiles[0] ? [{ from: completedTemplateFile, to: completedFiles[0] }] : []),
+    ...(failedFiles[0] ? [{ from: failedTemplateFile, to: failedFiles[0].fileName }] : []),
+  ], (card) => {
+    removeInvoiceCurrentFileIcon(card);
+    replaceInvoiceProgressSteps(card, view.steps);
+    if (!completedFiles[0]) {
+      removeDesignerCardElements(card, (element) => designerElementContainsText(element, completedTemplateFile));
+    }
+    if (!failedFiles[0]) {
+      removeDesignerCardElements(card, (element) => designerElementContainsText(element, failedTemplateFile));
+    }
+  });
+}
+
+function removeInvoiceCurrentFileIcon(card: Record<string, unknown>): void {
+  const current = getDesignerBodyElements(card).find((element) => {
+    const content = getDesignerRecord(element)?.content;
+    return typeof content === "string" && content.startsWith("正在识别：");
+  });
+  if (current) {
+    delete current.icon;
+  }
+}
+
+function replaceInvoiceProgressSteps(
+  card: Record<string, unknown>,
+  steps: InvoiceRecognizeProgressView["steps"],
+): void {
+  const stepColumnSet = getDesignerBodyElements(card).find((element) => designerElementContainsText(element, "已完成xxx"));
+  const columns = Array.isArray(stepColumnSet?.columns) ? stepColumnSet.columns : [];
+  const firstColumn = getDesignerRecord(columns[0]);
+  if (!firstColumn) {
+    return;
+  }
+  firstColumn.elements = steps.map((step) => buildInvoiceStepElement(step));
+}
+
+function buildInvoiceStepElement(step: InvoiceRecognizeProgressView["steps"][number]): Record<string, unknown> {
+  const style = stepStyle(step.status);
+  const statusLabel = step.status === "completed" ? "已完成" : step.status === "running" ? "进行中" : "等待中";
+  return {
+    tag: "div",
+    text: {
+      tag: "plain_text",
+      content: `${step.label}：${statusLabel}`,
+      text_size: "normal_v2",
+      text_align: "left",
+      text_color: style.color,
+    },
+    icon: {
+      tag: "standard_icon",
+      token: style.token,
+      color: style.color,
+    },
+    margin: "0px 0px 0px 0px",
+  };
 }
 
 /** 构建发票识别完成卡。 */
 export function buildInvoiceRecognizeCompletedPayload(
   result: InvoiceRecognizeResult,
-  options: { elapsedMs: number; recordUrl: string },
+  options: { elapsedMs: number; recordUrl: string; batchResults?: readonly InvoiceRecognizeResult[] | undefined },
 ): FeishuPostPayload {
   const payer = readCaseField(result.record, "购买方") ?? readCaseField(result.record, "付款方");
   const invoiceNo = readCaseField(result.record, "发票号");
@@ -159,9 +216,46 @@ export function buildInvoiceRecognizeCompletedPayload(
     { from: "291.94", to: amount ?? "未识别" },
     { from: "2026/03/24", to: invoiceDate ?? "未识别" },
     { from: "xx合同.pdf", to: payer ?? "非发票文件" },
+    { from: "耗时 32s", to: `耗时 ${formatDurationSeconds(options.elapsedMs)}` },
   ], (card) => {
+    if (options.batchResults && options.batchResults.length > 1) {
+      renderInvoiceBatchDetails(card, options.batchResults);
+    }
     setDesignerButtonValue(card, "查看发票表", { kind: "invoice-action", action: "open-invoice-table", url: options.recordUrl });
   });
+}
+
+function renderInvoiceBatchDetails(card: Record<string, unknown>, results: readonly InvoiceRecognizeResult[]): void {
+  const body = getDesignerRecord(card.body);
+  const elements = Array.isArray(body?.elements) ? body.elements : null;
+  if (!elements) {
+    return;
+  }
+  const buttonIndex = elements.findIndex((element) => getDesignerRecord(element)?.tag === "button");
+  const insertAt = buttonIndex >= 0 ? buttonIndex : elements.length;
+  elements.splice(insertAt, 0, {
+    tag: "markdown",
+    content: results.map(renderInvoiceResultDetails).join("\n\n---\n\n"),
+    text_size: "normal_v2",
+  });
+}
+
+function renderInvoiceResultDetails(result: InvoiceRecognizeResult): string {
+  const payer = readCaseField(result.record, "购买方") ?? readCaseField(result.record, "付款方") ?? "未识别";
+  const invoiceNo = readCaseField(result.record, "发票号") ?? "未识别";
+  const summaryBits = splitInvoiceSummary(result.summary);
+  const invoiceType = readCaseField(result.record, "发票类型") ?? summaryBits.invoiceType ?? "未识别";
+  const invoiceDate = readCaseField(result.record, "开票日期") ?? "未识别";
+  const amount = readInvoiceAmount(result.record) ?? "未识别";
+  const fileName = readCaseField(result.record, "文件名") ?? "发票文件";
+  return [
+    `**${fileName}**`,
+    `发票号：${invoiceNo}`,
+    `发票类型：${invoiceType}`,
+    `金额：${amount}`,
+    `开票时间：${invoiceDate}`,
+    `购买方：${payer}`,
+  ].join("\n");
 }
 
 /** 构建案件工作台开启卡。 */
@@ -205,6 +299,7 @@ export function buildCaseTodoReminderPayload(view: CaseTodoReminderCardView): Fe
       }
       const button = getFirstButtonElement(actionColumn);
       if (button && item.url) {
+        button.url = item.url;
         button.value = { kind: "contract-case-action", action: "open-case-record", url: item.url };
         row.columns = firstColumn && actionColumn ? [firstColumn, actionColumn] : [firstColumn].filter(Boolean);
       } else {
@@ -243,6 +338,10 @@ function resolveTodoRowBackground(index: number, line: string): string {
     return index === 0 ? "red-50" : "yellow-50";
   }
   return ["wathet-50", "grey-50", "blue-50", "green-50"][index] ?? "grey-50";
+}
+
+function formatDurationSeconds(elapsedMs: number): string {
+  return `${Math.max(1, Math.round(elapsedMs / 1000))}s`;
 }
 
 function getDesignerBodyElements(card: Record<string, unknown>): Array<Record<string, unknown>> {
@@ -295,6 +394,57 @@ function getFirstButtonElement(input: unknown): Record<string, unknown> | null {
   return null;
 }
 
+function setDesignerButtonUrl(card: Record<string, unknown>, label: string, url?: string | undefined): void {
+  if (!url) {
+    return;
+  }
+  const button = findButtonByLabel(card, label);
+  if (button) {
+    button.url = url;
+  }
+}
+
+function findButtonByLabel(input: unknown, label: string): Record<string, unknown> | null {
+  if (Array.isArray(input)) {
+    for (const item of input) {
+      const found = findButtonByLabel(item, label);
+      if (found) return found;
+    }
+    return null;
+  }
+  const record = getDesignerRecord(input);
+  if (!record) {
+    return null;
+  }
+  if (record.tag === "button" && getButtonText(record) === label) {
+    return record;
+  }
+  for (const value of Object.values(record)) {
+    const found = findButtonByLabel(value, label);
+    if (found) return found;
+  }
+  return null;
+}
+
+function getButtonText(button: Record<string, unknown>): string | undefined {
+  const text = getDesignerRecord(button.text);
+  return typeof text?.content === "string" ? text.content : undefined;
+}
+
+function designerElementContainsText(input: unknown, text: string): boolean {
+  if (typeof input === "string") {
+    return input.includes(text);
+  }
+  if (Array.isArray(input)) {
+    return input.some((item) => designerElementContainsText(item, text));
+  }
+  const record = getDesignerRecord(input);
+  if (!record) {
+    return false;
+  }
+  return Object.values(record).some((value) => designerElementContainsText(value, text));
+}
+
 function removeMarkedDesignerElements(input: unknown): void {
   if (Array.isArray(input)) {
     for (let index = input.length - 1; index >= 0; index -= 1) {
@@ -327,8 +477,10 @@ function getDesignerRecord(value: unknown): Record<string, unknown> | null {
 export function createInvoiceRecognizeProgressState(): InvoiceRecognizeProgressView {
   return {
     steps: [
-      { label: "OCR 识别发票内容", status: "pending" },
-      { label: "填写表格", status: "pending" },
+      { label: "解析发票文件", status: "pending" },
+      { label: "本地提取字段", status: "pending" },
+      { label: "模型补全缺失字段", status: "pending" },
+      { label: "写入发票表", status: "pending" },
     ],
   };
 }

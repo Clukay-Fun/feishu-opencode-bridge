@@ -13,6 +13,7 @@ import {
   buildKnowledgeQueryEmptyPayload,
   buildKnowledgeQueryPayload,
   buildGuideCardPayload,
+  buildInvoiceRecognizeProgressPayload,
   buildLaborAnalysisCompletedPayload,
   buildLaborAnalysisProgressPayload,
   buildLaborFinalReviewPayload,
@@ -664,6 +665,30 @@ describe("buildPostPayload", () => {
     expect(finalSerialized).not.toContain("knowledge-ingest-action");
   });
 
+  it("renders invoice progress card without template dummy files", () => {
+    const payload = buildInvoiceRecognizeProgressPayload({
+      currentFile: "真实发票.pdf",
+      completedFiles: [],
+      failedFiles: [],
+      steps: [
+        { label: "读取发票文件", status: "running" },
+        { label: "OpenCode 识别原始内容", status: "pending" },
+      ],
+    });
+
+    const serialized = JSON.stringify(JSON.parse(payload.content));
+    expect(serialized).toContain("真实发票.pdf");
+    expect(serialized).toContain("读取发票文件：进行中");
+    expect(serialized).toContain("OpenCode 识别原始内容：等待中");
+    expect(serialized).not.toContain("260405_635.00_深圳市南山区肖三胖甲鱼院子.pdf");
+    expect(serialized).not.toContain("260415_875.00_广东徐记海鲜餐饮有限公司.pdf");
+    expect(serialized).not.toContain("已完成发票.pdf");
+    expect(serialized).not.toContain("识别失败发票.pdf");
+    expect(serialized).not.toContain("已完成xxx");
+    expect(serialized).not.toContain("正在 OCR 识别发票内容");
+    expect(serialized).not.toContain("等待填写表格");
+  });
+
   it("renders labor analysis progress and completed cards through formatter exports", () => {
     const progressPayload = buildLaborAnalysisProgressPayload({
       sourceLabel: "仲裁申请书.pdf",
@@ -783,9 +808,10 @@ describe("buildPostPayload", () => {
 
     const serialized = JSON.stringify(JSON.parse(payload.content));
 
-    expect(serialized).toContain("权威法规检索：不可用");
-    expect(serialized).toContain("法条引用校验：已跳过");
+    expect(serialized).toContain("整理审查材料：已完成");
+    expect(serialized).toContain("法条与案例溯源：不可用");
     expect(serialized).toContain("二审模型审查：进行中");
+    expect(serialized).toContain("汇总审查结论：等待中");
     expect(serialized).not.toContain("权威法规检索：已完成");
     expect(serialized).not.toContain("请求权基础校验：等待中");
   });
