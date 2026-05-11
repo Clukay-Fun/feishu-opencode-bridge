@@ -468,7 +468,7 @@ export class ContractAssistantService {
         summary: readString(extraction.result, "summary"),
       });
       if (hasRelaxedInvoiceCoreFields(modelRecord)) {
-        return { result: extraction.result, structured: null };
+        return { result: extraction.result, structured };
       }
       throw new Error(`这份文件不像发票，暂不写入发票台账：${structured.detection.reason}`);
     }

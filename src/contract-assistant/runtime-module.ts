@@ -582,16 +582,6 @@ export class ContractAssistantRuntimeModule implements RuntimeModule {
     pending.files = nextFiles;
     pending.expiresAt = Date.now() + this.featureConfig.ingest.pendingTtlMs;
     this.interactions.touch(pending.conversationKey, pending.expiresAt);
-    await this.sendNotice(message, {
-      title: "已收到发票文件",
-      template: "green",
-      icon: "yes_outlined",
-      message: [
-        `已加入队列：${message.file.fileName}`,
-        `当前共 ${nextFiles.length} 份发票文件。`,
-        "可以继续上传；上传完成后发送 `/完成上传` 开始识别。",
-      ].join("\n"),
-    });
     return true;
   }
 

@@ -196,11 +196,10 @@ export function buildInvoiceRecognizeCompletedPayload(
   result: InvoiceRecognizeResult,
   options: { elapsedMs: number; recordUrl: string; batchResults?: readonly InvoiceRecognizeResult[] | undefined },
 ): FeishuPostPayload {
-  const payer = readCaseField(result.record, "购买方") ?? readCaseField(result.record, "付款方");
   const invoiceNo = readCaseField(result.record, "发票号");
   const summaryBits = splitInvoiceSummary(result.summary);
   const invoiceType = readCaseField(result.record, "发票类型") ?? summaryBits.invoiceType;
-  const invoiceDate = readCaseField(result.record, "开票日期");
+  const invoiceDate = readInvoiceDate(result.record);
   const amount = readInvoiceAmount(result.record);
   const fileName = readCaseField(result.record, "文件名") ?? "发票文件";
 
@@ -210,9 +209,9 @@ export function buildInvoiceRecognizeCompletedPayload(
     { from: "服务", to: invoiceType ?? "未识别" },
     { from: "291.94", to: amount ?? "未识别" },
     { from: "2026/03/24", to: invoiceDate ?? "未识别" },
-    { from: "**xx合同.pdf**   识别失败，非发票文件", to: `购买方：${payer ?? "未识别"}` },
     { from: "耗时 32s", to: `耗时 ${formatDurationSeconds(options.elapsedMs)}` },
   ], (card) => {
+    removeDesignerCardElements(card, (element) => designerElementContainsText(element, "识别失败，非发票文件"));
     if (options.batchResults && options.batchResults.length > 1) {
       renderInvoiceBatchDetails(card, options.batchResults);
     }
@@ -241,7 +240,7 @@ function renderInvoiceResultDetails(result: InvoiceRecognizeResult): string {
   const invoiceNo = readCaseField(result.record, "发票号") ?? "未识别";
   const summaryBits = splitInvoiceSummary(result.summary);
   const invoiceType = readCaseField(result.record, "发票类型") ?? summaryBits.invoiceType ?? "未识别";
-  const invoiceDate = readCaseField(result.record, "开票日期") ?? "未识别";
+  const invoiceDate = readInvoiceDate(result.record) ?? "未识别";
   const amount = readInvoiceAmount(result.record) ?? "未识别";
   const fileName = readCaseField(result.record, "文件名") ?? "发票文件";
   return [
@@ -286,12 +285,20 @@ export function buildCaseTodoReminderPayload(view: CaseTodoReminderCardView): Fe
       }
       const item = nextItems[index]!;
       row.background_style = resolveTodoRowBackground(index, item.line);
+      row.margin = index === nextItems.length - 1 ? "0px 0px 0px 0px" : "0px 0px 12px 0px";
       const columns = Array.isArray(row.columns) ? row.columns : [];
       const firstColumn = getDesignerRecord(columns[0]);
       const actionColumn = getDesignerRecord(columns[1]);
+      if (firstColumn) {
+        firstColumn.padding = "12px 12px 12px 12px";
+      }
+      if (actionColumn) {
+        actionColumn.padding = "12px 12px 12px 8px";
+      }
       const markdownElement = getFirstMarkdownElement(firstColumn);
       if (markdownElement) {
         markdownElement.content = formatCaseTodoLine(item.line);
+        markdownElement.text_size = "normal_v2";
       }
       const button = getFirstButtonElement(actionColumn);
       if (button && item.url) {
@@ -321,20 +328,179 @@ function buildCaseWorkbenchActionValue(view: CaseWorkbenchCardView, action: "sta
 
 function formatCaseTodoLine(line: string): string {
   const parts = line.split("\n").map((item) => item.trim()).filter(Boolean);
-  const title = parts[0] ?? "案件提醒";
-  const date = parts.find((item) => item.startsWith("日期："))?.replace(/^日期：/, "");
-  const todo = parts.find((item) => item.startsWith("待办："))?.replace(/^待办：/, "");
-  const progress = parts.find((item) => item.startsWith("进展："))?.replace(/^进展：/, "");
-  const headline = date ? `**案件节点** ${date}` : "**案件提醒**";
-  const detail = [title, todo, progress].filter(Boolean).join(" · ");
-  return detail ? `${headline}\n${detail}` : headline;
+  const item = parseCaseTodoLine(parts);
+  const statusLine = [item.stage, item.status, item.todo || item.progress].filter(Boolean).join("｜");
+  const dateLine = formatCaseTodoDateSummary(item.dates);
+  const detailLines = [item.caseLabel, statusLine, dateLine].filter(Boolean);
+  return [`**${item.headline}**`, ...detailLines].filter(Boolean).join("\n\n");
 }
 
 function resolveTodoRowBackground(index: number, line: string): string {
-  if (/截止|上诉|开庭|今日|今天/.test(line)) {
-    return index === 0 ? "red-50" : "yellow-50";
+  const item = parseCaseTodoLine(line.split("\n").map((part) => part.trim()).filter(Boolean));
+  if (item.urgency === "critical") {
+    return "red-50";
+  }
+  if (item.urgency === "warning") {
+    return "yellow-50";
   }
   return ["wathet-50", "grey-50", "blue-50", "green-50"][index] ?? "grey-50";
+}
+
+type ParsedCaseTodoLine = {
+  caseLabel: string;
+  stage?: string | undefined;
+  status?: string | undefined;
+  todo?: string | undefined;
+  progress?: string | undefined;
+  dates: Array<{ label: string; value: string }>;
+  headline: string;
+  urgency: "critical" | "warning" | "normal";
+};
+
+function parseCaseTodoLine(parts: string[]): ParsedCaseTodoLine {
+  const [caseLabel, stage, status] = (parts[0] ?? "案件提醒")
+    .split("｜")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const dateText = parts.find((item) => item.startsWith("日期："))?.replace(/^日期：/, "").trim() ?? "";
+  const dates = parseCaseTodoDates(dateText);
+  const rawTodo = parts.find((item) => item.startsWith("待办："))?.replace(/^待办：/, "").trim();
+  const progress = parts.find((item) => item.startsWith("进展："))?.replace(/^进展：/, "").trim();
+  const todo = normalizeCaseTodoText(rawTodo, dateText);
+  const { headline, urgency } = resolveCaseTodoHeadline(dates, todo, progress);
+  return {
+    caseLabel: caseLabel ?? "案件提醒",
+    stage,
+    status,
+    todo,
+    progress,
+    dates,
+    headline,
+    urgency,
+  };
+}
+
+function parseCaseTodoDates(text: string): Array<{ label: string; value: string }> {
+  if (!text) {
+    return [];
+  }
+  return text.split("；")
+    .map((item) => item.trim())
+    .map((item) => {
+      const matched = item.match(/^(.+?)\s+(\d{4}-\d{2}-\d{2}|今天|今日|明天|昨日|昨天)$/);
+      return matched ? { label: matched[1]!.trim(), value: matched[2]!.trim() } : null;
+    })
+    .filter((item): item is { label: string; value: string } => Boolean(item));
+}
+
+function normalizeCaseTodoText(todo: string | undefined, dateText: string): string | undefined {
+  if (!todo) {
+    return undefined;
+  }
+  const normalized = todo.replace(/^关注案件节点：/, "").trim();
+  if (!normalized || normalized === dateText) {
+    return undefined;
+  }
+  return normalized;
+}
+
+function resolveCaseTodoHeadline(
+  dates: Array<{ label: string; value: string }>,
+  todo: string | undefined,
+  progress: string | undefined,
+): { headline: string; urgency: ParsedCaseTodoLine["urgency"] } {
+  const headlineItems = dates
+    .filter((item) => /截止日|期限|上诉|举证|反诉|异议|开庭/.test(item.label))
+    .map((item) => {
+      const relative = describeCaseTodoRelativeDate(item.value);
+      const label = /开庭/.test(item.label) ? "开庭" : shortCaseTodoDateLabel(item.label);
+      return {
+        text: `${label}${relative.text}`,
+        urgency: relative.urgency,
+      };
+    });
+  if (headlineItems.length > 0) {
+    return {
+      headline: headlineItems.slice(0, 2).map((item) => item.text).join("｜"),
+      urgency: mergeCaseTodoUrgency(headlineItems.map((item) => item.urgency)),
+    };
+  }
+  const firstDate = dates[0];
+  if (firstDate) {
+    const relative = describeCaseTodoRelativeDate(firstDate.value);
+    return {
+      headline: `${shortCaseTodoDateLabel(firstDate.label)}${relative.text}`,
+      urgency: relative.urgency === "critical" ? "warning" : relative.urgency,
+    };
+  }
+  return {
+    headline: todo || progress || "案件提醒",
+    urgency: "normal",
+  };
+}
+
+function mergeCaseTodoUrgency(values: ParsedCaseTodoLine["urgency"][]): ParsedCaseTodoLine["urgency"] {
+  if (values.includes("critical")) {
+    return "critical";
+  }
+  if (values.includes("warning")) {
+    return "warning";
+  }
+  return "normal";
+}
+
+function describeCaseTodoRelativeDate(value: string): { text: string; urgency: ParsedCaseTodoLine["urgency"] } {
+  if (value === "今天" || value === "今日") {
+    return { text: "今日", urgency: "critical" };
+  }
+  if (value === "明天") {
+    return { text: "明天", urgency: "warning" };
+  }
+  const date = parseYmdDate(value);
+  if (!date) {
+    return { text: ` ${value}`, urgency: "normal" };
+  }
+  const today = startOfLocalDay(new Date());
+  const diffDays = Math.round((date.getTime() - today.getTime()) / 86_400_000);
+  if (diffDays < 0) {
+    return { text: `已过 ${Math.abs(diffDays)} 天`, urgency: "critical" };
+  }
+  if (diffDays === 0) {
+    return { text: "今日", urgency: "critical" };
+  }
+  if (diffDays <= 7) {
+    return { text: `还剩 ${diffDays} 天`, urgency: "warning" };
+  }
+  return { text: ` ${formatMonthDay(value)}`, urgency: "normal" };
+}
+
+function parseYmdDate(value: string): Date | null {
+  const matched = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!matched) {
+    return null;
+  }
+  return new Date(Number(matched[1]), Number(matched[2]) - 1, Number(matched[3]));
+}
+
+function startOfLocalDay(value: Date): Date {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+}
+
+function shortCaseTodoDateLabel(label: string): string {
+  return label.replace(/日$/, "");
+}
+
+function formatCaseTodoDateSummary(dates: Array<{ label: string; value: string }>): string | undefined {
+  const visible = dates.filter((item) => /开庭|截止|上诉|举证|反诉|异议/.test(item.label)).slice(0, 3);
+  if (visible.length === 0) {
+    return undefined;
+  }
+  return visible.map((item) => `${shortCaseTodoDateLabel(item.label)} ${formatMonthDay(item.value)}`).join("｜");
+}
+
+function formatMonthDay(value: string): string {
+  const matched = value.match(/^\d{4}-(\d{2})-(\d{2})$/);
+  return matched ? `${matched[1]}-${matched[2]}` : value;
 }
 
 function formatDurationSeconds(elapsedMs: number): string {
@@ -851,6 +1017,31 @@ function readInvoiceAmount(record: Record<string, unknown>): string | undefined 
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value)}`;
+}
+
+function readInvoiceDate(record: Record<string, unknown>): string | undefined {
+  const value = record["开票日期"];
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    return undefined;
+  }
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const byType = new Map(parts.map((part) => [part.type, part.value]));
+  const year = byType.get("year");
+  const month = byType.get("month");
+  const day = byType.get("day");
+  return year && month && day ? `${year}-${month}-${day}` : undefined;
 }
 
 function splitInvoiceSummary(summary: string): { invoiceType?: string; itemName?: string; identity?: string } {

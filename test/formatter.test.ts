@@ -13,6 +13,7 @@ import {
   buildKnowledgeQueryEmptyPayload,
   buildKnowledgeQueryPayload,
   buildGuideCardPayload,
+  buildInvoiceRecognizeCompletedPayload,
   buildInvoiceRecognizeProgressPayload,
   buildLaborAnalysisCompletedPayload,
   buildLaborAnalysisProgressPayload,
@@ -28,6 +29,7 @@ import {
   buildStatusCommandCardPayload,
   buildTurnStatusCardPayload,
 } from "../src/feishu/formatter.js";
+import { buildCaseTodoReminderPayload } from "../src/feishu/contract-cards.js";
 import { buildButtonCallbackTestCardPayload, buildCostCommandCardPayload } from "../src/feishu/runtime-cards.js";
 import { buildAssistantMarkdownPayload } from "../src/feishu/shared-primitives.js";
 
@@ -688,6 +690,52 @@ describe("buildPostPayload", () => {
     expect(serialized).not.toContain("已完成xxx");
     expect(serialized).not.toContain("正在 OCR 识别发票内容");
     expect(serialized).not.toContain("等待填写表格");
+  });
+
+  it("renders invoice completion date from Base timestamp", () => {
+    const payload = buildInvoiceRecognizeCompletedPayload({
+      summary: "2026-04-23电子发票，发票号26952000001657386511，价税合计8000元。",
+      recordId: "rec_invoice",
+      record: {
+        文件名: "测试发票.pdf",
+        发票号: "26952000001657386511",
+        发票类型: "电子发票（普通发票）",
+        发票金额: 8000,
+        开票日期: 1776873600000,
+      },
+    }, {
+      elapsedMs: 1_000,
+      recordUrl: "https://feishu.cn/base/app?table=tbl&record=rec_invoice",
+    });
+
+    const serialized = JSON.stringify(JSON.parse(payload.content));
+    expect(serialized).toContain("2026-04-23");
+    expect(serialized).not.toContain("开票时间：未识别");
+  });
+
+  it("renders case todo reminders as compact task items", () => {
+    const payload = buildCaseTodoReminderPayload({
+      items: [{
+        line: [
+          "(2026) 粤0305民初1234号｜一审｜未结",
+          "日期：日期 2026-05-06；开庭日 2026-05-16；举证截止日 2026-05-12",
+          "待办：关注案件节点：日期 2026-05-06；开庭日 2026-05-16；举证截止日 2026-05-12",
+          "进展：已立案，等待开庭",
+        ].join("\n"),
+        url: "https://example.com/base?record=rec_case",
+      }],
+    });
+
+    const content = JSON.parse(payload.content) as any;
+    const serialized = JSON.stringify(content);
+    expect(serialized).toContain("案件提醒");
+    expect(serialized).toContain("举证截止");
+    expect(serialized).toContain("开庭");
+    expect(serialized).toContain("(2026) 粤0305民初1234号");
+    expect(serialized).toContain("一审｜未结｜已立案，等待开庭");
+    expect(serialized).toContain("开庭 05-16｜举证截止 05-12");
+    expect(serialized).not.toContain("案件节点 日期");
+    expect(serialized).not.toContain("关注案件节点：日期");
   });
 
   it("renders labor analysis progress and completed cards through formatter exports", () => {

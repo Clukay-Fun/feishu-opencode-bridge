@@ -245,4 +245,52 @@ describe("contract prompt overrides", () => {
     expect(result.record["发票号"]).toBe("26952000001657386511");
     expect(result.record["购买方"]).toBe("测试客户");
   });
+
+  it("keeps structured date and buyer when detector is weak but model extracts core invoice fields", async () => {
+    const service = createService(async (_sessionId, request) => {
+      expect(String(request.parts[0]?.text ?? "")).toContain("发票号码 26952000001657386511");
+      return {
+        parts: [{
+          type: "text",
+          text: JSON.stringify({
+            summary: "2026-04-23电子发票，发票号26952000001657386511，价税合计8000元。",
+            record: {
+              发票号: "26952000001657386511",
+              发票金额: 8000,
+            },
+          }),
+        }],
+      };
+    });
+    (service as unknown as {
+      evidenceExtractor: {
+        prepareFile: () => Promise<{
+          fileName: string;
+          mimeType: string;
+          buffer: Buffer;
+          extension: string;
+          localPath: string;
+          extractedText: string;
+        }>;
+      };
+    }).evidenceExtractor.prepareFile = async () => ({
+      fileName: "invoice.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("invoice fixture weak detector"),
+      extension: ".pdf",
+      localPath: "/tmp/invoice.pdf",
+      extractedText: [
+        "发票号码 26952000001657386511",
+        "开票日期 2026年04月23日",
+        "购买方名称 张三",
+      ].join("\n"),
+    });
+
+    const result = await service.recognizeInvoice({ localPath: "/tmp/invoice.pdf", fileName: "invoice.pdf" });
+
+    expect(result.record["发票号"]).toBe("26952000001657386511");
+    expect(result.record["发票金额"]).toBe(8000);
+    expect(new Date(result.record["开票日期"] as number).toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" })).toBe("2026/4/23");
+    expect(result.record["购买方"]).toBe("张三");
+  });
 });
