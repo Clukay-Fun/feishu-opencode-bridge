@@ -71,6 +71,7 @@ type KnowledgeIngestQueueItem = {
 type KnowledgeIngestQueueState = {
   active: boolean;
   closing: boolean;
+  activeItem?: KnowledgeIngestQueueItem | undefined;
   currentLabel?: string | undefined;
   batchMessageId?: string | undefined;
   pending: KnowledgeIngestQueueItem[];
@@ -148,9 +149,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     const { message, routed } = context;
     const activeKnowledgeIngest = this.findKnowledgeIngestInteraction(message);
     if (activeKnowledgeIngest) {
-      if (
-        routed?.kind === "command" && routed.command.kind === "knowledge-ingest-end"
-      ) {
+      if (message.messageType === "text" && matchesKnowledgeIngestEndInstruction(message.plainText)) {
         await this.endKnowledgeIngestInteraction(message, activeKnowledgeIngest, { replyToMessageId: message.messageId });
         return { claimed: true };
       }
@@ -619,6 +618,13 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       ...itemInput,
       progressState,
     };
+    if (this.hasKnowledgeIngestQueueDuplicate(pending.conversationKey, queuedItem)) {
+      this.deps.logger.log("knowledge/ingest", "duplicate ingest item skipped", {
+        conversationKey: pending.conversationKey,
+        source: getKnowledgeIngestQueueItemLabel(queuedItem),
+      }, "info");
+      return true;
+    }
     queue.pending.push(queuedItem);
     this.refreshKnowledgeIngestPending(pending.conversationKey, pending);
     return true;
@@ -638,6 +644,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
         if (!pending || !this.deps.knowledge) {
           break;
         }
+        queue.activeItem = currentItem;
         queue.currentLabel = getKnowledgeIngestQueueItemLabel(currentItem);
         this.setRunningKnowledgeIngest(conversationKey, currentItem.requesterOpenId);
         await this.ensureKnowledgeIngestProcessingCard(queue, pending, currentItem);
@@ -696,11 +703,13 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
           this.clearRunningKnowledgeIngest(conversationKey);
         }
         queue.currentLabel = undefined;
+        queue.activeItem = undefined;
         item = queue.pending.shift();
       }
     } finally {
       queue.active = false;
       queue.currentLabel = undefined;
+      queue.activeItem = undefined;
       let shouldUpdateSummary = true;
       if (queue.pending.length === 0) {
         if (queue.closing) {
@@ -734,6 +743,22 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     const queue: KnowledgeIngestQueueState = { active: false, closing: false, pending: [] };
     this.knowledgeIngestQueues.set(conversationKey, queue);
     return queue;
+  }
+
+  private hasKnowledgeIngestQueueDuplicate(conversationKey: string, item: KnowledgeIngestQueueItem): boolean {
+    const queue = this.getKnowledgeIngestQueue(conversationKey);
+    const itemKey = getKnowledgeIngestQueueItemKey(item);
+    const sameItem = (candidate: KnowledgeIngestQueueItem): boolean => getKnowledgeIngestQueueItemKey(candidate) === itemKey;
+    if (queue.activeItem && sameItem(queue.activeItem)) {
+      return true;
+    }
+    if (queue.pending.some(sameItem)) {
+      return true;
+    }
+    const stats = this.getKnowledgeIngestSessionStats(conversationKey);
+    const label = getKnowledgeIngestQueueItemLabel(item);
+    return stats.results.some((result) => result.sourceFile === label)
+      || stats.failures.some((failure) => failure.sourceFile === label);
   }
 
   private getKnowledgeIngestSessionStats(conversationKey: string): KnowledgeIngestSessionStats {
@@ -1270,6 +1295,18 @@ function getKnowledgeIngestQueueItemLabel(item: KnowledgeIngestQueueItem): strin
   return item.kind === "web" ? item.url : item.fileName;
 }
 
+function getKnowledgeIngestQueueItemKey(item: KnowledgeIngestQueueItem): string {
+  if (item.kind === "web") {
+    return `web:${item.url}`;
+  }
+  return [
+    "file",
+    item.messageId,
+    item.fileKey,
+    item.fileName,
+  ].join(":");
+}
+
 function formatKnowledgeAllowedExtensions(allowedExtensions: readonly string[]): string {
   return allowedExtensions.map((extension) => extension.toUpperCase()).join(" / ");
 }
@@ -1281,6 +1318,10 @@ function matchesKnowledgeIngestInstruction(text: string): boolean {
 
 function matchesKnowledgeIngestEndInstruction(text: string): boolean {
   const trimmed = text.trim();
+  const normalized = trimmed.replace(/^\/+/, "").trim().toLowerCase();
+  if (["完成上传", "材料收集完成", "知识入库完成", "知识入库结束", "kb-ingest-end"].includes(normalized)) {
+    return true;
+  }
   const routed = routeIncomingText(trimmed);
   return routed.kind === "command" && routed.command.kind === "knowledge-ingest-end";
 }

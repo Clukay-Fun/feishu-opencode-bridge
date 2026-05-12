@@ -20,6 +20,7 @@ export type CaseWorkbenchContext = {
   docUrl?: string | undefined;
   markdown: string;
   summary?: string | undefined;
+  partyInfo: string[];
   issues: string[];
   claimBasis: string[];
   evidence: string[];
@@ -137,6 +138,9 @@ export function renderCaseWorkbenchContextBlock(context: CaseWorkbenchContext): 
     context.docUrl ? `工作台文档：${context.docUrl}` : "",
     context.summary ? `案件摘要：${context.summary}` : "",
     "",
+    "当事人信息：",
+    ...formatList(context.partyInfo),
+    "",
     "争议焦点：",
     ...formatList(context.issues),
     "",
@@ -160,6 +164,7 @@ function normalizeContext(context: CaseWorkbenchContext): CaseWorkbenchContext {
   return {
     ...context,
     markdown: context.markdown.slice(0, MAX_MARKDOWN_LENGTH),
+    partyInfo: (context.partyInfo ?? []).filter(Boolean).slice(0, 12),
     issues: context.issues.filter(Boolean).slice(0, 12),
     claimBasis: context.claimBasis.filter(Boolean).slice(0, 12),
     evidence: context.evidence.filter(Boolean).slice(0, 20),

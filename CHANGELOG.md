@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The project follows Semantic Versioning.
 
+## 0.2.2 - 2026-05-12
+
+### Added
+- Added case-workbench cloud document generation from the current case context, referenced Feishu documents, and matching local desktop templates.
+- Added local case document template injection for drafting turns, with support for DOCX, Markdown, and TXT templates under the desktop template folder.
+- Added party-information extraction into labor workbench context so later arbitration applications, complaints, evidence lists, and opinion drafts can reuse parties and identity facts.
+
+### Changed
+- Updated knowledge-ingest completion so `/完成上传` can close an active ingest session, and duplicate queued or in-flight files are skipped.
+- Improved labor workbench output by filling empty claim-evidence cells with explicit review guidance and appending final review findings back into the generated workbench document when possible.
+- Localized labor final-review finding text and citation-review messages so user-facing cards no longer expose internal whitelist/source wording.
+
+### Fixed
+- Updated OpenCode question replies to use the newer `/question/<id>/reply` endpoint with nested answer payloads.
+- Summarized accidental OpenCode HTML responses with a concise diagnostic instead of surfacing the raw frontend page.
+- Recognized `file.watcher.updated` as a known OpenCode event to avoid unnecessary warning logs.
+
 ## 0.2.1 - 2026-05-12
 
 ### Changed

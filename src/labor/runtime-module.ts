@@ -38,6 +38,7 @@ import type {
   LaborReviewAuthorityContext,
   LaborFinalReviewReport,
 } from "./index.js";
+import { extractPartyInfoFromMaterials, formatLaborReviewFindingText } from "./index.js";
 import { LaborCaseCheckpointStore } from "./checkpoint.js";
 
 type LaborRuntimeModuleDeps = {
@@ -651,6 +652,15 @@ export class LaborRuntimeModule implements RuntimeModule {
       const { reviewReport, reviewSkippedReason } = await this.deps.service!.finalizeReviewOnly(result, authorityContext);
       const finalReviewStatus = formatReviewStatus(reviewReport, reviewSkippedReason) ?? "未返回审查结论，法条引用待人工校验";
       const completedView = buildLaborCompletedView(result, undefined, { reviewReport, reviewSkippedReason });
+      const appendReview = this.deps.service!.appendReviewToWorkbench?.(result, reviewReport);
+      if (appendReview) {
+        await appendReview.catch((error) => {
+          this.deps.logger.log("labor/authority", "append review to workbench skipped", {
+            conversationKey: pending.conversationKey,
+            detail: error instanceof Error ? error.message : String(error),
+          }, "warn");
+        });
+      }
       await this.deps.transport.updatePayload(pending.chatId, reviewMessageId, buildLaborReviewCompletedPayload({
         title: completedView.title,
         materialCount: completedView.materialCount,
@@ -663,7 +673,7 @@ export class LaborRuntimeModule implements RuntimeModule {
         citationDetails: collectCitationValidationDetails(authorityContext),
         findings: reviewReport?.findings.map((finding) => ({
           severity: finding.severity,
-          message: finding.message,
+          message: formatLaborReviewFindingText(finding),
         })),
         elapsedMs: Date.now() - reviewStartedAt,
         docUrl: result.docUrl,
@@ -701,6 +711,7 @@ export class LaborRuntimeModule implements RuntimeModule {
       docUrl: result.docUrl,
       markdown: result.markdown,
       summary: result.aggregate.summary,
+      partyInfo: extractPartyInfoFromMaterials(result.extractedMaterials),
       issues: result.aggregate.keyIssues.length > 0
         ? result.aggregate.keyIssues
         : result.aggregate.issues.map((item) => item.issue),

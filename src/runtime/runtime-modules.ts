@@ -109,6 +109,7 @@ export function createRuntimeModules(options: {
       transport: options.transport,
       labor: laborPort,
       contextStore: caseContextStore,
+      opencode: options.opencode,
     }));
   }
 

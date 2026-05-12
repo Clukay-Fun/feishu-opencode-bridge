@@ -31,7 +31,14 @@ function createModule(contextStore?: {
   restore: () => Promise<void>;
   stop: () => Promise<void>;
   findRecent: (input: { userId: string; conversationKey?: string | undefined; chatId?: string | undefined }) => unknown;
-}, docReader?: (text: string) => Promise<string[]>) {
+}, docReader?: (text: string) => Promise<string[]>, templateReader?: (text: string) => Promise<string[]>, extras?: {
+  opencode?: {
+    createSession: ReturnType<typeof vi.fn>;
+    postMessageSync: ReturnType<typeof vi.fn>;
+    deleteSession?: ReturnType<typeof vi.fn>;
+  };
+  createDocument?: ReturnType<typeof vi.fn>;
+}) {
   const sendPayload = vi.fn(async () => ({ messageId: "out-1" }));
   const updatePayload = vi.fn(async () => ({ messageId: "om_card" }));
   const startCaseWorkbenchCollection = vi.fn(async () => undefined);
@@ -41,8 +48,31 @@ function createModule(contextStore?: {
     labor: { startCaseWorkbenchCollection },
     contextStore: contextStore as never,
     docReader: docReader as never,
+    templateReader: templateReader as never,
+    opencode: extras?.opencode as never,
+    createDocument: extras?.createDocument as never,
   });
   return { module, sendPayload, updatePayload, startCaseWorkbenchCollection };
+}
+
+function createRecentCaseContext() {
+  return {
+    caseId: "case_1",
+    title: "张三劳动争议案",
+    userId: "ou_user",
+    chatId: "chat-1",
+    conversationKey: "chat-1:thread-1",
+    source: "labor",
+    docUrl: "https://example.com/doc",
+    markdown: "# 工作台\n\n违法解除争议分析",
+    summary: "违法解除劳动争议",
+    partyInfo: ["申请人：张三；被申请人：某公司"],
+    issues: ["违法解除"],
+    claimBasis: ["赔偿金｜劳动合同法第八十七条"],
+    evidence: ["解除通知｜证明解除事实"],
+    missingEvidence: ["工资流水原件"],
+    updatedAt: Date.now(),
+  };
 }
 
 describe("CaseWorkbenchRuntimeModule", () => {
@@ -132,22 +162,7 @@ describe("CaseWorkbenchRuntimeModule", () => {
     const contextStore = {
       restore: vi.fn(async () => undefined),
       stop: vi.fn(async () => undefined),
-      findRecent: vi.fn(() => ({
-        caseId: "case_1",
-        title: "张三劳动争议案",
-        userId: "ou_user",
-        chatId: "chat-1",
-        conversationKey: "chat-1:thread-1",
-        source: "labor",
-        docUrl: "https://example.com/doc",
-        markdown: "# 工作台\n\n违法解除争议分析",
-        summary: "违法解除劳动争议",
-        issues: ["违法解除"],
-        claimBasis: ["赔偿金｜劳动合同法第八十七条"],
-        evidence: ["解除通知｜证明解除事实"],
-        missingEvidence: ["工资流水原件"],
-        updatedAt: Date.now(),
-      })),
+      findRecent: vi.fn(() => createRecentCaseContext()),
     };
     const { module } = createModule(contextStore);
 
@@ -169,6 +184,7 @@ describe("CaseWorkbenchRuntimeModule", () => {
     expect(block).toContain("[Current Case Workbench Context]");
     expect(block).toContain("张三劳动争议案");
     expect(block).toContain("违法解除争议分析");
+    expect(block).toContain("申请人：张三；被申请人：某公司");
     expect(block).toContain("赔偿金｜劳动合同法第八十七条");
   });
 
@@ -196,6 +212,83 @@ describe("CaseWorkbenchRuntimeModule", () => {
       expect.anything(),
     );
     expect(result?.systemBlocks?.join("\n")).toContain("仲裁申请书模板正文");
+  });
+
+  it("injects local desktop document templates for drafting turns", async () => {
+    const templateReader = vi.fn(async () => [
+      [
+        "[Local Case Document Template]",
+        "模板名称：劳动人事争议仲裁申请书（个案）.docx",
+        "仲裁申请书模板正文",
+      ].join("\n"),
+    ]);
+    const { module } = createModule(undefined, undefined, templateReader);
+
+    const result = await module.beforeTurn?.({
+      turn: {
+        plainText: "请根据当前案件分析结果生成仲裁申请书",
+        senderOpenId: "ou_user",
+        conversationKey: "chat-1:thread-1",
+        chatId: "chat-1",
+      },
+    } as never);
+
+    expect(templateReader).toHaveBeenCalledWith(
+      "请根据当前案件分析结果生成仲裁申请书",
+      expect.anything(),
+    );
+    expect(result?.systemBlocks?.join("\n")).toContain("劳动人事争议仲裁申请书");
+    expect(result?.systemBlocks?.join("\n")).toContain("仲裁申请书模板正文");
+  });
+
+  it("creates a cloud document for current-case drafting requests instead of passing through text", async () => {
+    const contextStore = {
+      restore: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
+      findRecent: vi.fn(() => createRecentCaseContext()),
+    };
+    const docReader = vi.fn(async () => ["[Referenced Feishu Document]\n仲裁申请书模板"]);
+    const templateReader = vi.fn(async () => ["[Local Case Document Template]\n本地模板"]);
+    const opencode = {
+      createSession: vi.fn(async () => ({ id: "ses_doc" })),
+      postMessageSync: vi.fn(async () => ({
+        info: { id: "msg_doc", role: "assistant" },
+        parts: [{ type: "text", text: "# 仲裁申请书\n\n申请人：张三" }],
+      })),
+      deleteSession: vi.fn(async () => true),
+    };
+    const createDocument = vi.fn(async () => ({
+      docUrl: "https://example.feishu.cn/docx/generated",
+      boardTokens: [],
+    }));
+    const { module, sendPayload, updatePayload } = createModule(contextStore, docReader, templateReader, {
+      opencode,
+      createDocument,
+    });
+    const message = createTextMessage("请根据当前的文档生成仲裁申请书");
+
+    const result = await module.handleMessage({
+      message,
+      routed: routeIncomingText(message.plainText),
+    });
+
+    expect(result).toEqual({ claimed: true });
+    expect(sendPayload).toHaveBeenCalledTimes(1);
+    expect(opencode.createSession).toHaveBeenCalledWith("[bridge] case-document-draft");
+    expect(opencode.postMessageSync).toHaveBeenCalledTimes(1);
+    const promptCalls = opencode.postMessageSync.mock.calls as unknown as Array<[string, { system?: string; parts: Array<{ text?: string }> }]>;
+    const promptRequest = promptCalls[0]?.[1] ?? { parts: [] };
+    expect(promptRequest.system).toContain("[Current Case Workbench Context]");
+    expect(promptRequest.system).toContain("仲裁申请书模板");
+    expect(promptRequest.system).toContain("本地模板");
+    expect(promptRequest.parts[0]?.text).toContain("只输出可直接写入飞书云文档的 Markdown 正文");
+    expect(createDocument).toHaveBeenCalledWith("张三劳动争议案｜仲裁申请书", "# 仲裁申请书\n\n申请人：张三");
+    expect(updatePayload).toHaveBeenCalledTimes(1);
+    const updateCalls = updatePayload.mock.calls as unknown as Array<[string, string, unknown]>;
+    const updatedPayload = JSON.stringify(updateCalls[0]?.[2] ?? {});
+    expect(updatedPayload).toContain("仲裁申请书已生成");
+    expect(updatedPayload).toContain("https://example.feishu.cn/docx/generated");
+    expect(opencode.deleteSession).toHaveBeenCalledWith("ses_doc");
   });
 
   it("only lets the requester operate the workbench entry card", async () => {

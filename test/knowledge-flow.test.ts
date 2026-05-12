@@ -296,6 +296,112 @@ describe("knowledge base bridge flow", () => {
     expect(JSON.stringify(replyPayloads)).not.toContain("已收到结束指令，将处理完当前队列后结束");
   });
 
+  it("accepts /完成上传 as the active knowledge ingest finish command", async () => {
+    const outbound = createOutbound();
+    const eventStream = new FakeOpenCodeEventStream();
+    const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "not used" });
+    const ingestFile = vi.fn(async (_file, options?: KnowledgeIngestOptions) => {
+      await options?.onProgress?.({ step: "read", status: "completed", detail: "已读取正文" });
+      await options?.onProgress?.({ step: "extract", status: "completed", detail: "已提取 1 条问答" });
+      await options?.onProgress?.({ step: "write", status: "completed", detail: "已写入知识库" });
+      return {
+        sourceFile: "劳动法.pdf",
+        rawExtractedCount: 1,
+        dedupedCount: 0,
+        extractedCount: 1,
+        tagCounts: { 劳动: 1 },
+        durationMs: 1_000,
+      };
+    });
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
+      knowledge: {
+        async query() {
+          return { question: "", results: [] };
+        },
+        ingestFile,
+        async syncMirror() {},
+        close() {},
+      },
+      opencode,
+      eventStream,
+      memory: null,
+    });
+
+    await app.handleIncomingMessage(createTextMessage("/知识入库"));
+    await app.handleIncomingMessage(createUploadedFileMessage("劳动法.pdf", "om_file", "file_1"));
+    await app.handleIncomingMessage(createTextMessage("/完成上传", "om_finish"));
+
+    await vi.waitFor(() => {
+      expect(ingestFile).toHaveBeenCalledTimes(1);
+    });
+    await vi.waitFor(() => {
+      const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+      expect(JSON.stringify(updatedPayloads)).toContain("知识入库完成");
+    });
+    const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+    const serializedUpdates = JSON.stringify(updatedPayloads);
+    expect(serializedUpdates).toContain("知识入库进行中");
+    expect(serializedUpdates).toContain("知识入库完成");
+    expect(serializedUpdates).not.toContain("当前没有进行中的材料收集");
+  });
+
+  it("dedupes the same uploaded file while it is already queued or processing", async () => {
+    const outbound = createOutbound();
+    const eventStream = new FakeOpenCodeEventStream();
+    const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "not used" });
+    let releaseIngest!: () => void;
+    let markIngestStarted!: () => void;
+    const ingestStarted = new Promise<void>((resolve) => {
+      markIngestStarted = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseIngest = resolve;
+    });
+    const ingestFile = vi.fn(async (_file, options?: KnowledgeIngestOptions) => {
+      await options?.onProgress?.({ step: "read", status: "completed", detail: "已读取正文" });
+      markIngestStarted();
+      await release;
+      await options?.onProgress?.({ step: "extract", status: "completed", detail: "已提取 1 条问答" });
+      await options?.onProgress?.({ step: "write", status: "completed", detail: "已写入知识库" });
+      return {
+        sourceFile: "劳动法.pdf",
+        rawExtractedCount: 1,
+        dedupedCount: 0,
+        extractedCount: 1,
+        tagCounts: { 劳动: 1 },
+        durationMs: 1_000,
+      };
+    });
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
+      knowledge: {
+        async query() {
+          return { question: "", results: [] };
+        },
+        ingestFile,
+        async syncMirror() {},
+        close() {},
+      },
+      opencode,
+      eventStream,
+      memory: null,
+    });
+
+    await app.handleIncomingMessage(createTextMessage("/知识入库"));
+    const file = createUploadedFileMessage("劳动法.pdf", "om_file", "file_1");
+    await app.handleIncomingMessage(file);
+    await app.handleIncomingMessage(file);
+    await app.handleIncomingMessage(createTextMessage("/完成上传", "om_finish"));
+    await ingestStarted;
+    await app.handleIncomingMessage(file);
+    releaseIngest();
+
+    await vi.waitFor(() => {
+      expect(ingestFile).toHaveBeenCalledTimes(1);
+    });
+    const updatedPayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+    expect(JSON.stringify(updatedPayloads)).not.toContain("排队中 1");
+  });
+
   it("does not start ingest mode from natural language 知识入库", async () => {
     const outbound = createOutbound();
     const eventStream = new FakeOpenCodeEventStream();

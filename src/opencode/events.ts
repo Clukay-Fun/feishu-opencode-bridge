@@ -31,6 +31,7 @@ export const KNOWN_EVENTS = [
   "message.updated",
   "message.part.updated",
   "message.part.delta",
+  "file.watcher.updated",
   "permission.asked",
   "question.asked",
 ] as const;

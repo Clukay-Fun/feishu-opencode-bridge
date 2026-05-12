@@ -35,6 +35,7 @@ import {
 } from "../workflows/evidence-extract.js";
 import { syncEvidenceLedger, type EvidenceLedgerResourcePort } from "../workflows/evidence-ledger.js";
 import { generateCaseWorkflowWorkbench } from "../workflows/case-workflow.js";
+import { updateWorkbenchDocument } from "../workflows/workbench-generate.js";
 import { buildTimelineMermaid, escapeMermaidLabel } from "../workflows/timeline-build.js";
 import { checkLaborLegalCitations, formatCitationReviewText } from "./legal-citation.js";
 import { buildLaborAggregatePrompt, buildLaborMaterialExtractPrompt, buildLaborReviewPrompt } from "./prompts.js";
@@ -43,6 +44,7 @@ type OpenCodePort = Pick<OpenCodeClient, "createSession" | "postMessageSync" | "
 type LaborSkillResourcePort = EvidenceExtractResourcePort & EvidenceLedgerResourcePort;
 
 export type LaborMaterialExtraction = {
+  sourceFileName?: string | undefined;
   materialType: string;
   summary: string;
   facts: string[];
@@ -361,7 +363,10 @@ export class LaborSkillService {
       await onProgress?.(`命中缓存，已复用《${displayFileName}》的历史提取结果`);
       return {
         fileName: preparedFile.fileName,
-        extraction: cached,
+        extraction: {
+          ...cached,
+          sourceFileName: preparedFile.fileName,
+        },
         cached: true,
       };
     }
@@ -376,7 +381,10 @@ export class LaborSkillService {
       createSessionTitle: "[bridge] labor-material-extract",
       buildPrompt: ({ fileName, extractedText, localPath }) => buildLaborMaterialExtractPrompt(fileName, extractedText ?? "", localPath),
     });
-    const extraction = normalizeMaterialExtraction(result);
+    const extraction = {
+      ...normalizeMaterialExtraction(result),
+      sourceFileName: preparedFile.fileName,
+    };
     cache.materials[fileHash] = extraction;
     await this.writeCache(cache);
     await onProgress?.(`《${displayFileName}》提取完成`);
@@ -433,7 +441,7 @@ export class LaborSkillService {
     }
 
     const title = normalizedAggregate.caseTitle || "劳动争议案件分析工作台";
-    const markdown = renderLaborWorkbenchMarkdown(normalizedAggregate, input.materialCount, input.warnings);
+    const markdown = renderLaborWorkbenchMarkdown(normalizedAggregate, input.materialCount, input.warnings, input.extractedMaterials);
     const workbench = await generateCaseWorkflowWorkbench({
       title,
       markdown,
@@ -510,6 +518,30 @@ export class LaborSkillService {
       const detail = error instanceof Error ? error.message : String(error);
       this.logger.log("labor-skill", "review call failed", { detail }, "warn");
       return { reviewReport: null, reviewSkippedReason: "review_call_failed" };
+    }
+  }
+
+  /** 将二审意见追加到工作台文档，便于律师在正文旁边直接复核。 */
+  async appendReviewToWorkbench(result: LaborAnalyzeResult, reviewReport: LaborFinalReviewReport | null | undefined): Promise<string | undefined> {
+    if (!result.docUrl) {
+      return undefined;
+    }
+    const reviewMarkdown = renderLaborReviewAppendMarkdown(reviewReport);
+    if (!reviewMarkdown) {
+      return undefined;
+    }
+    try {
+      const updated = await updateWorkbenchDocument(result.docUrl, result.title, [
+        result.markdown.trim(),
+        "",
+        reviewMarkdown,
+      ].join("\n"));
+      return updated.docUrl ?? result.docUrl;
+    } catch (error) {
+      this.logger.log("labor-skill", "append review to workbench failed", {
+        detail: error instanceof Error ? error.message : String(error),
+      }, "warn");
+      return undefined;
     }
   }
 
@@ -732,12 +764,18 @@ function normalizeAggregateResult(
 }
 
 /** 把聚合结果渲染为飞书工作台 Markdown。 */
-export function renderLaborWorkbenchMarkdown(result: LaborAggregateResult, materialCount: number, warnings: string[]): string {
+export function renderLaborWorkbenchMarkdown(
+  result: LaborAggregateResult,
+  materialCount: number,
+  warnings: string[],
+  materials: readonly LaborMaterialExtraction[] = [],
+): string {
   const title = result.caseTitle || "劳动争议案件";
   const timelineDiagram = buildTimelineMermaid(result.timeline);
   const evidenceDiagram = buildEvidenceMapMermaid(result);
   const claimsDiagram = buildClaimsMindmapMermaid(result);
   const nextActionsDiagram = buildNextActionsFlowMermaid(result);
+  const partyInfo = extractPartyInfoFromMaterials(materials);
   const lines: string[] = [
     `# ${title}｜证据链分析工作底稿`,
     "",
@@ -764,6 +802,16 @@ export function renderLaborWorkbenchMarkdown(result: LaborAggregateResult, mater
     "",
     "</grid>",
     "",
+    ...(partyInfo.length > 0
+      ? [
+        "### 当事人信息",
+        "",
+        "> 本节来自当事人信息材料或材料中的身份字段，用于后续生成仲裁申请书、起诉状、证据清单等文书时引用；正式提交前仍需核对身份证号、地址、联系方式和主体名称。",
+        "",
+        ...renderBulletList(partyInfo),
+        "",
+      ]
+      : []),
     ...(warnings.length > 0
       ? [
         `<callout emoji="⚠️" background-color="light-yellow" border-color="light-yellow">`,
@@ -831,7 +879,7 @@ export function renderLaborWorkbenchMarkdown(result: LaborAggregateResult, mater
     "",
     "### 请求权基础审核",
     "",
-    renderClaimBasisTable(result.claimBasis),
+    renderClaimBasisTable(result.claimBasis, result.evidenceRows),
     "",
     "### 关键事实时间线",
     "",
@@ -1012,7 +1060,7 @@ function renderLegalSupportTable(rows: LaborAggregateResult["legalSupports"]): s
   return body.join("\n");
 }
 
-function renderClaimBasisTable(rows: LaborAggregateResult["claimBasis"]): string {
+function renderClaimBasisTable(rows: LaborAggregateResult["claimBasis"], evidenceRows: LaborAggregateResult["evidenceRows"] = []): string {
   const visible = rows.length > 0
     ? rows.slice(0, 8)
     : [{ claim: "待明确请求项", basis: "需人工补核", evidence: [], risk: "待补充", reviewNote: "需人工复核" }];
@@ -1023,7 +1071,7 @@ function renderClaimBasisTable(rows: LaborAggregateResult["claimBasis"]): string
     ...visible.flatMap((row) => buildLarkTableRow([
       row.claim,
       row.basis,
-      row.evidence.join("；") || "-",
+      formatClaimEvidenceCell(row, evidenceRows),
       row.risk ?? "-",
       row.reviewNote ?? "-",
     ])),
@@ -1032,11 +1080,58 @@ function renderClaimBasisTable(rows: LaborAggregateResult["claimBasis"]): string
   return body.join("\n");
 }
 
+function formatClaimEvidenceCell(row: ClaimBasisItem, evidenceRows: LaborAggregateResult["evidenceRows"]): string {
+  const directEvidence = row.evidence.map((item) => item.trim()).filter(Boolean);
+  if (directEvidence.length > 0) {
+    return directEvidence.join("；");
+  }
+  const relatedEvidence = evidenceRows
+    .filter((item) => isEvidenceRelatedToClaim(row, item))
+    .map((item) => item.name.trim())
+    .filter(Boolean);
+  if (relatedEvidence.length > 0) {
+    return [...new Set(relatedEvidence)].slice(0, 3).join("；");
+  }
+  return "未绑定具体证据，需回看证据链总表补核";
+}
+
+function isEvidenceRelatedToClaim(row: ClaimBasisItem, evidence: LaborAggregateResult["evidenceRows"][number]): boolean {
+  const claimText = [row.claim, row.basis, row.risk ?? "", row.reviewNote ?? ""].join(" ");
+  const evidenceText = [evidence.name, evidence.proves, evidence.risk ?? "", evidence.remarks ?? ""].join(" ");
+  if (!claimText.trim() || !evidenceText.trim()) {
+    return false;
+  }
+  return evidence.name.length > 1 && claimText.includes(evidence.name)
+    || evidence.proves.length > 1 && claimText.includes(evidence.proves)
+    || row.claim.length > 1 && evidenceText.includes(row.claim);
+}
+
 function renderDraftDocumentList(rows: LaborAggregateResult["draftDocuments"]): string[] {
   if (rows.length === 0) {
     return ["- 暂无文书草稿摘要；建议先补充事实与证据后再生成正式文书。"];
   }
   return rows.slice(0, 5).map((item) => `- ${redactEvidenceText(item.type)}：${redactEvidenceText(item.summary || "待补充摘要")}`);
+}
+
+export function extractPartyInfoFromMaterials(materials: readonly LaborMaterialExtraction[]): string[] {
+  const lines: string[] = [];
+  for (const material of materials) {
+    const source = [material.sourceFileName, material.materialType, material.summary, ...material.facts].filter(Boolean).join("\n");
+    if (!isPartyInfoMaterial(source)) {
+      continue;
+    }
+    const label = material.sourceFileName || material.materialType || "当事人信息";
+    const facts = material.facts.length > 0 ? material.facts.slice(0, 8).join("；") : material.summary;
+    const line = `${label}：${facts}`.trim();
+    if (line && !lines.includes(line)) {
+      lines.push(line);
+    }
+  }
+  return lines.slice(0, 8);
+}
+
+function isPartyInfoMaterial(text: string): boolean {
+  return /当事人信息|申请人|被申请人|委托人|对方当事人|身份证号|统一社会信用代码|联系电话|联系地址|住所地|法定代表人/.test(text);
 }
 
 function renderBulletList(items: string[]): string[] {
@@ -1257,6 +1352,112 @@ function normalizeLaborStrategy(value: Record<string, unknown> | null): LaborAgg
 
 function escapeCell(value: string): string {
   return value.replace(/\|/g, "\\|").replace(/\n/g, "<br>");
+}
+
+export function formatLaborReviewFindingText(finding: Pick<LaborFinalReviewReport["findings"][number], "message" | "relatedSection" | "type" | "source">): string {
+  const original = finding.message.replace(/\s+/g, " ").trim();
+  let text = original
+    .replace(/marked as ['"]需人工补核['"] with no legal source provided\s*[—-]\s*source\.type is null.*$/i, "缺少可核验来源，已标记为“需人工补核”，需要人工复核。")
+    .replace(/flagged as ['"]需人工复核['"] in 法条引用风险;?\s*no individual article verification in 修正生成幻觉 results?/i, "在法条引用风险中被标记为“需人工复核”，本次未完成逐条校验。")
+    .replace(/only whole-law identification available via 法条识别与溯源,?\s*specific articles not individually verified in 修正生成幻觉/i, "目前只有法规名称识别，具体条文尚未逐条校验。")
+    .replace(/which is not individually verified in 修正生成幻觉;?\s*only 第([^\s，。；;]+)条 is verified/i, "本次未完成逐条校验，仅校验到第$1条。")
+    .replace(/\s+relies on\s+/i, "引用")
+    .replace(/\s+cites\s+/i, "引用")
+    .replace(/\s+cited for\s+/i, "被用于支撑")
+    .replace(/\s+claim\s+/i, "请求")
+    .replace(/no individual article verification in 修正生成幻觉 results?/i, "本次未完成逐条校验。")
+    .replace(/source\.type is null.*$/i, "来源为空，需要人工复核。")
+    .replace(/\s*[—-]\s*/g, "；")
+    .replace(/\s+/g, " ")
+    .replace(/([\u4e00-\u9fa5])\s+([\u4e00-\u9fa5])/g, "$1$2")
+    .trim();
+
+  if (!text) {
+    text = fallbackReviewFindingText(finding);
+  }
+  const section = finding.relatedSection?.trim();
+  return section ? `${section}：${text}` : text;
+}
+
+export function renderLaborReviewAppendMarkdown(reviewReport: LaborFinalReviewReport | null | undefined): string {
+  if (!reviewReport || reviewReport.findings.length === 0) {
+    return "";
+  }
+  const groups = groupReviewFindingsForMarkdown(reviewReport);
+  const sections = [
+    renderReviewRiskCallout("高风险问题", "high", groups.high),
+    renderReviewRiskCallout("中风险问题", "medium", groups.medium),
+    renderReviewRiskCallout("低风险问题", "low", groups.low),
+  ].filter(Boolean);
+  if (sections.length === 0) {
+    return "";
+  }
+  return [
+    "### 二次审查意见",
+    "",
+    "> 以下意见由二审模型与法条校验生成，用于定位需要人工复核的结论、依据和引用位置。",
+    "",
+    ...sections,
+  ].join("\n");
+}
+
+function groupReviewFindingsForMarkdown(reviewReport: LaborFinalReviewReport): Record<"high" | "medium" | "low", string[]> {
+  const groups = {
+    high: [] as string[],
+    medium: [] as string[],
+    low: [] as string[],
+  };
+  for (const finding of reviewReport.findings) {
+    groups[finding.severity].push(formatLaborReviewFindingText(finding));
+  }
+  return groups;
+}
+
+function renderReviewRiskCallout(
+  title: string,
+  severity: "high" | "medium" | "low",
+  findings: readonly string[],
+): string {
+  if (findings.length === 0) {
+    return "";
+  }
+  const style = severity === "high"
+    ? { emoji: "🔴", color: "light-red" }
+    : severity === "medium"
+      ? { emoji: "🔵", color: "light-blue" }
+      : { emoji: "🟢", color: "light-green" };
+  return [
+    `<callout emoji="${style.emoji}" background-color="${style.color}" border-color="${style.color}">`,
+    "",
+    `**${title}（${findings.length}项）**`,
+    "",
+    ...findings.map((item, index) => `${index + 1}. ${redactEvidenceText(item)}`),
+    "",
+    "</callout>",
+    "",
+  ].join("\n");
+}
+
+function fallbackReviewFindingText(finding: Pick<LaborFinalReviewReport["findings"][number], "type" | "source">): string {
+  const sourceText = finding.source.type === null
+    ? "来源为空"
+    : `来源类型：${finding.source.type}`;
+  return `${localizeReviewFindingType(finding.type)}，${sourceText}，需要人工复核。`;
+}
+
+function localizeReviewFindingType(type: string): string {
+  switch (type) {
+    case "missing_authority":
+      return "缺少权威依据";
+    case "null_source":
+      return "缺少来源字段";
+    case "citation":
+      return "法条引用需要复核";
+    case "unsupported_claim":
+      return "请求项缺少支撑";
+    default:
+      return type ? `审查项 ${type}` : "相关结论需要复核";
+  }
 }
 
 function buildLaborWorkbenchDiagrams(result: LaborAggregateResult) {

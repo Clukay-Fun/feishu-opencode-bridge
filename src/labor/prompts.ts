@@ -68,6 +68,7 @@ export function buildLaborAggregatePrompt(materialsJson: string, notesText: stri
     "5. 法律依据不能凭空编造；如果没有知识库命中或明确规则，请在 legalSupports 中写明“需人工补核”。",
     "6. 避免长段落，每条判断尽量控制在 1-2 句，便于飞书文档阅读和录屏展示。",
     "7. 如果给了 legalSupports，请结合使用；没有明确命中只能保守输出，不得虚构法条编号、案例名称或裁判规则。",
+    "8. claimBasis.evidence 必须填写已提交材料或 evidenceRows 中的证据名称；如果某请求项确实没有对应证据，请写“未绑定具体证据，需回看证据链总表补核”，不要留空数组。",
     "",
     notesText
       ? `案件补充背景：\n---\n${notesText}\n---`
