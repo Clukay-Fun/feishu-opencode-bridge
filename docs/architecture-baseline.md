@@ -542,27 +542,17 @@ freeze 之后仍然活跃的后续债务集中在 [post-freeze-backlog.md](/User
 - 任何新功能都不应迫使 `BridgeApp` 在 stable deps 之外继续长出更多 feature 专属资源适配
 - 新业务模块应通过 extension manifest 接入，而不是让 `runtime-modules.ts` 手写模块分支
 
-### P1. 普通文件处理仍然泄漏临时文件
-
-普通上传文件会为了 OpenCode turn 被写到临时目录。
-这些路径在 turn 完成后还没有被清理。
-
-在文件密集型功能继续扩张之前，这个问题应先修掉。
-
 ### P1. Module 状态持久化仍在按 Feature 复制实现
 
-contract assistant 和 labor 目前都维护了相似模式：
-
-- restore
-- TTL timers
-- persist chain
-- flush
+contract assistant、labor 和 knowledge ingest 已开始复用共享持久化基础设施。
+剩余重点是继续把 feature 专属 JSON 写入、debounce 和恢复逻辑收口到通用 store / interaction helper。
 
 这应成为共享基础设施，而不是继续复制。
 
 ### P2. 输出构造正在变成新的单体
 
-`src/feishu/formatter.ts` 已经大到足以成为下一个结构瓶颈。
+`src/feishu/formatter.ts` 已收敛为兼容 re-export 面。
+新的结构压力集中在 card family、designer template 和业务模板边界上。
 
 目标拆分应该按 view family，而不是按随意 helper 拆。
 拆分应分两层：
@@ -580,7 +570,7 @@ contract assistant 和 labor 目前都维护了相似模式：
 - 交互型业务模板可通过 `actions` block 渲染按钮，但按钮 value 只能携带模块自有 action payload；不得把模板 runtime 扩展成通用业务路由器
 - 业务专属卡片只用于提醒类和流程类场景；普通查询、资料摘要、一次性结果、空状态和错误提示默认走 shared notice / 通用结果卡，不为单次文本展示新增 designer 模板
 - `src/feishu/formatter.ts` 的导出面变更必须同步 formatter export snapshot；如果某个业务能力改为后台自动执行，不应继续保留仅供旧确认卡使用的导出
-- 用户侧卡片以 `docs/cards/spec.md` 为当前样式真值；群聊 `/who`、`/leave` 与提醒类卡片停用时，必须同步删除调用面、formatter export、测试断言和用户侧 guide 提及，避免保留孤儿卡片入口
+- 用户侧卡片以 `docs/cards/spec.md` 为当前样式真值；群聊 `/who`、`/leave` 与旧通用提醒入口停用时，必须同步删除调用面、formatter export、测试断言和用户侧 guide 提及，避免保留孤儿卡片入口
 - PDF 规范中的用户侧新卡片如果已实现 builder，应通过 formatter 兼容面导出；如果只用于离线 harness 或尚无运行时功能，不得进入 formatter 导出面
 
 建议方向：
@@ -658,12 +648,11 @@ contract assistant 和 labor 目前都维护了相似模式：
 
 ## 下一步建议顺序
 
-1. 修复普通上传文件的临时文件清理
-2. 抽取共享的 module interaction-state 持久化 helper
-3. 收窄 `BridgeApp` 的模块组装面，停止继续扩大 feature 专属依赖
-4. 将 `feishu/formatter.ts` 拆成按 feature 划分的 card family 与共享 post / notice primitives
-5. 收紧命令面，移除弱 alias
-6. 把不再定义产品方向的 demo-first 文档归档
+1. 继续收敛 module interaction-state / JSON state helper
+2. 收窄 `BridgeApp` 的模块组装面，停止继续扩大 feature 专属依赖
+3. 继续拆薄 card family、designer template 与业务模板边界
+4. 收紧命令面，移除弱 alias
+5. 把不再定义产品方向的 demo-first 文档归档
 
 ## 与现有文档的关系
 

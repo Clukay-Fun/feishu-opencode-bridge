@@ -6,10 +6,9 @@
  * - 支持最近未完成案件查询与恢复。
  */
 import crypto from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
 
 import type { Logger } from "../logging/logger.js";
+import { DebouncedJsonStore } from "../store/json-store.js";
 
 export type LaborCaseStage =
   | "collecting"
@@ -44,22 +43,30 @@ const CHECKPOINT_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 天
 
 export class LaborCaseCheckpointStore {
   private checkpoints: Map<string, LaborCaseCheckpoint> = new Map();
-  private dirty = false;
-  private persistTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly store: DebouncedJsonStore<CheckpointStore>;
 
   constructor(
     private readonly dataDir: string,
     private readonly logger: Logger,
-  ) {}
-
-  private get filePath(): string {
-    return path.join(this.dataDir, "labor-case-checkpoints.json");
+  ) {
+    this.store = new DebouncedJsonStore<CheckpointStore>(
+      this.dataDir,
+      "labor-case-checkpoints.json",
+      { version: 1, checkpoints: [] },
+      {
+        debounceMs: 2_000,
+        onError: (error) => {
+          this.logger.log("labor/checkpoint", "persist failed", {
+            detail: error instanceof Error ? error.message : String(error),
+          }, "warn");
+        },
+      },
+    );
   }
 
   async restore(): Promise<void> {
     try {
-      const raw = await readFile(this.filePath, "utf8");
-      const data = JSON.parse(raw) as CheckpointStore;
+      const data = await this.store.load();
       if (data.version !== 1 || !Array.isArray(data.checkpoints)) {
         return;
       }
@@ -78,18 +85,11 @@ export class LaborCaseCheckpointStore {
   }
 
   async stop(): Promise<void> {
-    if (this.persistTimer) {
-      clearTimeout(this.persistTimer);
-      this.persistTimer = null;
-    }
-    await this.flush();
+    await this.store.stop();
   }
 
   async flush(): Promise<void> {
-    if (!this.dirty) {
-      return;
-    }
-    await this.persist();
+    await this.store.flush();
   }
 
   generateCaseId(): string {
@@ -192,30 +192,10 @@ export class LaborCaseCheckpointStore {
   }
 
   private schedulePersist(): void {
-    this.dirty = true;
-    if (this.persistTimer) {
-      return;
-    }
-    this.persistTimer = setTimeout(() => {
-      this.persistTimer = null;
-      void this.persist();
-    }, 2000);
-  }
-
-  private async persist(): Promise<void> {
-    try {
-      await mkdir(this.dataDir, { recursive: true });
-      const entries = [...this.checkpoints.values()]
-        .sort((a, b) => b.updatedAt - a.updatedAt)
-        .slice(0, MAX_CHECKPOINTS);
-      const data: CheckpointStore = { version: 1, checkpoints: entries };
-      await writeFile(this.filePath, JSON.stringify(data, null, 2), "utf8");
-      this.dirty = false;
-    } catch (error) {
-      this.logger.log("labor/checkpoint", "persist failed", {
-        detail: error instanceof Error ? error.message : String(error),
-      }, "warn");
-    }
+    const entries = [...this.checkpoints.values()]
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, MAX_CHECKPOINTS);
+    this.store.scheduleSave({ version: 1, checkpoints: entries });
   }
 }
 

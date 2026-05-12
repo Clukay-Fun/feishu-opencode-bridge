@@ -35,24 +35,33 @@ export class ActiveKnowledgeIngestStore extends JsonStore<unknown> {
 
   /** 读取并规范化当前活跃入库记录。 */
   override async load(): Promise<ActiveKnowledgeIngestRecordMap> {
-    const loaded = await super.load();
-    if (!isStoreFile(loaded)) {
-      return {};
-    }
-    return Object.fromEntries(
-      Object.entries(loaded.records)
-        .map(([conversationKey, record]) => [conversationKey, normalizeRecord(record)] as const)
-        .filter((entry): entry is readonly [string, ActiveKnowledgeIngestRecord] => entry[1] !== null),
-    );
+    return parseActiveKnowledgeIngestRecords(await super.load());
   }
 
   /** 保存整批活跃入库记录。 */
   async saveRecords(records: ActiveKnowledgeIngestRecordMap): Promise<void> {
-    await super.save({
-      version: ACTIVE_KNOWLEDGE_INGEST_STORE_VERSION,
-      records,
-    } satisfies ActiveKnowledgeIngestFile);
+    await super.save(buildActiveKnowledgeIngestFile(records));
   }
+}
+
+/** 从持久化文件中读取并规范化 active ingest 记录。 */
+export function parseActiveKnowledgeIngestRecords(value: unknown): ActiveKnowledgeIngestRecordMap {
+  if (!isStoreFile(value)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value.records)
+      .map(([conversationKey, record]) => [conversationKey, normalizeRecord(record)] as const)
+      .filter((entry): entry is readonly [string, ActiveKnowledgeIngestRecord] => entry[1] !== null),
+  );
+}
+
+/** 保持 active ingest 旧文件格式，避免运行时状态迁移。 */
+export function buildActiveKnowledgeIngestFile(records: ActiveKnowledgeIngestRecordMap): ActiveKnowledgeIngestFile {
+  return {
+    version: ACTIVE_KNOWLEDGE_INGEST_STORE_VERSION,
+    records,
+  };
 }
 
 /** 判断对象是否符合 active ingest 存储结构。 */

@@ -46,6 +46,11 @@ import {
   buildPromptFromSkillOverride,
   buildPromptFromSkillOverrideAsync,
 } from "./prompt-overrides.js";
+import {
+  buildCaseRecordLabel,
+  buildCaseTodoDateSummary,
+  parseCaseTodoQuery,
+} from "./case-todos.js";
 
 type OpenCodePort = Pick<OpenCodeClient, "createSession" | "postMessageSync" | "deleteSession">;
 
@@ -668,10 +673,13 @@ export class ContractAssistantService {
         if (status === "已结案") {
           return null;
         }
-        const label = buildCaseRecordLabel(item.fields);
+        const label = buildCaseRecordLabel(item.fields, { readString: readFieldString });
         const stage = readFieldString(item.fields, "程序阶段");
         const progress = readFieldString(item.fields, "进展");
-        const dateSummary = buildCaseTodoDateSummary(item.fields);
+        const dateSummary = buildCaseTodoDateSummary(item.fields, {
+          readDate: readFieldDate,
+          normalizeDate: normalizeBitableDateValue,
+        });
         if (!todo && !dateSummary.text) {
           return null;
         }
@@ -1444,64 +1452,6 @@ function readFieldDate(fields: Record<string, unknown>, key: string): string | u
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   }
   return readFieldString(fields, key);
-}
-
-function parseCaseTodoQuery(query: string): { text: string; todayOnly: boolean } {
-  const trimmed = query.replace(/\s+/g, "").trim();
-  const todayOnly = /(今天|今日)/.test(trimmed);
-  const text = trimmed
-    .replace(/^(帮我)?(查看|查询|列出|看看|展示|打开|获取)/, "")
-    .replace(/(今天|今日)/g, "")
-    .replace(/(案件|案子|案源|全部|所有)/g, "")
-    .replace(/(待办|提醒|事项|日程|期限|节点)/g, "")
-    .trim();
-  return { text, todayOnly };
-}
-
-function buildCaseTodoDateSummary(fields: Record<string, unknown>): { text: string; todayMatched: boolean } {
-  const dateFields = [
-    "日期",
-    "开庭日",
-    "举证截止日",
-    "反诉截止日",
-    "管辖权异议截止日",
-    "上诉截止日",
-  ];
-  const parts: string[] = [];
-  let todayMatched = false;
-  for (const field of dateFields) {
-    const formatted = readFieldDate(fields, field);
-    if (!formatted) {
-      continue;
-    }
-    parts.push(`${field} ${formatted}`);
-    const timestamp = normalizeBitableDateValue(fields[field]);
-    if (timestamp !== undefined && isTodayTimestamp(timestamp)) {
-      todayMatched = true;
-    }
-  }
-  return { text: parts.join("；"), todayMatched };
-}
-
-function isTodayTimestamp(timestamp: number, now = new Date()): boolean {
-  const date = new Date(timestamp);
-  return date.getFullYear() === now.getFullYear()
-    && date.getMonth() === now.getMonth()
-    && date.getDate() === now.getDate();
-}
-
-function buildCaseRecordLabel(fields: Record<string, unknown>): string {
-  const caseNo = readFieldString(fields, "案号");
-  const client = readFieldString(fields, "委托人");
-  const counterparty = readFieldString(fields, "对方当事人");
-  const cause = readFieldString(fields, "案由");
-  if (caseNo) {
-    return caseNo;
-  }
-  if (client && counterparty) {
-    return `${client} vs ${counterparty}${cause ? ` ${cause}` : ""}`;
-  }
-  return client ?? counterparty ?? cause ?? "未命名案件";
 }
 
 function normalizeContractRecord(record: Record<string, unknown> | null): Record<string, unknown> {

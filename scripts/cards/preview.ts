@@ -4,7 +4,7 @@
  * 关注点:
  * - 复用真实卡片 builder 生成预览，避免验收脚本和产品卡片漂移。
  * - 默认通过 bot 私聊发送给当前 lark-cli 登录用户，支持指定 chat/user 和 dry-run。
- * - 仅覆盖用户侧保留卡片，不发送已弃用的群聊、提醒和 Harness 独立报告卡。
+ * - 仅覆盖用户侧保留卡片，不发送已弃用的群聊、旧通用提醒和 Harness 独立报告卡。
  */
 import { spawnSync } from "node:child_process";
 import { parseArgs } from "node:util";
@@ -13,6 +13,7 @@ import type { CaseCreateResult, ContractDraftProgressStage, InvoiceRecognizeResu
 import {
   buildCaseCreateCompletedPayload,
   buildCaseCreateProcessingPayload,
+  buildCaseTodoReminderPayload,
   buildCaseWorkbenchPayload,
   buildContractDraftCompletedPayload,
   buildContractDraftProgressPayload,
@@ -82,7 +83,7 @@ function main(): void {
   }
 
   const target = resolveTarget(options);
-  sendText(target, `卡片预览开始发送：共 ${cards.length} 张。当前不包含已弃用的群聊、提醒、Harness 独立报告卡。`);
+  sendText(target, `卡片预览开始发送：共 ${cards.length} 张。当前不包含已弃用的群聊、旧通用提醒、Harness 独立报告卡。`);
 
   let currentGroup = "";
   let sent = 0;
@@ -256,6 +257,10 @@ function createPreviewCards(): PreviewCard[] {
     card("合同/发票/案件", "案件工作台已开启", ["workbench", "case"], buildCaseWorkbenchPayload({ domains: ["劳动法", "公司法", "合同审查"], chatType: "p2p", conversationKey: "preview-case-workbench", requesterOpenId: "ou_preview" })),
     card("合同/发票/案件", "案件信息录入中", ["case", "processing"], buildCaseCreateProcessingPayload("委托人张三，对方某科技有限公司，案由违法解除劳动合同争议，程序阶段劳动仲裁。")),
     card("合同/发票/案件", "案件已录入", ["case", "completed"], buildCaseCreateCompletedPayload(createCaseCreateResult(), demoUrl, "委托人张三，对方某科技有限公司，案由违法解除劳动合同争议。")),
+    card("合同/发票/案件", "案件待办", ["case", "todo", "reminder"], buildCaseTodoReminderPayload({ items: [
+      { line: "（2026）沪01民初123号｜一审｜进行中\n日期：开庭日 2026-05-16；举证截止日 2026-05-12\n待办：补充工资流水证据", url: demoUrl },
+      { line: "张三 vs 某科技有限公司 劳动争议\n待办：联系当事人确认解除通知送达时间\n进展：证据清单待复核", url: demoUrl },
+    ] })),
     card("合同/发票/案件", "合同起草", ["contract", "draft"], buildContractDraftProgressPayload(contractDraftView)),
     card("合同/发票/案件", "合同起草完成", ["contract", "draft"], buildContractDraftCompletedPayload(contractDraftDoneView, { wordPath: "/Users/clukay/Documents/劳动合同解除协议.docx", recordId: "rec_contract_demo", warnings: ["建议人工复核竞业限制条款。"] }, { elapsedMs: 45000, recordUrl: demoUrl })),
     card("合同/发票/案件", "发票识别", ["invoice"], buildInvoiceRecognizeProgressPayload({ currentFile: "增值税专用发票.pdf", completedFiles: ["服务费发票.pdf"], failedFiles: [{ fileName: "模糊发票.jpg", reason: "图片过暗" }], steps: [{ label: "OCR 识别发票内容", status: "running" }, { label: "填写表格", status: "pending" }] })),

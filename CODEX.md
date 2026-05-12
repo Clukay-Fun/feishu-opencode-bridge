@@ -13,6 +13,7 @@
 - 写进 `AGENTS.md`：Bridge 在飞书里的运行时所有权、用户可见行为、架构 guardrails、skill runtime 产品契约。
 - 写进 `CODEX.md`：Codex 如何搜索、实现、验证、操作 CLI、处理 dirty worktree 和维护注释。
 - 写进 `docs/`：长文设计、模块背景、架构解释、完整 checklist、历史记录和排障手册。
+- `AGENTS-dev.md`：旧版 `AGENTS.md` 拆出的历史开发规范，仅作为维护背景保留；新增规则不要继续写入这里。
 - 不要把临时任务计划、一次性调试结论、个人偏好或未验证猜测写进 `AGENTS.md`。
 
 ## 工作方式

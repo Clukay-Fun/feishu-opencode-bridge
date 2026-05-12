@@ -16,6 +16,8 @@ type PersistedInteractionManagerOptions<T> = {
   getKey(interaction: T): string;
   getExpiresAt(interaction: T): number;
   onExpire?(interaction: T): Promise<void> | void;
+  deserialize?(value: unknown): T[];
+  serialize?(interactions: T[]): unknown;
 };
 
 export class PersistedInteractionManager<T> {
@@ -70,8 +72,11 @@ export class PersistedInteractionManager<T> {
   }
 
   // Store or replace an interaction and keep its persistence/expiry state in sync.
-  set(interaction: T): void {
-    const key = this.options.getKey(interaction);
+  set(interaction: T): void;
+  set(key: string, interaction: T): void;
+  set(keyOrInteraction: string | T, maybeInteraction?: T): void {
+    const interaction = maybeInteraction ?? (keyOrInteraction as T);
+    const key = typeof keyOrInteraction === "string" ? keyOrInteraction : this.options.getKey(interaction);
     const expiresAt = this.options.getExpiresAt(interaction);
     if (expiresAt <= Date.now()) {
       this.delete(key);
@@ -161,8 +166,12 @@ export class PersistedInteractionManager<T> {
   private async readPersistedInteractions(): Promise<T[]> {
     try {
       const raw = await readFile(this.options.stateFilePath, "utf8");
-      const parsed = JSON.parse(raw) as { version?: number; interactions?: T[] };
-      return Array.isArray(parsed.interactions) ? parsed.interactions : [];
+      const parsed = JSON.parse(raw) as unknown;
+      if (this.options.deserialize) {
+        return this.options.deserialize(parsed);
+      }
+      const state = parsed as { version?: number; interactions?: T[] };
+      return Array.isArray(state.interactions) ? state.interactions : [];
     } catch {
       return [];
     }
@@ -174,10 +183,11 @@ export class PersistedInteractionManager<T> {
       .catch(() => undefined)
       .then(async () => {
         await mkdir(path.dirname(this.options.stateFilePath), { recursive: true });
-        await writeFile(this.options.stateFilePath, JSON.stringify({
+        const payload = this.options.serialize?.([...this.interactions.values()]) ?? {
           version: 1,
           interactions: [...this.interactions.values()],
-        }, null, 2), "utf8");
+        };
+        await writeFile(this.options.stateFilePath, JSON.stringify(payload, null, 2), "utf8");
       })
       .catch((error) => {
         this.options.logger.log(this.options.logScope, "persist state failed", {

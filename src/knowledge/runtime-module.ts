@@ -5,6 +5,8 @@
  * - 管理知识摄入过程中的挂起状态与卡片更新。
  * - 在需要时向模型注入知识检索相关上下文。
  */
+import path from "node:path";
+
 import type { AppConfig } from "../config/schema.js";
 import type { RuntimeModule, RuntimeModuleHandleResult, RuntimeModuleMessageContext } from "../bridge/module.js";
 import type { PendingFileInstructionInteraction, PendingKnowledgeIngestInteraction } from "../bridge/state.js";
@@ -26,6 +28,7 @@ import {
 import { createTextPreview, type Logger, type TranscriptType } from "../logging/logger.js";
 import type { IncomingChatMessage } from "../runtime/app.js";
 import type { FeishuTransport } from "../runtime/feishu-transport.js";
+import { PersistedInteractionManager } from "../runtime/persisted-interaction-manager.js";
 import {
   getActiveSession,
   setActiveSession,
@@ -33,7 +36,11 @@ import {
   updateSessionLabel,
 } from "../runtime/session-windows.js";
 import type { SessionBindingRecord, SessionWindowRecord } from "../store/mappings.js";
-import { ActiveKnowledgeIngestStore, type ActiveKnowledgeIngestRecordMap } from "../store/active-ingests.js";
+import {
+  buildActiveKnowledgeIngestFile,
+  parseActiveKnowledgeIngestRecords,
+  type ActiveKnowledgeIngestRecordMap,
+} from "../store/active-ingests.js";
 import { routeIncomingText, type RoutedText } from "../bridge/router.js";
 import { detectKnowledgeWebIngest } from "./detector.js";
 import {
@@ -104,24 +111,38 @@ type KnowledgeCommand = Extract<RoutedText, { kind: "command" }>["command"];
 export class KnowledgeRuntimeModule implements RuntimeModule {
   readonly name = "knowledge";
   readonly priority = 20;
-  readonly interactions = new Map<string, PendingKnowledgeIngestInteraction>();
+  readonly interactions: PersistedInteractionManager<PendingKnowledgeIngestInteraction>;
 
-  private readonly activeKnowledgeIngests: ActiveKnowledgeIngestStore;
-  private activeKnowledgeIngestMap: ActiveKnowledgeIngestRecordMap = {};
   private readonly runningKnowledgeIngests = new Map<string, { requesterOpenId: string }>();
   private readonly knowledgeIngestQueues = new Map<string, KnowledgeIngestQueueState>();
   private readonly knowledgeIngestSessionStats = new Map<string, KnowledgeIngestSessionStats>();
-  private readonly timers = new Map<string, NodeJS.Timeout>();
 
   constructor(private readonly deps: KnowledgeRuntimeModuleDeps) {
-    this.activeKnowledgeIngests = new ActiveKnowledgeIngestStore(deps.config.storage.dataDir);
+    this.interactions = new PersistedInteractionManager({
+      stateFilePath: path.join(deps.config.storage.dataDir, "active-knowledge-ingests.json"),
+      logger: deps.logger,
+      logScope: "knowledge/ingest",
+      getKey: (interaction) => interaction.conversationKey,
+      getExpiresAt: (interaction) => interaction.expiresAt,
+      onExpire: async (interaction) => {
+        await this.handleExpiredKnowledgeIngest(interaction);
+      },
+      deserialize: (value) => Object.values(parseActiveKnowledgeIngestRecords(value)).map((record) => ({
+        ...record,
+        kind: "knowledge-ingest-await-file" as const,
+        replyToMessageId: record.anchorMessageId,
+      })),
+      serialize: (interactions) => buildActiveKnowledgeIngestFile(
+        Object.fromEntries(interactions.map((interaction) => [interaction.conversationKey, interaction])) as ActiveKnowledgeIngestRecordMap,
+      ),
+    });
   }
 
   // #region 生命周期与入口
 
   /** 恢复持久化状态，并在可用时同步知识镜像。 */
   async start(): Promise<void> {
-    this.activeKnowledgeIngestMap = await this.activeKnowledgeIngests.load();
+    await this.interactions.restore();
     await this.interruptPersistedKnowledgeIngests();
     if (!this.deps.knowledge) {
       return;
@@ -137,10 +158,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
 
   /** 清理计时器并关闭知识库资源。 */
   async stop(): Promise<void> {
-    for (const timeout of this.timers.values()) {
-      clearTimeout(timeout);
-    }
-    this.timers.clear();
+    await this.interactions.stop();
     this.deps.knowledge?.close();
   }
 
@@ -935,52 +953,35 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
   }
 
   private setKnowledgeIngestInteraction(conversationKey: string, interaction: PendingKnowledgeIngestInteraction): void {
-    this.clearKnowledgeIngestInteraction(conversationKey, { keepActiveKnowledgeIngest: true });
-    this.interactions.set(conversationKey, interaction);
+    this.clearKnowledgeIngestInteraction(conversationKey, { keepPersisted: true });
+    this.interactions.set(interaction);
     this.getKnowledgeIngestSessionStats(conversationKey);
-    const timer = setTimeout(() => {
-      void this.handleKnowledgeIngestTimeout(conversationKey, interaction);
-    }, Math.max(0, interaction.expiresAt - Date.now()));
-    this.timers.set(this.getKnowledgeIngestTimerKey(conversationKey), timer);
-    this.saveActiveKnowledgeIngest(interaction);
   }
 
   private clearKnowledgeIngestInteraction(
     conversationKey: string,
-    options?: { keepActiveKnowledgeIngest?: boolean },
+    options?: { keepPersisted?: boolean },
   ): void {
-    const timerKey = this.getKnowledgeIngestTimerKey(conversationKey);
-    const timeout = this.timers.get(timerKey);
-    if (timeout) {
-      clearTimeout(timeout);
-      this.timers.delete(timerKey);
-    }
-    this.interactions.delete(conversationKey);
-    if (!options?.keepActiveKnowledgeIngest) {
-      this.deleteActiveKnowledgeIngest(conversationKey);
+    if (!options?.keepPersisted) {
+      this.interactions.delete(conversationKey);
     }
   }
 
-  private getKnowledgeIngestTimerKey(conversationKey: string): string {
-    return `knowledge-ingest:${conversationKey}`;
-  }
-
-  private async handleKnowledgeIngestTimeout(conversationKey: string, pending: PendingKnowledgeIngestInteraction): Promise<void> {
-    const current = this.getInteraction(conversationKey);
-    if (
-      !current
-      || current.anchorMessageId !== pending.anchorMessageId
-      || current.expiresAt > Date.now()
-    ) {
+  private async handleExpiredKnowledgeIngest(pending: PendingKnowledgeIngestInteraction): Promise<void> {
+    if (this.runningKnowledgeIngests.has(pending.conversationKey)) {
+      this.setKnowledgeIngestInteraction(pending.conversationKey, {
+        ...pending,
+        expiresAt: Date.now() + this.deps.config.knowledgeBase.ingest.sessionIdleMs,
+      });
       return;
     }
-    if (this.runningKnowledgeIngests.has(conversationKey)) {
-      this.refreshKnowledgeIngestPending(conversationKey, current);
-      return;
+    await this.sendKnowledgeIngestFinalSummary(pending);
+    if (pending.previousActiveSessionId) {
+      await this.restorePreviousSessionForBackgroundIngest(pending.conversationKey, pending.chatType, pending);
     }
-    await this.sendKnowledgeIngestFinalSummary(current);
-    await this.clearPending(conversationKey, current.chatType);
-    await this.sendPayload(current.chatId, buildNoticeCardPayload({
+    this.knowledgeIngestQueues.delete(pending.conversationKey);
+    this.knowledgeIngestSessionStats.delete(pending.conversationKey);
+    await this.sendPayload(pending.chatId, buildNoticeCardPayload({
       title: "入库任务已超时",
       level: "warning",
       message: "长时间未收到新的入库素材，已结束当前入库任务。需要继续时请重新发送 `/知识入库`。",
@@ -990,7 +991,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       transcriptType: "outbound-final",
       textPreview: "入库任务已超时",
       len: 7,
-    }, this.getKnowledgeIngestDelivery(current));
+    }, this.getKnowledgeIngestDelivery(pending));
   }
 
   private async sendKnowledgeIngestMarkdown(pending: PendingKnowledgeIngestInteraction, markdown: string): Promise<void> {
@@ -1028,40 +1029,6 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
     this.setKnowledgeIngestInteraction(conversationKey, {
       ...current,
       expiresAt: Date.now() + this.deps.config.knowledgeBase.ingest.sessionIdleMs,
-    });
-  }
-
-  private saveActiveKnowledgeIngest(pending: PendingKnowledgeIngestInteraction): void {
-    this.activeKnowledgeIngestMap[pending.conversationKey] = {
-      chatId: pending.chatId,
-      chatType: pending.chatType,
-      conversationKey: pending.conversationKey,
-      requesterOpenId: pending.requesterOpenId,
-      rootMessageId: pending.rootMessageId,
-      anchorMessageId: pending.anchorMessageId,
-      deliveryMode: pending.deliveryMode,
-      ingestSessionId: pending.ingestSessionId,
-      previousActiveSessionId: pending.previousActiveSessionId,
-      expiresAt: pending.expiresAt,
-    };
-    void this.activeKnowledgeIngests.saveRecords(this.activeKnowledgeIngestMap).catch((error) => {
-      this.deps.logger.log("knowledge/ingest", "failed to persist active ingest", {
-        conversationKey: pending.conversationKey,
-        detail: error instanceof Error ? error.message : String(error),
-      }, "warn");
-    });
-  }
-
-  private deleteActiveKnowledgeIngest(conversationKey: string): void {
-    if (!(conversationKey in this.activeKnowledgeIngestMap)) {
-      return;
-    }
-    delete this.activeKnowledgeIngestMap[conversationKey];
-    void this.activeKnowledgeIngests.saveRecords(this.activeKnowledgeIngestMap).catch((error) => {
-      this.deps.logger.log("knowledge/ingest", "failed to clear active ingest", {
-        conversationKey,
-        detail: error instanceof Error ? error.message : String(error),
-      }, "warn");
     });
   }
 
@@ -1108,7 +1075,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
   }
 
   private async interruptPersistedKnowledgeIngests(): Promise<void> {
-    const records = Object.values(this.activeKnowledgeIngestMap);
+    const records = [...this.interactions.values()];
     if (records.length === 0) {
       return;
     }
@@ -1141,8 +1108,10 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       });
     }
 
-    this.activeKnowledgeIngestMap = {};
-    await this.activeKnowledgeIngests.saveRecords(this.activeKnowledgeIngestMap);
+    for (const record of records) {
+      this.interactions.delete(record.conversationKey);
+    }
+    await this.interactions.flush();
   }
 
   private async updateKnowledgeIngestProgress(

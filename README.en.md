@@ -3,7 +3,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6)](https://www.typescriptlang.org/)
 [![Feishu](https://img.shields.io/badge/Feishu-Bridge-0F6FFF)](https://open.feishu.cn/)
-[![Tests](https://img.shields.io/badge/tests-622%20passing-success)](#%EF%B8%8F-development-commands)
+[![Tests](https://img.shields.io/badge/tests-697%20passing-success)](#%EF%B8%8F-development-commands)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 [中文](README.md) | **English**
@@ -19,6 +19,9 @@ For sensitive cases, prefer a local model or private model gateway, keep `memory
 
 ## 📢 News
 
+- **2026-05-12** · `0.2.2` development update completed the case document generation path, let knowledge ingest close with `/完成上传` while skipping duplicates, enriched labor workbench party and evidence context, and adapted OpenCode question replies to the newer endpoint
+- **2026-05-12** · `0.2.1` development update refined invoice batch intake, invoice/Base date display, compact case-todo cards, and permission-card resolution updates
+- **2026-05-09** · `0.2.0` promoted the project to the case-workbench milestone with typed knowledge entries, statute recall, designer-card cleanup, and labor-review checkpoints
 - **2026-05-06** · `0.1.60` development update added Legal Harness card templates, the labor final-review chain, template action blocks, and clarified batch case/invoice skill boundaries; verification baseline is now 72 test files / 622 tests
 - **2026-05-05** · `0.1.59` development update added the labor Legal Harness, PKULaw authority-search confirmation, recent-material knowledge ingestion, Obsidian export strategy, and refreshed the verification baseline to 71 test files / 596 tests
 - **2026-05-04** · `0.1.58` development update restored uploaded images as OpenCode `image_url` prompt parts while keeping local turn-file paths and extracted previews as fallbacks
@@ -49,7 +52,7 @@ For sensitive cases, prefer a local model or private model gateway, keep `memory
 - **Permission confirmation**: OpenCode permission requests use `/allow` and `/deny` text commands as the stable path; button callbacks remain a paused follow-up line
 - **Group collaboration**: whitelist binding keeps group collaboration usable without repeated `@bot` mentions
 - **Knowledge base**: legal knowledge search, batch file ingestion, URL ingestion, unified document parsing, and local CLI diagnostics
-- **Contract assistant**: contract drafting, case create/update flows, todos, and reminder management
+- **Contract assistant**: contract drafting, case create/update flows, invoice recognition, and case todos
 - **Labor analysis**: collect labor dispute materials and produce structured analysis output
 - **Long-term memory**: optional memory extraction, retrieval, SQLite / FTS5 storage, and Obsidian sync
 - **Startup diagnostics**: preflight checks config, Feishu, OpenCode, providers, and callback settings before startup
@@ -182,8 +185,8 @@ flowchart TB
 
 | Contract Assistant | Labor Analysis | Long-Term Memory | Startup Diagnostics |
 | :-- | :-- | :-- | :-- |
-| From contract drafting to case tracking, todos and reminders can be pushed by schedule | Collect salary, attendance, and agreement materials, then produce analysis and workbench materials | Retrieve by conversation or topic, with optional Obsidian sync | Check Feishu, OpenCode, and callbacks before runtime starts, and fail loudly when something is missing |
-| Drafting · cases · todos · reminders | Materials · timeline · ledger | SQLite + FTS5 + Obsidian | `npm run doctor` |
+| From contract drafting to case tracking, todos can be reviewed from the case ledger | Collect salary, attendance, and agreement materials, then produce analysis and workbench materials | Retrieve by conversation or topic, with optional Obsidian sync | Check Feishu, OpenCode, and callbacks before runtime starts, and fail loudly when something is missing |
+| Drafting · cases · invoices · todos | Materials · timeline · ledger | SQLite + FTS5 + Obsidian | `npm run doctor` |
 
 > Screenshots and GIFs are still being added. For now, run `npm run dev` and send the example commands in Feishu to reproduce the card experience.
 
@@ -290,8 +293,6 @@ Quick reference:
 - `/案件录入 <case info>`
 - `/案件更新 <update>`
 - `/案件待办`
-- `/案件提醒`
-- `/添加案件提醒 <reminder>`
 
 ### Labor Analysis
 
@@ -326,7 +327,7 @@ Use [config.example.json](config.example.json) as the template. Main config sect
 | `bridge` | Queueing, session mode, timeout, and system state injection |
 | `memory` | Long-term memory switches, storage, and sync settings |
 | `extensions["knowledge-base"]` | Knowledge base switches, ingestion, retrieval, unified document parsing, local DB, and Bitable settings |
-| `extensions["contract-assistant"]` | Contract, case, invoice, and reminder capabilities |
+| `extensions["contract-assistant"]` | Contract, case, invoice, and case-todo capabilities |
 | `extensions["labor-skill"]` | Labor analysis material collection and output settings |
 | `extensions["<external-extension>"]` | External extension-owned config blocks normalized by configDefinition declarations from extension meta |
 
@@ -349,7 +350,7 @@ npm run dev
 npm run dev:once
 ```
 
-Current full verification baseline: **72 test files · 622 tests passing**
+Current full verification baseline: **78 test files · 697 tests passing**
 
 ## 📂 Project Layout
 
@@ -364,7 +365,7 @@ src/
   http/                # healthz and card action callback server
   runtime/             # BridgeApp, command handler, turn executor, short-term message context, preflight
   knowledge/           # legal knowledge base, parser, local CLI, SQLite mirror
-  contract-assistant/  # contract drafting, case updates, reminders
+  contract-assistant/  # contract drafting, case updates, case todos
   labor/               # labor dispute material collection and analysis
   memory/              # long-term memory, retrievers, embeddings, Obsidian sync
   opencode/            # OpenCode client and event stream

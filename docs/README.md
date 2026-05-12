@@ -18,13 +18,17 @@
 - [架构基线](architecture-baseline.md)：freeze 之后的运行时边界、data-only extension meta / runtime extension seam 和 reviewer 规则。
 - [部署说明](deploy.md)：本地与服务器部署、环境变量、Caddy、健康检查和验收步骤。
 - [飞书卡片回调排障记录](troubleshooting-card-actions.md)：记录 quick tunnel、端口残留和“返回数据不是合法 JSON”的排查路径。
+- [数据流向与隐私说明](privacy-and-data-flow.md)：真实案件材料进入 Bridge 前的本地存储、外发路径和推荐配置。
 - [飞书 Markdown 输出规范](feishu-markdown.md)：面向飞书输出的 Markdown 规则与长文本排版约束。
+- [飞书卡片规范](cards/spec.md)：用户侧卡片 active / retired 状态和卡片准入规则。
 - [可观测性事件规范](observability/event-schema.md)：运行时可观测性的稳定事件名与日志字段。
 
 ## 规范
 
 - [新功能自检清单](guidelines/new-feature-checklist.md)：framework freeze 之后功能 PR 的自检清单。
 - [内置业务扩展开发规范](guidelines/business-extension-development.md)：新增内置业务扩展时的目录、manifest、命令、配置和禁止事项。
+- [本地卫生清理指南](guidelines/local-hygiene.md)：开发工作区中可再生成内容、运行态文件和用户数据的清理边界。
+- [小敬人格规范](guidelines/persona-xiaojing.md)：飞书律助对话端的人格、语气、边界与拒绝策略。
 
 ## 模块
 
@@ -54,6 +58,7 @@
 
 - `AGENTS.md`：项目/运行时契约，不放 Codex 工作流细节。
 - `CODEX.md`：Codex 开发执行准则、issue/PR/release 流程、常用命令和检查清单。
+- `AGENTS-dev.md`：从旧版 `AGENTS.md` 拆出的历史开发规范，当前作为维护背景保留；新增开发执行规则优先写入 `CODEX.md`。
 - `docs/architecture-baseline.md`：补充 `AGENTS.md` 中架构 guardrails 背后的完整契约。
 - `docs/guidelines/new-feature-checklist.md`：补充新功能规则的完整清单。
 - `docs/modules/*`：模块背景和设计说明，细节程度高于 `AGENTS.md`。

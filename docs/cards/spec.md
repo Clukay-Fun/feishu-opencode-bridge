@@ -121,9 +121,11 @@ npm run cards:preview
 | `buildInvoiceRecognizeProgressPayload` | 发票识别 | blue | 发票字段识别进度，支持多文件展示字段 |
 | `buildInvoiceRecognizeCompletedPayload` | 发票识别完成 | green | 发票字段识别结果 |
 | `buildCaseWorkbenchPayload` | 案件工作台已开启 | blue | 案件工作台入口卡 |
+| `buildCaseTodoReminderPayload` | 案件提醒 | blue | `/案件待办` 查询结果，复用今日待办设计器模板展示案件节点和待办 |
 
 **停用说明**：
-- 提醒卡片与提醒入口本期完全停用，不保留用户侧卡片 fallback。
+- 旧通用提醒入口本期停用，不保留用户侧卡片 fallback。
+- 案件待办查询仍是 active 能力；卡片标题使用“案件提醒”，但入口只保留 `/案件待办`。
 
 ---
 
@@ -167,6 +169,10 @@ Harness 卡片不再作为用户侧独立卡片展示，仅用于离线回归脚
 - `HarnessAuthorityCoverageCardView`
 - `HarnessFindingsCardView`
 - `HarnessResultGroupCardView`
+
+### 旧通用提醒入口
+- `/案件提醒`
+- `/添加案件提醒`
 
 ---
 

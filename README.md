@@ -406,7 +406,7 @@ npm run ext:pack -- ./my-extension
 | `bridge`            | 队列、会话模式、超时和系统状态注入                                                           |
 | `memory`            | 长期记忆开关、存储和同步设置                                                                 |
 | `extensions["knowledge-base"]`       | 知识库开关、入库、检索、统一文档解析、本地数据库和多维表格配置                               |
-| `extensions["contract-assistant"]`   | 合同、案件、发票和提醒能力配置                                                               |
+| `extensions["contract-assistant"]`   | 合同、案件、发票和案件待办能力配置                                                           |
 | `extensions["labor-skill"]`          | 劳动分析材料收集和输出配置                                                                   |
 | `extensions["<external-extension>"]` | 外部扩展自有配置块，由扩展 meta 声明的 configDefinition 归一化                              |
 
@@ -429,7 +429,7 @@ npm run dev
 npm run dev:once
 ```
 
-当前完整验证基线：**72 test files · 622 tests passing**
+当前完整验证基线：**78 test files · 697 tests passing**
 
 ## 📂 项目目录
 
@@ -444,7 +444,7 @@ src/
   http/                # healthz 与卡片回调服务
   runtime/             # BridgeApp、命令处理、turn 执行、短期消息上下文、启动前检查
   knowledge/           # 法律知识库、解析器、本地 CLI、SQLite 镜像
-  contract-assistant/  # 合同起草、案件更新、提醒
+  contract-assistant/  # 合同起草、案件更新、案件待办
   labor/               # 劳动争议材料收集与分析
   memory/              # 长期记忆、检索器、embedding、Obsidian 同步
   opencode/            # OpenCode 客户端与事件流
