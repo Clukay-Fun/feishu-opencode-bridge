@@ -32,18 +32,27 @@ describe("events", () => {
     const fetch = vi.fn().mockResolvedValue(new Response(createSseBody([
       'data: {"type":"server.connected","properties":{}}',
       'data: {"type":"message.part.delta","properties":{"sessionID":"ses_1","field":"text","delta":"Hi"}}',
+      'data: {"type":"file.watcher.updated","properties":{"file":"README.md","event":"change"}}',
     ]), { status: 200 }));
     vi.stubGlobal("fetch", fetch);
 
     const events: string[] = [];
-    const stream = new OpenCodeEventStream(new URL("http://127.0.0.1:4096/"), { log() {} });
+    const logger = { log: vi.fn() };
+    const stream = new OpenCodeEventStream(new URL("http://127.0.0.1:4096/"), logger);
     stream.subscribe(async (event) => {
       events.push(`${event.streamEndpoint}:${event.type}:${event.sessionId ?? "-"}`);
     });
 
     await stream.start();
     await vi.waitFor(() => expect(events).toContain("/event:message.part.delta:ses_1"));
+    await vi.waitFor(() => expect(events).toContain("/event:file.watcher.updated:-"));
     await stream.stop();
+    expect(logger.log).not.toHaveBeenCalledWith(
+      "opencode/events",
+      "unknown event type received",
+      expect.objectContaining({ type: "file.watcher.updated" }),
+      "warn",
+    );
   });
 
   it("falls back to /global/event and unwraps payload", async () => {

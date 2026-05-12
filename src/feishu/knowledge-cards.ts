@@ -207,7 +207,7 @@ export function buildKnowledgeIngestReadyPayload(allowedExtensions: readonly str
           { tag: "hr", margin: "0px 0px 0px 0px" },
           {
             tag: "markdown",
-            content: "> 发送 `知识入库完成` 结束本次任务",
+            content: "> 发送 `/完成上传` 或 `/知识入库完成` 结束本次任务",
             text_align: "left",
             text_size: "notation",
             margin: "0px 0px 0px 0px",

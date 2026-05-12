@@ -27,7 +27,7 @@ const LABOR_LAW_ARTICLE_WHITELIST: Record<string, Set<string>> = {
   中华人民共和国社会保险法: new Set(["58", "60", "63", "84", "86"]),
 };
 
-/** 抽取文本中的法条引用并标记白名单命中情况。 */
+/** 抽取文本中的法条引用并标记是否属于劳动争议常用法规范围。 */
 export function checkLaborLegalCitations(text: string): LegalCitationCheck[] {
   const checks: LegalCitationCheck[] = [];
   const seen = new Set<string>();
@@ -57,8 +57,8 @@ export function formatCitationReviewText(checks: LegalCitationCheck[]): string[]
     return ["未识别到明确法条引用；正式提交前仍需律师补核法律依据。"];
   }
   return checks.map((check) => check.allowed
-    ? `${check.citation}：白名单命中`
-    : `${check.citation}：需人工复核`);
+    ? `${check.citation}：属于劳动争议常用法条范围，仍需结合案件事实复核适用条件。`
+    : `${check.citation}：不在当前劳动争议常用法条范围内，需人工确认是否适用。`);
 }
 
 function normalizeArticleNumber(value: string): string {

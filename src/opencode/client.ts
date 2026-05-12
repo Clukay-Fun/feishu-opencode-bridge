@@ -230,9 +230,9 @@ export class OpenCodeClient {
 
   /** 回答模型提出的问题。 */
   async replyQuestion(requestId: string, answers: string[]): Promise<void> {
-    await this.request(`/question/${encodeURIComponent(requestId)}`, {
+    await this.request(`/question/${encodeURIComponent(requestId)}/reply`, {
       method: "POST",
-      body: { answers },
+      body: { answers: answers.map((answer) => [answer]) },
     });
   }
 
@@ -287,7 +287,7 @@ export class OpenCodeClient {
       throw new OpenCodeRequestError(
         response.status,
         response.statusText,
-        body.trim().slice(0, 1_000),
+        summarizeOpenCodeResponseBody(body),
       );
     }
   }
@@ -298,8 +298,23 @@ async function buildOpenCodeRequestError(response: Response): Promise<OpenCodeRe
   return new OpenCodeRequestError(
     response.status,
     response.statusText,
-    body.trim() ? body.trim().slice(0, 1_000) : undefined,
+    summarizeOpenCodeResponseBody(body),
   );
+}
+
+function summarizeOpenCodeResponseBody(body: string): string | undefined {
+  const trimmed = body.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (looksLikeOpenCodeHtml(trimmed)) {
+    return "OpenCode 返回了前端页面而不是 API JSON。请检查接口路径或 opencode.baseUrl 是否指向 OpenCode server。";
+  }
+  return trimmed.slice(0, 1_000);
+}
+
+function looksLikeOpenCodeHtml(value: string): boolean {
+  return /^<!doctype html/i.test(value) || /<html[\s>]/i.test(value);
 }
 
 export function createOpenCodeHeaders(initialHeaders?: Record<string, string>): Record<string, string> {

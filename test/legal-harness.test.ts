@@ -9,7 +9,7 @@ import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { checkLaborLegalCitations } from "../src/labor/legal-citation.js";
+import { checkLaborLegalCitations, formatCitationReviewText } from "../src/labor/legal-citation.js";
 import { buildKnowledgeObsidianMarkdown, exportKnowledgeObsidianNote } from "../src/knowledge/obsidian-export.js";
 import {
   buildKnowledgeSearchStrategyDraft,
@@ -33,6 +33,13 @@ describe("legal harness helpers", () => {
       allowed: true,
       article: "47",
     }));
+  });
+
+  it("formats citation review text without internal whitelist wording", () => {
+    const lines = formatCitationReviewText(checkLaborLegalCitations("依据《社会保险法》第五十八条处理。"));
+
+    expect(lines[0]).toContain("属于劳动争议常用法条范围");
+    expect(lines[0]).not.toContain("白名单命中");
   });
 
   it("builds Obsidian markdown with frontmatter and wiki links", () => {

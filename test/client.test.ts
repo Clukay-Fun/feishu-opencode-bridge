@@ -62,6 +62,40 @@ describe("OpenCodeClient", () => {
     expect(init.body).toBe(JSON.stringify({ response: "always", remember: true }));
   });
 
+  it("uses the documented question reply path and nested answer payload", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response("true", { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+    const client = new OpenCodeClient(new URL("http://127.0.0.1:4096/"));
+
+    await client.replyQuestion("que_7", ["answer"]);
+
+    const [url, init] = fetch.mock.calls[0] as [URL, RequestInit];
+    expect(String(url)).toBe("http://127.0.0.1:4096/question/que_7/reply");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ answers: [["answer"]] }));
+  });
+
+  it("summarizes html responses instead of surfacing the OpenCode web page", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response("<!doctype html><html><head><title>OpenCode</title></head></html>", {
+      status: 200,
+      statusText: "OK",
+      headers: { "content-type": "text/html" },
+    }));
+    vi.stubGlobal("fetch", fetch);
+    const client = new OpenCodeClient(new URL("http://127.0.0.1:4096/"));
+
+    let thrown: unknown;
+    try {
+      await client.replyQuestion("que_7", ["answer"]);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toContain("OpenCode 返回了前端页面");
+    expect((thrown as Error).message).not.toContain("<!doctype html>");
+  });
+
   it("returns false when permission reply is no longer accepted by OpenCode", async () => {
     for (const status of [404, 409, 410]) {
       const fetch = vi.fn().mockResolvedValue(new Response("expired", { status }));

@@ -634,14 +634,15 @@ function groupLaborReviewFindings(view: LaborReviewCompletedCardView): {
     low: [] as string[],
   };
   for (const finding of view.findings ?? []) {
-    groups[finding.severity].push(finding.message);
+    const message = finding.message.trim() || "该项需要人工复核。";
+    groups[finding.severity].push(message);
   }
   return groups;
 }
 
 function formatFindingLine(findings: readonly string[], fallback?: string): string {
   if (findings.length > 0) {
-    return findings.slice(0, 2).join("\n> ");
+    return findings.slice(0, 3).map((item, index) => `${index + 1}. ${item}`).join("\n\n");
   }
   return fallback ?? "未发现该等级问题";
 }
