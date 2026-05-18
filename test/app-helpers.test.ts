@@ -42,6 +42,9 @@ describe("runtime prompt helpers", () => {
     expect(prompt).toContain("activeSessionId: ses_2");
     expect(prompt).toContain("* 当前会话 (ses_2)");
     expect(prompt).toContain("Bridge owns /new /sessions /switch /status");
+    expect(prompt).toContain("prefer the project's Feishu knowledge base and Bitable records");
+    expect(prompt).toContain("prefer existing bridge or lark-cli capabilities over chat-only Markdown");
+    expect(prompt).toContain("write, overwrite, delete, or batch-update operations must ask for confirmation");
   });
 
   it("keeps local labels until they are still raw session ids", () => {

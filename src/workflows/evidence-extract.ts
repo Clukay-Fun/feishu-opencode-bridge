@@ -221,11 +221,12 @@ async function readLocalEvidenceFile(file: LocalEvidenceFileRef): Promise<{
 function buildPromptRequest(prompt: string, preparedFile: PreparedEvidenceFile, model?: OpenCodeModelRef): OpenCodePromptRequest {
   const parts: OpenCodePromptRequest["parts"] = [{ type: "text", text: prompt }];
   if (isImageMimeType(preparedFile.mimeType) || isImageExtension(preparedFile.extension)) {
+    const mime = preparedFile.mimeType || extensionToMimeType(preparedFile.extension);
     parts.push({
-      type: "image_url",
-      image_url: {
-        url: `data:${preparedFile.mimeType || extensionToMimeType(preparedFile.extension)};base64,${preparedFile.buffer.toString("base64")}`,
-      },
+      type: "file",
+      mime,
+      filename: preparedFile.fileName,
+      url: `data:${mime};base64,${preparedFile.buffer.toString("base64")}`,
     });
   }
   return model

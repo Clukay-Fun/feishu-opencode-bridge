@@ -618,13 +618,8 @@ function parseTextMessage(rawContent: string, mentions: NormalizedMention[], bot
 function parsePostMessage(rawContent: string, mentions: NormalizedMention[], botOpenIds: Set<string>, botMentionNames: Set<string>): TextParseResult {
   try {
     const parsed = JSON.parse(rawContent) as Record<string, unknown>;
-    const localeKey = Object.keys(parsed).find((key) => isRecord(parsed[key]));
-    if (!localeKey) {
-      return { plainText: "", hasAnyMention: false, hasExactBotMention: false };
-    }
-
-    const localePayload = parsed[localeKey];
-    if (!isRecord(localePayload)) {
+    const localePayload = resolvePostPayload(parsed);
+    if (!localePayload) {
       return { plainText: "", hasAnyMention: false, hasExactBotMention: false };
     }
 
@@ -674,6 +669,20 @@ function parsePostMessage(rawContent: string, mentions: NormalizedMention[], bot
   } catch {
     return { plainText: "", hasAnyMention: false, hasExactBotMention: false };
   }
+}
+
+function resolvePostPayload(parsed: Record<string, unknown>): Record<string, unknown> | null {
+  if (Array.isArray(parsed.content)) {
+    return parsed;
+  }
+
+  const localeKey = Object.keys(parsed).find((key) => isRecord(parsed[key]) && Array.isArray((parsed[key] as Record<string, unknown>).content));
+  if (!localeKey) {
+    return null;
+  }
+
+  const localePayload = parsed[localeKey];
+  return isRecord(localePayload) ? localePayload : null;
 }
 
 function extractPostElementText(value: unknown, seen = new Set<unknown>()): string {

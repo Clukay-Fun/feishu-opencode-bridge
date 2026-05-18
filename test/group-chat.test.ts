@@ -388,6 +388,37 @@ describe("group chat support", () => {
     });
   });
 
+  it("parses direct rich text post payloads without locale wrappers", () => {
+    const rawContent = {
+      title: "",
+      content: [
+        [
+          { tag: "text", text: "请看这个链接：" },
+          { tag: "a", text: "劳动合同", href: "https://example.com/labor" },
+        ],
+        [
+          { tag: "text", text: "第二行说明" },
+        ],
+      ],
+    };
+    const normalized = normalizeIncomingMessage({
+      message: {
+        chat_id: "oc_p2p_post",
+        chat_type: "p2p",
+        message_id: "om_post_direct",
+        message_type: "post",
+        content: JSON.stringify(rawContent),
+      },
+      sender: {
+        sender_id: {
+          open_id: "ou_123",
+        },
+      },
+    }, makeOptions());
+
+    expect(normalized?.plainText).toBe("请看这个链接：劳动合同\n第二行说明");
+  });
+
   it("preserves markdown-like post input from rich text nodes", () => {
     const content = {
       zh_cn: {

@@ -1772,10 +1772,10 @@ function buildUploadedResourcePromptParts(
     return undefined;
   }
   return [{
-    type: "image_url",
-    image_url: {
-      url: `data:${imageMimeType};base64,${buffer.toString("base64")}`,
-    },
+    type: "file",
+    mime: imageMimeType,
+    filename: fileName,
+    url: `data:${imageMimeType};base64,${buffer.toString("base64")}`,
   }];
 }
 

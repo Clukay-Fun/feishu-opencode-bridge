@@ -546,7 +546,7 @@ describe("knowledge base bridge flow", () => {
     await expect(readFile(localPath!, "utf8")).rejects.toThrow();
   });
 
-  it("sends uploaded images to OpenCode as image parts for immediate recognition", async () => {
+  it("sends uploaded images to OpenCode as file parts for immediate recognition", async () => {
     const outbound = {
       ...createOutbound(),
       downloadMessageResource: vi.fn(async () => ({
@@ -580,7 +580,14 @@ describe("knowledge base bridge flow", () => {
     const promptText = request?.parts.map((part) => part.text ?? "").join("\n") ?? "";
     expect(promptText).toContain("请直接识别并总结这个图片的内容");
     expect(promptText).toContain("文件名：img_v3_abc123.png");
-    expect(request?.parts.some((part) => part.type === "image_url")).toBe(true);
+    const imagePart = request?.parts.find((part) => part.type === "file");
+    expect(imagePart).toMatchObject({
+      type: "file",
+      mime: "image/png",
+      filename: "img_v3_abc123.png",
+    });
+    expect(String(imagePart?.url)).toMatch(/^data:image\/png;base64,/);
+    expect(request?.parts.some((part) => part.type === "image_url")).toBe(false);
   });
 
   it("cleans temporary regular-file resources even when the turn fails", async () => {

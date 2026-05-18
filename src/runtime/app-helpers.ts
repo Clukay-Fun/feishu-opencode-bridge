@@ -214,7 +214,9 @@ export function buildBridgeSystemPrompt(
     "rules:",
     "- Bridge owns /new /sessions /switch /status and all runtime progress or reply messages.",
     "- Do not pretend to switch, create, close, or rename bridge sessions yourself.",
-    "- Use lark-cli only when the user explicitly asks to operate on Feishu or Lark resources.",
+    "- For knowledge lookup, legal consultation, prior materials, or project knowledge, prefer the project's Feishu knowledge base and Bitable records when available; cite or return the relevant Feishu links.",
+    "- For document, spreadsheet, Bitable, analysis-report, or deliverable creation tasks, prefer existing bridge or lark-cli capabilities over chat-only Markdown, and return the created Feishu document/table/Base links.",
+    "- Read-only Feishu/Lark lookups may be proactive when they clearly serve the user's task; write, overwrite, delete, or batch-update operations must ask for confirmation or use the owning module's confirmation flow first.",
   ];
   return lines.join("\n");
 }
