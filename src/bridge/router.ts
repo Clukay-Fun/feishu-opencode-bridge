@@ -17,7 +17,7 @@ export type RoutedText =
       | { kind: "models"; provider?: string | undefined }
       | { kind: "model-use"; model: string }
       | { kind: "model-reset" }
-      | { kind: "guide" }
+      | { kind: "help" }
       | { kind: "button-test" }
       | { kind: "knowledge-query"; question: string; explicit?: boolean | undefined }
       | { kind: "knowledge-ingest" }
@@ -31,7 +31,6 @@ export type RoutedText =
       | { kind: "delete"; index?: number | undefined; sessionId?: string | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined; confirm: boolean }
       | { kind: "allow"; policy: "once" | "always" }
       | { kind: "deny" }
-      | { kind: "help-file" }
       | { kind: "passthrough"; name: string; arguments: string[] };
   }
   | { kind: "message"; text: string };
@@ -92,8 +91,20 @@ export function routeIncomingText(text: string): RoutedText {
     return { kind: "command", command: { kind: "model-reset" } };
   }
 
-  if (rawCommand === "guide" && args.length === 0) {
-    return { kind: "command", command: { kind: "guide" } };
+  if (["允许一次", "仅此一次"].includes(rawCommand) && args.length === 0) {
+    return { kind: "command", command: { kind: "allow", policy: "once" } };
+  }
+
+  if (["始终允许", "总是允许"].includes(rawCommand) && args.length === 0) {
+    return { kind: "command", command: { kind: "allow", policy: "always" } };
+  }
+
+  if (rawCommand === "拒绝" && args.length === 0) {
+    return { kind: "command", command: { kind: "deny" } };
+  }
+
+  if (["help", "commands", "指令", "帮助"].includes(rawCommand) && args.length === 0) {
+    return { kind: "command", command: { kind: "help" } };
   }
 
   if ((rawCommand === "button-test" || rawCommand === "callback-test") && args.length === 0) {
@@ -277,10 +288,6 @@ export function routeIncomingText(text: string): RoutedText {
 
   if (rawCommand === "deny" && args.length === 0) {
     return { kind: "command", command: { kind: "deny" } };
-  }
-
-  if (rawCommand === "help-file" && args.length === 0) {
-    return { kind: "command", command: { kind: "help-file" } };
   }
 
   return {

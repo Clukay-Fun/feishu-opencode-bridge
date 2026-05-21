@@ -253,7 +253,7 @@ Feishu Transport
 - 把入站消息路由到 command、pending interaction、module chain 或默认 turn flow
 - 维护通用 `file-await-instruction` 挂起状态，并在兜底处理前按模块顺序询问是否接管
 - 对未被模块接管的普通文件或图片上传，core 可以直接创建默认识别 turn；文件统一保存到本地 turn 级临时路径，图片在兼容路径中同时附带 `image_url` part 供多模态模型直接识别
-- 管理 bridge 命令面，例如 `/new`、`/sessions`、`/status`、`/close`、`/delete`、`/guide`、`/cost`
+- 管理 bridge 命令面，例如 `/new`、`/sessions`、`/status`、`/close`、`/delete`、`/help`、`/cost`
 - 管理 queueing、turn execution、watchdog、process-card 生命周期和 final reply 投递
 - 管理 session-window 状态、interaction mode 状态，以及窗口级模型 override
 - 使用 observability event schema 输出 turn、permission、cost usage 和 module 生命周期事件

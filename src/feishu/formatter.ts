@@ -37,14 +37,12 @@ export {
 
 //#region Runtime cards
 export {
-  buildGuideCardPayload,
   buildModelListCardPayload,
   buildPermissionRequestCardPayload,
   buildSessionListCardPayload,
   buildSessionTransitionCardPayload,
   buildStatusCommandCardPayload,
   buildTurnStatusCardPayload,
-  type GuideCardView,
   type ModelListCardView,
   type PermissionActionButton,
   type PermissionRequestCardView,

@@ -136,7 +136,7 @@ export async function maybePrintGuidePrompt(options) {
     return false;
   }
   options.logger.log("");
-  options.logger.log("新手提示：Bridge 启动后，回到飞书发送 /guide 查看 60 秒新手引导。");
+  options.logger.log("新手提示：Bridge 启动后，回到飞书发送 /help 查看指令总览。");
   options.logger.log("如果不确定下一步，终端运行 bridge guide。");
   await markGuidePromptShown(statePath);
   return true;

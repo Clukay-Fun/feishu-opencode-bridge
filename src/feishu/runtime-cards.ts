@@ -99,10 +99,6 @@ export type ModelListCardView = {
   footer: string;
 };
 
-export type GuideCardView = {
-  windowLabel: string;
-};
-
 export type PermissionActionButton = {
   label: string;
   type: "default" | "primary" | "danger";
@@ -423,24 +419,6 @@ function resolvePermissionDesignerButtonLabel(label: string): string {
   return label;
 }
 
-/** 构建 `/guide` 新手引导卡。 */
-export function buildGuideCardPayload(view: GuideCardView): FeishuPostPayload {
-  void view;
-  return buildInteractivePayload({
-    title: "快速上手",
-    template: "blue",
-    iconToken: "compass_outlined",
-    bodyElements: [
-      buildGuideStepBlock("1", "上传样例材料", "先使用样例材料验证流程，再处理真实案件。"),
-      buildGuideStepBlock("2", "启动案件工作台", "发送 `/案件工作台`，上传材料后发送 `/完成上传`。"),
-      buildGuideStepBlock("3", "查看分析输出", "重点核对争议焦点、请求权基础、证据缺口、策略和文书草稿摘要。"),
-      buildGuideStepBlock("4", "核对二审状态", "完成卡会显示法条引用校验、建议修改或需人工复核状态。"),
-      buildDivider(),
-      buildGuideCommandTagsBlock(),
-    ],
-  });
-}
-
 /** 构建按钮回调真机验收卡。 */
 export function buildButtonCallbackTestCardPayload(view: ButtonCallbackTestCardView): FeishuPostPayload {
   return buildInteractivePayload({
@@ -514,28 +492,6 @@ function buildTurnBodyElements(
   elements.push(buildDivider());
   elements.push(buildFooter(view.sessionId, view.durationText));
   return elements;
-}
-
-function buildGuideStepBlock(index: string, title: string, detail: string): Record<string, unknown> {
-  return columnSet([
-    column([
-      markdown(`**${index}. ${escapeText(title)}**\n${detail}`, {
-        icon: { token: "send_outlined", color: "green" },
-      }),
-    ], { bg: "grey-50", weight: 1 }),
-  ]);
-}
-
-function buildGuideCommandTagsBlock(): Record<string, unknown> {
-  return {
-    ...columnSet([
-      buildStatusChip("/new", "grey-50"),
-      buildStatusChip("/sessions", "grey-50"),
-      buildStatusChip("/models", "grey-50"),
-      buildStatusChip("/cost", "grey-50"),
-    ]),
-    flex_mode: "flow",
-  };
 }
 
 function buildButtonCallbackTestActionBlock(view: ButtonCallbackTestCardView): Record<string, unknown> {

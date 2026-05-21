@@ -45,7 +45,7 @@
   - 只诊断，不自动改配置或创建远端资源
 - `bridge guide`
   - 输出缺配置、缺 workspace、doctor 未通过或已就绪等阶段化下一步
-  - 与飞书 `/guide` 卡片配合，帮助新用户跑通 Hero 路线
+  - 与飞书 `/help` 指令配合，帮助新用户跑通 Hero 路线
 - `bridge backup`
   - 将用户数据目录中的 `config.json`、`data/`、`logs/`、`extensions/` 等打包为 zip
 - `bridge restore <zip> [--force]`

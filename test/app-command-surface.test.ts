@@ -48,7 +48,7 @@ describe("BridgeApp command surface", () => {
     expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("当前没有正在执行的任务");
   });
 
-  it("returns a core-owned guide card without creating an OpenCode session", async () => {
+  it("returns a complete command help message without creating an OpenCode session", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
     const ensureSession = vi.fn();
@@ -56,14 +56,17 @@ describe("BridgeApp command surface", () => {
 
     await callHandleCommand(app, {
       kind: "command",
-      command: { kind: "guide" },
+      command: { kind: "help" },
     });
 
     expect(ensureSession).not.toHaveBeenCalled();
-    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("快速上手");
-    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("上传样例材料");
-    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("/案件工作台");
-    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("/完成上传");
+    const helpText = extractMarkdown(getReplyPayloads(outbound)[0]);
+    expect(helpText).toContain("Bridge 指令总览");
+    expect(helpText).toContain("/commands");
+    expect(helpText).toContain("/sessions all <关键词>");
+    expect(helpText).toContain("/法律问答 <问题>");
+    expect(helpText).toContain("/案件工作台");
+    expect(helpText).toContain("/完成上传");
   });
 
   it("returns a callback demo card without creating an OpenCode session", async () => {
@@ -1603,7 +1606,7 @@ type AppCommandSurfaceTestRoute = {
     | { kind: "new"; title?: string | undefined }
     | { kind: "rename"; title: string }
     | { kind: "abort" }
-    | { kind: "guide" }
+    | { kind: "help" }
     | { kind: "button-test" }
     | { kind: "models"; provider?: string | undefined }
     | { kind: "model-use"; model: string }

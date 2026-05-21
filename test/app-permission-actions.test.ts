@@ -299,6 +299,32 @@ describe("BridgeApp permission card actions", () => {
     expect(replyPermission).toHaveBeenCalledWith(interaction.sessionId, interaction.permissionId, "reject", false);
     expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("拒绝执行");
   });
+
+  it("accepts explicit natural text permission fallback when card buttons are unavailable", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const replyPermission = vi.fn(async () => true);
+    (app as unknown as { opencode: { replyPermission: typeof replyPermission } }).opencode = { replyPermission };
+
+    const interaction = seedPermission(app);
+    await app.handleIncomingMessage(createPermissionTextMessage("允许一次"));
+
+    expect(replyPermission).toHaveBeenCalledWith(interaction.sessionId, interaction.permissionId, "once", false);
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("授权成功，已执行");
+  });
+
+  it("rejects explicit natural text permission fallback from non-requesters", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const replyPermission = vi.fn(async () => true);
+    (app as unknown as { opencode: { replyPermission: typeof replyPermission } }).opencode = { replyPermission };
+
+    seedPermission(app);
+    await app.handleIncomingMessage(createPermissionTextMessage("拒绝", { senderOpenId: "ou_other" }));
+
+    expect(replyPermission).not.toHaveBeenCalled();
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("仅限本轮发起者处理");
+  });
 });
 
 function seedPermission(
@@ -473,6 +499,26 @@ async function runCommand(
     threadKey: "om_text_1",
     senderOpenId: "ou_requester",
   }, routed);
+}
+
+function createPermissionTextMessage(
+  plainText: string,
+  overrides: Partial<{
+    senderOpenId: string;
+    messageId: string;
+  }> = {},
+) {
+  return {
+    chatId: "oc_chat_1",
+    chatType: "p2p" as const,
+    senderOpenId: overrides.senderOpenId ?? "ou_requester",
+    messageId: overrides.messageId ?? "om_text_1",
+    messageType: "text" as const,
+    rawContent: plainText,
+    plainText,
+    threadKey: overrides.messageId ?? "om_text_1",
+    conversationKey: "oc_chat_1",
+  };
 }
 
 type PermissionTextCommandRoute =

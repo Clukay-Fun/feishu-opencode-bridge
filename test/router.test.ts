@@ -24,9 +24,17 @@ describe("routeIncomingText", () => {
       kind: "command",
       command: { kind: "rename", title: "合同起草" },
     });
-    expect(routeIncomingText("/guide")).toEqual({
+    expect(routeIncomingText("/help")).toEqual({
       kind: "command",
-      command: { kind: "guide" },
+      command: { kind: "help" },
+    });
+    expect(routeIncomingText("/commands")).toEqual({
+      kind: "command",
+      command: { kind: "help" },
+    });
+    expect(routeIncomingText("/指令")).toEqual({
+      kind: "command",
+      command: { kind: "help" },
     });
     expect(routeIncomingText("/button-test")).toEqual({
       kind: "command",
@@ -138,7 +146,19 @@ describe("routeIncomingText", () => {
       kind: "command",
       command: { kind: "allow", policy: "once" },
     });
+    expect(routeIncomingText("/允许一次")).toEqual({
+      kind: "command",
+      command: { kind: "allow", policy: "once" },
+    });
+    expect(routeIncomingText("/始终允许")).toEqual({
+      kind: "command",
+      command: { kind: "allow", policy: "always" },
+    });
     expect(routeIncomingText("/deny")).toEqual({
+      kind: "command",
+      command: { kind: "deny" },
+    });
+    expect(routeIncomingText("/拒绝")).toEqual({
       kind: "command",
       command: { kind: "deny" },
     });
@@ -152,6 +172,14 @@ describe("routeIncomingText", () => {
     expect(routeIncomingText("/leave")).toEqual({
       kind: "command",
       command: { kind: "passthrough", name: "leave", arguments: [] },
+    });
+    expect(routeIncomingText("/guide")).toEqual({
+      kind: "command",
+      command: { kind: "passthrough", name: "guide", arguments: [] },
+    });
+    expect(routeIncomingText("/help-file")).toEqual({
+      kind: "command",
+      command: { kind: "passthrough", name: "help-file", arguments: [] },
     });
   });
 

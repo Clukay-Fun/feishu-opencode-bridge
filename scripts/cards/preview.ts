@@ -40,7 +40,6 @@ import {
 import {
   buildButtonCallbackTestCardPayload,
   buildCostCommandCardPayload,
-  buildGuideCardPayload,
   buildModelListCardPayload,
   buildPermissionRequestCardPayload,
   buildSessionListCardPayload,
@@ -251,7 +250,6 @@ function createPreviewCards(): PreviewCard[] {
     card("运行时", "会话列表", ["sessions"], buildSessionListCardPayload({ items: [{ index: 1, title: "劳动争议案件分析", current: true, meta: "当前", shortId: "abc123456789" }, { index: 2, title: "合同起草", meta: "2 分钟前", shortId: "def987654321" }, { index: 3, title: "知识库入库", archived: true, meta: "已归档", shortId: "ghi456789012" }], footer: "发送 `/switch <编号>` 切换 · 3 分钟内有效" })),
     card("运行时", "会话切换", ["switch"], buildSessionTransitionCardPayload({ title: "已切换会话", iconToken: "chat_filled", previousLabel: "上一会话", previousTitle: "合同起草", currentLabel: "当前会话", currentTitle: "劳动争议案件分析", review: { meta: "刚刚分析了劳动合同解除材料", recentMessages: ["用户上传了劳动合同.pdf", "系统生成了材料分析卡"] }, footer: "会话已切换，可继续发送材料或问题。" })),
     card("运行时", "AI 成本摘要", ["cost"], buildCostCommandCardPayload({ todayTokens: 45231, todayCostCny: 1.2388, monthTokens: 812340, monthCostCny: 26.4821, dailyLimitCny: 20, recent: [{ createdAt: "2026-05-09 00:20", provider: "openai", model: "gpt-5.3-codex", totalTokens: 18231, estimatedCostCny: 0.7421, source: "estimated" }, { createdAt: "2026-05-09 00:28", provider: "openai", model: "embedding", totalTokens: 3910, estimatedCostCny: 0.0312, source: "external-call", tool: "kb", operation: "embed" }] })),
-    card("运行时", "快速上手", ["guide"], buildGuideCardPayload({ windowLabel: "当前窗口" })),
     card("运行时", "按钮回调测试", ["callback"], buildButtonCallbackTestCardPayload({ nonce: "preview-20260509", callbackPath: "/feishu/card-action" })),
     card("运行时", "可用模型", ["models"], buildModelListCardPayload({ currentModelLabel: "openai/gpt-5.3-codex", providers: [{ id: "openai", name: "OpenAI", models: [{ id: "gpt-5.3-codex", current: true }, { id: "gpt-5.4" }, { id: "gpt-5.4-mini" }] }], footer: "发送 `/model use <provider>/<model>` 切换。" })),
     card("合同/发票/案件", "案件工作台已开启", ["workbench", "case"], buildCaseWorkbenchPayload({ domains: ["劳动法", "公司法", "合同审查"], chatType: "p2p", conversationKey: "preview-case-workbench", requesterOpenId: "ou_preview" })),

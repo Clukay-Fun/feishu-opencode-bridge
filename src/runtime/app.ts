@@ -486,7 +486,7 @@ export class BridgeApp {
       await this.sendPayload(message.chatId, buildNoticeCardPayload({
         title: "已达到今日 AI 成本上限",
         level: "warning",
-        message: `今天的本地估算成本已达到上限${limit === undefined ? "" : `（¥${limit.toFixed(2)}）`}。\n普通对话已暂停，仍可使用 \`/cost\`、\`/status\`、\`/guide\` 查看状态。\n如需继续，请调整 config.json 的 \`costs.dailyLimitCny\` 后重启。`,
+        message: `今天的本地估算成本已达到上限${limit === undefined ? "" : `（¥${limit.toFixed(2)}）`}。\n普通对话已暂停，仍可使用 \`/cost\`、\`/status\`、\`/help\` 查看状态。\n如需继续，请调整 config.json 的 \`costs.dailyLimitCny\` 后重启。`,
       }), {
         event: "cost limit reached",
         transcriptType: "outbound-final",
@@ -693,10 +693,37 @@ export class BridgeApp {
     }
 
     if (pending.kind === "permission") {
+      const textResolution = parsePermissionTextResolution(message.plainText);
+      if (textResolution) {
+        if (pending.requesterOpenId !== message.senderOpenId) {
+          await this.sendPayload(message.chatId, buildNoticeCardPayload({
+            title: "权限请求待确认",
+            level: "warning",
+            message: "当前权限请求仅限本轮发起者处理。",
+          }), {
+            event: "final message sent",
+            transcriptType: "outbound-final",
+            textPreview: "当前权限请求仅限本轮发起者处理。",
+            len: 16,
+          }, { replyToMessageId: message.messageId });
+          return true;
+        }
+
+        await this.permissionManager.resolveInteraction(pending, textResolution);
+        const finalResolution = pending.resolution ?? textResolution;
+        await this.sendPayload(message.chatId, this.permissionManager.buildResolutionPayload(finalResolution), {
+          event: "final message sent",
+          transcriptType: "outbound-final",
+          textPreview: finalResolution === "upstream-expired" ? "权限请求已失效。" : finalResolution === "deny" ? "已拒绝权限请求。" : "已确认权限请求。",
+          len: 8,
+        }, { replyToMessageId: message.messageId });
+        return true;
+      }
+
       await this.sendPayload(message.chatId, buildNoticeCardPayload({
         title: "信息提示",
         level: "info",
-        message: "当前有待确认的权限请求，请先点击卡片按钮或发送 `/allow once`、`/allow always`、`/deny`。",
+        message: "当前有待确认的权限请求，请先点击卡片按钮，或发送 `/allow once`、`/allow always`、`/deny`、`允许一次`、`始终允许`、`拒绝`。",
       }), {
         event: "final message sent",
         transcriptType: "outbound-final",
@@ -1745,6 +1772,22 @@ function inferBridgeOutputTitle(kind: BridgeOutputContext["kind"], event: string
     default:
       return event || "Bridge 输出";
   }
+}
+
+type PermissionTextResolution = "once" | "always" | "deny";
+
+function parsePermissionTextResolution(text: string): PermissionTextResolution | null {
+  const normalized = text.trim().toLowerCase().replace(/\s+/g, " ");
+  if (["/allow once", "allow once", "/允许一次", "允许一次", "/仅此一次", "仅此一次"].includes(normalized)) {
+    return "once";
+  }
+  if (["/allow always", "allow always", "/始终允许", "始终允许", "/总是允许", "总是允许"].includes(normalized)) {
+    return "always";
+  }
+  if (["/deny", "deny", "/拒绝", "拒绝"].includes(normalized)) {
+    return "deny";
+  }
+  return null;
 }
 
 function shouldBypassQuestionForBusinessEntrypoint(message: IncomingChatMessage): boolean {

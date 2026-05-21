@@ -12,7 +12,6 @@ import {
   buildKnowledgeIngestQueuedPayload,
   buildKnowledgeQueryEmptyPayload,
   buildKnowledgeQueryPayload,
-  buildGuideCardPayload,
   buildInvoiceRecognizeCompletedPayload,
   buildInvoiceRecognizeProgressPayload,
   buildLaborAnalysisCompletedPayload,
@@ -278,20 +277,6 @@ describe("buildPostPayload", () => {
     expect(serialized).not.toContain("费用");
     expect(serialized).not.toContain("来源");
     expect(serialized).not.toContain("查看完整账单");
-  });
-
-  it("renders a guide card with reproducible hero actions", () => {
-    const payload = buildGuideCardPayload({ windowLabel: "日常会话" });
-    const content = JSON.parse(payload.content) as any;
-    const serialized = JSON.stringify(content);
-
-    expect(content.header.title.content).toBe("快速上手");
-    expect(serialized).toContain("/案件工作台");
-    expect(serialized).toContain("/完成上传");
-    expect(serialized).toContain("查看分析输出");
-    expect(serialized).toContain("二审状态");
-    expect(serialized).not.toContain("labor:harness");
-    expect(serialized).not.toContain("当前窗口");
   });
 
   it("renders a model list card with current model in header", () => {

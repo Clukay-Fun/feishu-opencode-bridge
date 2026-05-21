@@ -1,7 +1,7 @@
 /**
  * 职责: 根据本地配置与引导状态输出新手下一步。
  * 关注点:
- * - 串联 onboard、workspace 初始化、doctor、start 和飞书 `/guide`。
+ * - 串联 onboard、workspace 初始化、doctor、start 和飞书 `/help`。
  * - 只读取本地状态，不触达飞书远端资源。
  */
 import os from "node:os";
@@ -94,8 +94,8 @@ export async function buildGuideView(options = {}) {
   return {
     status: "ready",
     title: "环境已就绪",
-    detail: "可以启动 Bridge，并回到飞书发送 /guide 查看 60 秒新手引导。",
-    nextSteps: ["bridge start", "在飞书里发送 /guide"],
+    detail: "可以启动 Bridge，并回到飞书发送 /help 查看指令总览。",
+    nextSteps: ["bridge start", "在飞书里发送 /help"],
     heroSteps: buildHeroSteps(),
     fixes: ["如果飞书无响应，运行 bridge doctor workspace 和 bridge doctor 查看环境状态。"],
     statePath,

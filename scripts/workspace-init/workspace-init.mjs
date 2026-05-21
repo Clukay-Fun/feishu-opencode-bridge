@@ -44,7 +44,7 @@ export async function runWorkspaceInitCli(args = process.argv.slice(2), options 
       logger.log("推荐下一步：");
       logger.log("  1. bridge doctor workspace");
       logger.log("  2. bridge start");
-      logger.log("  3. 回到飞书发送 /guide");
+      logger.log("  3. 回到飞书发送 /help");
       logger.log(`初始化样例 manifest：${result.seedManifestPath}`);
       logger.log("需要重建初始化样例时运行：bridge init workspace --reset-sample-data");
       return 0;

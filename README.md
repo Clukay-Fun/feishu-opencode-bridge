@@ -265,7 +265,7 @@ bridge.cmd update check
 
 `bridge cost` / 飞书 `/cost` 会展示本地 token 与成本估算；金额只代表 Bridge 本地估算，真实账单以 AI provider 为准。`bridge update check` 会检查 GitHub Release 新版本；下载与切换需显式运行 `bridge update download` / `bridge update apply`。
 
-30 分钟跑通目标默认你已有 AI provider key，或已通过维护者提供的测试 key 入口拿到临时 key。首次体验素材见 `examples/hero/`，它们只使用 TXT / MD 路线，不依赖外部 OCR。启动后回到飞书发送 `/guide`，即可看到 60 秒新手引导；终端里运行 `bridge guide` 可查看当前阶段和下一步。
+30 分钟跑通目标默认你已有 AI provider key，或已通过维护者提供的测试 key 入口拿到临时 key。首次体验素材见 `examples/hero/`，它们只使用 TXT / MD 路线，不依赖外部 OCR。启动后回到飞书发送 `/help` 查看指令总览；终端里运行 `bridge guide` 可查看当前阶段和下一步。
 
 源码开发者仍可使用：
 
@@ -285,6 +285,8 @@ npm run doctor
 
 `/new` · `/status` · `/cost` · `/sessions` · `/switch <编号>` — 会话与成本状态
 
+`/help` · `/commands` · `/指令` — 展示 Bridge 指令总览和用法
+
 `/allow once` · `/allow always` · `/deny` — 权限确认
 
 `/button-test` — 发送一张按钮回调测试卡，用于验收飞书 Action 回调链路
@@ -301,6 +303,8 @@ npm run doctor
 ### 运行时控制
 
 `/new`：创建新会话
+
+`/help`、`/commands`、`/指令`、`/帮助`：展示 Bridge 指令总览和用法
 
 `/status`：查看当前窗口状态
 

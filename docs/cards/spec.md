@@ -103,7 +103,6 @@ npm run cards:preview
 | 函数名 | 卡片标题 | 模板色 | 用途 |
 |-------|---------|--------|------|
 | `buildStatusPayload` | 系统状态 | indigo | /status 命令 |
-| `buildGuidePayload` | 快速上手 | indigo | /guide 命令 |
 | `buildModelListPayload` | 可用模型 | indigo | /models 命令 |
 | `buildSessionListPayload` | 会话列表 | indigo | /sessions 命令 |
 | `buildSessionTransitionPayload` | 会话切换 | green | /switch 命令 |

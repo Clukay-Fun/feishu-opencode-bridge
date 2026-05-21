@@ -9,7 +9,6 @@ import type { PendingInteraction, PendingPermissionInteraction, PendingSessionSe
 import type { RoutedText } from "../bridge/router.js";
 import {
   buildButtonCallbackTestCardPayload,
-  buildGuideCardPayload,
   buildCostCommandCardPayload,
   buildModelListCardPayload,
   buildSessionListCardPayload,
@@ -139,7 +138,7 @@ const BRIDGE_OWNED_COMMAND_KINDS = new Set<Extract<RoutedText, { kind: "command"
   "status",
   "cost",
   "abort",
-  "guide",
+  "help",
   "button-test",
   "models",
   "model-use",
@@ -151,7 +150,6 @@ const BRIDGE_OWNED_COMMAND_KINDS = new Set<Extract<RoutedText, { kind: "command"
   "delete",
   "allow",
   "deny",
-  "help-file",
   "passthrough",
 ]);
 
@@ -168,7 +166,7 @@ function resolvePendingPermission(
 
   // 1. 按 conversationKey 精确查找
   const direct = pendingInteractions.get(message.conversationKey);
-  if (direct?.kind === "permission" && isValid(direct)) {
+  if (direct?.kind === "permission" && isValid(direct) && direct.requesterOpenId === message.senderOpenId) {
     return direct;
   }
 
@@ -177,7 +175,7 @@ function resolvePendingPermission(
   if (threadCandidates.size > 0) {
     for (const pending of pendingInteractions.values()) {
       if (pending.kind !== "permission" || !isValid(pending)) continue;
-      if (pending.chatId === message.chatId && pending.permissionMessageId && threadCandidates.has(pending.permissionMessageId)) {
+      if (pending.chatId === message.chatId && pending.requesterOpenId === message.senderOpenId && pending.permissionMessageId && threadCandidates.has(pending.permissionMessageId)) {
         return pending;
       }
     }
@@ -370,17 +368,8 @@ export class CommandHandler {
       return;
     }
 
-    if (command.kind === "guide") {
-      const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
-      const currentSession = getActiveSession(window);
-      await this.context.sendPayload(message.chatId, buildGuideCardPayload({
-        windowLabel: currentSession?.label ?? "当前窗口暂无会话，可先发送 `/new` 创建会话。",
-      }), {
-        event: "final message sent",
-        transcriptType: "outbound-final",
-        textPreview: "60 秒新手引导",
-        len: 9,
-      }, { replyToMessageId: message.messageId });
+    if (command.kind === "help") {
+      await this.context.sendMarkdown(message.chatId, buildCommandHelpText(), message.messageId);
       return;
     }
 
@@ -841,24 +830,6 @@ export class CommandHandler {
       return;
     }
 
-    if (command.kind === "help-file") {
-      const helpText = [
-        "**文件处理示例**",
-        "",
-        "直接回复文件消息，输入以下指令：",
-        "",
-        "- `总结这个文件`",
-        "- `提取文件中的关键信息`",
-        "- `把这个文件入库`",
-        "- `分析这个 PDF 的内容`",
-        "- `识别这张图片中的文字`",
-        "",
-        "批量入库请发送 `/知识入库` 后重新上传文件。",
-      ].join("\n");
-      await this.context.sendMarkdown(message.chatId, helpText, message.messageId);
-      return;
-    }
-
     if (command.kind !== "passthrough") {
       return;
     }
@@ -1102,6 +1073,87 @@ function buildDeleteConfirmMessage(input: { target: string; confirmCommand: stri
     input.target,
     "",
     `确认请发送 \`${input.confirmCommand}\`。`,
+  ].join("\n");
+}
+
+function buildCommandHelpText(): string {
+  return [
+    "### Bridge 指令总览",
+    "",
+    "本帮助覆盖 Bridge 接管的指令；未列入 Bridge 接管的 slash 命令会透传给 OpenCode，例如 `/review`、`/init`、`/compact`。",
+    "",
+    "### 运行时控制",
+    "",
+    "- `/new`：创建新会话。",
+    "- `/new <标题>`：创建新会话并使用指定标题。",
+    "- `/status`：查看当前窗口、会话、队列和运行状态。",
+    "- `/cost`：查看本地估算成本和用量。",
+    "- `/abort`：中止当前正在执行的任务。",
+    "- `/button-test` 或 `/callback-test`：发送按钮回调测试卡。",
+    "- `/help`、`/commands`、`/指令`、`/帮助`：显示本指令总览。",
+    "",
+    "### 会话管理",
+    "",
+    "- `/sessions`：查看当前窗口的会话列表。",
+    "- `/sessions all`：查看可恢复的全部会话。",
+    "- `/sessions all <关键词>` 或 `/sessions find <关键词>`：按关键词搜索历史会话。",
+    "- `/sessions <编号>`：选择最近一次会话列表里的编号。",
+    "- `/switch <编号>`：切换到最近一次会话列表里的编号。",
+    "- `/switch <关键词>`：按标题或摘要匹配并切换会话。",
+    "- `/rename <标题>` 或 `/title <标题>`：重命名当前会话。",
+    "- `/close`：软关闭当前会话。",
+    "- `/close <编号>`：软关闭指定编号会话。",
+    "- `/close <起始>-<结束>`：软关闭编号范围内的会话。",
+    "- `/close all`：软关闭当前窗口全部会话。",
+    "- `/delete`：发起删除当前会话确认。",
+    "- `/delete <编号>`：发起删除指定编号会话确认。",
+    "- `/delete <sessionId>`：按 sessionId 发起删除确认。",
+    "- `/delete <起始>-<结束>`：发起删除编号范围内的会话确认。",
+    "- `/delete confirm`、`/delete <编号> confirm`、`/delete <sessionId> confirm`、`/delete all confirm`：确认删除。",
+    "",
+    "### 模型",
+    "",
+    "- `/models`：查看可用模型提供方和模型。",
+    "- `/models <provider>`：查看指定 provider 下的模型。",
+    "- `/model use <provider/model>`：设置当前窗口的模型覆盖。",
+    "- `/model reset`：清除当前窗口的模型覆盖。",
+    "",
+    "### 权限确认",
+    "",
+    "- `/allow once`：仅本次允许 OpenCode 权限请求。",
+    "- `/allow always`：始终允许同类权限请求。",
+    "- `/deny`：拒绝当前权限请求。",
+    "",
+    "### 知识库",
+    "",
+    "- `/知识入库`、`/kb-ingest`、`/kb-ingest-start`：进入知识库材料入库模式。",
+    "- `/知识入库结束`、`/知识入库完成`、`/kb-ingest-end`：结束知识库材料入库模式。",
+    "- `/法律问答 <问题>` 或 `/kb-query <问题>`：显式查询法律知识库。",
+    "- `法律问答 <问题>`：自然语言入口，无需斜杠。",
+    "- `/法律咨询开始`、`/法律咨询结束`：群聊法律咨询模式入口，由知识库模块处理。",
+    "",
+    "### 文件与材料",
+    "",
+    "- `总结这个文件`：回复文件消息，让 Bridge 走普通文件总结。",
+    "- `把这个文件入库`：回复文件消息，将材料送入知识库入库流程。",
+    "- 本地绝对路径也可作为材料上下文，例如 `/Users/clukay/Desktop/demo.pdf`。",
+    "",
+    "### 合同、发票与案件",
+    "",
+    "- `/合同起草开始`：进入合同起草工作会话。",
+    "- `/合同起草结束`：结束合同起草工作会话。",
+    "- `/起草合同 <需求>` 或 `/contract-draft <需求>`：按需求起草合同。",
+    "- `/合同录入 <材料或说明>` 或 `/contract-extract <材料或说明>`：提取合同字段并写入台账。",
+    "- `/识别发票 <材料或说明>` 或 `/invoice-recognize <材料或说明>`：识别发票并写入记录。",
+    "- `/案件录入 <案件信息>` 或 `/case-manage <案件信息>`：新增案件管理记录。",
+    "- `/案件更新 <更新内容>` 或 `/case-update <更新内容>`：更新案件管理记录。",
+    "- `/案件待办` 或 `/case-todos`：查询案件待办。",
+    "",
+    "### 案件工作台与劳动分析",
+    "",
+    "- `/案件工作台`：打开案件工作台材料收集流程。",
+    "- `/完成上传`：结束材料收集并开始劳动争议分析。",
+    "- 自然语言也可以触发，例如 `根据这些材料生成劳动争议分析`；低置信度时 Bridge 会继续普通会话或要求补充。",
   ].join("\n");
 }
 

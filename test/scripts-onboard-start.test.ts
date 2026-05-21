@@ -634,7 +634,7 @@ describe("scripts/guide", () => {
     }), "utf8");
     await expect(buildGuideView({ cwd: dir, configPath })).resolves.toMatchObject({
       status: "ready",
-      nextSteps: expect.arrayContaining(["bridge start", "在飞书里发送 /guide"]),
+      nextSteps: expect.arrayContaining(["bridge start", "在飞书里发送 /help"]),
     });
   });
 });
@@ -720,7 +720,7 @@ describe("scripts/release portable package", () => {
 });
 
 describe("scripts/start", () => {
-  it("prints the Feishu /guide hint only once per user data directory", async () => {
+  it("prints the Feishu /help hint only once per user data directory", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-start-guide-"));
     const configPath = path.join(dir, "config.json");
     const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
@@ -729,7 +729,7 @@ describe("scripts/start", () => {
     await expect(maybePrintGuidePrompt({ config, configPath, logger })).resolves.toBe(true);
     await expect(maybePrintGuidePrompt({ config, configPath, logger })).resolves.toBe(false);
 
-    expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("/guide"));
+    expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("/help"));
     const state = JSON.parse(await readFile(path.join(dir, "data", "onboarding-state.json"), "utf8"));
     expect(state.guideShownAt).toEqual(expect.any(String));
   });

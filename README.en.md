@@ -226,7 +226,7 @@ Starter records are tracked in `data/init-seeds.json` under the user data direct
 
 `bridge cost` and Feishu `/cost` show local token/cost estimates only; the provider bill remains authoritative. `bridge update check` checks GitHub Releases, while downloads and switching require explicit `bridge update download` / `bridge update apply`.
 
-The 30-minute quick-start target assumes you already have an AI provider key, or have received a temporary test key through the maintainer-provided application channel. Reproducible first-run materials live in `examples/hero/` and avoid external OCR dependencies. After startup, send `/guide` in Feishu for the 60-second walkthrough; in the terminal, run `bridge guide` to see your current stage and next step.
+The 30-minute quick-start target assumes you already have an AI provider key, or have received a temporary test key through the maintainer-provided application channel. Reproducible first-run materials live in `examples/hero/` and avoid external OCR dependencies. After startup, send `/help` in Feishu for the command catalog; in the terminal, run `bridge guide` to see your current stage and next step.
 
 Source contributors can still use:
 
@@ -245,10 +245,11 @@ If Feishu card buttons are enabled, also configure `server.publicBaseUrl` and `f
 Quick reference:
 
 - `/new` · `/status` · `/cost` · `/sessions` · `/switch <index>` — session and cost status
+- `/help` · `/commands` · `/指令` — show the Bridge command catalog and usage notes
 - `/allow once` · `/allow always` · `/deny` — permission confirmation
-- `/法律咨询 <question>` · `/kb-query <question>` — knowledge base query
+- `/法律问答 <question>` · `/kb-query <question>` — knowledge base query
 - `/合同起草开始` · `/案件录入 <case info>` — contract assistant
-- `/劳动分析` — labor dispute analysis
+- `/案件工作台` · `/完成上传` — case workbench and labor dispute analysis
 
 <details>
 <summary>Show all commands</summary>
@@ -256,6 +257,7 @@ Quick reference:
 ### Runtime Control
 
 - `/new`: create a new session
+- `/help`, `/commands`, `/指令`, `/帮助`: show the Bridge command catalog and usage notes
 - `/status`: show the current window status
 - `/cost`: show local AI token/cost estimates
 - `/sessions`: list sessions
@@ -264,11 +266,8 @@ Quick reference:
 - `/close`, `/delete`: close or delete sessions
 - `/abort`: abort the current turn
 - `/models`, `/models <provider>`: list available models
-
-### Group Collaboration
-
-- `/who`: show the current group binding state
-- `/leave`: remove the current user's group binding
+- `/model use <provider/model>`, `/model reset`: set or clear the current window model override
+- `/button-test`: send a card callback test card
 
 ### Permission Confirmation
 
@@ -280,9 +279,10 @@ Quick reference:
 
 - `/法律咨询开始`
 - `/法律咨询结束`
-- `/法律咨询 <question>`
+- `/法律问答 <question>`
 - `/kb-query <question>`
 - `/知识入库`
+- `/知识入库结束`
 - `/kb-ingest-start`
 - `/kb-ingest-end`
 
@@ -294,12 +294,12 @@ Quick reference:
 - `/案件更新 <update>`
 - `/案件待办`
 
-### Labor Analysis
+### Case Workbench And Labor Analysis
 
-- `/劳动分析`
-- `/劳动分析结束`
+- `/案件工作台`
+- `/完成上传`
 
-Slash commands not owned by the bridge are passed through to OpenCode, for example `/model use ...`, `/model reset`, `/review`, and `/init`.
+Slash commands not owned by the bridge are passed through to OpenCode, for example `/review`, `/init`, and `/compact`.
 
 </details>
 
