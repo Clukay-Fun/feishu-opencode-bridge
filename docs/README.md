@@ -25,6 +25,10 @@
 - [飞书卡片规范](cards/spec.md)：用户侧卡片 active / retired 状态和卡片准入规则。
 - [可观测性事件规范](observability/event-schema.md)：运行时可观测性的稳定事件名与日志字段。
 
+## 决策记录（ADR）
+
+- [ADR 0001：窗口 / 会话 / 上下文术语与分层](adr/0001-window-session-vocabulary.md)：固定 Window / Binding / OpenCode Session / Reply Context / Memory 的定义、命名迁移映射、持久化迁移政策与占用词。
+
 ## 规范
 
 - [新功能自检清单](guidelines/new-feature-checklist.md)：framework freeze 之后功能 PR 的自检清单。

@@ -265,6 +265,52 @@ Feishu Transport
 - feature 专属 persistence file
 - feature 专属 command alias
 
+#### Window 与 Session 术语
+
+Bridge 不拥有对话历史。
+Bridge 拥有窗口状态和 OpenCode session 绑定关系。
+OpenCode session 才拥有真实会话内容。
+
+会话管理术语按下面的关系理解：
+
+```text
+Surface identity
+  -> Topic identity
+    -> derive Window
+      -> bind OpenCode Session
+        -> use External environment
+```
+
+- `Surface identity` 是 Feishu 入站表面身份，例如 `chatId` 和 `chatType`。
+- `Topic identity` 是话题或回复链输入，例如 `threadKey`、`rootId` 和 `parentId`；它只参与派生窗口，不是持久化实体。
+- `Window` 是 Bridge 持久化的一条窗口记录，包含窗口模式、交互模式、模型 override、当前活跃 session 和绑定的 OpenCode sessions。
+- `Binding` 是 Window 里的字段维度，不是平级持久化实体。
+- `OpenCode Session` 是 OpenCode 拥有的真实会话历史和执行上下文。
+- `External environment` 是 session 使用的外部环境；当前 workspace 仍是全局单例，memory 按自身模块规则注入，不作为 Window 或 OpenCode Session 的内嵌状态。
+
+命名规则：
+
+- `conversationKey` 是当前实现里的窗口 key 输入或结果，不是 session key；概念目标名是 `windowKey`。
+- `SessionWindowRecord` 的概念目标名是 `BridgeWindowRecord`。
+- `sessions[]` 的概念目标名是 `boundSessions[]`，表示 Window 绑定的 OpenCode sessions。
+- 在清晰类型语境内，字段名可以继续使用 `activeSessionId`；不强制改成更长的 `activeOpenCodeSessionId`。
+- Bridge 代码内部默认不加 `bridge` 前缀；只有跨 Feishu / OpenCode 边界的 DTO 需要消歧时，才使用全限定命名。
+
+持久化迁移规则：
+
+- 术语重命名默认只改内存语义、类型名、变量名和文档，不顺手改盘上格式。
+- 不得在命名 PR 里改动 `mappings.json` wire shape、store version、`message-context.json` 文件名或已落盘字段。
+- 如果未来要把 `sessions` 持久化字段改成 `boundSessions`，必须单独提供 migration 或 loader compatibility shim。
+- 任何盘上格式变更都需要迁移测试和架构 review。
+
+占用词：
+
+- `profile` 已被发行形态 `general` / `legal` 和 persona `xiaojing` 占用。
+- 新的 window、session、context、memory 或 workspace 概念不得再命名为 `profile`。
+- 未来的用户画像也不要叫 `profile`，建议命名为 `userMemory` / `userPersonaMemory` / `workMemory`，归入 memory 外部环境。
+
+术语决策背景与完整迁移政策见 [ADR 0001：窗口 / 会话 / 上下文术语与分层](adr/0001-window-session-vocabulary.md)。
+
 ### 3. Runtime Modules
 
 当前模块：
