@@ -3,246 +3,42 @@
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6)](https://www.typescriptlang.org/)
 [![Feishu](https://img.shields.io/badge/Feishu-Bridge-0F6FFF)](https://open.feishu.cn/)
-[![测试](https://img.shields.io/badge/tests-697%20passing-success)](#%EF%B8%8F-开发命令)
+[![测试](https://img.shields.io/badge/tests-passing-success)](#开发者入口)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**中文** | [英文版](README.en.md)
+**中文** | [English](README.en.md)
 
-> **Feishu OpenCode Bridge 不是一个普通的飞书机器人。**
-> 它是把 OpenCode 运行时产品化到飞书里的 **Feishu-native runtime adapter**——让私聊、群聊、话题群都拥有会话窗口、过程卡片、权限确认、知识库、合同/劳动业务模块和长期记忆，真正成为 OpenCode 的工作入口。
+Feishu OpenCode Bridge 是把 OpenCode 运行时接入飞书的本地优先工作入口。它让私聊、群聊和话题群拥有可控的 OpenCode 会话窗口、过程卡片、权限确认、材料处理、法律知识库和法律业务工作台。
 
-## 🔐 数据与合规先看
+它不是只负责“收消息、问模型、回消息”的普通飞书机器人。Bridge 自己管理会话、权限、卡片、模块状态和飞书传输边界；OpenCode 仍负责真实 agent 执行。
 
-真实合同、案件材料进来前，先看 [数据流向与隐私说明](docs/privacy-and-data-flow.md)。默认边界是：文本会进入你配置的 OpenCode / AI provider，合同和案件台账写入你自己的飞书 Base，本地保留配置、日志和 SQLite 索引，外部 OCR 默认关闭。
+## 数据边界
 
-敏感案件建议使用本地模型或私有模型网关，并保持 `memory.enabled=false`、`knowledgeBase.parser.externalApiEnabled=false`、`logging.messagePolicy=preview/hash/none`。
+真实合同、案件材料进入 Bridge 前，建议先看 [数据流向与隐私说明](docs/privacy-and-data-flow.md)。
 
-## 📢 项目动态
+默认边界是：文本会进入你配置的 OpenCode / AI provider；合同、发票、案件和知识库索引写入你自己的本地目录或飞书 Base。外部 OCR、记忆、Obsidian 同步等能力都由配置开关控制。
 
-**2026-05-12** · `0.2.2` 开发版补齐案件文书生成链路：案件工作台可基于当前分析结果、飞书文档和本地文书模板生成云文档；知识入库支持 `/完成上传` 并跳过重复文件；劳动工作台补当事人信息、请求权证据兜底和二审意见回写；OpenCode question reply 适配新版接口
+## 核心能力
 
-<details>
-<summary>展开 0.2.2 之前的历史记录</summary>
+| 能力 | 说明 |
+| :-- | :-- |
+| OpenCode 飞书运行时 | 会话窗口、模型切换、过程卡片、权限确认、群聊和话题群协作 |
+| 材料处理与知识库 | 文件/URL 入库、文档解析、法律问答、法条召回、可选 rerank、本地 SQLite 索引 |
+| 法律业务工作台 | 合同起草、合同/发票/案件结构化录入、案件待办、劳动争议材料整理与文书生成 |
+| 状态与记忆 | 会话映射、案件断点、短期材料上下文、可选长期记忆、可选 Obsidian 同步 |
+| 本地运维 | portable 启动、工作区初始化、健康检查、备份恢复、成本估算、更新检查 |
 
-**2026-05-12** · `0.2.1` 开发版聚焦案件工作台体验修复：发票识别支持连续上传后统一 `/完成上传`，发票金额与 Base 日期展示更稳，案件提醒卡片改为紧凑任务视图，权限审批后会回写原请求卡片，减少重复点击和状态误解
+更多功能说明见 [功能说明](docs/features.md)。
 
-**2026-05-09** · `0.2.0` 开发版进入案件工作台里程碑：案件工作台成为劳动材料收集主入口，知识库新增类型化条目、法条精确召回、Jina-compatible 重排与基础脱敏层，用户侧卡片收敛到设计器模板，劳动二审链路新增案件断点记忆，文档与命令面统一到中文优先口径，当前验证基线为 77 个测试文件、623 个测试
+## 快速开始
 
-**2026-05-09** · `0.1.61` 开发版新增案件工作台统一入口、知识库法条精确召回与 Jina-compatible 重排配置，继续收口用户侧卡片规范和劳动二审展示，当前验证基线为 75 个测试文件、618 个测试
-
-**2026-05-06** · `0.1.60` 开发版新增 Legal Harness 卡片模板、劳动二审校验链路、模板 actions 区块，并补充批量案件/发票 skill 边界，当前验证基线更新为 72 个测试文件、622 个测试
-
-**2026-05-05** · `0.1.59` 开发版新增劳动 Legal Harness、北大法宝权威检索确认、知识库最近材料入库与 Obsidian 导出策略，当前验证基线更新为 71 个测试文件、596 个测试
-
-**2026-05-04** · `0.1.58` 开发版恢复图片上传的 OpenCode `image_url` prompt part，同时保留本地 turn 文件路径与正文预览作为兜底
-
-**2026-05-04** · `0.1.57` 开发版补充合同助手自然语言 skill 路由、发票结构化识别、Bitable 字段降级重试和飞书卡片回调排障文档，当前验证基线更新为 69 个测试文件、571 个测试
-
-**2026-05-04** · `v0.1.56` 已发布 GitHub Release，提供 macOS arm64、Linux x64、Windows x64 portable 包；新增本地备份/恢复、成本统计、portable 更新检查/下载/切换/回滚，以及数据流向与隐私诊断能力
-
-**2026-04-28** · 外部扩展进入受限加载阶段：公开 `extension-api`、启动期 manifest/config 归一化、外部 RuntimeModule 适配和本地扩展包管理命令，同时继续禁止热拔插和直接依赖 bridge 内部
-
-**2026-04-27** · 内置业务扩展拆分为 data-only meta 与 runtime extension，配置、命令声明、业务卡片模板和 RuntimeModule 创建边界进一步收紧
-
-**2026-04-24** · 除权限按钮回调外的 open issue 已完成收口，项目进入框架维护与发布前整理阶段
-
-**2026-04-23** · 业务扩展边界继续收紧：配置引入模块注册表，文件解析收敛到 `document-pipeline`，业务卡片开始向模板化运行时迁移
-
-**2026-04-19** · 冻结后 backlog 全部清零，`TurnExecutor` settlement 控制器落地，进入日常维护节奏
-
-**2026-04-10** · 框架冻结验收通过，[架构基线](docs/architecture-baseline.md) 与 [新功能自检清单](docs/guidelines/new-feature-checklist.md) 成为 PR 准入标准
-
-**2026-03** · Runtime Module 抽象完成，知识 / 合同 / 劳动 / 记忆四大模块全部收敛到统一 seam
-
-**2026-02** · `FeishuTransport` 成为飞书侧唯一出口，卡片拆分为独立 family 文件
-
-<details>
-<summary>更早的里程碑</summary>
-
-Formatter 从单体文件拆分为 `shared-primitives` + `runtime-cards` + `knowledge-cards` + `labor-cards` + `contract-cards` 五个家族
-
-OpenCode turn 执行链抽象出 `prepareTurnExecution` / `handlePermissionAskedEvent`
-
-合同助手、劳动分析、知识库 CLI 与 Bitable 镜像能力上线
-
-长期记忆接入 SQLite / FTS5 + Obsidian 同步
-
-</details>
-
-</details>
-
-## 💡 核心能力
-
-**会话窗口**：支持私聊、群聊、话题群的 session 绑定、切换、关闭、重命名
-
-**过程卡片**：运行中的 OpenCode turn、知识入库、案件工作台和劳动二审通过设计器卡片持续更新状态
-
-**权限确认**：OpenCode 权限请求支持飞书按钮审批，并保留 `/allow once`、`/allow always`、`/deny` 文本兜底
-
-**群聊协作**：群聊与话题群支持独立 session window、线程回复和显式 `@bot` 协作流
-
-**知识库**：支持法律知识查询、批量文件/URL 入库、法条精确召回、可选 rerank、类型化条目和本地 CLI 诊断
-
-**合同助手**：支持合同起草、合同/发票/案件结构化录入、案件更新和工作台协同
-
-**案件工作台**：支持劳动争议材料收集、案件断点记忆、证据链整理、一审分析和二审复核
-
-**长期记忆**：可选的记忆提取、检索、SQLite / FTS5 存储和 Obsidian 同步
-
-**启动前诊断**：preflight 会在启动时检查配置、Feishu、OpenCode、provider 和 callback 设置
-
-## 🧭 为什么不是普通机器人
-
-普通机器人通常只做消息收发和 LLM 回复。本项目的核心价值是把 OpenCode 的运行时能力稳定地嵌入飞书：
-
-bridge 自己拥有 `/new`、`/sessions`、`/switch`、`/status` 等运行时控制面
-
-OpenCode 原生命令继续通过 passthrough 工作
-
-业务能力通过受限 `extension-api`、data-only extension meta、runtime extension、Runtime Module、CLI、skill 和共享 workflow 扩展，而不是继续把 `core` 写成巨型分支
-
-飞书发送、回复、更新、notice 收敛到 `FeishuTransport`、通用卡片原语和业务卡片模板入口
-
-常见文件先经 `document-pipeline` 转换为 Markdown / 纯文本 / sections，再供知识库、合同材料和证据抽取复用
-
-新功能必须在冻结后的 seam 内扩展，不能随意绕过核心边界
-
-## 🏗️ 架构
-
-### 请求流
-
-```mermaid
-flowchart LR
-    user["飞书用户 / 群聊 / 话题群"] --> ws["飞书 WebSocket<br/>src/feishu/ws.ts"]
-    user --> callback["卡片回调<br/>src/http/server.ts"]
-
-    ws --> app["BridgeApp<br/>src/runtime/app.ts"]
-    callback --> app
-
-    app --> command["CommandHandler<br/>会话 / 模型 / 白名单 / 权限命令"]
-    app --> executor["TurnExecutor<br/>OpenCode turn 执行链"]
-    app --> extensions["内置 / 外部扩展注册表<br/>meta + runtime adapter"]
-    extensions --> modules["RuntimeModuleManager<br/>RuntimeModule seam"]
-
-    executor <--> opencode["OpenCode 服务 API + SSE<br/>src/opencode/*"]
-    modules --> services["领域服务 / CLI / Skill<br/>knowledge / contract / labor / memory"]
-    services --> pipeline["Document Pipeline<br/>Markdown / Text / Sections"]
-    services --> stores["存储 / 数据库 / 本地工具<br/>JSON / SQLite / Bitable / Files"]
-
-    command --> transport["FeishuTransport<br/>send / reply / update / notice"]
-    executor --> transport
-    modules --> transport
-    transport --> cards["飞书卡片<br/>通用原语 / 业务模板"]
-    cards --> user
-```
-
-### 分层视图
-
-```mermaid
-flowchart TB
-    config["配置<br/>schema / loader / module registry"]
-    extensions["内置 / 外部扩展<br/>data-only meta + runtime adapter"]
-
-    subgraph feishu["飞书接入层"]
-      ws["WebSocket 入口"]
-      api["飞书 API 客户端"]
-      transport["FeishuTransport"]
-      cardRuntime["卡片原语与模板<br/>shared / runtime / business templates"]
-    end
-
-    subgraph core["核心运行时"]
-      app["BridgeApp"]
-      router["Router<br/>src/bridge/router.ts"]
-      command["CommandHandler"]
-      executor["TurnExecutor"]
-      permission["PermissionManager"]
-      turnCards["TurnCardManager"]
-      resources["TurnOwnedResourceStore"]
-    end
-
-    subgraph modules["运行时模块"]
-      knowledgeModule["KnowledgeRuntimeModule"]
-      contractModule["ContractAssistantRuntimeModule"]
-      laborModule["LaborRuntimeModule"]
-      memoryModule["MemoryRuntimeModule"]
-    end
-
-    subgraph services["领域服务 / 工作流"]
-      knowledge["KnowledgeBaseService"]
-      contract["ContractAssistantService"]
-      labor["LaborSkillService"]
-      memory["MemoryService"]
-      documentPipeline["Document Pipeline"]
-      workflow["共享工作流 / Python / 本地 CLI"]
-    end
-
-    subgraph persistence["持久化 / 外部 API"]
-      json["JSON 存储<br/>mappings / whitelist / active ingests"]
-      sqlite["SQLite / FTS / embeddings"]
-      bitable["飞书多维表格"]
-      files["临时文件 / 本地工作区"]
-      opencode["OpenCode 服务"]
-    end
-
-    config --> app
-    ws --> app
-    app --> router
-    app --> command
-    app --> executor
-    app --> permission
-    app --> turnCards
-    app --> resources
-    app --> extensions
-    extensions --> modules
-
-    command --> transport
-    executor --> opencode
-    executor --> transport
-    modules --> transport
-    transport --> api
-    transport --> cardRuntime
-
-    modules --> knowledge
-    modules --> contract
-    modules --> labor
-    modules --> memory
-    services --> documentPipeline
-    services --> json
-    services --> sqlite
-    services --> bitable
-    services --> files
-    services --> opencode
-    contract --> workflow
-```
-
-## ✨ 能力展示
-
-| 会话窗口                                         | 过程卡片                                             | 权限确认                                                 | 知识入库                                          |
-| :----------------------------------------------- | :--------------------------------------------------- | :------------------------------------------------------- | :------------------------------------------------ |
-| 私聊 / 群聊 / 话题群各自独立绑定，切换不丢上下文 | 卡片原地滚动更新，工具调用逐步展开，最终回复就地落地 | 敏感操作通过 `/allow` `/deny` 文本确认，按钮链路暂缓 | 拖文件进聊天、粘 URL 或批量入库，进度卡片全程可见 |
-| `/new` · `/switch` · `/sessions`         | 实时工具调用 + 最终回复                              | `/allow` · `/deny`                                  | 文件 · URL · 批量                               |
-
-| 合同助手                                 | 案件工作台                                       | 长期记忆                                    | 启动诊断                                       |
-| :--------------------------------------- | :----------------------------------------------- | :------------------------------------------ | :--------------------------------------------- |
-| 合同起草、合同/发票/案件结构化录入与案件更新 | 收齐工资 / 考勤 / 协议，记录断点并产出争议分析与工作台材料 | 按会话 / 主题检索，支持与 Obsidian 双向同步 | 启动前自检飞书 / OpenCode / 回调，缺什么报什么 |
-| 起草 · 录入 · 发票 · 案件更新             | 材料收集 · 断点 · 时间线 · 二审                 | SQLite + FTS5 + Obsidian                    | `npm run doctor`                             |
-
-> 截图与 GIF 正在补充中。当前版本运行 `npm run dev` 并在飞书侧发送示例命令即可复现上述卡片体验。
-
-## 🚀 快速开始
-
-Release 包用户优先使用 portable 入口：
+Release 包用户优先使用 portable 入口（源码开发者请直接跳到下方 npm 段）：
 
 ```bash
 # macOS / Linux
 ./bridge onboard
 ./bridge init workspace
 ./bridge start
-./bridge guide
-./bridge doctor workspace
-./bridge backup
-./bridge cost
-./bridge update check
 ```
 
 ```cmd
@@ -250,280 +46,89 @@ Release 包用户优先使用 portable 入口：
 bridge.cmd onboard
 bridge.cmd init workspace
 bridge.cmd start
-bridge.cmd guide
-bridge.cmd doctor workspace
-bridge.cmd backup
-bridge.cmd cost
-bridge.cmd update check
 ```
 
-首次运行会自动下载 portable Node 到 `.runtime/node`，并把用户配置、数据和日志放到用户目录，避免升级新版包时覆盖旧数据。Windows 首次运行如果被 Defender 拦截，请将解压目录加入信任后重试。
+启动后回到飞书发送：
 
-`bridge init workspace` 会使用当前 `lark-cli` 用户授权，在你的飞书账号下创建合同、发票、案件和知识库多维表格，并把新的 Base / Table ID 写回用户目录的 `config.json`。已有多维表格配置不会被静默覆盖；`--force` 只覆盖本地配置指向，不删除旧 Base、旧表或旧数据。
+```text
+/help
+```
 
-初始化样例记录会写入正式 Base，并在用户数据目录生成 `data/init-seeds.json`。需要重建样例时运行 `bridge init workspace --reset-sample-data`，脚本只会删除 seed manifest 记录过的样例记录，找不到的记录会安静跳过。
-
-`bridge cost` / 飞书 `/cost` 会展示本地 token 与成本估算；金额只代表 Bridge 本地估算，真实账单以 AI provider 为准。`bridge update check` 会检查 GitHub Release 新版本；下载与切换需显式运行 `bridge update download` / `bridge update apply`。
-
-30 分钟跑通目标默认你已有 AI provider key，或已通过维护者提供的测试 key 入口拿到临时 key。首次体验素材见 `examples/hero/`，它们只使用 TXT / MD 路线，不依赖外部 OCR。启动后回到飞书发送 `/help` 查看指令总览；终端里运行 `bridge guide` 可查看当前阶段和下一步。
-
-源码开发者仍可使用：
+源码开发者可以使用：
 
 ```bash
 npm install
 cp config.example.json config.json
 npm run dev
-npm run doctor
 ```
 
-至少需要配置 `feishu.appId`、`feishu.appSecret`、`opencode.baseUrl`、`opencode.directory`、`storage.dataDir`。
-如果启用飞书卡片按钮，还需要配置 HTTPS 公网 `server.publicBaseUrl` 和 `feishu.cardActions`，再运行 `bridge doctor` 检查回调 URL 与 `/healthz`。
+至少需要配置 `feishu.appId`、`feishu.appSecret`、`opencode.baseUrl`、`opencode.directory` 和 `storage.dataDir`。如果启用飞书卡片按钮，还需要 HTTPS 公网 `server.publicBaseUrl` 与 `feishu.cardActions`。
 
-## 📖 常用命令
+完整部署和初始化说明见 [部署说明](docs/deploy.md)。
 
-速查：
+## 仓库、发布包与用户数据
 
-`/new` · `/status` · `/cost` · `/sessions` · `/switch <编号>` — 会话与成本状态
+源码仓库包含开发所需的 `src/`、`test/`、`docs/`、`scripts/` 和工程配置。`npm run release:portable` 生成的发布包只包含 `dist/`、`scripts/runtime/`、启动器、配置样例、README 和 LICENSE，不携带源码、测试、完整文档、示例或本地数据。
 
-`/help` · `/commands` · `/指令` — 展示 Bridge 指令总览和用法
+真实配置和运行状态属于用户数据目录：`config.json`、`data/`、`logs/`、`.runtime/`、`turn-files/`、`artifacts/`、`outputs/` 以及历史根目录 runtime 文件都不应提交。清理或迁移前请先看 [本地卫生清理指南](docs/guidelines/local-hygiene.md)。
 
-`/allow once` · `/allow always` · `/deny` — 权限确认
+## 常用入口
 
-`/button-test` — 发送一张按钮回调测试卡，用于验收飞书 Action 回调链路
+| 入口 | 用途 |
+| :-- | :-- |
+| `/help`、`/commands`、`/指令` | 在飞书里查看 Bridge 指令总览 |
+| `/new`、`/sessions`、`/switch <编号>` | 管理当前聊天窗口的 OpenCode 会话 |
+| `/model use <provider/model>`、`/model reset` | 切换或恢复当前窗口模型 |
+| `/allow once`、`/allow always`、`/deny` | 处理 OpenCode 权限请求 |
+| `/法律问答 <问题>`、`/知识入库` | 使用法律知识库 |
+| `/合同起草开始`、`/案件录入 <信息>` | 使用合同与案件能力 |
+| `/案件工作台`、`/完成上传` | 使用案件工作台和劳动争议材料流程 |
 
-`/法律问答 <问题>` · `/知识入库` · `/知识入库结束` — 知识库查询与入库
+完整命令说明见 [命令手册](docs/commands.md)。
 
-`/合同起草开始` · `/案件录入 <案件信息>` — 合同助手
+## 文档导航
 
-`/案件工作台` · `/完成上传` — 案件工作台材料收集与分析
+| 文档 | 内容 |
+| :-- | :-- |
+| [功能说明](docs/features.md) | 用户能力、模块边界和典型使用场景 |
+| [命令手册](docs/commands.md) | 飞书命令、本地 CLI 和常见操作 |
+| [文档索引](docs/README.md) | 当前活跃文档入口 |
+| [架构基线](docs/architecture-baseline.md) | framework freeze 后的核心边界和 reviewer 规则 |
+| [配置样例](config.example.json) | 用户配置模板 |
+| [部署说明](docs/deploy.md) | 本地、服务器、Caddy、健康检查和验收步骤 |
+| [飞书卡片规范](docs/cards/spec.md) | 卡片 active / retired 状态和准入规则 |
+| [可观测性事件规范](docs/observability/event-schema.md) | runtime、transport、module 事件命名和字段 |
+| [新功能自检清单](docs/guidelines/new-feature-checklist.md) | 新功能 PR 的架构、测试、文档检查 |
 
-<details>
-<summary>展开全部命令</summary>
+## 架构概览
 
-### 运行时控制
-
-`/new`：创建新会话
-
-`/help`、`/commands`、`/指令`、`/帮助`：展示 Bridge 指令总览和用法
-
-`/status`：查看当前窗口状态
-
-`/sessions`：查看会话列表
-
-`/switch <编号>`：切换会话
-
-`/rename <标题>`：重命名当前会话
-
-`/close`、`/delete`：关闭或删除会话
-
-`/abort`：中止当前任务
-
-`/models`、`/models <provider>`：查看模型列表
-
-### 权限确认
-
-`/allow once`
-
-`/allow always`
-
-`/deny`
-
-### 知识库
-
-`/法律咨询开始`
-
-`/法律咨询结束`
-
-`/法律问答 <问题>`
-
-`法律问答 <问题>`：自然语言入口，无需斜杠
-
-`/kb-query <问题>`：兼容旧入口
-
-`/知识入库`
-
-`/知识入库结束`
-
-`/kb-ingest-start`、`/kb-ingest-end`：兼容旧入口
-
-### 合同与案件
-
-`/合同起草开始`
-
-`/合同起草结束`
-
-`/案件录入 <案件信息>`
-
-`/案件更新 <更新内容>`
-
-### 案件工作台
-
-`/案件工作台`
-
-`/完成上传`
-
-未被 bridge 接管的 slash 命令会透传给 OpenCode，例如 `/model use ...`、`/model reset`、`/review`、`/init`。
-
-</details>
-
-## 🧰 知识库 CLI
-
-本地知识库提供 CLI 快速路径：
-
-```bash
-npm run --silent kb -- query --question "员工试用期最长多久？"
-npm run --silent kb -- ingest file --path "/absolute/path/to/file.pdf"
-npm run --silent kb -- ingest url --url "https://example.com/article"
-npm run --silent kb -- doctor
+```mermaid
+flowchart LR
+    user["飞书用户"] --> bridge["Bridge Runtime"]
+    bridge --> opencode["OpenCode Server"]
+    bridge --> modules["Runtime Modules"]
+    modules --> services["Knowledge / Contract / Labor / Memory"]
+    services --> pipeline["Document Pipeline"]
+    services --> stores["JSON / SQLite / Bitable / Files"]
+    bridge --> feishu["FeishuTransport + Cards"]
+    feishu --> user
 ```
 
-## 🧩 外部扩展 CLI
+详细架构见 [架构基线](docs/architecture-baseline.md)。
 
-外部扩展按本地 npm package 管理。每个扩展目录都需要自己的 `manifest.json`、`package.json`、`dist/meta.js` 和 `dist/runtime.js`。
-
-安装本地目录或 `.tgz`：
-
-```bash
-npm run ext:install -- ./my-extension
-```
-
-查看、删除和打包：
-
-```bash
-npm run ext:list
-npm run ext:remove -- hello-world
-npm run ext:pack -- ./my-extension
-```
-
-这些命令只处理本地目录或本地 tarball，不连接 npm registry。安装后会在扩展自己的目录执行依赖安装，启动加载时也会拒绝依赖泄漏到 bridge 根目录 `node_modules` 的扩展。
-
-## ⚙️ 配置说明
-
-配置文件以 [config.example.json](config.example.json) 为模板。主要配置块：
-
-| 配置块                | 作用                                                                                         |
-| :-------------------- | :------------------------------------------------------------------------------------------- |
-| `feishu`            | 飞书应用、机器人身份、WebSocket、卡片回调和行为开关                                          |
-| `server`            | HTTP 服务监听地址、健康检查和公网回调地址                                                    |
-| `opencode`          | OpenCode 服务地址和工作目录                                                                  |
-| `storage`           | 会话映射、白名单、日志和业务状态目录                                                         |
-| `bridge`            | 队列、会话模式、超时和系统状态注入                                                           |
-| `memory`            | 长期记忆开关、存储和同步设置                                                                 |
-| `extensions["knowledge-base"]`       | 知识库开关、入库、检索、统一文档解析、本地数据库和多维表格配置                               |
-| `extensions["contract-assistant"]`   | 合同、案件、发票和案件待办能力配置                                                           |
-| `extensions["labor-skill"]`          | 劳动分析材料收集和输出配置                                                                   |
-| `extensions["<external-extension>"]` | 外部扩展自有配置块，由扩展 meta 声明的 configDefinition 归一化                              |
-
-推荐使用 `extensions["extension-id"]` 作为用户侧配置入口；legacy 顶层字段 `knowledgeBase`、`contractAssistant`、`laborSkill` 仍永久兼容。
-运行时输出形状不变，仍然归一化到 `config.knowledgeBase`、`config.contractAssistant`、`config.laborSkill`。
-namespace 与 legacy 同时出现时，namespace 胜出并记录 warning；未知 namespace id 会保留在 `config.extensions`。
-`memory` 暂仍在中央 schema/loader 中，后续可按同样模式下沉。
-内置扩展的 `id` 与配置块通过 data-only meta 的 `configKey` 显式映射，例如 `contract-assistant -> contractAssistant`，不依赖字符串猜测。
-`extension.meta.ts` 只承载配置、命令、卡片模板等静态声明；`extension.ts` 只负责 runtime module 创建。
-外部扩展只能从 `src/extension-api/` 依赖公共契约，启动时从 `BRIDGE_EXTENSIONS_DIR` 或 `${BRIDGE_HOME:-.}/extensions` 扫描，加载失败会降级为 warning。
-
-## 🛠️ 开发命令
+## 开发者入口
 
 ```bash
 npm run typecheck
 npm run lint
 npm test
 npm run build
-npm run dev
-npm run dev:once
 ```
 
-当前完整验证基线：**78 test files · 697 tests passing**
+当前完整验证基线：**78 test files · 697 tests passing**。
 
-## 📂 项目目录
+开发约束见 [CODEX.md](CODEX.md)、[AGENTS.md](AGENTS.md) 和 [新功能自检清单](docs/guidelines/new-feature-checklist.md)。
 
-```text
-src/
-  bridge/              # 路由、队列、turn 状态、看门狗、模块接口
-  config/              # Zod schema、配置加载与模块配置注册表
-  document-pipeline/   # 常见文件到 Markdown / 纯文本 / sections 的统一解析入口
-  extension-api/       # 外部扩展公共类型、声明 helper 和受限 port 契约
-  extensions/          # 内置扩展 data-only meta、runtime registry、命令声明和模板聚合
-  feishu/              # 飞书 API、WebSocket 入口、卡片原语与业务模板
-  http/                # healthz 与卡片回调服务
-  runtime/             # BridgeApp、命令处理、turn 执行、短期消息上下文、启动前检查
-  knowledge/           # 法律知识库、解析器、本地 CLI、SQLite 镜像
-  contract-assistant/  # 合同起草、案件更新、案件待办
-  labor/               # 劳动争议材料收集与分析
-  memory/              # 长期记忆、检索器、embedding、Obsidian 同步
-  opencode/            # OpenCode 客户端与事件流
-  store/               # 会话映射、白名单、活跃入库等 JSON 存储
-  workflows/           # 证据提取、时间线、工作台、台账等共享工作流
-scripts/               # runtime、checks、kb、wrappers、python 分组脚本
-docs/                  # 架构、部署、模块、可观测性、归档文档
-examples/              # 外部扩展示例和最小加载样本
-test/                  # Vitest 单元测试与集成测试
-```
-
-## 📚 文档入口
-
-[架构基线](docs/architecture-baseline.md) — 冻结后的分层边界、扩展 seam 与禁止绕开的核心约束
-
-[新功能自检清单](docs/guidelines/new-feature-checklist.md) — 新功能进入 PR 前必须核对的架构、测试、文档与部署检查项
-
-[飞书 Markdown 输出规范](docs/feishu-markdown.md) — 面向飞书消息的 Markdown 输出规则和长文本排版约束
-
-[部署说明](docs/deploy.md) — 本地与服务器部署、环境变量、Caddy、健康检查和验收步骤
-
-[可观测性事件规范](docs/observability/event-schema.md) — runtime、transport、module 事件命名和字段约定
-
-[法律知识库方案](docs/modules/knowledge-base.md) — 知识库入库、检索、Bitable 镜像和 CLI 使用说明
-
-[Labor Skill 工作流分层](docs/modules/labor-skill-workflows.md) — 劳动案件 workflow、shared workflow 与专项能力边界
-
-[Formatter 迁移记录](docs/archive/design-history/formatter-migration.md) — 卡片 formatter 拆分的迁移背景、边界和收尾记录
-
-[框架冻结验收](docs/archive/qa-and-submission/freeze-acceptance.md) — 框架冻结时的验收范围、证据和后续准入要求
-
-## 🚢 部署
-
-单机部署拓扑：
-
-```text
-飞书 <-> HTTPS / Caddy <-> Bridge HTTP + WebSocket <-> OpenCode 服务
-```
-
-参考：
-
-[部署说明](docs/deploy.md)
-
-[Caddy 配置样例](ops/Caddyfile)
-
-[环境变量样例](.env.example)
-
-健康检查 `GET /healthz` · 默认卡片回调路径 `/webhook/card`
-
-## 🤝 贡献与开发约束
-
-本项目已经完成框架冻结。后续功能开发请遵守：
-
-新功能优先落在 Runtime Module / Service / Transport seam 内。
-
-内置业务能力应拆分 `extension.meta.ts` 与 `extension.ts`：meta 声明 `id`、`configKey`、commands、配置和业务模板，runtime extension 只负责 module 创建。
-
-外部扩展只能依赖 `src/extension-api/`，不得直接 import `src/runtime/**`、`src/bridge/**`、`src/feishu/**`、`src/store/**` 或业务实现；当前仍是启动期受信代码加载，不支持热拔插或沙箱隔离。
-
-不要在 `src/runtime/app.ts`、`src/runtime/turn-executor.ts`、`src/bridge/router.ts` 里新增业务特定分支，除非同步更新架构基线。
-
-新卡片优先走通用卡片原语与业务模板，不要继续扩张 `formatter.ts`。
-
-业务规则、prompt 和可复用能力优先沉淀到 CLI / skill / shared workflow，不要默认写死进 bridge core。
-
-新增重要代码文件应写中文文件头注释，沿用 `职责 / 关注点` 模板。
-
-模块状态持久化复用共享基础设施，不复制 timer + JSON persist 逻辑。
-
-PR 描述里建议附上 [新功能自检清单](docs/guidelines/new-feature-checklist.md) 的自检结果。
-
-## ⭐ Star 历史
-
-[![Star 历史图](https://api.star-history.com/svg?repos=Clukay-Fun/feishu-opencode-bridge&type=Date)](https://star-history.com/#Clukay-Fun/feishu-opencode-bridge&Date)
-
-## 许可证
+## License
 
 [MIT](LICENSE)

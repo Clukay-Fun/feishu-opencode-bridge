@@ -1,6 +1,7 @@
 # Build outputs
 node_modules/
 dist/
+/release/
 !examples/extensions/*/dist/
 !examples/extensions/*/dist/*.js
 
@@ -9,6 +10,9 @@ logs/
 data/
 config.json
 .runtime/
+turn-files/
+artifacts/
+outputs/
 
 # Legacy root-level runtime artifacts
 mappings.json
@@ -17,6 +21,9 @@ knowledge-base.db
 tmp-knowledge-check.txt
 usage-ledger.jsonl
 message-context.json
+
+# One-off local payloads
+batch-*.json
 
 # Local tool state
 .DS_Store

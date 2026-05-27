@@ -218,8 +218,8 @@ manifest 示例：
 - 否则使用 `${BRIDGE_HOME:-.}/extensions`。
 - 单个扩展加载失败只会记录 warning，不阻止 bridge 核心启动。
 
-仓库内的最小示例位于 `examples/extensions/hello-world/`。
-这个示例同时提供 `dist/*.js` 和 `src/*.ts`，用于验证生产加载与 dev source 加载两条路径。
+最小扩展可按上面的目录结构自行创建到本地扩展目录，例如 `${BRIDGE_HOME:-.}/extensions/hello-world/`。
+扩展示例应同时提供 `dist/*.js` 和 `src/*.ts`，用于验证生产加载与 dev source 加载两条路径。
 
 依赖规则：
 

@@ -3,7 +3,7 @@
  * 关注点: 验证核心路径、边界条件和回归场景。
  */
 import { PassThrough } from "node:stream";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -35,7 +35,7 @@ import { runCostCli } from "../scripts/runtime/cost.mjs";
 import { checkForUpdate, downloadUpdate } from "../scripts/runtime/update.mjs";
 import { buildGuideView, runGuide } from "../scripts/runtime/guide.mjs";
 import { createPortableEnv, resolveBridgeHome, resolveNodeDownload, resolveProjectConfigPath } from "../scripts/runtime/portable.mjs";
-import { buildPortablePackage } from "../scripts/release/build-portable.mjs";
+import { buildPortablePackage, PORTABLE_PACKAGE_MANIFEST } from "../scripts/release/build-portable.mjs";
 
 describe("scripts/onboard", () => {
   it("does not overwrite existing config by default", async () => {
@@ -699,9 +699,37 @@ describe("scripts/release portable package", () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-release-portable-"));
     await mkdir(path.join(dir, "dist", "src"), { recursive: true });
     await mkdir(path.join(dir, "scripts", "runtime"), { recursive: true });
+    await mkdir(path.join(dir, "src"), { recursive: true });
+    await mkdir(path.join(dir, "test"), { recursive: true });
+    await mkdir(path.join(dir, "data"), { recursive: true });
+    await mkdir(path.join(dir, "logs"), { recursive: true });
+    await mkdir(path.join(dir, "artifacts"), { recursive: true });
+    await mkdir(path.join(dir, "outputs"), { recursive: true });
+    await mkdir(path.join(dir, "turn-files"), { recursive: true });
+    await mkdir(path.join(dir, "docs"), { recursive: true });
+    await mkdir(path.join(dir, "examples"), { recursive: true });
+    await mkdir(path.join(dir, ".runtime"), { recursive: true });
     await writeFile(path.join(dir, "dist", "src", "index.js"), "console.log('ok');");
     await writeFile(path.join(dir, "scripts", "runtime", "bootstrap.mjs"), "export {};");
-    for (const file of ["bridge", "bridge.cmd", "bridge.ps1", "package.json", "package-lock.json", "config.example.json", "README.md", "README.en.md"]) {
+    await writeFile(path.join(dir, "src", "index.ts"), "export {};");
+    await writeFile(path.join(dir, "test", "example.test.ts"), "export {};");
+    await writeFile(path.join(dir, "data", "knowledge-base.db"), "db");
+    await writeFile(path.join(dir, "logs", "bridge.log"), "log");
+    await writeFile(path.join(dir, "artifacts", "demo.json"), "{}");
+    await writeFile(path.join(dir, "outputs", "demo.txt"), "output");
+    await writeFile(path.join(dir, "turn-files", "material.txt"), "material");
+    await writeFile(path.join(dir, "docs", "README.md"), "docs");
+    await writeFile(path.join(dir, "examples", "README.md"), "examples");
+    await writeFile(path.join(dir, ".runtime", "secret.txt"), "runtime");
+    await writeFile(path.join(dir, "config.json"), "{}");
+    await writeFile(path.join(dir, "knowledge-base.db"), "db");
+    await writeFile(path.join(dir, "mappings.json"), "{}");
+    await writeFile(path.join(dir, "message-context.json"), "{}");
+    await writeFile(path.join(dir, "usage-ledger.jsonl"), "{}\n");
+    await writeFile(path.join(dir, "active-knowledge-ingests.json"), "[]");
+    await writeFile(path.join(dir, "batch-create.json"), "{}");
+    await writeFile(path.join(dir, "batch-create-weekly.json"), "{}");
+    for (const file of PORTABLE_PACKAGE_MANIFEST.files) {
       await writeFile(path.join(dir, file), "{}");
     }
     const runCommandFn = vi.fn(async () => ({ code: 0, stdout: "", stderr: "", signal: null, timedOut: false }));
@@ -716,6 +744,31 @@ describe("scripts/release portable package", () => {
 
     expect(result.packageDir).toContain("feishu-opencode-bridge-macos-arm64");
     expect(runCommandFn).toHaveBeenCalledWith("tar", expect.arrayContaining(["feishu-opencode-bridge-macos-arm64"]), expect.any(Object));
+
+    const topLevelEntries = await readdir(result.packageDir);
+    expect(topLevelEntries.sort()).toEqual([
+      ".runtime",
+      "LICENSE",
+      "README.en.md",
+      "README.md",
+      "bridge",
+      "bridge.cmd",
+      "bridge.ps1",
+      "config.example.json",
+      "dist",
+      "logs",
+      "package-lock.json",
+      "package.json",
+      "scripts",
+    ]);
+    await expect(readFile(path.join(result.packageDir, "dist", "src", "index.js"), "utf8")).resolves.toBe("console.log('ok');");
+    await expect(readFile(path.join(result.packageDir, "scripts", "runtime", "bootstrap.mjs"), "utf8")).resolves.toBe("export {};");
+    await expect(readdir(path.join(result.packageDir, ".runtime"))).resolves.toEqual([]);
+    await expect(readdir(path.join(result.packageDir, "logs"))).resolves.toEqual([]);
+    for (const excluded of PORTABLE_PACKAGE_MANIFEST.excluded) {
+      await expect(readFile(path.join(result.packageDir, excluded), "utf8")).rejects.toThrow();
+      await expect(readdir(path.join(result.packageDir, excluded))).rejects.toThrow();
+    }
   });
 });
 

@@ -12,16 +12,46 @@ import path from "node:path";
 
 import { isMainModule, runCommand } from "../runtime/checks.mjs";
 
-const PACKAGE_FILES = [
-  "bridge",
-  "bridge.cmd",
-  "bridge.ps1",
-  "package.json",
-  "package-lock.json",
-  "config.example.json",
-  "README.md",
-  "README.en.md",
-];
+export const PORTABLE_PACKAGE_MANIFEST = Object.freeze({
+  files: Object.freeze([
+    "bridge",
+    "bridge.cmd",
+    "bridge.ps1",
+    "package.json",
+    "package-lock.json",
+    "config.example.json",
+    "README.md",
+    "README.en.md",
+    "LICENSE",
+  ]),
+  directories: Object.freeze([
+    "dist",
+    "scripts/runtime",
+  ]),
+  emptyDirectories: Object.freeze([
+    ".runtime",
+    "logs",
+  ]),
+  excluded: Object.freeze([
+    "src",
+    "test",
+    "docs",
+    "examples",
+    "artifacts",
+    "outputs",
+    "turn-files",
+    "data",
+    "logs/bridge.log",
+    "config.json",
+    "knowledge-base.db",
+    "mappings.json",
+    "message-context.json",
+    "usage-ledger.jsonl",
+    "active-knowledge-ingests.json",
+    "batch-create.json",
+    "batch-create-weekly.json",
+  ]),
+});
 
 export async function buildPortablePackage(options = {}) {
   const cwd = options.cwd ?? process.cwd();
@@ -39,13 +69,15 @@ export async function buildPortablePackage(options = {}) {
   await rm(packageDir, { recursive: true, force: true });
   await mkdir(packageDir, { recursive: true });
 
-  for (const file of PACKAGE_FILES) {
+  for (const file of PORTABLE_PACKAGE_MANIFEST.files) {
     await cp(path.join(cwd, file), path.join(packageDir, file), { recursive: true });
   }
-  await cp(path.join(cwd, "dist"), path.join(packageDir, "dist"), { recursive: true });
-  await cp(path.join(cwd, "scripts", "runtime"), path.join(packageDir, "scripts", "runtime"), { recursive: true });
-  await mkdir(path.join(packageDir, ".runtime"), { recursive: true });
-  await mkdir(path.join(packageDir, "logs"), { recursive: true });
+  for (const directory of PORTABLE_PACKAGE_MANIFEST.directories) {
+    await cp(path.join(cwd, directory), path.join(packageDir, directory), { recursive: true });
+  }
+  for (const directory of PORTABLE_PACKAGE_MANIFEST.emptyDirectories) {
+    await mkdir(path.join(packageDir, directory), { recursive: true });
+  }
 
   const archivePath = await archivePackage({
     cwd: outRoot,
