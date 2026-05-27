@@ -11,12 +11,12 @@
 | `/new` | 创建新会话 |
 | `/status` | 查看当前窗口状态 |
 | `/cost` | 查看本地 token 与成本估算 |
-| `/sessions` | 查看当前窗口会话列表 |
-| `/sessions all` | 查看可访问的全部会话 |
-| `/switch <编号>` | 切换会话 |
+| `/sessions` | 查看当前窗口绑定的 OpenCode 会话 |
+| `/sessions all` | 查看全部 OpenCode 会话 |
+| `/switch <编号>` | 切换或绑定并切换会话 |
 | `/rename <标题>` | 重命名当前会话 |
-| `/close` | 关闭当前会话 |
-| `/delete` | 删除会话 |
+| `/close` | 从当前窗口移除会话绑定 |
+| `/delete` | 彻底删除 OpenCode 会话 |
 | `/abort` | 中止当前任务 |
 | `/models` | 查看模型提供方和模型列表 |
 | `/models <provider>` | 查看指定 provider 的模型 |

@@ -214,6 +214,7 @@ describe("BridgeApp command surface", () => {
     expect(text).toContain("ID：ses_2");
     expect(text).toContain("用户：上一轮用户问题");
     expect(text).toContain("助手：上一轮助手回答");
+    expect(text).toContain("已切换当前窗口会话");
   });
 
   it("shows a disambiguation card when /switch name matches multiple sessions", async () => {
@@ -342,7 +343,7 @@ describe("BridgeApp command surface", () => {
     });
 
     expect(appAny.sessionMap["oc_p2p_1"].sessions.map((session) => session.sessionId)).toEqual(["ses_1"]);
-    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("已删除会话");
+    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("已从当前窗口移除会话");
   });
 
   it("uses /new title as the new session label", async () => {
@@ -703,10 +704,47 @@ describe("BridgeApp command surface", () => {
 
     const text = extractInteractiveText(getReplyPayloads(outbound)[0]);
     expect(text).not.toContain("已隐藏会话");
-    expect(text).toContain("隐藏会话 #2");
+    expect(text).toContain("未绑定会话 #2");
+    expect(text).toContain("未绑定");
     expect(text).toContain("ses_2");
     expect(text).toContain("s_hidden");
-    expect(text).toContain("已归档");
+    expect(text).not.toContain("已归档");
+  });
+
+  it("binds and switches to an unbound session from /sessions all", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const listSessions = vi.fn(async () => ([
+      { id: "ses_2", title: "当前会话", time: { created: 2, updated: 2 } },
+      { id: "ses_hidden", title: "已隐藏会话", time: { created: 1, updated: 1 } },
+    ]));
+    const getSessionMessages = vi.fn(async () => ([]));
+    const appAny = app as unknown as {
+      opencode: { listSessions: typeof listSessions; getSessionMessages: typeof getSessionMessages };
+      sessionMap: Record<string, SessionWindowRecord>;
+    };
+    appAny.opencode = { listSessions, getSessionMessages };
+    appAny.sessionMap["oc_p2p_1"] = {
+      mode: "multi",
+      activeSessionId: "ses_2",
+      sessions: [
+        { sessionId: "ses_2", label: "当前会话", createdAt: 2, lastUsedAt: 2 },
+      ],
+    };
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "sessions-all" },
+    });
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "sessions-select", index: 2 },
+    });
+
+    expect(appAny.sessionMap["oc_p2p_1"]?.activeSessionId).toBe("ses_hidden");
+    expect(appAny.sessionMap["oc_p2p_1"]?.sessions.map((session) => session.sessionId)).toContain("ses_hidden");
+    const text = extractInteractiveText(getReplyPayloads(outbound).at(-1));
+    expect(text).toContain("已绑定到当前窗口并切换");
   });
 
   it("renders /models openai as an interactive provider card", async () => {
@@ -831,8 +869,8 @@ describe("BridgeApp command surface", () => {
     const text = extractInteractiveText(getReplyPayloads(outbound)[0]);
     expect(text).not.toContain("会话12");
     expect(text).not.toContain("会话1");
-    expect(text).toContain("隐藏会话 #1");
-    expect(text).toContain("隐藏会话 #12");
+    expect(text).toContain("未绑定会话 #1");
+    expect(text).toContain("未绑定会话 #12");
   });
 
   it("filters /sessions all by keyword and keeps filtered numbering stable", async () => {
@@ -858,7 +896,7 @@ describe("BridgeApp command surface", () => {
     expect(pending.options).toEqual([expect.objectContaining({ index: 1, sessionId: "ses_labor" })]);
     const text = extractInteractiveText(getReplyPayloads(outbound)[0]);
     expect(text).not.toContain("劳动争议分析");
-    expect(text).toContain("隐藏会话 #1");
+    expect(text).toContain("未绑定会话 #1");
     expect(text).toContain("es_labor");
     expect(text).not.toContain("发票识别");
     expect(text).toContain("关键词：劳动");
@@ -885,10 +923,10 @@ describe("BridgeApp command surface", () => {
 
     expect((appAny.pendingInteractions.get("oc_p2p_1") as Extract<PendingInteraction, { kind: "session-select" }>).options).toHaveLength(25);
     expect(getReplyPayloads(outbound)).toHaveLength(2);
-    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("隐藏会话 #1");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("未绑定会话 #1");
     expect(extractInteractiveText(getReplyPayloads(outbound)[0])).not.toContain("会话25");
     expect(extractInteractiveText(getReplyPayloads(outbound)[0])).not.toContain("会话5");
-    expect(extractInteractiveText(getReplyPayloads(outbound)[1])).toContain("隐藏会话 #25");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[1])).toContain("未绑定会话 #25");
     expect(extractInteractiveText(getReplyPayloads(outbound)[1])).not.toContain("会话5");
   });
 
@@ -925,7 +963,7 @@ describe("BridgeApp command surface", () => {
 
     expect(deleteSession).toHaveBeenCalledWith("ses_2");
     expect(appAny.sessionMap["oc_p2p_1"].sessions.map((session) => session.sessionId)).toEqual(["ses_1"]);
-    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("已彻底删除会话");
+    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("已彻底删除 OpenCode 会话");
   });
 
   it("allows /delete 1 in single mode for the current session", async () => {
@@ -996,7 +1034,7 @@ describe("BridgeApp command surface", () => {
     });
 
     expect(deleteSession).toHaveBeenCalledWith("ses_hidden");
-    expect(extractInteractiveHeader(getReplyPayloads(outbound).at(-1))).toBe("已彻底删除会话");
+    expect(extractInteractiveHeader(getReplyPayloads(outbound).at(-1))).toBe("已彻底删除 OpenCode 会话");
   });
 
   it("can hard-delete a session directly by session id", async () => {
@@ -1017,7 +1055,7 @@ describe("BridgeApp command surface", () => {
       command: { kind: "delete", sessionId: "ses_hidden", confirm: false },
     });
     const confirmText = extractInteractiveText(getReplyPayloads(outbound)[0]);
-    expect(confirmText).toContain("删除 OpenCode 本地真实 session");
+    expect(confirmText).toContain("彻底删除 OpenCode 会话");
     expect(confirmText).toContain("已隐藏会话");
     expect(confirmText).toContain("/delete ses_hidden confirm");
 
@@ -1027,7 +1065,7 @@ describe("BridgeApp command surface", () => {
     });
 
     expect(deleteSession).toHaveBeenCalledWith("ses_hidden");
-    expect(extractInteractiveHeader(getReplyPayloads(outbound).at(-1))).toBe("已彻底删除会话");
+    expect(extractInteractiveHeader(getReplyPayloads(outbound).at(-1))).toBe("已彻底删除 OpenCode 会话");
   });
 
   it("supports /close all and /delete all confirm", async () => {
@@ -1053,7 +1091,7 @@ describe("BridgeApp command surface", () => {
       command: { kind: "close", all: true },
     });
     expect(appAny.sessionMap["oc_p2p_1"]).toBeUndefined();
-    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("已删除全部会话");
+    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("已从当前窗口移除全部会话");
 
     appAny.sessionMap["oc_p2p_1"] = {
       mode: "multi",
@@ -1074,7 +1112,7 @@ describe("BridgeApp command surface", () => {
 
     expect(deleteSession).toHaveBeenCalledTimes(2);
     expect(appAny.sessionMap["oc_p2p_1"]).toBeUndefined();
-    expect(extractInteractiveHeader(getReplyPayloads(outbound).at(-1))).toBe("已彻底删除全部会话");
+    expect(extractInteractiveHeader(getReplyPayloads(outbound).at(-1))).toBe("已彻底删除全部 OpenCode 会话");
   });
 
   it("supports ranged /close and ranged /delete confirm", async () => {
@@ -1110,7 +1148,7 @@ describe("BridgeApp command surface", () => {
     });
 
     expect(appAny.sessionMap["oc_p2p_1"].sessions.map((session) => session.sessionId)).toEqual(["ses_4", "ses_1"]);
-    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("已删除多个会话");
+    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("已从当前窗口移除多个会话");
 
     await callHandleCommand(app, {
       kind: "command",
@@ -1134,7 +1172,7 @@ describe("BridgeApp command surface", () => {
 
     expect(deleteSession).toHaveBeenCalledWith("ses_3");
     expect(deleteSession).toHaveBeenCalledWith("ses_2");
-    expect(extractInteractiveHeader(getReplyPayloads(outbound).at(-1))).toBe("已彻底删除多个会话");
+    expect(extractInteractiveHeader(getReplyPayloads(outbound).at(-1))).toBe("已彻底删除多个 OpenCode 会话");
   });
 
   it("keeps explicit knowledge-mode commands out of private chat", async () => {

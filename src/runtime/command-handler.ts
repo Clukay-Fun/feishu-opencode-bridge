@@ -455,15 +455,15 @@ export class CommandHandler {
       if (window.mode === "single") {
         await this.context.sendPayload(message.chatId, buildSessionListCardPayload({
           items: currentSession ? [{ index: 1, title: currentSession.label, current: true, meta: "当前", shortId: shortSessionId(currentSession.sessionId) }] : [],
-          footer: currentSession ? "当前窗口为单会话模式，不支持切换" : "发送 `/new` 创建第一个会话",
-          emptyText: "暂无会话",
+          footer: currentSession ? "当前窗口为单会话模式，只保留一个绑定的 OpenCode 会话，不支持切换" : "发送 `/new` 创建第一个 OpenCode 会话并绑定到当前窗口",
+          emptyText: "当前窗口暂无绑定会话",
         }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "会话列表", len: 4 }, { replyToMessageId: message.messageId });
         return;
       }
 
       const visibleSessions = getVisibleSessions(window).slice(0, this.context.config.bridge.sessionListLimit);
       if (visibleSessions.length === 0) {
-        await this.context.sendPayload(message.chatId, buildSessionListCardPayload({ items: [], footer: "发送 `/new` 创建第一个会话", emptyText: "暂无会话" }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "会话列表", len: 4 }, { replyToMessageId: message.messageId });
+        await this.context.sendPayload(message.chatId, buildSessionListCardPayload({ items: [], footer: "发送 `/new` 创建第一个 OpenCode 会话并绑定到当前窗口", emptyText: "当前窗口暂无绑定会话" }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "会话列表", len: 4 }, { replyToMessageId: message.messageId });
         return;
       }
 
@@ -471,7 +471,7 @@ export class CommandHandler {
       this.context.setPendingInteraction(message.conversationKey, { kind: "session-select", options, expiresAt: Date.now() + SESSION_SELECTION_TTL_MS });
       await this.context.sendPayload(message.chatId, buildSessionListCardPayload({
         items: options.map((option) => ({ index: option.index, title: option.title, current: option.current, meta: option.current ? "当前" : formatSessionTimestamp(findSessionMeta(window, option.sessionId)?.lastUsedAt), shortId: shortSessionId(option.sessionId) })),
-        footer: "发送 `/switch <编号或短ID>` 切换 · 3 分钟内有效",
+        footer: "当前窗口绑定的 OpenCode 会话 · 发送 `/switch <编号或短ID>` 切换当前窗口绑定会话 · 3 分钟内有效",
       }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "会话列表", len: 4 }, { replyToMessageId: message.messageId });
       return;
     }
@@ -488,8 +488,8 @@ export class CommandHandler {
       if (sessions.length === 0) {
         await this.context.sendPayload(message.chatId, buildSessionListCardPayload({
           items: [],
-          footer: query ? "发送 `/sessions all` 查看全部会话" : "发送 `/new` 创建第一个会话",
-          emptyText: query ? "未找到匹配会话" : "暂无会话",
+          footer: query ? "发送 `/sessions all` 查看全部 OpenCode 会话" : "发送 `/new` 创建第一个 OpenCode 会话",
+          emptyText: query ? "未找到匹配的 OpenCode 会话" : "暂无 OpenCode 会话",
         }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "全部会话", len: 4 }, { replyToMessageId: message.messageId });
         return;
       }
@@ -499,7 +499,7 @@ export class CommandHandler {
           index: index + 1,
           sessionId: session.id,
           title: resolveDisplayLabel(session, session.title ?? session.slug ?? session.id, session.id),
-          displayTitle: inWindow ? resolveDisplayLabel(session, session.title ?? session.slug ?? session.id, session.id) : formatHiddenSessionDisplayTitle(index + 1, session.id),
+          displayTitle: inWindow ? resolveDisplayLabel(session, session.title ?? session.slug ?? session.id, session.id) : formatUnboundSessionDisplayTitle(index + 1, session.id),
           current: session.id === currentSession?.sessionId,
           inWindow,
         };
@@ -507,9 +507,9 @@ export class CommandHandler {
       this.context.setPendingInteraction(message.conversationKey, { kind: "session-select", options, expiresAt: Date.now() + SESSION_SELECTION_TTL_MS });
       const pages = chunkArray(options, SESSIONS_ALL_PAGE_SIZE);
       for (const [pageIndex, page] of pages.entries()) {
-        const footer = `${query ? `关键词：${command.query?.trim()} · ` : ""}第 ${pageIndex + 1}/${pages.length} 页 · 发送 \`/switch <编号>\` 恢复或切换 · \`/delete <编号>\` 或 \`/delete <sessionId>\` 彻底删除 · 3 分钟内有效`;
+        const footer = `${query ? `关键词：${command.query?.trim()} · ` : ""}全部 OpenCode 会话 · 第 ${pageIndex + 1}/${pages.length} 页 · 发送 \`/switch <编号>\` 绑定并切换 · \`/delete <编号>\` 或 \`/delete <sessionId>\` 彻底删除 · 3 分钟内有效`;
         await this.context.sendPayload(message.chatId, buildSessionListCardPayload({
-          items: page.map((option) => ({ index: option.index, title: option.displayTitle ?? option.title, current: option.current, archived: !option.inWindow, meta: option.current ? "当前" : option.inWindow ? "窗口中" : "已隐藏", shortId: shortSessionId(option.sessionId) })),
+          items: page.map((option) => ({ index: option.index, title: option.displayTitle ?? option.title, current: option.current, meta: option.current ? "当前" : option.inWindow ? "窗口中" : "未绑定", shortId: shortSessionId(option.sessionId) })),
           footer,
         }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "全部会话", len: 4 }, { replyToMessageId: message.messageId });
       }
@@ -565,10 +565,10 @@ export class CommandHandler {
         }, window.mode, this.context.config.bridge.maxSessionsPerWindow));
         this.context.clearPendingInteraction(message.conversationKey, false);
         await this.sendNotice(message, {
-          title: "已删除全部会话",
+          title: "已从当前窗口移除全部会话",
           template: "grey",
           icon: "close-bold_outlined",
-          message: "当前窗口的全部会话已移除，发送 `/new` 创建新会话。",
+          message: "当前窗口的全部 OpenCode 会话绑定已移除，真实 OpenCode 会话仍可通过 `/sessions all` 找回并重新绑定。",
         });
         return;
       }
@@ -590,10 +590,10 @@ export class CommandHandler {
         await this.context.saveSessionWindow(message.conversationKey, nextWindow);
         this.context.clearPendingInteraction(message.conversationKey, false);
         await this.sendNotice(message, {
-          title: "已删除多个会话",
+          title: "已从当前窗口移除多个会话",
           template: "grey",
           icon: "close-bold_outlined",
-          message: `已从当前窗口移除 ${targets.sessions.length} 个会话。`,
+          message: `已从当前窗口移除 ${targets.sessions.length} 个 OpenCode 会话绑定，真实 OpenCode 会话仍可通过 \`/sessions all\` 找回并重新绑定。`,
         });
         return;
       }
@@ -610,7 +610,7 @@ export class CommandHandler {
       await this.context.saveSessionWindow(message.conversationKey, nextWindow);
       this.context.clearPendingInteraction(message.conversationKey, false);
       const current = getActiveSession(nextWindow);
-      await this.context.sendPayload(message.chatId, buildSessionTransitionCardPayload({ title: "已删除会话", iconToken: "close-bold_outlined", previousLabel: target.session.label, currentLabel: current?.label ?? "当前窗口已无会话", footer: current ? "已从当前窗口移除，可继续使用当前会话" : "已从当前窗口移除，发送 `/new` 创建新会话" }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "已删除会话", len: 5 }, { replyToMessageId: message.messageId });
+      await this.context.sendPayload(message.chatId, buildSessionTransitionCardPayload({ title: "已从当前窗口移除会话", iconToken: "close-bold_outlined", previousLabel: target.session.label, currentLabel: current?.label ?? "当前窗口已无绑定会话", footer: current ? "已从当前窗口移除绑定，可继续使用当前窗口会话" : "已从当前窗口移除绑定，发送 `/new` 创建新 OpenCode 会话" }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "已从当前窗口移除会话", len: 10 }, { replyToMessageId: message.messageId });
       return;
     }
 
@@ -628,7 +628,7 @@ export class CommandHandler {
         }
         this.context.setPendingInteraction(message.conversationKey, { kind: "session-delete-confirm", all: true, sessionIds: window.sessions.map((session) => session.sessionId), expiresAt: Date.now() + SESSION_DELETE_CONFIRM_TTL_MS });
         await this.sendNotice(message, {
-          title: "确认彻底删除全部会话",
+          title: "确认彻底删除全部 OpenCode 会话",
           template: "yellow",
           icon: "maybe_outlined",
           message: buildDeleteConfirmMessage({
@@ -651,7 +651,7 @@ export class CommandHandler {
           }
           this.context.setPendingInteraction(message.conversationKey, { kind: "session-delete-confirm", sessionId: target.sessionId, title: target.title, expiresAt: Date.now() + SESSION_DELETE_CONFIRM_TTL_MS });
           await this.sendNotice(message, {
-            title: "确认彻底删除会话",
+            title: "确认彻底删除 OpenCode 会话",
             template: "yellow",
             icon: "maybe_outlined",
             message: buildDeleteConfirmMessage({
@@ -675,7 +675,7 @@ export class CommandHandler {
           const rangeLabel = `${command.range.start}-${command.range.end}`;
           this.context.setPendingInteraction(message.conversationKey, { kind: "session-delete-confirm", indices: targets.indices, rangeLabel, sessionIds: targets.sessions.map((session) => session.sessionId), titles: targets.sessions.map((session) => session.label), expiresAt: Date.now() + SESSION_DELETE_CONFIRM_TTL_MS });
           await this.sendNotice(message, {
-            title: "确认彻底删除多个会话",
+            title: "确认彻底删除多个 OpenCode 会话",
             template: "yellow",
             icon: "maybe_outlined",
             message: buildDeleteConfirmMessage({
@@ -696,7 +696,7 @@ export class CommandHandler {
         }
         this.context.setPendingInteraction(message.conversationKey, { kind: "session-delete-confirm", index: target.index, sessionId: target.session.sessionId, title: target.session.label, expiresAt: Date.now() + SESSION_DELETE_CONFIRM_TTL_MS });
         await this.sendNotice(message, {
-          title: "确认彻底删除会话",
+          title: "确认彻底删除 OpenCode 会话",
           template: "yellow",
           icon: "maybe_outlined",
           message: buildDeleteConfirmMessage({
@@ -737,10 +737,10 @@ export class CommandHandler {
         }, window.mode, this.context.config.bridge.maxSessionsPerWindow));
         this.context.clearPendingInteraction(message.conversationKey, false);
         await this.sendNotice(message, {
-          title: "已彻底删除全部会话",
+          title: "已彻底删除全部 OpenCode 会话",
           template: "red",
           icon: "close-bold_outlined",
-          message: "当前窗口的全部会话已从窗口和 OpenCode 中删除。",
+          message: "当前窗口的全部绑定已移除，对应 OpenCode 会话也已彻底删除，不能通过 `/sessions all` 恢复。",
         });
         return;
       }
@@ -779,10 +779,10 @@ export class CommandHandler {
           await this.context.saveSessionWindow(message.conversationKey, nextWindow);
           this.context.clearPendingInteraction(message.conversationKey, false);
           await this.sendNotice(message, {
-            title: "已彻底删除多个会话",
+            title: "已彻底删除多个 OpenCode 会话",
             template: "red",
             icon: "close-bold_outlined",
-            message: `已从当前窗口和 OpenCode 中删除 ${pending.sessionIds.length} 个会话。`,
+            message: `已从当前窗口移除绑定，并彻底删除 ${pending.sessionIds.length} 个 OpenCode 会话，不能通过 \`/sessions all\` 恢复。`,
           });
           return;
         }
@@ -805,7 +805,7 @@ export class CommandHandler {
       await this.context.saveSessionWindow(message.conversationKey, nextWindow);
       this.context.clearPendingInteraction(message.conversationKey, false);
       const current = getActiveSession(nextWindow);
-      await this.context.sendPayload(message.chatId, buildSessionTransitionCardPayload({ title: "已彻底删除会话", iconToken: "close-bold_outlined", previousLabel: targetSession?.label ?? pending.title ?? null, currentLabel: current?.label ?? "当前窗口已无会话", footer: current ? "已从当前窗口和 OpenCode 中删除" : "已从当前窗口和 OpenCode 中删除，发送 `/new` 创建新会话" }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "已彻底删除会话", len: 7 }, { replyToMessageId: message.messageId });
+      await this.context.sendPayload(message.chatId, buildSessionTransitionCardPayload({ title: "已彻底删除 OpenCode 会话", iconToken: "close-bold_outlined", previousLabel: targetSession?.label ?? pending.title ?? null, currentLabel: current?.label ?? "当前窗口已无绑定会话", footer: current ? "已从当前窗口移除绑定，并彻底删除 OpenCode 会话" : "已从当前窗口移除绑定，并彻底删除 OpenCode 会话，发送 `/new` 创建新会话" }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "已彻底删除 OpenCode 会话", len: 15 }, { replyToMessageId: message.messageId });
       return;
     }
 
@@ -965,13 +965,14 @@ export class CommandHandler {
     const current = getActiveSession(nextWindow);
     const messageCount = await this.context.getSessionMessageCount(match.sessionId);
     const review = await this.buildSessionReview(match.sessionId, current, sessionMeta, messageCount);
+    const switchFooterPrefix = inWindow ? "已切换当前窗口会话" : "已绑定到当前窗口并切换";
     await this.context.sendPayload(message.chatId, buildSessionTransitionCardPayload({
       title: "已切换会话",
       iconToken: "sheet-iconsets-check_filled",
       previousLabel: previous?.sessionId === current?.sessionId ? null : previous?.label ?? null,
       currentLabel: current?.label ?? fallbackLabel,
       review,
-      footer: `创建于 ${formatSessionTimestamp(current?.createdAt ?? sessionMeta?.time?.created ?? Date.now())} · 共 ${messageCount} 条消息`,
+      footer: `${switchFooterPrefix} · 创建于 ${formatSessionTimestamp(current?.createdAt ?? sessionMeta?.time?.created ?? Date.now())} · 共 ${messageCount} 条消息`,
     }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "已切换会话", len: 5 }, { replyToMessageId: message.messageId });
   }
 
@@ -1028,7 +1029,7 @@ export class CommandHandler {
       title: "提醒",
       template: "yellow",
       icon: "maybe_outlined",
-      message: "当前会话正在执行任务，请先发送 `/abort`。",
+      message: "目标 OpenCode 会话正在执行任务，请先发送 `/abort`。",
     });
   }
 
@@ -1067,8 +1068,8 @@ function parseWindowModelOverride(value: string): SessionWindowModelOverride | n
 
 function buildDeleteConfirmMessage(input: { target: string; confirmCommand: string }): string {
   return [
-    "该操作会从当前窗口移除目标，并删除 OpenCode 本地真实 session。",
-    "这不是 `/close` 软删除，删除后不可通过 `/sessions all` 恢复。",
+    "该操作会从当前窗口移除绑定，并彻底删除 OpenCode 会话。",
+    "这不是 `/close` 移除绑定；删除后不能通过 `/sessions all` 恢复。",
     "",
     input.target,
     "",
@@ -1094,22 +1095,22 @@ function buildCommandHelpText(): string {
     "",
     "### 会话管理",
     "",
-    "- `/sessions`：查看当前窗口的会话列表。",
-    "- `/sessions all`：查看可恢复的全部会话。",
-    "- `/sessions all <关键词>` 或 `/sessions find <关键词>`：按关键词搜索历史会话。",
+    "- `/sessions`：查看当前窗口绑定的 OpenCode 会话。",
+    "- `/sessions all`：查看全部 OpenCode 会话。",
+    "- `/sessions all <关键词>` 或 `/sessions find <关键词>`：按关键词搜索全部 OpenCode 会话。",
     "- `/sessions <编号>`：选择最近一次会话列表里的编号。",
-    "- `/switch <编号>`：切换到最近一次会话列表里的编号。",
-    "- `/switch <关键词>`：按标题或摘要匹配并切换会话。",
+    "- `/switch <编号>`：切换或绑定并切换最近一次会话列表里的编号。",
+    "- `/switch <关键词>`：按标题或摘要匹配并切换当前窗口绑定会话。",
     "- `/rename <标题>` 或 `/title <标题>`：重命名当前会话。",
-    "- `/close`：软关闭当前会话。",
-    "- `/close <编号>`：软关闭指定编号会话。",
-    "- `/close <起始>-<结束>`：软关闭编号范围内的会话。",
-    "- `/close all`：软关闭当前窗口全部会话。",
-    "- `/delete`：发起删除当前会话确认。",
-    "- `/delete <编号>`：发起删除指定编号会话确认。",
-    "- `/delete <sessionId>`：按 sessionId 发起删除确认。",
-    "- `/delete <起始>-<结束>`：发起删除编号范围内的会话确认。",
-    "- `/delete confirm`、`/delete <编号> confirm`、`/delete <sessionId> confirm`、`/delete all confirm`：确认删除。",
+    "- `/close`：从当前窗口移除当前会话绑定。",
+    "- `/close <编号>`：从当前窗口移除指定编号会话绑定。",
+    "- `/close <起始>-<结束>`：从当前窗口移除编号范围内的会话绑定。",
+    "- `/close all`：从当前窗口移除全部会话绑定。",
+    "- `/delete`：发起彻底删除当前 OpenCode 会话确认。",
+    "- `/delete <编号>`：发起彻底删除指定编号 OpenCode 会话确认。",
+    "- `/delete <sessionId>`：按 sessionId 发起彻底删除确认。",
+    "- `/delete <起始>-<结束>`：发起彻底删除编号范围内的 OpenCode 会话确认。",
+    "- `/delete confirm`、`/delete <编号> confirm`、`/delete <sessionId> confirm`、`/delete all confirm`：确认彻底删除 OpenCode 会话。",
     "",
     "### 模型",
     "",
@@ -1169,9 +1170,9 @@ function normalizeSessionLookupText(value: string | undefined): string {
   return (value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function formatHiddenSessionDisplayTitle(index: number, sessionId: string): string {
+function formatUnboundSessionDisplayTitle(index: number, sessionId: string): string {
   const suffix = sessionId.length > 8 ? sessionId.slice(-8) : sessionId;
-  return `隐藏会话 #${index} · ${suffix}`;
+  return `未绑定会话 #${index} · ${suffix}`;
 }
 
 function shortSessionId(sessionId: string): string {
