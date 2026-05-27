@@ -709,8 +709,13 @@ describe("scripts/release portable package", () => {
     await mkdir(path.join(dir, "docs"), { recursive: true });
     await mkdir(path.join(dir, "examples"), { recursive: true });
     await mkdir(path.join(dir, ".runtime"), { recursive: true });
+    await mkdir(path.join(dir, "bin"), { recursive: true });
     await writeFile(path.join(dir, "dist", "src", "index.js"), "console.log('ok');");
     await writeFile(path.join(dir, "scripts", "runtime", "bootstrap.mjs"), "export {};");
+    // bin/ 启动器文件（便携包会从这里拷贝到根目录）
+    await writeFile(path.join(dir, "bin", "bridge"), "#!/bin/bash\nROOT=\"$(cd \"$(dirname \"$0\")/..\" && pwd)\"\nexec \"$ROOT/scripts/runtime/bootstrap.mjs\" \"$@\"\n");
+    await writeFile(path.join(dir, "bin", "bridge.cmd"), "@echo off\nset \"ROOT=%~dp0..\\\"\n\"%ROOT%.runtime\\node\\node.exe\" \"%ROOT%scripts\\runtime\\bootstrap.mjs\" %*\n");
+    await writeFile(path.join(dir, "bin", "bridge.ps1"), "$Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)\n& (Join-Path $Root 'scripts\\runtime\\bootstrap.mjs')\n");
     await writeFile(path.join(dir, "src", "index.ts"), "export {};");
     await writeFile(path.join(dir, "test", "example.test.ts"), "export {};");
     await writeFile(path.join(dir, "data", "knowledge-base.db"), "db");
@@ -755,6 +760,8 @@ describe("scripts/release portable package", () => {
       "bridge.cmd",
       "bridge.ps1",
       "config.example.json",
+      "config.general.example.json",
+      "config.legal.example.json",
       "dist",
       "logs",
       "package-lock.json",
@@ -763,6 +770,10 @@ describe("scripts/release portable package", () => {
     ]);
     await expect(readFile(path.join(result.packageDir, "dist", "src", "index.js"), "utf8")).resolves.toBe("console.log('ok');");
     await expect(readFile(path.join(result.packageDir, "scripts", "runtime", "bootstrap.mjs"), "utf8")).resolves.toBe("export {};");
+    await expect(readFile(path.join(result.packageDir, "bridge"), "utf8")).resolves.toContain('ROOT="$(cd "$(dirname "$0")" && pwd)"');
+    await expect(readFile(path.join(result.packageDir, "bridge"), "utf8")).resolves.not.toContain('/.."');
+    await expect(readFile(path.join(result.packageDir, "bridge.cmd"), "utf8")).resolves.toContain('set "ROOT=%~dp0."');
+    await expect(readFile(path.join(result.packageDir, "bridge.ps1"), "utf8")).resolves.toContain("$Root = Split-Path -Parent $MyInvocation.MyCommand.Path");
     await expect(readdir(path.join(result.packageDir, ".runtime"))).resolves.toEqual([]);
     await expect(readdir(path.join(result.packageDir, "logs"))).resolves.toEqual([]);
     for (const excluded of PORTABLE_PACKAGE_MANIFEST.excluded) {

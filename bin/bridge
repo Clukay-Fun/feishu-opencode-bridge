@@ -6,7 +6,7 @@
 # - 后续命令统一交给 scripts/runtime/bootstrap.mjs。
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 NODE_BIN="$ROOT/.runtime/node/bin/node"
 
 if [ ! -x "$NODE_BIN" ]; then

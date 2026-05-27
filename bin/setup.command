@@ -5,5 +5,5 @@
 # - 保持旧文件名可用，避免历史 README 或用户习惯失效。
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
-exec "$ROOT/bridge" onboard
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+exec "$ROOT/bin/bridge" onboard

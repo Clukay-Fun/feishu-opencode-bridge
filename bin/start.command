@@ -5,7 +5,7 @@
 # - 保持旧文件名可用，避免历史 README 或用户习惯失效。
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 if [ -z "${BRIDGE_CONFIG_PATH:-}" ] && [ -f "$ROOT/config.json" ]; then
   case "$(uname -s)" in
@@ -21,4 +21,4 @@ if [ -z "${BRIDGE_CONFIG_PATH:-}" ] && [ -f "$ROOT/config.json" ]; then
   fi
 fi
 
-exec "$ROOT/bridge" start
+exec "$ROOT/bin/bridge" start

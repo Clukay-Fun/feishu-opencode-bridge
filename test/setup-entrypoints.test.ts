@@ -10,18 +10,19 @@ import { describe, expect, it } from "vitest";
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(testDir, "..");
+const binDir = path.join(repoRoot, "bin");
 
 describe("setup entrypoints", () => {
   it("macOS setup command forwards to the portable bridge onboarding entrypoint", async () => {
-    const script = await readFile(path.join(repoRoot, "setup.command"), "utf8");
+    const script = await readFile(path.join(binDir, "setup.command"), "utf8");
 
     expect(script).toContain("兼容旧版 macOS 双击安装入口");
-    expect(script).toContain("exec \"$ROOT/bridge\" onboard");
+    expect(script).toContain("exec \"$ROOT/bin/bridge\" onboard");
     expect(script).not.toContain("brew install");
   });
 
   it("Windows setup batch forwards to the portable bridge onboarding entrypoint", async () => {
-    const script = await readFile(path.join(repoRoot, "setup.bat"), "utf8");
+    const script = await readFile(path.join(binDir, "setup.bat"), "utf8");
 
     expect(script).toContain("兼容旧版 Windows 双击安装入口");
     expect(script).toContain("bridge.cmd\" onboard");
@@ -29,16 +30,16 @@ describe("setup entrypoints", () => {
   });
 
   it("macOS start command forwards to the portable bridge start entrypoint", async () => {
-    const script = await readFile(path.join(repoRoot, "start.command"), "utf8");
+    const script = await readFile(path.join(binDir, "start.command"), "utf8");
 
     expect(script).toContain("兼容旧版 macOS 双击启动入口");
     expect(script).toContain("BRIDGE_CONFIG_PATH");
-    expect(script).toContain("exec \"$ROOT/bridge\" start");
+    expect(script).toContain("exec \"$ROOT/bin/bridge\" start");
     expect(script).not.toContain("scripts/runtime/start.mjs");
   });
 
   it("Windows start batch forwards to the portable bridge start entrypoint", async () => {
-    const script = await readFile(path.join(repoRoot, "start.bat"), "utf8");
+    const script = await readFile(path.join(binDir, "start.bat"), "utf8");
 
     expect(script).toContain("兼容旧版 Windows 双击启动入口");
     expect(script).toContain("BRIDGE_CONFIG_PATH");
@@ -47,7 +48,7 @@ describe("setup entrypoints", () => {
   });
 
   it("portable macOS entrypoint downloads Node and dispatches through bootstrap", async () => {
-    const script = await readFile(path.join(repoRoot, "bridge"), "utf8");
+    const script = await readFile(path.join(binDir, "bridge"), "utf8");
 
     expect(script).toContain("scripts/runtime/install-node.sh");
     expect(script).toContain("BRIDGE_HOME");
@@ -56,7 +57,7 @@ describe("setup entrypoints", () => {
   });
 
   it("portable Windows entrypoint downloads Node and dispatches through bootstrap", async () => {
-    const script = await readFile(path.join(repoRoot, "bridge.cmd"), "utf8");
+    const script = await readFile(path.join(binDir, "bridge.cmd"), "utf8");
 
     expect(script).toContain("scripts\\runtime\\install-node.ps1");
     expect(script).toContain("BRIDGE_HOME");

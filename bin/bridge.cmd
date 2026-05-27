@@ -7,7 +7,7 @@ rem - 后续命令统一交给 scripts\runtime\bootstrap.mjs。
 setlocal
 cd /d "%~dp0"
 
-set "ROOT=%~dp0"
+set "ROOT=%~dp0..\"
 set "NODE_EXE=%ROOT%.runtime\node\node.exe"
 
 if exist "%NODE_EXE%" goto run

@@ -5,25 +5,55 @@
  * - 按当前系统生成 zip 或 tar.gz，供 GitHub Release artifact 使用。
  * - 不负责下载安装外部组件，首次运行由 bridge/bootstrap 完成。
  */
-import { cp, mkdir, rm } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, writeFile, chmod } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { isMainModule, runCommand } from "../runtime/checks.mjs";
 
+/** 将 bin/ 启动器的 ROOT 路径回退到当前目录（便携包根目录），避免 /.. 跳到父目录。 */
+function patchPortableLauncherRoot(content, filename) {
+  if (filename === "bridge") {
+    return content.replace(
+      /\$\{0\}\)\.\.\//,
+      "${0})/",
+    ).replace(
+      /dirname "\$0"\)\/\.\./g,
+      'dirname "$0")',
+    );
+  }
+  if (filename === "bridge.cmd") {
+    return content.replace(
+      /%~dp0\.\.\\/g,
+      "%~dp0.",
+    );
+  }
+  if (filename === "bridge.ps1") {
+    return content.replace(
+      /Split-Path -Parent \(Split-Path -Parent \$MyInvocation\.MyCommand\.Path\)/,
+      "Split-Path -Parent $MyInvocation.MyCommand.Path",
+    );
+  }
+  return content;
+}
+
 export const PORTABLE_PACKAGE_MANIFEST = Object.freeze({
   files: Object.freeze([
-    "bridge",
-    "bridge.cmd",
-    "bridge.ps1",
     "package.json",
     "package-lock.json",
     "config.example.json",
+    "config.general.example.json",
+    "config.legal.example.json",
     "README.md",
     "README.en.md",
     "LICENSE",
   ]),
+  launcherFiles: Object.freeze({
+    "bin/bridge": "bridge",
+    "bin/bridge.cmd": "bridge.cmd",
+    "bin/bridge.ps1": "bridge.ps1",
+  }),
   directories: Object.freeze([
     "dist",
     "scripts/runtime",
@@ -33,6 +63,7 @@ export const PORTABLE_PACKAGE_MANIFEST = Object.freeze({
     "logs",
   ]),
   excluded: Object.freeze([
+    "bin",
     "src",
     "test",
     "docs",
@@ -71,6 +102,17 @@ export async function buildPortablePackage(options = {}) {
 
   for (const file of PORTABLE_PACKAGE_MANIFEST.files) {
     await cp(path.join(cwd, file), path.join(packageDir, file), { recursive: true });
+  }
+  // 拷贝 bin/ 下的启动器到包根目录，同时替换 ROOT 为当前目录（包根目录）。
+  for (const [source, dest] of Object.entries(PORTABLE_PACKAGE_MANIFEST.launcherFiles)) {
+    const srcPath = path.join(cwd, source);
+    const destPath = path.join(packageDir, dest);
+    const srcContent = await readFile(srcPath, "utf-8");
+    const patched = patchPortableLauncherRoot(srcContent, dest);
+    await writeFile(destPath, patched);
+    if (source.endsWith(".sh") || source === "bin/bridge" || source === "bin/bridge.cmd" || source === "bin/setup.command" || source === "bin/start.command") {
+      await chmod(destPath, 0o755);
+    }
   }
   for (const directory of PORTABLE_PACKAGE_MANIFEST.directories) {
     await cp(path.join(cwd, directory), path.join(packageDir, directory), { recursive: true });
