@@ -60,7 +60,7 @@
 
 - `AGENTS.md`：项目/运行时契约，不放 Codex 工作流细节。
 - `CODEX.md`：Codex 开发执行准则、issue/PR/release 流程、常用命令和检查清单。
-- `AGENTS-dev.md`：从旧版 `AGENTS.md` 拆出的历史开发规范，当前作为维护背景保留；新增开发执行规则优先写入 `CODEX.md`。
+- `archive/AGENTS-dev.md`：从旧版 `AGENTS.md` 拆出的历史开发规范，当前作为维护背景保留；新增开发执行规则优先写入 `CODEX.md`。
 - `docs/architecture-baseline.md`：补充 `AGENTS.md` 中架构 guardrails 背后的完整契约。
 - `docs/guidelines/new-feature-checklist.md`：补充新功能规则的完整清单。
 - `docs/modules/*`：模块背景和设计说明，细节程度高于 `AGENTS.md`。
