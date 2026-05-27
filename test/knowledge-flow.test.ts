@@ -2,11 +2,11 @@
  * 职责: 覆盖知识库摄入、查询和存储协作流程。
  * 关注点: 验证核心路径、边界条件和回归场景。
  */
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { AppConfig } from "../src/config/schema.js";
 import type { KnowledgeIngestOptions } from "../src/knowledge/index.js";
@@ -14,7 +14,13 @@ import { BridgeApp, type IncomingChatMessage } from "../src/runtime/app.js";
 import type { ChatWhitelist } from "../src/store/whitelist.js";
 import { FakeOpenCodeClient, FakeOpenCodeEventStream } from "./integration/fakes.js";
 
+const testDataDir = path.join(os.tmpdir(), "bridge-kb-test-fixed");
+
 describe("knowledge base bridge flow", () => {
+  beforeAll(async () => {
+    await mkdir(testDataDir, { recursive: true });
+  });
+
   it("keeps private legal-looking questions on the normal OpenCode path without /法律问答", async () => {
     const outbound = createOutbound();
     const eventStream = new FakeOpenCodeEventStream();
@@ -1282,7 +1288,7 @@ describe("knowledge base bridge flow", () => {
   });
 
   it("marks persisted active ingest sessions interrupted on restart", async () => {
-    const dataDir = await mkdtemp(path.join(tmpdir(), "bridge-active-ingest-"));
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "bridge-active-ingest-"));
     await writeFile(path.join(dataDir, "mappings.json"), JSON.stringify({
       version: 4,
       mappings: {
@@ -1379,7 +1385,7 @@ function baseConfig(options?: { autoDetect?: boolean; queueLimit?: number }): Ap
       directory: process.cwd(),
     },
     storage: {
-      dataDir: process.cwd(),
+      dataDir: testDataDir,
       mappingsFile: "mappings.json",
     },
     server: {
@@ -1388,7 +1394,7 @@ function baseConfig(options?: { autoDetect?: boolean; queueLimit?: number }): Ap
       publicBaseUrl: new URL("http://127.0.0.1:3000/"),
     },
     whitelist: {
-      storePath: "whitelist.json",
+      storePath: path.join(testDataDir, "whitelist.json"),
     },
     bridge: {
       queueLimit: options?.queueLimit ?? 3,
@@ -1410,7 +1416,7 @@ function baseConfig(options?: { autoDetect?: boolean; queueLimit?: number }): Ap
     },
     memory: {
       enabled: false,
-      dbPath: "memory.db",
+      dbPath: path.join(testDataDir, "memory.db"),
       maxMemoriesPerUser: 500,
       searchLimit: 5,
       extractQueueLimit: 100,
@@ -1430,7 +1436,7 @@ function baseConfig(options?: { autoDetect?: boolean; queueLimit?: number }): Ap
       autoDetect: { enabled: options?.autoDetect ?? false, minConfidence: 0.75 },
       query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
       storage: {
-        sqlitePath: "knowledge-base.db",
+        sqlitePath: path.join(testDataDir, "knowledge-base.db"),
         bitable: { appToken: "app_token", tableId: "tbl_1", documentTableId: undefined },
       },
       embeddingProvider: {
@@ -1446,7 +1452,7 @@ function baseConfig(options?: { autoDetect?: boolean; queueLimit?: number }): Ap
       },
     },
     logging: {
-      dir: process.cwd(),
+      dir: testDataDir,
       level: "info",
       enableTranscript: true,
       enableConsole: true,

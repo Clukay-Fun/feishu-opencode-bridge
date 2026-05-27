@@ -3,8 +3,11 @@
  * 关注点: 验证核心路径、边界条件和回归场景。
  */
 import http from "node:http";
+import { mkdir } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 const actionResults = vi.hoisted(() => ({
   nextResult: { card: { title: "ok" } } as Record<string, unknown>,
@@ -43,7 +46,13 @@ import { startBridgeHttpServer, type BridgeHttpServer } from "../src/http/server
 import type { AppConfig } from "../src/config/schema.js";
 import { APP_VERSION } from "../src/version.js";
 
+const testDataDir = path.join(os.tmpdir(), "bridge-http-test-fixed");
+
 describe("startBridgeHttpServer", () => {
+  beforeAll(async () => {
+    await mkdir(testDataDir, { recursive: true });
+  });
+
   const servers: BridgeHttpServer[] = [];
 
   afterEach(async () => {
@@ -473,7 +482,7 @@ function createConfig(
       directory: process.cwd(),
     },
     storage: {
-      dataDir: process.cwd(),
+      dataDir: testDataDir,
       mappingsFile: "mappings.json",
     },
     server: {
@@ -482,7 +491,7 @@ function createConfig(
       publicBaseUrl: new URL(`http://127.0.0.1:${port}/`),
     },
     whitelist: {
-      storePath: "whitelist.json",
+      storePath: path.join(testDataDir, "whitelist.json"),
     },
     bridge: {
       queueLimit: 3,
@@ -500,7 +509,7 @@ function createConfig(
     },
     memory: {
       enabled: false,
-      dbPath: "memory.db",
+      dbPath: path.join(testDataDir, "memory.db"),
       maxMemoriesPerUser: 500,
       searchLimit: 5,
       extractQueueLimit: 100,
@@ -520,7 +529,7 @@ function createConfig(
       autoDetect: { enabled: false, minConfidence: 0.75 },
       query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
       storage: {
-        sqlitePath: "knowledge-base.db",
+        sqlitePath: path.join(testDataDir, "knowledge-base.db"),
         bitable: { appToken: "", tableId: "", documentTableId: undefined },
       },
       embeddingProvider: undefined,
@@ -528,7 +537,7 @@ function createConfig(
       ingest: { allowedExtensions: [".pdf", ".docx", ".txt"], maxFileSizeMb: 20, pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500 },
     },
     logging: {
-      dir: process.cwd(),
+      dir: testDataDir,
       level: "info",
       enableTranscript: true,
       enableConsole: true,

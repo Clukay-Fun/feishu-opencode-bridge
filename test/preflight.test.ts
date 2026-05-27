@@ -6,12 +6,17 @@ import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AppConfig } from "../src/config/schema.js";
 import { runStartupPreflight } from "../src/runtime/preflight.js";
 
+const testDataDir = path.join(os.tmpdir(), "bridge-preflight-test-fixed");
+
 describe("runStartupPreflight", () => {
+  beforeAll(async () => {
+    await mkdir(testDataDir, { recursive: true });
+  });
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -205,7 +210,7 @@ function baseConfig(): AppConfig {
       directory: process.cwd(),
     },
     storage: {
-      dataDir: process.cwd(),
+      dataDir: testDataDir,
       mappingsFile: "mappings.json",
     },
     server: {
@@ -214,7 +219,7 @@ function baseConfig(): AppConfig {
       publicBaseUrl: new URL("http://127.0.0.1:3000/"),
     },
     whitelist: {
-      storePath: "whitelist.json",
+      storePath: path.join(testDataDir, "whitelist.json"),
     },
     bridge: {
       queueLimit: 3,
@@ -232,7 +237,7 @@ function baseConfig(): AppConfig {
     },
     memory: {
       enabled: false,
-      dbPath: "memory.db",
+      dbPath: path.join(testDataDir, "memory.db"),
       maxMemoriesPerUser: 500,
       searchLimit: 5,
       extractQueueLimit: 100,
@@ -252,7 +257,7 @@ function baseConfig(): AppConfig {
       autoDetect: { enabled: false, minConfidence: 0.75 },
       query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
       storage: {
-        sqlitePath: "knowledge-base.db",
+        sqlitePath: path.join(testDataDir, "knowledge-base.db"),
         bitable: { appToken: "", tableId: "", documentTableId: undefined },
       },
       embeddingProvider: undefined,
@@ -260,7 +265,7 @@ function baseConfig(): AppConfig {
       ingest: { allowedExtensions: [".pdf", ".docx", ".txt"], maxFileSizeMb: 20, pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500 },
     },
     logging: {
-      dir: process.cwd(),
+      dir: testDataDir,
       level: "info",
       enableTranscript: true,
       enableConsole: true,

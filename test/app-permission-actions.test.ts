@@ -2,14 +2,23 @@
  * 职责: 覆盖BridgeApp 权限卡片回调处理流程。
  * 关注点: 验证核心路径、边界条件和回归场景。
  */
-import { describe, expect, it, vi } from "vitest";
+import { mkdir } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { BridgeApp, type PermissionCardActionValue } from "../src/runtime/app.js";
 import type { AppConfig } from "../src/config/schema.js";
 import type { PendingPermissionInteraction } from "../src/bridge/state.js";
 import type { ChatWhitelist } from "../src/store/whitelist.js";
 
+const testDataDir = path.join(os.tmpdir(), "bridge-perm-test-fixed");
+
 describe("BridgeApp permission card actions", () => {
+  beforeAll(async () => {
+    await mkdir(testDataDir, { recursive: true });
+  });
   it("handles an allow-once button click for the requester", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
@@ -404,7 +413,7 @@ function baseConfig(): AppConfig {
       directory: process.cwd(),
     },
     storage: {
-      dataDir: process.cwd(),
+      dataDir: testDataDir,
       mappingsFile: "mappings.json",
     },
     server: {
@@ -413,7 +422,7 @@ function baseConfig(): AppConfig {
       publicBaseUrl: new URL("http://127.0.0.1:3000/"),
     },
     whitelist: {
-      storePath: "whitelist.json",
+      storePath: path.join(testDataDir, "whitelist.json"),
     },
     bridge: {
       queueLimit: 3,
@@ -431,7 +440,7 @@ function baseConfig(): AppConfig {
     },
     memory: {
       enabled: false,
-      dbPath: "memory.db",
+      dbPath: path.join(testDataDir, "memory.db"),
       maxMemoriesPerUser: 500,
       searchLimit: 5,
       extractQueueLimit: 100,
@@ -451,7 +460,7 @@ function baseConfig(): AppConfig {
       autoDetect: { enabled: false, minConfidence: 0.75 },
       query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
       storage: {
-        sqlitePath: "knowledge-base.db",
+        sqlitePath: path.join(testDataDir, "knowledge-base.db"),
         bitable: { appToken: "", tableId: "", documentTableId: undefined },
       },
       embeddingProvider: undefined,
@@ -459,7 +468,7 @@ function baseConfig(): AppConfig {
       ingest: { allowedExtensions: [".pdf", ".docx", ".txt"], maxFileSizeMb: 20, pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500 },
     },
     logging: {
-      dir: process.cwd(),
+      dir: testDataDir,
       level: "info",
       enableTranscript: true,
       enableConsole: true,

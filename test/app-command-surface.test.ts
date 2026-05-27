@@ -2,7 +2,11 @@
  * 职责: 覆盖BridgeApp 命令入口和用户可见命令面。
  * 关注点: 验证核心路径、边界条件和回归场景。
  */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdir } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { FeishuApiClient } from "../src/feishu/api.js";
 import { BridgeApp } from "../src/runtime/app.js";
@@ -11,7 +15,13 @@ import type { ChatWhitelist } from "../src/store/whitelist.js";
 import type { PendingInteraction } from "../src/bridge/state.js";
 import type { SessionWindowRecord } from "../src/store/mappings.js";
 
+const testDataDir = path.join(os.tmpdir(), "bridge-cmd-test-fixed");
+
 describe("BridgeApp command surface", () => {
+  beforeAll(async () => {
+    await mkdir(testDataDir, { recursive: true });
+  });
+
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
@@ -1662,7 +1672,7 @@ function baseConfig(): AppConfig {
       directory: process.cwd(),
     },
     storage: {
-      dataDir: process.cwd(),
+      dataDir: testDataDir,
       mappingsFile: "mappings.json",
     },
     server: {
@@ -1671,7 +1681,7 @@ function baseConfig(): AppConfig {
       publicBaseUrl: new URL("http://127.0.0.1:3000/"),
     },
     whitelist: {
-      storePath: "whitelist.json",
+      storePath: path.join(testDataDir, "whitelist.json"),
     },
     bridge: {
       queueLimit: 3,
@@ -1689,7 +1699,7 @@ function baseConfig(): AppConfig {
     },
     memory: {
       enabled: false,
-      dbPath: "memory.db",
+      dbPath: path.join(testDataDir, "memory.db"),
       maxMemoriesPerUser: 500,
       searchLimit: 5,
       extractQueueLimit: 100,
@@ -1709,7 +1719,7 @@ function baseConfig(): AppConfig {
       autoDetect: { enabled: false, minConfidence: 0.75 },
       query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
       storage: {
-        sqlitePath: "knowledge-base.db",
+        sqlitePath: path.join(testDataDir, "knowledge-base.db"),
         bitable: { appToken: "", tableId: "", documentTableId: undefined },
       },
       embeddingProvider: undefined,
@@ -1717,7 +1727,7 @@ function baseConfig(): AppConfig {
       ingest: { allowedExtensions: [".pdf", ".docx", ".txt"], maxFileSizeMb: 20, pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500 },
     },
     logging: {
-      dir: process.cwd(),
+      dir: testDataDir,
       level: "info",
       enableTranscript: true,
       enableConsole: true,
