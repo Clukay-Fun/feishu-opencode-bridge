@@ -1,0 +1,53 @@
+{
+  "profile": "legal",
+  "feishu": {
+    "appId": "cli_xxx",
+    "appSecret": "xxx",
+    "botMentionNames": ["opencode"]
+  },
+  "opencode": {
+    "baseUrl": "http://127.0.0.1:4096/",
+    "directory": "/absolute/path/to/your/project"
+  },
+  "storage": {
+    "dataDir": "./data"
+  },
+  "bridge": {},
+  "embeddings": {
+    "provider": {
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "sk-xxx",
+      "model": "text-embedding-3-small"
+    },
+    "similarityThreshold": 0.75
+  },
+  "memory": {
+    "enabled": true,
+    "dbPath": "./data/memory.db"
+  },
+  "extensions": {
+    "knowledge-base": {
+      "enabled": true,
+      "storage": {
+        "sqlitePath": "./data/knowledge-base.db",
+        "bitable": {
+          "appToken": "bascn_xxx",
+          "tableId": "tbl_xxx",
+          "documentTableId": "tbl_doc_xxx"
+        }
+      }
+    },
+    "contract-assistant": {
+      "enabled": true,
+      "storage": {
+        "baseToken": "bascn_xxx",
+        "contractTableId": "tbl_contract_xxx",
+        "invoiceTableId": "tbl_invoice_xxx",
+        "caseTableId": "tbl_case_xxx"
+      }
+    },
+    "labor-skill": {
+      "enabled": true
+    }
+  }
+}

@@ -7,6 +7,7 @@
 import { z } from "zod";
 
 import { moduleConfigSchemas } from "./modules.js";
+import { DEFAULT_PROFILE, type BridgeProfile } from "./profiles.js";
 import type { KnowledgeBaseConfig } from "../knowledge/config.js";
 import type { ContractAssistantConfig } from "../contract-assistant/config.js";
 import type { LaborSkillConfig } from "../labor/config.js";
@@ -72,8 +73,15 @@ const PersonaConfigSchema = z.object({
   profile: z.literal("xiaojing").default("xiaojing"),
   scope: z.enum(["legal", "global"]).default("legal"),
 }).default({});
+// 案件工作台目前只需要一个 enabled 开关，比照 memory 暂留中央 schema。
+// 真实启用值由 loader 的 profile 解析覆盖；schema 默认值仅作为最终兜底。
+const CaseWorkbenchConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+}).default({});
 
 export const ConfigSchema = z.object({
+  // 发行形态 profile：为内置扩展提供默认启用值，用户显式 enabled 始终优先。
+  profile: z.enum(["general", "legal"]).default(DEFAULT_PROFILE),
   feishu: z.object({
     appId: z.string().min(1),
     appSecret: z.string().min(1),
@@ -158,6 +166,7 @@ export const ConfigSchema = z.object({
   updates: UpdatesConfigSchema,
   persona: PersonaConfigSchema,
   memory: MemoryConfigSchema.default({}),
+  caseWorkbench: CaseWorkbenchConfigSchema,
   extensions: z.record(z.unknown()).default({}),
   knowledgeBase: moduleConfigSchemas.knowledgeBase,
   contractAssistant: moduleConfigSchemas.contractAssistant,
@@ -182,6 +191,7 @@ export const ConfigSchema = z.object({
 });
 
 export type AppConfig = {
+  profile: BridgeProfile;
   feishu: {
     appId: string;
     appSecret: string;
@@ -299,6 +309,9 @@ export type AppConfig = {
       syncCron: string;
       enableWikiLinks: boolean;
     };
+  };
+  caseWorkbench: {
+    enabled: boolean;
   };
   extensions?: Record<string, unknown> | undefined;
   knowledgeBase: KnowledgeBaseConfig;

@@ -1,4 +1,8 @@
 {
+  "profile": "legal",
+  "caseWorkbench": {
+    "enabled": true
+  },
   "feishu": {
     "appId": "cli_legacy",
     "appSecret": "secret",

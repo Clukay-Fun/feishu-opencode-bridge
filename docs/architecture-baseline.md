@@ -395,8 +395,19 @@ Feishu Transport
 当前状态：
 
 - `knowledgeBase`、`contractAssistant` 和 `laborSkill` 已下沉到模块 config registry
-- `memory` 仍保留在中央 `schema.ts` / `loader.ts`，后续可按同模式迁移
+- `memory` 与 `caseWorkbench` 仍保留在中央 `schema.ts` / `loader.ts`，后续可按同模式迁移
 - 后续迁移步骤固定为：创建 `<module>/config.ts`，导出 module config definition，加入静态 registry，删除中央 schema / loader 旧块，补兼容快照与模块配置测试
+
+#### 发行形态 Profile 与扩展开关
+
+通用版（`general`）与法律版（`legal`）共享同一主干代码，只通过配置区分默认启用的能力，不维护双分支或双仓库。
+
+- `profile` 字段（默认 `legal`）只提供内置扩展的默认 `enabled`，映射在 `src/config/profiles.ts` 维护。
+- 用户在 `<configKey>.enabled` 或 `extensions["<id>"].enabled` 里的显式声明始终优先于 profile 默认值。
+- profile 与 enabled 的归一化只发生在 `src/config/loader.ts`（config seam）；knowledge 在 profile 派生启用却缺 `embeddingProvider` 时优雅降级为关闭并记 warning，显式启用仍走严格校验。
+- 是否创建 `RuntimeModule` 的门控只发生在 `src/runtime/runtime-modules.ts`（runtime assembly seam）：禁用的内置扩展不创建模块，因此不认领命令、自然语言 routing 或业务卡片。
+- 不得把 profile / enabled 的业务分支写入 `app.ts`、`turn-executor.ts` 或 `router.ts`。knowledge 作为 app.ts 依赖的共享接口，禁用时仍构造对象但不注册进模块链。
+- `general` 默认仅启用基础运行时、基础卡片、文件能力、记忆能力与外部扩展机制；`legal` 额外默认启用法律知识库、合同助手、劳动案件与案件工作台。
 
 ### 7. Logging 与 Observability
 

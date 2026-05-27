@@ -1,0 +1,20 @@
+{
+  "profile": "general",
+  "feishu": {
+    "appId": "cli_xxx",
+    "appSecret": "xxx",
+    "botMentionNames": ["opencode"]
+  },
+  "opencode": {
+    "baseUrl": "http://127.0.0.1:4096/",
+    "directory": "/absolute/path/to/your/project"
+  },
+  "storage": {
+    "dataDir": "./data"
+  },
+  "bridge": {},
+  "memory": {
+    "enabled": true,
+    "dbPath": "./data/memory.db"
+  }
+}

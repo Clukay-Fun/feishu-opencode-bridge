@@ -759,8 +759,67 @@ describe("loadConfig memory settings", () => {
   });
 });
 
+describe("loadConfig profiles", () => {
+  async function writeAndLoad(raw: Record<string, unknown>) {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-profile-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify(raw), "utf8");
+    return await loadConfigWithWarnings(configPath);
+  }
+
+  const providerConfig = {
+    embeddings: {
+      provider: { baseUrl: "https://api.example.com/v1", apiKey: "sk-x", model: "text-embedding-3-small" },
+    },
+  };
+
+  it("defaults to the legal profile and enables legal verticals when a provider is configured", async () => {
+    const { config } = await writeAndLoad({ ...baseConfig(), profile: undefined, ...providerConfig });
+    expect(config.profile).toBe("legal");
+    expect(config.knowledgeBase.enabled).toBe(true);
+    expect(config.contractAssistant?.enabled).toBe(true);
+    expect(config.laborSkill?.enabled).toBe(true);
+    expect(config.caseWorkbench.enabled).toBe(true);
+    expect(config.memory.enabled).toBe(true);
+  });
+
+  it("keeps legal verticals off under the general profile but retains memory", async () => {
+    const { config } = await writeAndLoad({ ...baseConfig(), profile: "general", ...providerConfig });
+    expect(config.profile).toBe("general");
+    expect(config.knowledgeBase.enabled).toBe(false);
+    expect(config.contractAssistant?.enabled).toBe(false);
+    expect(config.laborSkill?.enabled).toBe(false);
+    expect(config.caseWorkbench.enabled).toBe(false);
+    expect(config.memory.enabled).toBe(true);
+  });
+
+  it("auto-disables knowledge under legal profile when no embedding provider is configured", async () => {
+    const { config, warnings } = await writeAndLoad({ ...baseConfig(), profile: "legal" });
+    expect(config.knowledgeBase.enabled).toBe(false);
+    // 其它垂直扩展不依赖 provider，legal 默认仍启用。
+    expect(config.contractAssistant?.enabled).toBe(true);
+    expect(warnings).toContainEqual(expect.objectContaining({
+      code: "profile-extension-auto-disabled",
+      extensionId: "knowledge-base",
+    }));
+  });
+
+  it("lets an explicit enabled override the profile default", async () => {
+    const { config } = await writeAndLoad({
+      ...baseConfig(),
+      profile: "legal",
+      ...providerConfig,
+      contractAssistant: { enabled: false },
+    });
+    expect(config.knowledgeBase.enabled).toBe(true);
+    expect(config.contractAssistant?.enabled).toBe(false);
+  });
+});
+
 function baseConfig(): Record<string, unknown> {
   return {
+    // 这些单测断言的是 profile 引入前的默认形态（垂直扩展默认关闭），固定用 general profile 复现。
+    profile: "general",
     feishu: {
       appId: "cli_xxx",
       appSecret: "secret",

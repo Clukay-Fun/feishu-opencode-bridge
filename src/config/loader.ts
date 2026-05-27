@@ -11,6 +11,7 @@ import type { AppConfig } from "./schema.js";
 import { ConfigSchema } from "./schema.js";
 import type { ConfigLoadContext, ModuleConfigDefinition } from "./module-registry.js";
 import { moduleConfigRegistry } from "./modules.js";
+import { resolveProfileExtensionDefault, type BridgeProfile, type ProfileManagedExtensionId } from "./profiles.js";
 import type { ContractAssistantConfig } from "../contract-assistant/config.js";
 import type { ExtensionMetaDefinition } from "../extension-api/index.js";
 import { builtinExtensionMetas } from "../extensions/builtin-meta.js";
@@ -18,7 +19,7 @@ import type { KnowledgeBaseConfig } from "../knowledge/config.js";
 import type { LaborSkillConfig } from "../labor/config.js";
 
 export type ConfigWarning = {
-  code: "extension-config-overrides-legacy";
+  code: "extension-config-overrides-legacy" | "profile-extension-auto-disabled";
   extensionId: string;
   configKey: string;
   message: string;
@@ -72,6 +73,21 @@ export async function loadConfigWithWarnings(
     effectiveParsed,
     configLoadContext,
   );
+  const profileResolution = resolveProfileExtensionEnabled({
+    profile: parsed.profile,
+    raw: rawRecord,
+    parsedEnabled: {
+      "memory": parsed.memory.enabled,
+      "knowledge-base": moduleConfigs.knowledgeBase.enabled,
+      "contract-assistant": moduleConfigs.contractAssistant.enabled,
+      "labor-skill": moduleConfigs.laborSkill.enabled,
+      "case-workbench": parsed.caseWorkbench.enabled,
+    },
+    hasEmbeddingProvider: Boolean(resolvedEmbeddingProvider),
+  });
+  moduleConfigs.knowledgeBase.enabled = profileResolution.enabled["knowledge-base"];
+  moduleConfigs.contractAssistant.enabled = profileResolution.enabled["contract-assistant"];
+  moduleConfigs.laborSkill.enabled = profileResolution.enabled["labor-skill"];
   validateEffectiveModuleConfigs(moduleConfigs, resolvedEmbeddingProvider);
   const extensionConfigs = normalizeExternalExtensionConfigs(
     rawRecord.extensions && typeof rawRecord.extensions === "object" && !Array.isArray(rawRecord.extensions)
@@ -83,6 +99,7 @@ export async function loadConfigWithWarnings(
   );
 
   const config = {
+    profile: parsed.profile,
     feishu: {
       appId: parsed.feishu.appId,
       appSecret: parsed.feishu.appSecret,
@@ -176,7 +193,7 @@ export async function loadConfigWithWarnings(
       scope: parsed.persona.scope,
     },
     memory: {
-      enabled: parsed.memory.enabled,
+      enabled: profileResolution.enabled["memory"],
       dbPath: resolveRelative(baseDir, parsed.memory.dbPath ?? path.join(dataDir, "memory.db")),
       maxMemoriesPerUser: parsed.memory.maxMemoriesPerUser,
       searchLimit: parsed.memory.searchLimit,
@@ -200,6 +217,9 @@ export async function loadConfigWithWarnings(
         enableWikiLinks: parsed.memory.obsidian.enableWikiLinks,
       },
     },
+    caseWorkbench: {
+      enabled: profileResolution.enabled["case-workbench"],
+    },
     ...(Object.keys(extensionConfigs).length > 0 ? { extensions: extensionConfigs } : {}),
     knowledgeBase: moduleConfigs.knowledgeBase,
     contractAssistant: moduleConfigs.contractAssistant,
@@ -208,7 +228,7 @@ export async function loadConfigWithWarnings(
 
   return {
     config,
-    warnings: builtinNamespace.warnings,
+    warnings: [...builtinNamespace.warnings, ...profileResolution.warnings],
   };
 }
 
@@ -300,6 +320,68 @@ function validateEffectiveModuleConfigs(
   ) {
     throw new Error("knowledgeBase.enabled=true 时必须提供 knowledgeBase.embeddingProvider，或复用 embeddings.provider / memory.embeddingProvider");
   }
+}
+
+/** 受 profile 控制的内置扩展 enabled 在原始配置中的位置。 */
+const PROFILE_EXTENSION_CONFIG_LOCATIONS: Record<ProfileManagedExtensionId, { legacyKey: string; namespaced: boolean }> = {
+  "memory": { legacyKey: "memory", namespaced: false },
+  "knowledge-base": { legacyKey: "knowledgeBase", namespaced: true },
+  "contract-assistant": { legacyKey: "contractAssistant", namespaced: true },
+  "labor-skill": { legacyKey: "laborSkill", namespaced: true },
+  "case-workbench": { legacyKey: "caseWorkbench", namespaced: false },
+};
+
+/** 判断用户是否在原始配置里显式声明了某扩展的 enabled（legacy 顶层或 extensions 命名空间）。 */
+function hasExplicitEnabled(
+  raw: Record<string, unknown>,
+  location: { legacyKey: string; namespaced: boolean },
+  extensionId: string,
+): boolean {
+  const legacy = asRecord(raw[location.legacyKey]);
+  if (Object.prototype.hasOwnProperty.call(legacy, "enabled")) {
+    return true;
+  }
+  if (location.namespaced) {
+    const namespace = asRecord(asRecord(raw.extensions)[extensionId]);
+    if (Object.prototype.hasOwnProperty.call(namespace, "enabled")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 解析每个内置扩展的最终 enabled。
+ * - 用户显式声明的 enabled 始终优先。
+ * - 否则取 profile 默认值。
+ * - 知识库 profile 默认启用但缺 embeddingProvider 时优雅降级为关闭并记 warning。
+ */
+function resolveProfileExtensionEnabled(options: {
+  profile: BridgeProfile;
+  raw: Record<string, unknown>;
+  parsedEnabled: Record<ProfileManagedExtensionId, boolean>;
+  hasEmbeddingProvider: boolean;
+}): { enabled: Record<ProfileManagedExtensionId, boolean>; warnings: ConfigWarning[] } {
+  const warnings: ConfigWarning[] = [];
+  const enabled = {} as Record<ProfileManagedExtensionId, boolean>;
+  for (const extensionId of Object.keys(PROFILE_EXTENSION_CONFIG_LOCATIONS) as ProfileManagedExtensionId[]) {
+    const location = PROFILE_EXTENSION_CONFIG_LOCATIONS[extensionId];
+    const explicit = hasExplicitEnabled(options.raw, location, extensionId);
+    let value = explicit
+      ? options.parsedEnabled[extensionId]
+      : resolveProfileExtensionDefault(options.profile, extensionId);
+    if (extensionId === "knowledge-base" && !explicit && value && !options.hasEmbeddingProvider) {
+      value = false;
+      warnings.push({
+        code: "profile-extension-auto-disabled",
+        extensionId,
+        configKey: location.legacyKey,
+        message: `profile=${options.profile} 默认启用知识库，但缺少 embeddingProvider，已自动跳过；配置 embeddings.provider 或 knowledgeBase.embeddingProvider 后即可启用。`,
+      });
+    }
+    enabled[extensionId] = value;
+  }
+  return { enabled, warnings };
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

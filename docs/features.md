@@ -74,6 +74,33 @@ Bridge 提供 portable runtime 和源码开发两种路径。
 
 部署详见 [部署说明](deploy.md)。
 
+## 发行形态：通用版与法律版
+
+同一套代码通过 `profile` 配置区分默认启用的能力，不需要维护两个分支或两个仓库。
+
+- **通用版（`profile: "general"`）**：保留基础运行时、基础卡片、文件/文档能力、记忆能力和外部扩展机制，不加载法律垂直扩展。配置模板见 [config.general.example.json](../config.general.example.json)。
+- **法律版（`profile: "legal"`，默认）**：在通用能力之上，默认启用法律知识库、合同助手、劳动案件和案件工作台。配置模板见 [config.legal.example.json](../config.legal.example.json)。
+
+每个内置扩展都有独立的 `enabled` 开关：
+
+```json
+{
+  "profile": "general",
+  "memory": { "enabled": true },
+  "extensions": {
+    "knowledge-base": { "enabled": false },
+    "contract-assistant": { "enabled": false },
+    "labor-skill": { "enabled": false }
+  },
+  "caseWorkbench": { "enabled": false }
+}
+```
+
+- `profile` 只提供默认值；任意扩展的显式 `enabled` 始终优先，可在 profile 基础上单独开关。
+- 被关闭的扩展不会加载运行时模块，也不会认领命令、自然语言 routing 或业务卡片。
+- 法律版默认启用知识库需要配置 `embeddings.provider`（或 `knowledgeBase.embeddingProvider`）；未配置时知识库会被自动跳过并给出提示。
+- 案件工作台依赖劳动案件扩展提供采集能力，需与 `labor-skill` 一起启用。
+
 ## 架构边界
 
 项目已经完成 framework freeze。后续功能应在既有 seam 内扩展：

@@ -1,4 +1,5 @@
 {
+  "profile": "general",
   "feishu": {
     "appId": "cli_xxx",
     "appSecret": "xxx",

@@ -56,6 +56,74 @@ describe("createRuntimeModules", () => {
     await result.moduleManager.stop();
   });
 
+  it("does not register disabled builtin extensions as runtime modules", async () => {
+    const result = createRuntimeModules({
+      config: createConfig({ knowledgeEnabled: false, contractEnabled: false, laborEnabled: false }),
+      outbound: createOutbound(),
+      transport: createTransport(),
+      logger: { log: vi.fn() } as never,
+      opencode: createOpenCode(),
+      whitelist: { bind: vi.fn(async () => {}) },
+      getSessionWindow: () => ({ mode: "single", interactionMode: "default", activeSessionId: null, sessions: [] }),
+      saveSessionWindow: vi.fn(async () => {}),
+      createAndBindSession: vi.fn(async () => ({ sessionId: "ses_1", label: "会话", createdAt: 1, lastUsedAt: 1 })),
+    });
+
+    const names = result.moduleManager.list().map((module) => module.name);
+    // 禁用的垂直扩展不进入模块链，因此不会认领命令或 routing。
+    expect(names).not.toContain("knowledge");
+    expect(names).not.toContain("contract-assistant");
+    expect(names).not.toContain("labor");
+    expect(names).not.toContain("case-workbench");
+    // 但 knowledge module 仍被构造出来供 app.ts 接线（入库挂起接口）。
+    expect(result.knowledgeModule).toBeDefined();
+    expect(result.knowledgeModule.getInteraction("oc_p2p_1")).toBeNull();
+    await result.moduleManager.stop();
+  });
+
+  it("registers the case workbench only when enabled together with labor", async () => {
+    const result = createRuntimeModules({
+      config: createConfig({ knowledgeEnabled: false, contractEnabled: false, laborEnabled: true, caseWorkbenchEnabled: true }),
+      outbound: createOutbound(),
+      transport: createTransport(),
+      logger: { log: vi.fn() } as never,
+      opencode: createOpenCode(),
+      whitelist: { bind: vi.fn(async () => {}) },
+      getSessionWindow: () => ({ mode: "single", interactionMode: "default", activeSessionId: null, sessions: [] }),
+      saveSessionWindow: vi.fn(async () => {}),
+      createAndBindSession: vi.fn(async () => ({ sessionId: "ses_1", label: "会话", createdAt: 1, lastUsedAt: 1 })),
+    });
+
+    const names = result.moduleManager.list().map((module) => module.name);
+    expect(names).toContain("labor");
+    expect(names).toContain("case-workbench");
+    await result.moduleManager.stop();
+  });
+
+  it("skips the case workbench and warns when enabled without labor", async () => {
+    const logger = { log: vi.fn() };
+    const result = createRuntimeModules({
+      config: createConfig({ knowledgeEnabled: false, contractEnabled: false, laborEnabled: false, caseWorkbenchEnabled: true }),
+      outbound: createOutbound(),
+      transport: createTransport(),
+      logger: logger as never,
+      opencode: createOpenCode(),
+      whitelist: { bind: vi.fn(async () => {}) },
+      getSessionWindow: () => ({ mode: "single", interactionMode: "default", activeSessionId: null, sessions: [] }),
+      saveSessionWindow: vi.fn(async () => {}),
+      createAndBindSession: vi.fn(async () => ({ sessionId: "ses_1", label: "会话", createdAt: 1, lastUsedAt: 1 })),
+    });
+
+    const names = result.moduleManager.list().map((module) => module.name);
+    expect(names).not.toContain("case-workbench");
+    expect(logger.log).toHaveBeenCalledWith(
+      "runtime/modules",
+      "case-workbench skipped: labor extension disabled",
+      expect.objectContaining({ caseWorkbenchEnabled: true }),
+    );
+    await result.moduleManager.stop();
+  });
+
   it("injects Xiaojing persona only for legal-scoped turns by default", async () => {
     const result = createRuntimeModules({
       config: createConfig({ knowledgeEnabled: false, contractEnabled: false, laborEnabled: false }),
@@ -285,7 +353,7 @@ function createTurn(plainText: string) {
   };
 }
 
-function createConfig(options: { knowledgeEnabled: boolean; contractEnabled: boolean; laborEnabled: boolean }): AppConfig {
+function createConfig(options: { knowledgeEnabled: boolean; contractEnabled: boolean; laborEnabled: boolean; caseWorkbenchEnabled?: boolean }): AppConfig {
   const dataDir = mkdtempSync(join(tmpdir(), "runtime-modules-test-"));
   tempDirs.push(dataDir);
   return {
@@ -303,6 +371,8 @@ function createConfig(options: { knowledgeEnabled: boolean; contractEnabled: boo
       eventGapTimeoutMs: 1_000,
       totalTimeoutMs: 5_000,
     },
+    profile: "legal",
+    caseWorkbench: { enabled: options.caseWorkbenchEnabled ?? false },
     feishu: {
       appId: "app",
       appSecret: "secret",

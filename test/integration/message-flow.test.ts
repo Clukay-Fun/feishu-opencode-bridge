@@ -60,6 +60,8 @@ describe("integration/message-flow", () => {
 
 function baseConfig(dir: string): AppConfig {
   return {
+    profile: "legal",
+    caseWorkbench: { enabled: false },
     feishu: {
       appId: "app",
       appSecret: "secret",

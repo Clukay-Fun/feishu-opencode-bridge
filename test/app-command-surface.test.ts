@@ -1129,7 +1129,7 @@ describe("BridgeApp command surface", () => {
 
   it("keeps explicit knowledge-mode commands out of private chat", async () => {
     const outbound = createOutbound();
-    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
+    const app = new BridgeApp(knowledgeEnabledConfig(), outbound, logger(), createWhitelist(), {
       knowledge: {
         async query() {
           return { question: "", results: [] };
@@ -1181,7 +1181,7 @@ describe("BridgeApp command surface", () => {
 
   it("creates a dedicated ingest session and restores the previous session on exit", async () => {
     const outbound = createOutbound();
-    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
+    const app = new BridgeApp(knowledgeEnabledConfig(), outbound, logger(), createWhitelist(), {
       knowledge: {
         async query() {
           return { question: "", results: [] };
@@ -1623,8 +1623,17 @@ type AppCommandSurfaceTestRoute = {
     | { kind: "delete"; index?: number | undefined; sessionId?: string | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined; confirm: boolean };
 };
 
+// 知识库命令相关用例需要 knowledge 模块实际注册（enabled=true），
+// 这些用例通过 deps 注入 mock knowledge port，因此不会创建真实 service / DB。
+function knowledgeEnabledConfig(): AppConfig {
+  const config = baseConfig();
+  return { ...config, knowledgeBase: { ...config.knowledgeBase, enabled: true } };
+}
+
 function baseConfig(): AppConfig {
   return {
+    profile: "legal",
+    caseWorkbench: { enabled: false },
     feishu: {
       appId: "app",
       appSecret: "secret",
@@ -1723,6 +1732,11 @@ function createOutbound() {
     sendMessage: vi.fn(async () => ({ messageId: "om_send" })),
     replyMessage: vi.fn(async () => ({ messageId: "om_reply" })),
     updateMessage: vi.fn(async () => ({ messageId: "om_update" })),
+    // 资源型能力（如 knowledge）启用时，BridgeApp 要求 outbound 暴露资源方法。
+    downloadMessageResource: vi.fn(async () => ({ fileName: "f", mimeType: "text/plain", buffer: Buffer.from("") })),
+    createBitableRecord: vi.fn(async () => "rec_1"),
+    listBitableRecords: vi.fn(async () => []),
+    updateBitableRecord: vi.fn(async () => {}),
   };
 }
 

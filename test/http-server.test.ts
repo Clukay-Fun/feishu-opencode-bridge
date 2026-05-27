@@ -442,6 +442,8 @@ function createConfig(
   cardActions?: Partial<AppConfig["feishu"]["cardActions"]>,
 ): AppConfig {
   return {
+    profile: "legal",
+    caseWorkbench: { enabled: false },
     feishu: {
       appId: "app",
       appSecret: "secret",

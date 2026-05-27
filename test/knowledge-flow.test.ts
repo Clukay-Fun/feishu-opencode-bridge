@@ -1349,6 +1349,8 @@ describe("knowledge base bridge flow", () => {
 
 function baseConfig(options?: { autoDetect?: boolean; queueLimit?: number }): AppConfig {
   return {
+    profile: "legal",
+    caseWorkbench: { enabled: false },
     feishu: {
       appId: "app",
       appSecret: "secret",

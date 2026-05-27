@@ -73,6 +73,8 @@ describe("integration/queue-concurrency", () => {
 
 function baseConfig(dir: string): AppConfig {
   return {
+    profile: "legal",
+    caseWorkbench: { enabled: false },
     feishu: {
       appId: "app",
       appSecret: "secret",

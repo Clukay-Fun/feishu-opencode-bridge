@@ -175,6 +175,8 @@ describe("runStartupPreflight", () => {
 
 function baseConfig(): AppConfig {
   return {
+    profile: "legal",
+    caseWorkbench: { enabled: false },
     feishu: {
       appId: "app",
       appSecret: "secret",
