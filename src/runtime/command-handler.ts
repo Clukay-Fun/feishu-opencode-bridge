@@ -18,7 +18,7 @@ import {
 import { buildNoticeCardPayload, resolveNoticeLevelFromTemplate, type FeishuPostPayload } from "../feishu/shared-primitives.js";
 import type { TranscriptType } from "../logging/logger.js";
 import type { OpenCodeMessage, OpenCodeProvidersResponse, OpenCodeSession, OpenCodeSessionStatus } from "../opencode/client.js";
-import type { SessionBindingRecord, SessionWindowModelOverride, SessionWindowRecord } from "../store/mappings.js";
+import type { BridgeWindowModelOverride, BridgeWindowRecord, SessionBindingRecord } from "../store/mappings.js";
 import type { CostTracker } from "./cost-tracker.js";
 import type { IncomingChatMessage } from "./app.js";
 import {
@@ -97,7 +97,7 @@ export type BridgeAppContext = {
     resolveInteraction(interaction: PendingPermissionInteraction, resolution: PermissionResolution): Promise<void>;
     buildResolutionPayload(resolution: PermissionResolution): FeishuPostPayload;
   };
-  getSessionWindow(conversationKey: string, chatType: string): SessionWindowRecord;
+  getSessionWindow(conversationKey: string, chatType: string): BridgeWindowRecord;
   createAndBindSession(message: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey">, preferredLabel?: string): Promise<SessionBindingRecord>;
   createDetachedSession(message: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey">, preferredLabel?: string): Promise<SessionBindingRecord>;
   bindSessionWithoutActivating(message: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey">, entry: SessionBindingRecord): Promise<SessionBindingRecord>;
@@ -112,7 +112,7 @@ export type BridgeAppContext = {
   setPendingInteraction(conversationKey: string, interaction: PendingInteraction): void;
   clearPendingInteraction(conversationKey: string, keepNonExpiring: boolean): void;
   listOpenCodeSessionsById(): Promise<Map<string, OpenCodeSession>>;
-  saveSessionWindow(conversationKey: string, window: SessionWindowRecord): Promise<void>;
+  saveSessionWindow(conversationKey: string, chatType: string | undefined, window: BridgeWindowRecord): Promise<void>;
   getSessionMessageCount(sessionId: string): Promise<number>;
   ensureSession(source: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey">): Promise<string>;
   isSessionBusy(conversationKey: string, sessionId: string): boolean;
@@ -120,14 +120,14 @@ export type BridgeAppContext = {
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey">,
     index: number | undefined,
   ): Promise<
-    | { ok: true; window: SessionWindowRecord; session: SessionWindowRecord["sessions"][number]; index: number }
+    | { ok: true; window: BridgeWindowRecord; session: BridgeWindowRecord["sessions"][number]; index: number }
     | { ok: false; message: string }
   >;
   resolveSessionCommandTargets(
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey">,
     range: { start: number; end: number },
   ): Promise<
-    | { ok: true; window: SessionWindowRecord; sessions: SessionWindowRecord["sessions"]; indices: number[] }
+    | { ok: true; window: BridgeWindowRecord; sessions: BridgeWindowRecord["sessions"]; indices: number[] }
     | { ok: false; message: string }
   >;
 };
@@ -263,7 +263,7 @@ export class CommandHandler {
       }
       const nextWindow = updateSessionLabel(window, currentSession.sessionId, nextLabel, this.context.config.bridge.maxSessionsPerWindow);
       const renamedSession = getActiveSession(nextWindow);
-      await this.context.saveSessionWindow(message.conversationKey, nextWindow);
+      await this.context.saveSessionWindow(message.conversationKey, message.chatType, nextWindow);
       await this.context.sendPayload(message.chatId, buildSessionTransitionCardPayload({
         title: "已重命名会话",
         iconToken: "edit_outlined",
@@ -423,6 +423,7 @@ export class CommandHandler {
       const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
       await this.context.saveSessionWindow(
         message.conversationKey,
+        message.chatType,
         setModelOverride(window, modelOverride, this.context.config.bridge.maxSessionsPerWindow),
       );
       await this.sendNotice(message, {
@@ -438,6 +439,7 @@ export class CommandHandler {
       const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
       await this.context.saveSessionWindow(
         message.conversationKey,
+        message.chatType,
         setModelOverride(window, undefined, this.context.config.bridge.maxSessionsPerWindow),
       );
       await this.sendNotice(message, {
@@ -557,7 +559,7 @@ export class CommandHandler {
           await this.sendBusyNotice(message);
           return;
         }
-        await this.context.saveSessionWindow(message.conversationKey, normalizeSessionWindowRecord({
+        await this.context.saveSessionWindow(message.conversationKey, message.chatType, normalizeSessionWindowRecord({
           mode: window.mode,
           interactionMode: window.interactionMode === "knowledge" ? "knowledge" : "default",
           activeSessionId: null,
@@ -587,7 +589,7 @@ export class CommandHandler {
         for (const session of targets.sessions) {
           nextWindow = removeSession(nextWindow, session.sessionId, this.context.config.bridge.maxSessionsPerWindow);
         }
-        await this.context.saveSessionWindow(message.conversationKey, nextWindow);
+        await this.context.saveSessionWindow(message.conversationKey, message.chatType, nextWindow);
         this.context.clearPendingInteraction(message.conversationKey, false);
         await this.sendNotice(message, {
           title: "已从当前窗口移除多个会话",
@@ -607,7 +609,7 @@ export class CommandHandler {
         return;
       }
       const nextWindow = removeSession(target.window, target.session.sessionId, this.context.config.bridge.maxSessionsPerWindow);
-      await this.context.saveSessionWindow(message.conversationKey, nextWindow);
+      await this.context.saveSessionWindow(message.conversationKey, message.chatType, nextWindow);
       this.context.clearPendingInteraction(message.conversationKey, false);
       const current = getActiveSession(nextWindow);
       await this.context.sendPayload(message.chatId, buildSessionTransitionCardPayload({ title: "已从当前窗口移除会话", iconToken: "close-bold_outlined", previousLabel: target.session.label, currentLabel: current?.label ?? "当前窗口已无绑定会话", footer: current ? "已从当前窗口移除绑定，可继续使用当前窗口会话" : "已从当前窗口移除绑定，发送 `/new` 创建新 OpenCode 会话" }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "已从当前窗口移除会话", len: 10 }, { replyToMessageId: message.messageId });
@@ -729,7 +731,7 @@ export class CommandHandler {
           await this.context.opencode.deleteSession(sessionId);
         }
         const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
-        await this.context.saveSessionWindow(message.conversationKey, normalizeSessionWindowRecord({
+        await this.context.saveSessionWindow(message.conversationKey, message.chatType, normalizeSessionWindowRecord({
           mode: window.mode,
           interactionMode: window.interactionMode === "knowledge" ? "knowledge" : "default",
           activeSessionId: null,
@@ -776,7 +778,7 @@ export class CommandHandler {
           for (const sessionId of pending.sessionIds) {
             nextWindow = removeSession(nextWindow, sessionId, this.context.config.bridge.maxSessionsPerWindow);
           }
-          await this.context.saveSessionWindow(message.conversationKey, nextWindow);
+          await this.context.saveSessionWindow(message.conversationKey, message.chatType, nextWindow);
           this.context.clearPendingInteraction(message.conversationKey, false);
           await this.sendNotice(message, {
             title: "已彻底删除多个 OpenCode 会话",
@@ -802,7 +804,7 @@ export class CommandHandler {
       const targetSession = window.sessions.find((session) => session.sessionId === pending.sessionId);
       await this.context.opencode.deleteSession(pending.sessionId);
       const nextWindow = removeSession(window, pending.sessionId, this.context.config.bridge.maxSessionsPerWindow);
-      await this.context.saveSessionWindow(message.conversationKey, nextWindow);
+      await this.context.saveSessionWindow(message.conversationKey, message.chatType, nextWindow);
       this.context.clearPendingInteraction(message.conversationKey, false);
       const current = getActiveSession(nextWindow);
       await this.context.sendPayload(message.chatId, buildSessionTransitionCardPayload({ title: "已彻底删除 OpenCode 会话", iconToken: "close-bold_outlined", previousLabel: targetSession?.label ?? pending.title ?? null, currentLabel: current?.label ?? "当前窗口已无绑定会话", footer: current ? "已从当前窗口移除绑定，并彻底删除 OpenCode 会话" : "已从当前窗口移除绑定，并彻底删除 OpenCode 会话，发送 `/new` 创建新会话" }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "已彻底删除 OpenCode 会话", len: 15 }, { replyToMessageId: message.messageId });
@@ -849,7 +851,7 @@ export class CommandHandler {
     await this.context.sendMarkdown(message.chatId, text, message.messageId);
   }
 
-  private async switchSessionByName(message: CommandMessage, window: SessionWindowRecord, rawQuery: string): Promise<void> {
+  private async switchSessionByName(message: CommandMessage, window: BridgeWindowRecord, rawQuery: string): Promise<void> {
     const query = normalizeSessionLookupText(rawQuery);
     if (!query) {
       await this.context.sendMarkdown(message.chatId, "请在 `/switch` 后输入会话名称或短 ID。", message.messageId);
@@ -935,14 +937,14 @@ export class CommandHandler {
 
   private async switchToSession(
     message: CommandMessage,
-    window: SessionWindowRecord,
+    window: BridgeWindowRecord,
     match: SessionSelectionOption,
     options: { clearPending: boolean; openCodeSessions?: Map<string, OpenCodeSession> },
   ): Promise<void> {
     const openCodeSessions = options.openCodeSessions ?? await this.context.listOpenCodeSessionsById();
     if (!openCodeSessions.has(match.sessionId)) {
       const nextWindow = removeSession(window, match.sessionId, this.context.config.bridge.maxSessionsPerWindow);
-      await this.context.saveSessionWindow(message.conversationKey, nextWindow);
+      await this.context.saveSessionWindow(message.conversationKey, message.chatType, nextWindow);
       this.context.clearPendingInteraction(message.conversationKey, false);
       await this.context.sendMarkdown(message.chatId, "目标会话已失效，已从当前窗口列表移除，请重新执行 `/sessions`。", message.messageId);
       return;
@@ -956,7 +958,7 @@ export class CommandHandler {
       : addSession(window, createSessionEntry(match.sessionId, Date.now(), fallbackLabel), this.context.config.bridge.maxSessionsPerWindow);
     nextWindow = setActiveSession(nextWindow, match.sessionId, Date.now(), this.context.config.bridge.maxSessionsPerWindow);
     nextWindow = updateSessionLabel(nextWindow, match.sessionId, fallbackLabel, this.context.config.bridge.maxSessionsPerWindow);
-    await this.context.saveSessionWindow(message.conversationKey, nextWindow);
+    await this.context.saveSessionWindow(message.conversationKey, message.chatType, nextWindow);
     if (options.clearPending) {
       this.context.clearPendingInteraction(message.conversationKey, false);
     }
@@ -1052,7 +1054,7 @@ export class CommandHandler {
   }
 }
 
-function parseWindowModelOverride(value: string): SessionWindowModelOverride | null {
+function parseWindowModelOverride(value: string): BridgeWindowModelOverride | null {
   const normalized = value.trim();
   const slashIndex = normalized.indexOf("/");
   if (slashIndex <= 0 || slashIndex >= normalized.length - 1) {

@@ -577,6 +577,225 @@ describe("BridgeApp command surface", () => {
     }
   });
 
+  it("prefers parentId anchor over rootId anchor when both are present", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const appAny = app as unknown as {
+      opencode: {
+        health: () => Promise<{ ok: boolean }>;
+        listSessions: () => Promise<Array<{ id: string; title: string; time: { created: number; updated: number } }>>;
+        promptAsync: () => Promise<{ id: string }>;
+      };
+      sessionMap: Record<string, SessionWindowRecord>;
+      pendingNewSessionAnchors: Map<string, {
+        replyMessageId: string;
+        sourceConversationKey: string;
+        entry: { sessionId: string; label: string; createdAt: number; lastUsedAt: number };
+        expiresAt: number;
+      }>;
+    };
+    appAny.opencode = {
+      ...(appAny.opencode ?? {}),
+      health: async () => ({ ok: true }),
+      listSessions: async () => [
+        { id: "ses_root_anchor", title: "根 anchor", time: { created: 1, updated: 1 } },
+        { id: "ses_parent_anchor", title: "父 anchor", time: { created: 2, updated: 2 } },
+      ],
+      promptAsync: async () => ({ id: "evt_1" }),
+    };
+    const farFuture = Date.now() + 5 * 60_000;
+    appAny.pendingNewSessionAnchors.set("om_root", {
+      replyMessageId: "om_root",
+      sourceConversationKey: "oc_p2p_other_root",
+      entry: { sessionId: "ses_root_anchor", label: "根 anchor", createdAt: 1, lastUsedAt: 1 },
+      expiresAt: farFuture,
+    });
+    appAny.pendingNewSessionAnchors.set("om_parent", {
+      replyMessageId: "om_parent",
+      sourceConversationKey: "oc_p2p_other_parent",
+      entry: { sessionId: "ses_parent_anchor", label: "父 anchor", createdAt: 2, lastUsedAt: 2 },
+      expiresAt: farFuture,
+    });
+
+    await app.handleIncomingMessage({
+      ...createIncomingMessage("om_thread_msg"),
+      conversationKey: "oc_p2p_1:om_root",
+      threadKey: "om_root",
+      rootId: "om_root",
+      parentId: "om_parent",
+      plainText: "继续",
+      rawContent: "继续",
+    });
+
+    expect(appAny.sessionMap["oc_p2p_1:om_root"]?.activeSessionId).toBe("ses_parent_anchor");
+    expect(appAny.pendingNewSessionAnchors.has("om_parent")).toBe(false);
+    expect(appAny.pendingNewSessionAnchors.has("om_root")).toBe(true);
+  });
+
+  it("does not adopt the /new anchor when the new message stays in the source window", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const createSession = vi.fn(async (title: string) => ({
+      id: "ses_same_window",
+      title,
+      time: { created: 1, updated: 1 },
+    }));
+    const appAny = app as unknown as {
+      opencode: {
+        health: () => Promise<{ ok: boolean }>;
+        createSession: typeof createSession;
+        listSessions: () => Promise<Array<{ id: string; title: string; time: { created: number; updated: number } }>>;
+        promptAsync: () => Promise<{ id: string }>;
+      };
+      sessionMap: Record<string, SessionWindowRecord>;
+      pendingNewSessionAnchors: Map<string, unknown>;
+    };
+    appAny.opencode = {
+      ...(appAny.opencode ?? {}),
+      health: async () => ({ ok: true }),
+      createSession,
+      listSessions: async () => [{ id: "ses_same_window", title: "原窗口", time: { created: 1, updated: 1 } }],
+      promptAsync: async () => ({ id: "evt_1" }),
+    };
+    appAny.sessionMap["oc_p2p_1"] = {
+      mode: "multi",
+      activeSessionId: "ses_existing",
+      sessions: [
+        { sessionId: "ses_existing", label: "原会话", createdAt: 1, lastUsedAt: 1 },
+      ],
+    };
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "new", title: "原窗口" },
+    });
+    expect(appAny.pendingNewSessionAnchors.has("om_reply")).toBe(true);
+
+    await app.handleIncomingMessage({
+      ...createIncomingMessage("om_followup"),
+      conversationKey: "oc_p2p_1",
+      rootId: "om_reply",
+      plainText: "再说一句",
+      rawContent: "再说一句",
+    });
+
+    expect(appAny.pendingNewSessionAnchors.has("om_reply")).toBe(true);
+  });
+
+  it("clears the /new anchor without binding when the OpenCode session is gone", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const createSession = vi.fn(async (title: string) => ({
+      id: "ses_disappeared",
+      title,
+      time: { created: 1, updated: 1 },
+    }));
+    const newThreadSession = vi.fn(async (title: string) => ({
+      id: "ses_thread_new",
+      title,
+      time: { created: 2, updated: 2 },
+    }));
+    let sessionGone = false;
+    const appAny = app as unknown as {
+      opencode: {
+        health: () => Promise<{ ok: boolean }>;
+        createSession: typeof createSession;
+        listSessions: () => Promise<Array<{ id: string; title: string; time: { created: number; updated: number } }>>;
+        promptAsync: () => Promise<{ id: string }>;
+      };
+      sessionMap: Record<string, SessionWindowRecord>;
+      pendingNewSessionAnchors: Map<string, unknown>;
+    };
+    appAny.opencode = {
+      ...(appAny.opencode ?? {}),
+      health: async () => ({ ok: true }),
+      createSession,
+      listSessions: async () => sessionGone
+        ? []
+        : [{ id: "ses_disappeared", title: "失踪", time: { created: 1, updated: 1 } }],
+      promptAsync: async () => ({ id: "evt_1" }),
+    };
+    appAny.sessionMap["oc_p2p_1"] = {
+      mode: "multi",
+      activeSessionId: "ses_existing",
+      sessions: [
+        { sessionId: "ses_existing", label: "原会话", createdAt: 1, lastUsedAt: 1 },
+      ],
+    };
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "new", title: "失踪" },
+    });
+    expect(appAny.pendingNewSessionAnchors.has("om_reply")).toBe(true);
+
+    // 模拟话题新 Window 内的消息触发 ensureSession：会因为找不到 session 而 fallback 到新建。
+    sessionGone = true;
+    appAny.opencode.createSession = newThreadSession;
+    await app.handleIncomingMessage({
+      ...createIncomingMessage("om_thread_orphan"),
+      conversationKey: "oc_p2p_1:om_reply",
+      threadKey: "om_reply",
+      rootId: "om_reply",
+      plainText: "继续",
+      rawContent: "继续",
+    });
+
+    expect(appAny.pendingNewSessionAnchors.has("om_reply")).toBe(false);
+    expect(appAny.sessionMap["oc_p2p_1:om_reply"]?.activeSessionId).toBe("ses_thread_new");
+  });
+
+  it("clears the /new anchor without duplicating when the target window already binds the session", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const appAny = app as unknown as {
+      opencode: {
+        health: () => Promise<{ ok: boolean }>;
+        listSessions: () => Promise<Array<{ id: string; title: string; time: { created: number; updated: number } }>>;
+        promptAsync: () => Promise<{ id: string }>;
+      };
+      sessionMap: Record<string, SessionWindowRecord>;
+      pendingNewSessionAnchors: Map<string, {
+        replyMessageId: string;
+        sourceConversationKey: string;
+        entry: { sessionId: string; label: string; createdAt: number; lastUsedAt: number };
+        expiresAt: number;
+      }>;
+    };
+    appAny.opencode = {
+      ...(appAny.opencode ?? {}),
+      health: async () => ({ ok: true }),
+      listSessions: async () => [{ id: "ses_already_bound", title: "已在目标窗口", time: { created: 1, updated: 1 } }],
+      promptAsync: async () => ({ id: "evt_1" }),
+    };
+    appAny.sessionMap["oc_p2p_1:om_reply"] = {
+      mode: "multi",
+      activeSessionId: "ses_already_bound",
+      sessions: [
+        { sessionId: "ses_already_bound", label: "已在目标窗口", createdAt: 1, lastUsedAt: 1 },
+      ],
+    };
+    appAny.pendingNewSessionAnchors.set("om_reply", {
+      replyMessageId: "om_reply",
+      sourceConversationKey: "oc_p2p_1",
+      entry: { sessionId: "ses_already_bound", label: "已在目标窗口", createdAt: 1, lastUsedAt: 1 },
+      expiresAt: Date.now() + 5 * 60_000,
+    });
+
+    await app.handleIncomingMessage({
+      ...createIncomingMessage("om_thread_dup"),
+      conversationKey: "oc_p2p_1:om_reply",
+      threadKey: "om_reply",
+      rootId: "om_reply",
+      plainText: "继续",
+      rawContent: "继续",
+    });
+
+    expect(appAny.pendingNewSessionAnchors.has("om_reply")).toBe(false);
+    expect(appAny.sessionMap["oc_p2p_1:om_reply"]?.sessions).toHaveLength(1);
+    expect(appAny.sessionMap["oc_p2p_1:om_reply"]?.activeSessionId).toBe("ses_already_bound");
+  });
+
   it("renames the current session with /rename", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());

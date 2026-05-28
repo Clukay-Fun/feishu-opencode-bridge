@@ -35,7 +35,7 @@ import {
   setInteractionMode,
   updateSessionLabel,
 } from "../runtime/session-windows.js";
-import type { SessionBindingRecord, SessionWindowRecord } from "../store/mappings.js";
+import type { SessionBindingRecord, BridgeWindowRecord } from "../store/mappings.js";
 import {
   buildActiveKnowledgeIngestFile,
   parseActiveKnowledgeIngestRecords,
@@ -100,8 +100,8 @@ type KnowledgeRuntimeModuleDeps = {
   logger: Logger;
   knowledge: KnowledgeBasePort | null;
   transport: FeishuTransport;
-  getSessionWindow(conversationKey: string, chatType?: string): SessionWindowRecord;
-  saveSessionWindow(conversationKey: string, window: SessionWindowRecord): Promise<void>;
+  getSessionWindow(conversationKey: string, chatType?: string): BridgeWindowRecord;
+  saveSessionWindow(conversationKey: string, chatType: string | undefined, window: BridgeWindowRecord): Promise<void>;
   createAndBindSession(source: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey">): Promise<SessionBindingRecord>;
   whitelistBind(chatId: string, openId: string): Promise<void>;
 };
@@ -304,7 +304,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       const window = this.deps.getSessionWindow(message.conversationKey, message.chatType);
       if (window.interactionMode === "knowledge") {
         const nextWindow = setInteractionMode(window, "default", this.deps.config.bridge.maxSessionsPerWindow);
-        await this.deps.saveSessionWindow(message.conversationKey, nextWindow);
+        await this.deps.saveSessionWindow(message.conversationKey, message.chatType, nextWindow);
       }
       await this.sendNotice(message, {
         title: "私聊里直接提问即可",
@@ -368,7 +368,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
         "知识入库",
         this.deps.config.bridge.maxSessionsPerWindow,
       );
-      await this.deps.saveSessionWindow(message.conversationKey, nextWindow);
+      await this.deps.saveSessionWindow(message.conversationKey, message.chatType, nextWindow);
       const deliveryMode = message.chatType === "p2p" ? "p2p_reply" : "group_thread";
       const ready = await this.sendPayload(message.chatId, buildKnowledgeIngestReadyPayload(this.deps.config.knowledgeBase.ingest.allowedExtensions), {
         event: "knowledge ingest pending",
@@ -435,7 +435,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
         return true;
       }
       const nextWindow = setInteractionMode(window, "knowledge", this.deps.config.bridge.maxSessionsPerWindow);
-      await this.deps.saveSessionWindow(message.conversationKey, nextWindow);
+      await this.deps.saveSessionWindow(message.conversationKey, message.chatType, nextWindow);
       await this.sendNotice(message, {
         title: "已进入知识库模式",
         template: "indigo",
@@ -460,7 +460,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
         return true;
       }
       const nextWindow = setInteractionMode(window, "default", this.deps.config.bridge.maxSessionsPerWindow);
-      await this.deps.saveSessionWindow(message.conversationKey, nextWindow);
+      await this.deps.saveSessionWindow(message.conversationKey, message.chatType, nextWindow);
       await this.sendNotice(message, {
         title: "已退出知识库模式",
         template: "green",
@@ -518,7 +518,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       "知识入库",
       this.deps.config.bridge.maxSessionsPerWindow,
     );
-    await this.deps.saveSessionWindow(message.conversationKey, nextWindow);
+    await this.deps.saveSessionWindow(message.conversationKey, message.chatType, nextWindow);
     const deliveryMode = message.chatType === "p2p" ? "p2p_reply" : "group_thread";
     const ready = await this.sendPayload(message.chatId, buildKnowledgeIngestReadyPayload(this.deps.config.knowledgeBase.ingest.allowedExtensions), {
       event: "knowledge ingest pending",
@@ -1034,7 +1034,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
 
   private async restorePreviousSessionForBackgroundIngest(
     conversationKey: string,
-    chatType: string,
+    chatType: string | undefined,
     pending: Pick<PendingKnowledgeIngestInteraction, "previousActiveSessionId">,
   ): Promise<void> {
     if (!pending.previousActiveSessionId) {
@@ -1053,7 +1053,7 @@ export class KnowledgeRuntimeModule implements RuntimeModule {
       Date.now(),
       this.deps.config.bridge.maxSessionsPerWindow,
     );
-    await this.deps.saveSessionWindow(conversationKey, nextWindow);
+    await this.deps.saveSessionWindow(conversationKey, chatType, nextWindow);
   }
 
   private async restoreOrCreateNormalSessionForBackgroundIngest(

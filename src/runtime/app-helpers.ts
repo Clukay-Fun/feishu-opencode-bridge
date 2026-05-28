@@ -9,7 +9,7 @@ import type { BridgeTurn } from "../bridge/turn.js";
 import type { FeishuPostPayload, OutputView, ToolUpdateView } from "../feishu/shared-primitives.js";
 import type { ModelListCardView } from "../feishu/runtime-cards.js";
 import type { OpenCodeMessage, OpenCodeModelRef, OpenCodePromptPart, OpenCodeProvidersResponse, OpenCodeSession } from "../opencode/client.js";
-import type { SessionBindingRecord, SessionWindowRecord } from "../store/mappings.js";
+import type { SessionBindingRecord, BridgeWindowRecord } from "../store/mappings.js";
 import type { IncomingChatMessage, PermissionCardActionValue } from "./app.js";
 import { getVisibleSessions } from "./session-windows.js";
 
@@ -196,7 +196,7 @@ function formatProviderDefaults(defaults: Record<string, string>): string {
 // Inject authoritative bridge session state into the system prompt for the model.
 export function buildBridgeSystemPrompt(
   turn: Pick<BridgeTurn, "chatType" | "conversationKey" | "senderOpenId" | "sessionId" | "model">,
-  window: SessionWindowRecord,
+  window: BridgeWindowRecord,
 ): string {
   const visibleSessions = getVisibleSessions(window);
   const lines = [
@@ -400,7 +400,7 @@ export function formatSessionTimestamp(timestamp: number | undefined): string {
   return `${month}-${day} ${hours}:${minutes}`;
 }
 
-export function findSessionMeta(window: SessionWindowRecord, sessionId: string): SessionBindingRecord | null {
+export function findSessionMeta(window: BridgeWindowRecord, sessionId: string): SessionBindingRecord | null {
   return window.sessions.find((session) => session.sessionId === sessionId) ?? null;
 }
 

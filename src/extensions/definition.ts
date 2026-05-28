@@ -18,7 +18,7 @@ import type { OpenCodeClient } from "../opencode/client.js";
 import type { IncomingChatMessage } from "../runtime/app.js";
 import type { CostTracker } from "../runtime/cost-tracker.js";
 import type { FeishuTransport } from "../runtime/feishu-transport.js";
-import type { SessionBindingRecord, SessionWindowRecord } from "../store/mappings.js";
+import type { SessionBindingRecord, BridgeWindowRecord } from "../store/mappings.js";
 import type { WhitelistStore } from "../store/whitelist.js";
 import type { CaseWorkbenchContextStore } from "../case-workbench/context-store.js";
 
@@ -44,8 +44,8 @@ export type RuntimeExtensionContext = {
   costTracker?: Pick<CostTracker, "recordExternalCall"> | undefined;
   caseContextStore?: CaseWorkbenchContextStore | undefined;
   whitelist: Pick<WhitelistStore, "bind">;
-  getSessionWindow(conversationKey: string, chatType?: string): SessionWindowRecord;
-  saveSessionWindow(conversationKey: string, window: SessionWindowRecord): Promise<void>;
+  getSessionWindow(conversationKey: string, chatType?: string): BridgeWindowRecord;
+  saveSessionWindow(conversationKey: string, chatType: string | undefined, window: BridgeWindowRecord): Promise<void>;
   createAndBindSession(source: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey">): Promise<SessionBindingRecord>;
 };
 

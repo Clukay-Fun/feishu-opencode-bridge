@@ -9,7 +9,7 @@ import type { BridgeOutputContext } from "../runtime/message-context.js";
 import type { IncomingChatMessage } from "../runtime/app.js";
 import type { RoutedText } from "./router.js";
 import type { BridgeTurn } from "./turn.js";
-import type { SessionWindowRecord } from "../store/mappings.js";
+import type { BridgeWindowRecord } from "../store/mappings.js";
 import type { PendingFileInstructionInteraction, PendingInteraction } from "./state.js";
 import { logEvent, type Logger } from "../logging/logger.js";
 
@@ -20,7 +20,7 @@ export type RuntimeModuleHandleResult =
 export type RuntimeModuleMessageContext = {
   message: IncomingChatMessage;
   routed: RoutedText | null;
-  window?: SessionWindowRecord | undefined;
+  window?: BridgeWindowRecord | undefined;
   pendingInteraction?: PendingInteraction | null;
   /** 从被引用消息解析出的 BridgeOutputContext 数组，可供业务模块续接上一条 Bridge 输出 */
   messageContext?: BridgeOutputContext[] | undefined;
@@ -28,7 +28,7 @@ export type RuntimeModuleMessageContext = {
 
 export type RuntimeModuleBeforeTurnContext = {
   turn: BridgeTurn & { sessionId: string };
-  window: SessionWindowRecord;
+  window: BridgeWindowRecord;
   /** 从被引用消息解析出的 BridgeOutputContext 数组，可供模块读取 */
   messageContext?: BridgeOutputContext[] | undefined;
 };
@@ -36,7 +36,7 @@ export type RuntimeModuleBeforeTurnContext = {
 export type RuntimeModuleAfterTurnContext = {
   turn: BridgeTurn & { sessionId: string };
   reply: string;
-  window: SessionWindowRecord;
+  window: BridgeWindowRecord;
 };
 
 export interface RuntimeModule {

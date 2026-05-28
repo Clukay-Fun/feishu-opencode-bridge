@@ -17,7 +17,7 @@ import { createTextPreview, logEvent, runWithLogContext, type Logger, type Trans
 import { type OpenCodeMessage, type OpenCodeSessionStatus } from "../opencode/client.js";
 import { formatCostSummary, type CostTracker } from "./cost-tracker.js";
 import { getEventSessionId, type OpenCodeEvent } from "../opencode/events.js";
-import { type SessionWindowRecord } from "../store/mappings.js";
+import { type BridgeWindowRecord } from "../store/mappings.js";
 import { type BridgeMessageContextStore, type BridgeOutputContext } from "./message-context.js";
 import type { PendingInteraction } from "../bridge/state.js";
 import {
@@ -168,7 +168,7 @@ export type TurnExecutorContext = {
     }>;
   };
   moduleManager: Pick<ModuleManager, "collectBeforeTurnBlocks" | "runAfterTurnHooks">;
-  getSessionWindow(conversationKey: string, chatType?: string): SessionWindowRecord;
+  getSessionWindow(conversationKey: string, chatType?: string): BridgeWindowRecord;
   ensureSession(source: Pick<BridgeTurn, "chatId" | "chatType" | "conversationKey" | "threadKey">): Promise<string>;
   maybeUpdateSessionLabel(turn: BridgeTurn & { sessionId: string }): Promise<void>;
   clearPendingInteraction(conversationKey: string, keepNonExpiring: boolean): void;

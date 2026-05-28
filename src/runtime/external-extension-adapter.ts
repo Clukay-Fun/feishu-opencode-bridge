@@ -23,7 +23,7 @@ import type { PendingFileInstructionInteraction, PendingInteraction } from "../b
 import type { KnowledgeBasePort } from "../knowledge/index.js";
 import type { Logger } from "../logging/logger.js";
 import type { OpenCodeClient } from "../opencode/client.js";
-import type { SessionWindowRecord } from "../store/mappings.js";
+import type { BridgeWindowRecord } from "../store/mappings.js";
 import type { IncomingChatMessage } from "./app.js";
 import type { RuntimeModuleOutboundPort } from "../extensions/definition.js";
 
@@ -92,7 +92,7 @@ function adaptExternalModule(module: ExtensionRuntimeModule): RuntimeModule {
 function toMessageContext(context: {
   message: IncomingChatMessage;
   routed: unknown;
-  window?: SessionWindowRecord | undefined;
+  window?: BridgeWindowRecord | undefined;
   pendingInteraction?: PendingInteraction | null | undefined;
 }): ExtensionRuntimeModuleMessageContext {
   return {
@@ -107,7 +107,7 @@ function toMessageContext(context: {
 
 function toBeforeTurnContext(
   turn: BridgeTurn & { sessionId: string },
-  window: SessionWindowRecord,
+  window: BridgeWindowRecord,
 ): ExtensionRuntimeModuleBeforeTurnContext {
   return {
     turn: toTurnView(turn),
@@ -117,7 +117,7 @@ function toBeforeTurnContext(
 
 function toAfterTurnContext(
   turn: BridgeTurn & { sessionId: string },
-  window: SessionWindowRecord,
+  window: BridgeWindowRecord,
 ): Omit<ExtensionRuntimeModuleAfterTurnContext, "reply"> {
   return {
     turn: toTurnView(turn),
@@ -173,7 +173,7 @@ function toTurnView(turn: BridgeTurn & { sessionId: string }): ExtensionTurnView
   };
 }
 
-function toWindowView(window: SessionWindowRecord): ExtensionSessionWindowView {
+function toWindowView(window: BridgeWindowRecord): ExtensionSessionWindowView {
   return {
     mode: window.mode,
     interactionMode: window.interactionMode,

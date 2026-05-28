@@ -164,7 +164,7 @@ L2 动态加载的前置契约是 `src/extension-api/`。
 
 - `FeishuTransport`
 - `WhitelistStore`
-- `SessionWindowRecord`
+- `BridgeWindowRecord`（旧 alias `SessionWindowRecord`）
 - `BridgeApp`
 - `saveSessionWindow()` / `createAndBindSession()` 等 session mutation API
 - 业务 service 实现类
@@ -291,7 +291,7 @@ Surface identity
 命名规则：
 
 - `conversationKey` 是当前实现里的窗口 key 输入或结果，不是 session key；概念目标名是 `windowKey`。
-- `SessionWindowRecord` 的概念目标名是 `BridgeWindowRecord`。
+- `BridgeWindowRecord` 是当前主类型名，`SessionWindowRecord` 保留为兼容 alias。
 - `sessions[]` 的概念目标名是 `boundSessions[]`，表示 Window 绑定的 OpenCode sessions。
 - 在清晰类型语境内，字段名可以继续使用 `activeSessionId`；不强制改成更长的 `activeOpenCodeSessionId`。
 - Bridge 代码内部默认不加 `bridge` 前缀；只有跨 Feishu / OpenCode 边界的 DTO 需要消歧时，才使用全限定命名。
@@ -302,6 +302,73 @@ Surface identity
 - 不得在命名 PR 里改动 `mappings.json` wire shape、store version、`message-context.json` 文件名或已落盘字段。
 - 如果未来要把 `sessions` 持久化字段改成 `boundSessions`，必须单独提供 migration 或 loader compatibility shim。
 - 任何盘上格式变更都需要迁移测试和架构 review。
+
+#### 会话管理命令架构
+
+Bridge 会话命令只管理 Window 与 OpenCode Session 的绑定关系，不拥有 OpenCode 的对话历史。
+
+命令语义：
+
+- `/sessions` 展示当前 Window 绑定的 OpenCode sessions。
+- `/sessions all` 展示 OpenCode 可见的全部 sessions，并标记它们相对当前 Window 的状态。
+- `/switch <编号>` 切换当前 Window 的 active session；当编号来自 `/sessions all` 且目标未绑定时，先把该 OpenCode session 绑定到当前 Window，再切换为 active。
+- `/close` 只从当前 Window 移除绑定，不删除 OpenCode session。
+- `/delete` 在确认后删除 OpenCode session，并同步从当前 Window 移除对应绑定。
+
+`/sessions all` 的用户可见状态固定为：
+
+- `当前`：当前 Window 的 active session。
+- `窗口中`：已经绑定到当前 Window，但不是 active session。
+- `未绑定`：存在于 OpenCode，但当前 Window 没有绑定。
+
+状态文案不再使用 `隐藏` 或 `归档`。
+未绑定 session 的列表展示可以隐藏真实标题，只显示稳定编号和短 sessionId，避免用户误以为它已经属于当前 Window。
+
+数据流：
+
+```text
+/sessions
+  -> load Window
+  -> read bound sessions
+  -> render current-window list
+
+/sessions all
+  -> load Window
+  -> list OpenCode sessions
+  -> mark current / in-window / unbound
+  -> create pending session-select
+
+/switch <编号>
+  -> resolve pending session-select
+  -> verify OpenCode session still exists
+  -> bind if unbound
+  -> set active session
+
+/close
+  -> verify target binding is not busy
+  -> remove binding from Window
+  -> keep OpenCode session
+
+/delete
+  -> confirm pending delete
+  -> verify target session is not busy
+  -> delete OpenCode session
+  -> remove binding from Window
+```
+
+并发与安全约束：
+
+- 执行队列仍以 Window key 与 OpenCode sessionId 组合隔离。
+- busy OpenCode session 不允许被 `/close` 或 `/delete` 处理，用户应先 `/abort`。
+- `/sessions` 和 `/sessions all` 生成的编号只在 `session-select` pending interaction 生命周期内有效。
+- `/delete` 必须继续使用确认 pending interaction，不能被普通选择列表直接触发删除。
+- 命令 UX 改动不得改变 `mappings.json`、`message-context.json` 或 OpenCode session 的持久化格式。
+
+Topic Window Anchor：
+
+- `/new` 在已有活跃会话的 Window 中执行时，会注册一个短期 anchor，把刚创建的 OpenCode session 绑到 `/new` 卡片的回复 messageId 上。
+- 后续话题首条消息派生出新 Window（`conversationKey` 不同于源 Window）时，若其 `parentId` 或 `rootId` 命中 anchor，则把 anchor session 绑定到新 Window 并设为 active。匹配优先级固定为 `parentId`、`rootId`，贴近"用户直接回复哪条消息"的语义。
+- Anchor 只是 in-memory 短期 binding handoff，不是 Topic 持久化实体，也不是长期上下文或 memory；过期、目标即源、OpenCode session 丢失或目标 Window 已绑定该 session 时，anchor 安全清理或跳过。
 
 占用词：
 

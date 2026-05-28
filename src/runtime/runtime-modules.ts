@@ -20,7 +20,7 @@ import { MemoryService } from "../memory/index.js";
 import type { OpenCodeClient } from "../opencode/client.js";
 import { DEFAULT_PERSONA_CONFIG, PersonaRuntimeModule } from "../persona/runtime-module.js";
 import type { CostTracker } from "./cost-tracker.js";
-import type { SessionBindingRecord, SessionWindowRecord } from "../store/mappings.js";
+import type { BridgeWindowRecord, SessionBindingRecord } from "../store/mappings.js";
 import type { WhitelistStore } from "../store/whitelist.js";
 import type { IncomingChatMessage } from "./app.js";
 import { createExternalRuntimeModule } from "./external-extension-adapter.js";
@@ -71,8 +71,8 @@ export function createRuntimeModules(options: {
   costTracker?: Pick<CostTracker, "recordExternalCall"> | undefined;
   externalExtensions?: readonly ExtensionDefinition[] | undefined;
   whitelist: Pick<WhitelistStore, "bind">;
-  getSessionWindow(conversationKey: string, chatType?: string): SessionWindowRecord;
-  saveSessionWindow(conversationKey: string, window: SessionWindowRecord): Promise<void>;
+  getSessionWindow(conversationKey: string, chatType?: string): BridgeWindowRecord;
+  saveSessionWindow(conversationKey: string, chatType: string | undefined, window: BridgeWindowRecord): Promise<void>;
   createAndBindSession(source: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey">): Promise<SessionBindingRecord>;
 }): RuntimeModuleAssemblyResult {
   const memory = options.memory ?? createMemoryService(options.config, options.logger, options.opencode as OpenCodeClient);

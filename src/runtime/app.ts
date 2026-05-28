@@ -35,7 +35,7 @@ import {
   type OpenCodeSessionStatus,
 } from "../opencode/client.js";
 import { getEventSessionId, OpenCodeEventStream, type OpenCodeEvent } from "../opencode/events.js";
-import { MappingStore, type MappingRecord, type SessionBindingRecord, type SessionWindowRecord } from "../store/mappings.js";
+import { MappingStore, type MappingRecord, type SessionBindingRecord, type BridgeWindowRecord } from "../store/mappings.js";
 import type { WhitelistStore } from "../store/whitelist.js";
 import type { AppConfig } from "../config/schema.js";
 import { SUPPORTED_MATERIAL_EXTENSIONS } from "../document-pipeline/material-support.js";
@@ -254,7 +254,7 @@ export class BridgeApp {
       costTracker: this.costTracker,
       whitelist: this.whitelist,
       getSessionWindow: (conversationKey, chatType) => this.getSessionWindow(conversationKey, chatType),
-      saveSessionWindow: async (conversationKey, window) => await this.saveSessionWindow(conversationKey, window),
+      saveSessionWindow: async (conversationKey, chatType, window) => await this.saveSessionWindow(conversationKey, chatType, window),
       createAndBindSession: async (source) => await this.createAndBindSession(source),
       ...(deps && "memory" in deps ? { memory: deps.memory ?? null } : {}),
       ...(deps && "knowledge" in deps ? { knowledge: deps.knowledge ?? null } : {}),
@@ -652,7 +652,7 @@ export class BridgeApp {
         setPendingInteraction: (conversationKey, interaction) => this.setPendingInteraction(conversationKey, interaction),
         clearPendingInteraction: (conversationKey, keepNonExpiring) => this.clearPendingInteraction(conversationKey, keepNonExpiring),
         listOpenCodeSessionsById: async () => await this.listOpenCodeSessionsById(),
-        saveSessionWindow: async (conversationKey, window) => await this.saveSessionWindow(conversationKey, window),
+        saveSessionWindow: async (conversationKey, chatType, window) => await this.saveSessionWindow(conversationKey, chatType, window),
         getSessionMessageCount: async (sessionId) => await this.getSessionMessageCount(sessionId),
         isSessionBusy: (conversationKey, sessionId) => this.isSessionBusy(conversationKey, sessionId),
         resolveSessionCommandTarget: async (msg, index) => await this.resolveSessionCommandTarget(msg, index),
@@ -893,12 +893,12 @@ export class BridgeApp {
         const sessionMeta = openCodeSessions.get(currentSession.sessionId);
         const fallbackLabel = resolveDisplayLabel(sessionMeta, currentSession.label, currentSession.sessionId);
         nextWindow = updateSessionLabel(nextWindow, currentSession.sessionId, fallbackLabel, this.config.bridge.maxSessionsPerWindow);
-        await this.saveSessionWindow(source.conversationKey, nextWindow);
+        await this.saveSessionWindow(source.conversationKey, source.chatType, nextWindow);
         return currentSession.sessionId;
       }
 
       window = removeSession(window, currentSession.sessionId, this.config.bridge.maxSessionsPerWindow);
-      await this.saveSessionWindow(source.conversationKey, window);
+      await this.saveSessionWindow(source.conversationKey, source.chatType, window);
       currentSession = getActiveSession(window);
     }
 
@@ -907,7 +907,13 @@ export class BridgeApp {
   }
 
   /**
-   * 尝试认领由 `/new` 等流程提前创建、但尚未绑定窗口的 session。
+   * Topic Window Anchor 认领：把 `/new` 预创建的 OpenCode session 从原 Window
+   * 短期挪交（handoff）到话题派生出的新 Window。
+   *
+   * Anchor 本身只是 in-memory 短期绑定线索；不是 Topic 持久化实体，
+   * 也不是长期上下文或 memory。Topic identity 仍只参与派生 Window。
+   *
+   * 收敛规则：过期、目标即源、OpenCode session 丢失、已绑定 — 都安全清理或跳过。
    */
   private async maybeAdoptPendingNewSessionAnchor(
     source: Pick<SessionSource, "chatType" | "conversationKey" | "rootId" | "parentId">,
@@ -919,36 +925,43 @@ export class BridgeApp {
     }
     const { messageId: anchorMessageId, pending } = match;
 
+    // 过期 anchor: 清理后放弃认领。
     if (pending.expiresAt <= Date.now()) {
       this.clearPendingNewSessionAnchor(anchorMessageId);
       return;
     }
 
+    // 仍在 anchor 源 Window 内: 不做 handoff，保留 anchor 等待真正派生出的话题 Window。
     if (pending.sourceConversationKey === source.conversationKey) {
       return;
     }
 
+    // OpenCode session 已不存在: 没什么可认领，清理 anchor。
     if (!openCodeSessions.has(pending.entry.sessionId)) {
       this.clearPendingNewSessionAnchor(anchorMessageId);
       return;
     }
 
+    // 目标 Window 已绑定该 session: 不重复添加，清理 anchor 即可。
     const window = this.getSessionWindow(source.conversationKey, source.chatType);
     if (window.sessions.some((session) => session.sessionId === pending.entry.sessionId)) {
       this.clearPendingNewSessionAnchor(anchorMessageId);
       return;
     }
 
+    // 把 session 添加到目标 Window 并设为 active。
     const nextWindow = addSession(window, pending.entry, this.config.bridge.maxSessionsPerWindow);
-    await this.saveSessionWindow(source.conversationKey, nextWindow);
+    await this.saveSessionWindow(source.conversationKey, source.chatType, nextWindow);
     this.clearPendingNewSessionAnchor(anchorMessageId);
   }
 
   /**
-   * 根据 root / parent 消息链查找待认领的 session 锚点。
+   * 在 root / parent 消息链上查找待认领的 anchor。
+   * 优先 `parentId`（用户直接回复的那条），其次 `rootId`（话题根）；
+   * 平铺话题里两者通常相同，本顺序只在两者命中不同 anchor 时可观察。
    */
   private findPendingNewSessionAnchor(source: Pick<SessionSource, "rootId" | "parentId">): { messageId: string; pending: PendingNewSessionAnchor } | null {
-    const candidates = [source.rootId, source.parentId]
+    const candidates = [source.parentId, source.rootId]
       .filter((value): value is string => Boolean(value));
     for (const messageId of new Set(candidates)) {
       const pending = this.pendingNewSessionAnchors.get(messageId);
@@ -1146,21 +1159,30 @@ export class BridgeApp {
 
   // #endregion
 
-  // #region 会话窗口存储
+  // #region Bridge Window 存储
 
   /**
-   * 读取并规范化指定窗口的 session 记录。
+   * 读取并规范化 Bridge Window。
+   * conversationKey 是入站标识，经 resolveWindowStorageKey() 解析后用于实际存储。
    */
-  private getSessionWindow(conversationKey: string, chatType?: string): SessionWindowRecord {
+  private getSessionWindow(conversationKey: string, chatType?: string): BridgeWindowRecord {
     const mode = resolveSessionMode(chatType, this.config.bridge.sessionModes);
-    return normalizeSessionWindowRecord(this.sessionMap[this.resolveSessionWindowKey(conversationKey, chatType)], mode, this.config.bridge.maxSessionsPerWindow);
+    return normalizeSessionWindowRecord(this.sessionMap[this.resolveWindowStorageKey(conversationKey, chatType)], mode, this.config.bridge.maxSessionsPerWindow);
   }
 
   /**
-   * 保存窗口状态，并处理空窗口和旧键兼容。
+   * 保存到 resolved window storage key，并清理旧版 legacy key。
+   * chatType 显式传入，确保 p2p legacy key 归一化不依赖调用顺序。
+   * 空窗口（无 session、非 knowledge、无 modelOverride）会被清除。
+   *
+   * 契约：调用方必须先通过 `getSessionWindow()` 读取窗口、修改后再 save。
+   * 入参 `window` 会直接覆盖 storage key 下的现有记录，因此 save 不会从
+   * legacy p2p flat key 合并 session 内容；该合并由 get 路径负责。
+   * 直接 save-first 只能保证 storage key 归一化（删 legacy key），
+   * 不能保证 legacy session 不丢。
    */
-  private async saveSessionWindow(conversationKey: string, window: SessionWindowRecord): Promise<void> {
-    const storageKey = this.resolveSessionWindowKey(conversationKey);
+  private async saveSessionWindow(conversationKey: string, chatType: string | undefined, window: BridgeWindowRecord): Promise<void> {
+    const storageKey = this.resolveWindowStorageKey(conversationKey, chatType);
     const legacyKey = this.resolveLegacyP2pWindowKey(conversationKey);
     if (window.sessions.length === 0 && window.interactionMode !== "knowledge" && !window.modelOverride) {
       delete this.sessionMap[storageKey];
@@ -1174,9 +1196,11 @@ export class BridgeApp {
   }
 
   /**
-   * 解析窗口存储键，并在需要时迁移旧版单聊键。
+   * 将入站 conversationKey 解析为 Window 实际存储键。
+   * 新格式直接返回 conversationKey；旧版 p2p flat key 会在首次访问时
+   * 迁移到带 `:main` 后缀的格式并合并旧记录。
    */
-  private resolveSessionWindowKey(conversationKey: string, chatType?: string): string {
+  private resolveWindowStorageKey(conversationKey: string, chatType?: string): string {
     if (chatType === "p2p" && conversationKey.endsWith(":main")) {
       const legacyKey = this.resolveLegacyP2pWindowKey(conversationKey);
       if (legacyKey && this.sessionMap[legacyKey]) {
@@ -1203,13 +1227,14 @@ export class BridgeApp {
   }
 
   /**
-   * 合并当前窗口与旧版窗口记录，并重新规范化。
+   * 合并当前 Bridge Window 与旧版 Window 记录，并重新规范化。
+   * 用于 p2p legacy key 迁移场景。
    */
   private mergeSessionWindows(
-    current: SessionWindowRecord | undefined,
-    legacy: SessionWindowRecord,
+    current: BridgeWindowRecord | undefined,
+    legacy: BridgeWindowRecord,
     chatType?: string,
-  ): SessionWindowRecord {
+  ): BridgeWindowRecord {
     const mode = resolveSessionMode(chatType, this.config.bridge.sessionModes);
     if (!current) {
       return normalizeSessionWindowRecord(legacy, mode, this.config.bridge.maxSessionsPerWindow);
@@ -1238,7 +1263,7 @@ export class BridgeApp {
     const entry = await this.createDetachedSession(source, preferredLabel);
     const window = this.getSessionWindow(source.conversationKey, source.chatType);
     const nextWindow = addSession(window, entry, this.config.bridge.maxSessionsPerWindow);
-    await this.saveSessionWindow(source.conversationKey, nextWindow);
+    await this.saveSessionWindow(source.conversationKey, source.chatType, nextWindow);
     return entry;
   }
 
@@ -1251,7 +1276,7 @@ export class BridgeApp {
   ): Promise<SessionBindingRecord> {
     const window = this.getSessionWindow(source.conversationKey, source.chatType);
     const nextWindow = addSessionWithoutActivating(window, entry, this.config.bridge.maxSessionsPerWindow);
-    await this.saveSessionWindow(source.conversationKey, nextWindow);
+    await this.saveSessionWindow(source.conversationKey, source.chatType, nextWindow);
     return entry;
   }
 
@@ -1312,7 +1337,7 @@ export class BridgeApp {
     }
 
     const nextWindow = updateSessionLabel(window, turn.sessionId, nextLabel, this.config.bridge.maxSessionsPerWindow);
-    await this.saveSessionWindow(turn.conversationKey, nextWindow);
+    await this.saveSessionWindow(turn.conversationKey, turn.chatType, nextWindow);
   }
 
   /**
@@ -1471,7 +1496,7 @@ export class BridgeApp {
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey">,
     index: number | undefined,
   ): Promise<
-    | { ok: true; window: SessionWindowRecord; session: SessionWindowRecord["sessions"][number]; index: number }
+    | { ok: true; window: BridgeWindowRecord; session: BridgeWindowRecord["sessions"][number]; index: number }
     | { ok: false; message: string }
   > {
     const window = this.getSessionWindow(message.conversationKey, message.chatType);
@@ -1537,7 +1562,7 @@ export class BridgeApp {
     message: Pick<IncomingChatMessage, "chatId" | "chatType" | "messageId" | "conversationKey">,
     range: { start: number; end: number },
   ): Promise<
-    | { ok: true; window: SessionWindowRecord; sessions: SessionWindowRecord["sessions"]; indices: number[] }
+    | { ok: true; window: BridgeWindowRecord; sessions: BridgeWindowRecord["sessions"]; indices: number[] }
     | { ok: false; message: string }
   > {
     const indices = buildSessionRangeIndices(range);
@@ -1545,8 +1570,8 @@ export class BridgeApp {
       return { ok: false, message: "无效的会话编号范围，请重新输入。" };
     }
 
-    const sessions: SessionWindowRecord["sessions"] = [];
-    let window: SessionWindowRecord | null = null;
+    const sessions: BridgeWindowRecord["sessions"] = [];
+    let window: BridgeWindowRecord | null = null;
     for (const index of indices) {
       const target = await this.resolveSessionCommandTarget(message, index);
       if (!target.ok) {

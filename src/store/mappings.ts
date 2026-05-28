@@ -3,6 +3,10 @@
  * 关注点:
  * - 保存窗口模式、当前活跃会话和历史会话列表。
  * - 支持本地存储版本迁移与兼容读取。
+ *
+ * 类型命名说明:
+ * - `BridgeWindowRecord` 是当前主类型名，`SessionWindowRecord` 是兼容 alias。
+ * - 落盘 wire shape 不变（`sessions`、`activeSessionId` 等字段名保持原样）。
  */
 import { JsonStore } from "./json-store.js";
 
@@ -16,20 +20,26 @@ export type SessionBindingRecord = {
   lastUsedAt: number;
 };
 
-export type SessionWindowModelOverride = {
+export type BridgeWindowModelOverride = {
   providerID: string;
   modelID: string;
 };
 
-export type SessionWindowRecord = {
+/** @deprecated 使用 BridgeWindowModelOverride */
+export type SessionWindowModelOverride = BridgeWindowModelOverride;
+
+export type BridgeWindowRecord = {
   mode: SessionMode;
   interactionMode?: InteractionMode;
-  modelOverride?: SessionWindowModelOverride | undefined;
+  modelOverride?: BridgeWindowModelOverride | undefined;
   activeSessionId: string | null;
   sessions: SessionBindingRecord[];
 };
 
-export type MappingRecord = Record<string, SessionWindowRecord>;
+/** @deprecated 使用 BridgeWindowRecord */
+export type SessionWindowRecord = BridgeWindowRecord;
+
+export type MappingRecord = Record<string, BridgeWindowRecord>;
 
 type LoggerLike = {
   log: (scope: string, message: string, fields?: Record<string, unknown>, level?: "debug" | "info" | "warn" | "error") => void;
@@ -139,7 +149,7 @@ function normalizeMappings(value: unknown): MappingRecord {
       }
       return [conversationKey, normalized] as const;
     })
-    .filter((entry): entry is readonly [string, SessionWindowRecord] => entry !== null);
+    .filter((entry): entry is readonly [string, BridgeWindowRecord] => entry !== null);
 
   return Object.fromEntries(normalizedEntries);
 }
@@ -166,7 +176,7 @@ function migrateVersion2Mappings(value: Record<string, unknown>): MappingRecord 
       const lastUsedAt = typeof raw.lastUsedAt === "number" ? raw.lastUsedAt : now;
       return [conversationKey, createSingleWindow(raw.sessionId, lastUsedAt, raw.sessionId)] as const;
     })
-    .filter((entry): entry is readonly [string, SessionWindowRecord] => entry !== null);
+    .filter((entry): entry is readonly [string, BridgeWindowRecord] => entry !== null);
 
   return Object.fromEntries(migratedEntries);
 }
@@ -185,13 +195,13 @@ function migrateLegacyMappings(value: Record<string, unknown>): MappingRecord {
       const lastUsedAt = typeof raw.lastUsedAt === "number" ? raw.lastUsedAt : now;
       return [conversationKey, createSingleWindow(raw.sessionId, lastUsedAt, raw.sessionId)] as const;
     })
-    .filter((entry): entry is readonly [string, SessionWindowRecord] => entry !== null);
+    .filter((entry): entry is readonly [string, BridgeWindowRecord] => entry !== null);
 
   return Object.fromEntries(migratedEntries);
 }
 
 // Normalize one window record and repair invalid active-session references.
-function normalizeWindowRecord(value: unknown): SessionWindowRecord | null {
+function normalizeWindowRecord(value: unknown): BridgeWindowRecord | null {
   if (!isRecord(value)) {
     return null;
   }
@@ -264,7 +274,7 @@ function normalizeSessionBindingRecord(value: unknown, now: number): SessionBind
 }
 
 // Build a single-session window record for migrated legacy data.
-function createSingleWindow(sessionId: string, now: number, label: string): SessionWindowRecord {
+function createSingleWindow(sessionId: string, now: number, label: string): BridgeWindowRecord {
   return {
     mode: "single",
     interactionMode: "default",
@@ -283,7 +293,7 @@ function normalizeInteractionMode(value: unknown): InteractionMode {
   return value === "knowledge" ? "knowledge" : "default";
 }
 
-function normalizeModelOverride(value: unknown): SessionWindowModelOverride | undefined {
+function normalizeModelOverride(value: unknown): BridgeWindowModelOverride | undefined {
   if (!isRecord(value) || typeof value.providerID !== "string" || typeof value.modelID !== "string") {
     return undefined;
   }
@@ -296,7 +306,7 @@ function normalizeModelOverride(value: unknown): SessionWindowModelOverride | un
 }
 
 // Read the latest session activity timestamp from a window record.
-function getWindowLastUsedAt(window: SessionWindowRecord): number {
+function getWindowLastUsedAt(window: BridgeWindowRecord): number {
   return window.sessions.reduce((max, session) => Math.max(max, session.lastUsedAt), 0);
 }
 
