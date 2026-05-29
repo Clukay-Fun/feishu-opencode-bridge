@@ -248,6 +248,7 @@
         "useChartRecognition": false
       }
     },
+    "prompts": {},
     "ingest": {
       "allowedExtensions": [
         ".pdf",

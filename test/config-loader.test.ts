@@ -499,6 +499,41 @@ describe("loadConfig memory settings", () => {
     });
   });
 
+  it("loads knowledge base prompt override paths", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-"));
+    const configPath = path.join(dir, "config.json");
+    await writeFile(configPath, JSON.stringify({
+      ...baseConfig(),
+      embeddings: {
+        provider: {
+          baseUrl: "https://api.openai.com/v1/",
+          apiKey: "sk-test",
+          model: "text-embedding-3-small",
+        },
+      },
+      knowledgeBase: {
+        enabled: true,
+        storage: {
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+          },
+        },
+        prompts: {
+          extractQaPath: "prompts/knowledge-extract.txt",
+          enrichQaPath: "prompts/knowledge-enrich.txt",
+        },
+      },
+    }), "utf8");
+
+    const config = await loadConfig(configPath);
+
+    expect(config.knowledgeBase.prompts).toEqual({
+      extractQaPath: path.join(dir, "prompts/knowledge-extract.txt"),
+      enrichQaPath: path.join(dir, "prompts/knowledge-enrich.txt"),
+    });
+  });
+
   it("loads knowledge base rerank provider config", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-config-"));
     const configPath = path.join(dir, "config.json");

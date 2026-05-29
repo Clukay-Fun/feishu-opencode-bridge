@@ -88,6 +88,74 @@ describe("KnowledgeBaseService", () => {
     service.close();
   });
 
+  it("uses configured knowledge prompt override templates", async () => {
+    stubEmbeddingFetch();
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-prompt-"));
+    tempDirs.push(dir);
+    const extractPromptPath = join(dir, "extract-prompt.txt");
+    writeFileSync(extractPromptPath, [
+      "你是法律知识提取专家。",
+      "自定义知识抽取模板",
+      "源文件={{fileName}}",
+      "页码={{pageSection}}",
+      "正文={{chunk}}",
+      "前文={{prevContext}}",
+      "只输出 JSON 数组，不要输出其他内容。",
+    ].join("\n"), "utf8");
+    const requests: unknown[] = [];
+    const service = new KnowledgeBaseService(
+      {
+        enabled: true,
+        autoDetect: { enabled: true, minConfidence: 0.75 },
+        query: { topK: 10, finalTopN: 3, keywordFallbackLimit: 10 },
+        storage: {
+          sqlitePath: join(dir, "knowledge.db"),
+          bitable: {
+            appToken: "app_token",
+            tableId: "tbl_entries",
+          },
+        },
+        embeddingProvider: {
+          baseUrl: new URL("https://example.com/v1/"),
+          apiKey: "token",
+          model: "text-embedding",
+        },
+        models: {},
+        prompts: {
+          extractQaPath: extractPromptPath,
+        },
+        ingest: {
+          allowedExtensions: [".txt"],
+          maxFileSizeMb: 20,
+          pendingTtlMs: 600_000, sessionIdleMs: 1_800_000, concurrency: 3, maxExtractChunks: 30, maxExtractQas: 500,
+        },
+      },
+      {
+        async downloadMessageResource() {
+          throw new Error("not used");
+        },
+        async createBitableRecord() {
+          return "rec_1";
+        },
+        async listBitableRecords() {
+          return [];
+        },
+      },
+      createOpenCodeStub({ requests }),
+      logger(),
+    );
+
+    const sourcePath = join(dir, "source.txt");
+    writeFileSync(sourcePath, "试用期最长不超过六个月。", "utf8");
+    await service.ingestLocalFile(sourcePath);
+
+    const prompt = (requests[0] as { parts: Array<{ text?: string }> }).parts[0]?.text ?? "";
+    expect(prompt).toContain("自定义知识抽取模板");
+    expect(prompt).toContain("源文件=source.txt");
+    expect(prompt).toContain("正文=试用期最长不超过六个月。");
+    service.close();
+  });
+
   it("downloads folder resources with folder type before expanding zip entries", async () => {
     stubEmbeddingFetch();
     const dir = mkdtempSync(join(tmpdir(), "knowledge-folder-"));

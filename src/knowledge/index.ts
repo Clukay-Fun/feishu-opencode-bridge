@@ -161,6 +161,18 @@ type ExtractedQaCandidate = ExtractedQa & {
   fieldsJson?: string | undefined;
 };
 
+type KnowledgeExtractQaPromptVariables = {
+  fileName: string;
+  pageSection: string;
+  chunk: string;
+  prevContext?: string | undefined;
+};
+
+type KnowledgeEnrichQaPromptVariables = {
+  fileName: string;
+  inputJson: string;
+};
+
 type ChunkExtractionState = {
   chunk: {
     location: string;
@@ -590,7 +602,8 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
       });
 
       const extractedByChunk: Array<ChunkExtractionState> = new Array(chunks.length);
-      const cachedChunks = this.restoreChunkExtractions(document.id, chunks);
+      const extractPromptCacheKey = await this.resolveExtractQaPromptCacheKey();
+      const cachedChunks = this.restoreChunkExtractions(document.id, chunks, extractPromptCacheKey);
       let extractCompleted = cachedChunks.completedCount;
       if (cachedChunks.completedCount > 0) {
         for (const [index, cached] of cachedChunks.completed.entries()) {
@@ -632,7 +645,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
           this.db.saveExtractedChunk({
             documentId: document.id,
             chunkIndex: index,
-            chunkHash: buildChunkExtractionHash(chunk, resolveKnowledgeModelKey(this.config, "extract")),
+            chunkHash: buildChunkExtractionHash(chunk, resolveKnowledgeModelKey(this.config, "extract"), extractPromptCacheKey),
             pageSection: chunk.location,
             extractedJson: JSON.stringify(items),
           });
@@ -1064,52 +1077,16 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
   private async extractQa(fileName: string, pageSection: string, chunk: string, prevContext?: string | undefined): Promise<ExtractedQa[]> {
     const session = await this.opencode.createSession("[bridge] knowledge-extract");
     try {
+      const prompt = await this.buildExtractQaPrompt({
+        fileName,
+        pageSection,
+        chunk,
+        prevContext,
+      });
       const response = await this.opencode.postMessageSync(session.id, buildKnowledgePromptRequest(
         [{
           type: "text",
-          text: [
-            "你是法律知识提取专家。",
-            "阅读以下文本片段，提取可以直接回答用户法律咨询的问答对。",
-            "规则：",
-            "1. 问题必须是用户真实会提出的法律实务问题，范围覆盖劳动用工、合同纠纷、公司治理、知识产权、婚姻家事、侵权责任、行政合规、税务、数据与平台合规、诉讼仲裁和执行等场景。",
-            "2. 同一知识点只提取一个问答对，答案中列举所有关键情形，不要拆成多条相近问题。",
-            "3. 答案忠于原文，长度控制在 50-300 字，涵盖核心结论、适用条件和例外情形，不要整段照抄原文。",
-            "4. 不要提取目录、课程介绍、检索方法、转载说明、免责声明、作者信息、统计图表、地域分布、学习建议、关键词列表等非咨询内容。",
-            "5. 如果片段主要是说明性或信息性内容，而不是可直接回答咨询的问题，返回空数组 []。",
-            "字段说明：",
-            "- question: 字符串，口语化的法律咨询问题",
-            "- answer: 字符串，基于原文的回答",
-            "- tags: 数组，1-3 个核心法律主题标签",
-            "- statute: 字符串或 null；无明确法条引用时填 null",
-            prevContext ? `前文上下文（仅供理解，不要从这里单独提取问答）：\n${prevContext}` : "",
-            `源文件：${fileName}`,
-            `页码/章节：${pageSection}`,
-            "---正文开始---",
-            chunk,
-            "---正文结束---",
-            "示例输出：",
-            JSON.stringify([
-              {
-                question: "合同一方迟延付款时，守约方可以主张哪些违约责任？",
-                answer: "守约方通常可以依据合同约定和法律规定主张继续履行、支付违约金、赔偿损失等责任；如迟延付款导致合同目的不能实现，还可结合约定和法定条件评估解除合同。",
-                tags: ["合同纠纷", "违约责任"],
-                statute: "《民法典》第 577 条",
-              },
-              {
-                question: "股东会决议程序存在瑕疵时，公司应如何评估决议效力？",
-                answer: "需要结合召集程序、表决方式、表决比例和瑕疵程度判断。轻微瑕疵通常不当然影响效力，严重违反法律或章程并影响表决结果的，可能面临撤销或无效风险。",
-                tags: ["公司治理", "股东会决议"],
-                statute: null,
-              },
-              {
-                question: "未经许可使用他人注册商标会有哪些侵权风险？",
-                answer: "未经许可在相同或类似商品服务上使用相同或近似商标，容易导致混淆的，可能构成商标侵权，需要承担停止侵害、赔偿损失等责任。",
-                tags: ["知识产权", "商标侵权"],
-                statute: "《商标法》第 57 条",
-              },
-            ], null, 2),
-            "只输出 JSON 数组，不要输出其他内容。",
-          ].filter(Boolean).join("\n\n"),
+          text: prompt,
         }],
         resolveKnowledgeModel(this.config, "extract"),
       ));
@@ -1180,23 +1157,15 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
   ): Promise<ExtractedQaCandidate[]> {
     const session = await this.opencode.createSession("[bridge] knowledge-qa-enrich");
     try {
+      const inputJson = JSON.stringify(batch, null, 2);
+      const prompt = await this.buildEnrichQaPrompt({
+        fileName,
+        inputJson,
+      });
       const response = await this.opencode.postMessageSync(session.id, buildKnowledgePromptRequest(
         [{
           type: "text",
-          text: [
-            "你是法律知识补充助手。",
-            "用户已经从问答体文档中本地抽取了 question 和 answer。",
-            "不要重写、改写、扩写或合并 question / answer，只补充 tags 和 statute。",
-            "返回 JSON 数组，每个元素包含 question、answer、tags、statute。",
-            "其中：",
-            "- question: 必须与输入完全一致",
-            "- answer: 必须与输入完全一致",
-            "- tags: 1-3 个核心法律主题标签",
-            "- statute: 无明确法条时填 null",
-            `源文件：${fileName}`,
-            `输入：${JSON.stringify(batch, null, 2)}`,
-            "只输出 JSON 数组，不要输出其他内容。",
-          ].join("\n\n"),
+          text: prompt,
         }],
         resolveKnowledgeModel(this.config, "extract"),
       ));
@@ -1365,6 +1334,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
   private restoreChunkExtractions(
     documentId: number,
     chunks: Array<{ location: string; text: string; prevContext?: string | undefined }>,
+    extractPromptCacheKey: string,
   ): { completed: Map<number, ChunkExtractionState>; completedCount: number } {
     const cachedRows = this.db.listExtractedChunks(documentId);
     const completed = new Map<number, ChunkExtractionState>();
@@ -1379,7 +1349,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
       if (!chunk) {
         continue;
       }
-      const expectedHash = buildChunkExtractionHash(chunk, expectedModel);
+      const expectedHash = buildChunkExtractionHash(chunk, expectedModel, extractPromptCacheKey);
       if (row.chunkHash !== expectedHash) {
         continue;
       }
@@ -1394,6 +1364,33 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
       completedCount: completed.size,
     };
   }
+
+  private async resolveExtractQaPromptCacheKey(): Promise<string> {
+    const override = await readKnowledgePromptOverride(this.config.prompts?.extractQaPath);
+    return override ? hashText(override) : "builtin-extract-qa-v1";
+  }
+
+  private async buildExtractQaPrompt(variables: KnowledgeExtractQaPromptVariables): Promise<string> {
+    const override = await readKnowledgePromptOverride(this.config.prompts?.extractQaPath);
+    return override
+      ? renderKnowledgePromptTemplate(override, {
+        fileName: variables.fileName,
+        pageSection: variables.pageSection,
+        chunk: variables.chunk,
+        prevContext: variables.prevContext ?? "",
+      })
+      : buildDefaultExtractQaPrompt(variables);
+  }
+
+  private async buildEnrichQaPrompt(variables: KnowledgeEnrichQaPromptVariables): Promise<string> {
+    const override = await readKnowledgePromptOverride(this.config.prompts?.enrichQaPath);
+    return override
+      ? renderKnowledgePromptTemplate(override, {
+        fileName: variables.fileName,
+        inputJson: variables.inputJson,
+      })
+      : buildDefaultEnrichQaPrompt(variables);
+  }
 }
 
 function resolveSourceFileFieldName(config: KnowledgeBaseConfig): string {
@@ -1402,6 +1399,85 @@ function resolveSourceFileFieldName(config: KnowledgeBaseConfig): string {
 
 function resolveStatuteFieldName(config: KnowledgeBaseConfig): string {
   return config.storage.bitable.statuteField?.name ?? "法条";
+}
+
+function buildDefaultExtractQaPrompt(variables: KnowledgeExtractQaPromptVariables): string {
+  return [
+    "你是法律知识提取专家。",
+    "阅读以下文本片段，提取可以直接回答用户法律咨询的问答对。",
+    "规则：",
+    "1. 问题必须是用户真实会提出的法律实务问题，范围覆盖劳动用工、合同纠纷、公司治理、知识产权、婚姻家事、侵权责任、行政合规、税务、数据与平台合规、诉讼仲裁和执行等场景。",
+    "2. 同一知识点只提取一个问答对，答案中列举所有关键情形，不要拆成多条相近问题。",
+    "3. 答案忠于原文，长度控制在 50-300 字，涵盖核心结论、适用条件和例外情形，不要整段照抄原文。",
+    "4. 不要提取目录、课程介绍、检索方法、转载说明、免责声明、作者信息、统计图表、地域分布、学习建议、关键词列表等非咨询内容。",
+    "5. 如果片段主要是说明性或信息性内容，而不是可直接回答咨询的问题，返回空数组 []。",
+    "字段说明：",
+    "- question: 字符串，口语化的法律咨询问题",
+    "- answer: 字符串，基于原文的回答",
+    "- tags: 数组，1-3 个核心法律主题标签",
+    "- statute: 字符串或 null；无明确法条引用时填 null",
+    variables.prevContext ? `前文上下文（仅供理解，不要从这里单独提取问答）：\n${variables.prevContext}` : "",
+    `源文件：${variables.fileName}`,
+    `页码/章节：${variables.pageSection}`,
+    "---正文开始---",
+    variables.chunk,
+    "---正文结束---",
+    "示例输出：",
+    JSON.stringify([
+      {
+        question: "合同一方迟延付款时，守约方可以主张哪些违约责任？",
+        answer: "守约方通常可以依据合同约定和法律规定主张继续履行、支付违约金、赔偿损失等责任；如迟延付款导致合同目的不能实现，还可结合约定和法定条件评估解除合同。",
+        tags: ["合同纠纷", "违约责任"],
+        statute: "《民法典》第 577 条",
+      },
+      {
+        question: "股东会决议程序存在瑕疵时，公司应如何评估决议效力？",
+        answer: "需要结合召集程序、表决方式、表决比例和瑕疵程度判断。轻微瑕疵通常不当然影响效力，严重违反法律或章程并影响表决结果的，可能面临撤销或无效风险。",
+        tags: ["公司治理", "股东会决议"],
+        statute: null,
+      },
+      {
+        question: "未经许可使用他人注册商标会有哪些侵权风险？",
+        answer: "未经许可在相同或类似商品服务上使用相同或近似商标，容易导致混淆的，可能构成商标侵权，需要承担停止侵害、赔偿损失等责任。",
+        tags: ["知识产权", "商标侵权"],
+        statute: "《商标法》第 57 条",
+      },
+    ], null, 2),
+    "只输出 JSON 数组，不要输出其他内容。",
+  ].filter(Boolean).join("\n\n");
+}
+
+function buildDefaultEnrichQaPrompt(variables: KnowledgeEnrichQaPromptVariables): string {
+  return [
+    "你是法律知识补充助手。",
+    "用户已经从问答体文档中本地抽取了 question 和 answer。",
+    "不要重写、改写、扩写或合并 question / answer，只补充 tags 和 statute。",
+    "返回 JSON 数组，每个元素包含 question、answer、tags、statute。",
+    "其中：",
+    "- question: 必须与输入完全一致",
+    "- answer: 必须与输入完全一致",
+    "- tags: 1-3 个核心法律主题标签",
+    "- statute: 无明确法条时填 null",
+    `源文件：${variables.fileName}`,
+    `输入：${variables.inputJson}`,
+    "只输出 JSON 数组，不要输出其他内容。",
+  ].join("\n\n");
+}
+
+async function readKnowledgePromptOverride(filePath?: string | undefined): Promise<string | undefined> {
+  if (!filePath) {
+    return undefined;
+  }
+  const content = (await readFile(filePath, "utf8")).trim();
+  return content || undefined;
+}
+
+function renderKnowledgePromptTemplate(template: string, variables: Record<string, string>): string {
+  return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key: string) => variables[key] ?? "");
+}
+
+function hashText(text: string): string {
+  return crypto.createHash("sha256").update(text).digest("hex");
 }
 
 function buildSourceFileFieldValue(
@@ -2008,12 +2084,15 @@ function buildKnowledgePromptRequest(parts: OpenCodePromptRequest["parts"], mode
 function buildChunkExtractionHash(
   chunk: { location: string; text: string; prevContext?: string | undefined },
   modelKey: string,
+  promptKey: string,
 ): string {
   return crypto
     .createHash("sha256")
     .update(EXTRACTION_CACHE_VERSION)
     .update("\n")
     .update(modelKey)
+    .update("\n")
+    .update(promptKey)
     .update("\n")
     .update(chunk.location)
     .update("\n")

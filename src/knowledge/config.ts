@@ -143,6 +143,11 @@ const KnowledgeBaseModelsSchema = z.object({
   rerank: KnowledgeBaseModelRefSchema.optional(),
 }).default({});
 
+const KnowledgeBasePromptsSchema = z.object({
+  extractQaPath: z.string().min(1).optional(),
+  enrichQaPath: z.string().min(1).optional(),
+}).default({});
+
 const KnowledgeBaseObsidianSchema = z.object({
   enabled: z.boolean().default(false),
   vaultPath: z.string().min(1).optional(),
@@ -179,6 +184,7 @@ const KnowledgeBaseConfigSchema = z.object({
   storage: KnowledgeBaseStorageSchema,
   embeddingProvider: EmbeddingProviderSchema.optional(),
   models: KnowledgeBaseModelsSchema,
+  prompts: KnowledgeBasePromptsSchema,
   ingest: KnowledgeBaseIngestSchema,
   judicialIngest: KnowledgeBaseJudicialIngestSchema,
   parser: KnowledgeBaseParserSchema,
@@ -237,6 +243,10 @@ export type KnowledgeBaseConfig = {
     extract?: string | undefined;
     rerank?: string | undefined;
   };
+  prompts?: {
+    extractQaPath?: string | undefined;
+    enrichQaPath?: string | undefined;
+  } | undefined;
   ingest: {
     allowedExtensions: string[];
     maxFileSizeMb: number;
@@ -421,6 +431,14 @@ function normalizeKnowledgeBaseConfig(
       webRead: parsed.models.webRead,
       extract: parsed.models.extract,
       rerank: parsed.models.rerank,
+    },
+    prompts: {
+      extractQaPath: parsed.prompts.extractQaPath
+        ? context.resolveRelative(context.baseDir, parsed.prompts.extractQaPath)
+        : undefined,
+      enrichQaPath: parsed.prompts.enrichQaPath
+        ? context.resolveRelative(context.baseDir, parsed.prompts.enrichQaPath)
+        : undefined,
     },
     ingest: {
       allowedExtensions: normalizeAllowedExtensions(parsed.ingest.allowedExtensions),

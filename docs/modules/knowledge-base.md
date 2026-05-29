@@ -77,6 +77,26 @@
 
 解析优先级：`models.{step}` > `models.default` > 不传（使用 OpenCode 默认模型）。
 
+### Prompt 覆盖配置
+
+问答抽取和问答体补充默认使用内置 prompt。需要把法律版、通用版或客户定制版分开时，可以通过文件覆盖：
+
+```json
+"knowledgeBase": {
+  "prompts": {
+    "extractQaPath": "prompts/knowledge-extract-qa.txt",
+    "enrichQaPath": "prompts/knowledge-enrich-qa.txt"
+  }
+}
+```
+
+路径相对 `config.json` 所在目录解析，也支持绝对路径。模板变量：
+
+- `extractQaPath`：`{{fileName}}`、`{{pageSection}}`、`{{chunk}}`、`{{prevContext}}`
+- `enrichQaPath`：`{{fileName}}`、`{{inputJson}}`
+
+覆盖文件为空时视为未配置；未配置时回退内置 prompt。修改 `extractQaPath` 的模板内容会使分段抽取缓存失效，避免复用旧 prompt 的结果。
+
 ### 调用方式
 
 知识库的 webRead / extract / rerank 三步通过 OpenCode 短生命周期内部 session 完成：创建 session → 发送 prompt（带 model 参数）→ 获取响应 → 立即删除 session。这属于实现细节，不暴露成用户会话概念。
@@ -188,7 +208,7 @@ URL 入库路径：bridge 创建一次 OpenCode 短生命周期 session，使用
     SQLite 同时维护 FTS5 全文索引
 ```
 
-### 问答提取 Prompt
+### 内置问答提取 Prompt
 
 ```
 你是法律知识提取专家。
