@@ -111,11 +111,6 @@ export type PermissionRequestCardView = {
   expiresInSeconds: number;
 };
 
-export type ButtonCallbackTestCardView = {
-  nonce: string;
-  callbackPath: string;
-};
-
 type RuntimeCardActionButton = {
   label: string;
   type: "primary" | "default" | "danger";
@@ -419,29 +414,6 @@ function resolvePermissionDesignerButtonLabel(label: string): string {
   return label;
 }
 
-/** 构建按钮回调真机验收卡。 */
-export function buildButtonCallbackTestCardPayload(view: ButtonCallbackTestCardView): FeishuPostPayload {
-  return buildInteractivePayload({
-    title: "按钮回调测试",
-    template: "blue",
-    iconToken: "click_outlined",
-    bodyElements: [
-      columnSet([
-        column([
-          markdown("**用途**\n点击下方按钮，验证飞书卡片 action 是否能回调到 Bridge。", {
-            icon: { token: "info-hollow_filled", color: "blue" },
-          }),
-        ], { bg: "blue-50", weight: 1 }),
-      ]),
-      buildKeyValueBlock("回调路径", `\`${escapeText(view.callbackPath)}\``),
-      buildKeyValueBlock("测试 nonce", `\`${escapeText(view.nonce)}\``),
-      buildDivider(),
-      buildButtonCallbackTestActionBlock(view),
-      buildFooterTipBlock("无提示时运行 `bridge doctor`，再检查 `http/card-action` 日志。", "wrench_outlined", "grey", "notation"),
-    ],
-  });
-}
-
 // #endregion
 
 type CardState = {
@@ -492,47 +464,6 @@ function buildTurnBodyElements(
   elements.push(buildDivider());
   elements.push(buildFooter(view.sessionId, view.durationText));
   return elements;
-}
-
-function buildButtonCallbackTestActionBlock(view: ButtonCallbackTestCardView): Record<string, unknown> {
-  return {
-    tag: "column_set",
-    flex_mode: "stretch",
-    horizontal_spacing: "8px",
-    horizontal_align: "left",
-    columns: [
-      {
-        tag: "column",
-        width: "auto",
-        elements: [
-          {
-            tag: "button",
-            text: {
-              tag: "plain_text",
-              content: "点击测试回调",
-            },
-            type: "primary",
-            width: "fill",
-            size: "medium",
-            value: {
-              kind: "callback-demo",
-              nonce: view.nonce,
-              source: "button-test",
-            },
-          },
-        ],
-        vertical_align: "top",
-      },
-    ],
-    margin: "0px 0px 0px 0px",
-  };
-}
-
-function buildKeyValueBlock(label: string, value: string): Record<string, unknown> {
-  return columnSet([
-    column([markdown(escapeText(label), { size: "notation" })], { bg: "grey-50", weight: 1 }),
-    column([markdown(value, { size: "notation" })], { bg: "grey-50", weight: 3 }),
-  ]);
 }
 
 function buildToolElements(lines: ReadonlyArray<ToolUpdateView>): Array<Record<string, unknown>> {

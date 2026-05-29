@@ -8,7 +8,7 @@
 
 [中文](README.md) | **English**
 
-Feishu OpenCode Bridge is a local-first entry point that brings the OpenCode runtime into Feishu. It gives private chats, group chats, and topic groups controlled OpenCode session windows, process cards, permission confirmation, material handling, a legal knowledge base, and legal workbench modules.
+Feishu OpenCode Bridge is a Feishu-native OpenCode runtime plus a legal materials workbench. It brings OpenCode agent execution into Feishu with controlled session windows, process cards, permission confirmation, material handling, a legal knowledge base, and legal workbench modules.
 
 It is not a simple "receive message, ask model, send reply" Feishu bot. Bridge owns sessions, permissions, cards, module state, and the Feishu transport boundary; OpenCode remains responsible for real agent execution.
 

@@ -36,14 +36,6 @@ describe("routeIncomingText", () => {
       kind: "command",
       command: { kind: "help" },
     });
-    expect(routeIncomingText("/button-test")).toEqual({
-      kind: "command",
-      command: { kind: "button-test" },
-    });
-    expect(routeIncomingText("/callback-test")).toEqual({
-      kind: "command",
-      command: { kind: "button-test" },
-    });
     expect(routeIncomingText("/cost")).toEqual({
       kind: "command",
       command: { kind: "cost" },
@@ -55,7 +47,7 @@ describe("routeIncomingText", () => {
       "/文本不是指令",
       "",
       "这是用户粘贴的 Markdown 正文。",
-      "- 路径：/Users/example/demo.md",
+      "- 路径：/Users/example/material.md",
     ].join("\n");
 
     expect(routeIncomingText(text)).toEqual({
@@ -164,7 +156,7 @@ describe("routeIncomingText", () => {
     });
   });
 
-  it("treats removed group whitelist commands as passthrough", () => {
+  it("treats removed and unknown commands as passthrough", () => {
     expect(routeIncomingText("/who")).toEqual({
       kind: "command",
       command: { kind: "passthrough", name: "who", arguments: [] },
@@ -173,13 +165,9 @@ describe("routeIncomingText", () => {
       kind: "command",
       command: { kind: "passthrough", name: "leave", arguments: [] },
     });
-    expect(routeIncomingText("/guide")).toEqual({
+    expect(routeIncomingText("/unknown-command")).toEqual({
       kind: "command",
-      command: { kind: "passthrough", name: "guide", arguments: [] },
-    });
-    expect(routeIncomingText("/help-file")).toEqual({
-      kind: "command",
-      command: { kind: "passthrough", name: "help-file", arguments: [] },
+      command: { kind: "passthrough", name: "unknown-command", arguments: [] },
     });
   });
 

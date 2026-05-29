@@ -23,7 +23,6 @@ import {
   isProjectBridgeProcess,
   isBridgeHealthy,
   ensureOpencodeServer,
-  maybePrintGuidePrompt,
   parseLsofPidOutput,
   parsePsProcessOutput,
   resolveBridgeLaunch,
@@ -33,7 +32,6 @@ import { runBootstrap, ensureBridgeDependencies } from "../scripts/runtime/boots
 import { createBackup, restoreBackup } from "../scripts/runtime/backup.mjs";
 import { runCostCli } from "../scripts/runtime/cost.mjs";
 import { checkForUpdate, downloadUpdate } from "../scripts/runtime/update.mjs";
-import { buildGuideView, runGuide } from "../scripts/runtime/guide.mjs";
 import { createPortableEnv, resolveBridgeHome, resolveNodeDownload, resolveProjectConfigPath } from "../scripts/runtime/portable.mjs";
 import { buildPortablePackage, PORTABLE_PACKAGE_MANIFEST } from "../scripts/release/build-portable.mjs";
 
@@ -554,89 +552,6 @@ describe("scripts/portable bootstrap", () => {
     expect(updated.extensions["contract-assistant"].storage.baseToken).toBe("app_new");
   });
 
-  it("dispatches guide through bootstrap", async () => {
-    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-bootstrap-guide-"));
-    await mkdir(path.join(dir, "node_modules"), { recursive: true });
-    const bridgeHome = path.join(dir, "bridge-home");
-    const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
-
-    const exitCode = await runBootstrap({
-      cwd: dir,
-      args: ["guide"],
-      env: { BRIDGE_HOME: bridgeHome, PATH: "" },
-      logger,
-      findExecutableFn: vi.fn(),
-      runCommandFn: vi.fn(),
-    });
-
-    expect(exitCode).toBe(1);
-    expect(logger.log).toHaveBeenCalledWith("Feishu OpenCode Bridge — 新手引导");
-    expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("bridge onboard"));
-  });
-});
-
-describe("scripts/guide", () => {
-  it("points missing config users back to onboard", async () => {
-    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-guide-missing-"));
-    const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
-
-    const exitCode = await runGuide({ cwd: dir, env: {}, logger });
-
-    expect(exitCode).toBe(1);
-    expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("还没有生成配置"));
-    expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("bridge onboard"));
-  });
-
-  it("moves users through workspace, doctor, and ready states", async () => {
-    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-guide-state-"));
-    const configPath = path.join(dir, "config.json");
-    await writeFile(configPath, JSON.stringify({
-      storage: { dataDir: "./data" },
-      extensions: {
-        "knowledge-base": { storage: { bitable: { appToken: "app", tableId: "tbl_knowledge" } } },
-        "contract-assistant": {
-          storage: {
-            baseToken: "app",
-            contractTableId: "tbl_contract",
-            invoiceTableId: "tbl_invoice",
-            caseTableId: "tbl_case",
-          },
-        },
-      },
-    }), "utf8");
-
-    await expect(buildGuideView({ cwd: dir, configPath })).resolves.toMatchObject({
-      status: "needs-doctor",
-      nextSteps: expect.arrayContaining(["bridge doctor workspace"]),
-    });
-
-    await mkdir(path.join(dir, "data"), { recursive: true });
-    await writeFile(path.join(dir, "data", "onboarding-state.json"), JSON.stringify({
-      schemaVersion: 1,
-      lastWorkspaceDoctor: {
-        status: "fail",
-        checkedAt: "2026-05-03T00:00:00.000Z",
-        failedChecks: [{ id: "fields", label: "合同管理表 字段", detail: "缺字段：客户名称" }],
-      },
-    }), "utf8");
-    await expect(buildGuideView({ cwd: dir, configPath })).resolves.toMatchObject({
-      status: "needs-fix",
-      detail: expect.stringContaining("缺字段"),
-    });
-
-    await writeFile(path.join(dir, "data", "onboarding-state.json"), JSON.stringify({
-      schemaVersion: 1,
-      lastWorkspaceDoctor: {
-        status: "pass",
-        checkedAt: "2026-05-03T00:00:00.000Z",
-        failedChecks: [],
-      },
-    }), "utf8");
-    await expect(buildGuideView({ cwd: dir, configPath })).resolves.toMatchObject({
-      status: "ready",
-      nextSteps: expect.arrayContaining(["bridge start", "在飞书里发送 /help"]),
-    });
-  });
 });
 
 describe("scripts/backup", () => {
@@ -784,20 +699,6 @@ describe("scripts/release portable package", () => {
 });
 
 describe("scripts/start", () => {
-  it("prints the Feishu /help hint only once per user data directory", async () => {
-    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-start-guide-"));
-    const configPath = path.join(dir, "config.json");
-    const logger = { log: vi.fn(), warn: vi.fn(), error: vi.fn() };
-    const config = { storage: { dataDir: "./data" } };
-
-    await expect(maybePrintGuidePrompt({ config, configPath, logger })).resolves.toBe(true);
-    await expect(maybePrintGuidePrompt({ config, configPath, logger })).resolves.toBe(false);
-
-    expect(logger.log).toHaveBeenCalledWith(expect.stringContaining("/help"));
-    const state = JSON.parse(await readFile(path.join(dir, "data", "onboarding-state.json"), "utf8"));
-    expect(state.guideShownAt).toEqual(expect.any(String));
-  });
-
   it("reuses existing opencode serve instead of spawning a new one", async () => {
     const spawnFn = vi.fn();
     const result = await ensureOpencodeServer({

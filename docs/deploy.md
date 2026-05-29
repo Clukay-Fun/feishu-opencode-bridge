@@ -135,8 +135,7 @@ bridge doctor
 1. 先运行 `bridge doctor`，确认公网回调配置没有硬错误。
 2. 再确认 Caddy / ngrok / 反向代理能把 HTTPS 流量转发到 Bridge。
 3. 点击一次权限卡按钮，查看 `http/card-action` 和 `http/server` 日志。
-4. 如需不触发 OpenCode 权限流，只验证按钮回调，可在飞书发送 `/button-test`，点击“点击测试回调”按钮。
-5. 如果按钮链路仍失败，先用 `/allow once`、`/allow always`、`/deny` 文本命令兜底完成当前权限处理。
+4. 如果按钮链路仍失败，先用 `/allow once`、`/allow always`、`/deny` 文本命令兜底完成当前权限处理。
 
 如果飞书后台提示“返回数据不是合法的 JSON 格式”，优先参考 [飞书卡片回调排障记录](troubleshooting-card-actions.md)。这个报错通常表示公网入口返回了 `502`、`530`、HTML、空响应或纯文本，不一定是卡片 JSON 本身有问题。
 

@@ -167,7 +167,7 @@ export async function runOnboard(options = {}) {
   logger.log("  1. bridge init workspace");
   logger.log("  2. bridge doctor workspace");
   logger.log("  3. bridge start");
-  logger.log("  随时运行 bridge guide 查看当前阶段。");
+  logger.log("  需要排查时运行 bridge doctor workspace。");
 
   if (shouldOfferStart(results)) {
     const launchNow = await promptYesNoFn("当前环境已接近可运行状态，是否现在启动完整栈？", false);

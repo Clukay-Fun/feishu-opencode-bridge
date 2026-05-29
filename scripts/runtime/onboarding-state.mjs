@@ -42,13 +42,6 @@ export async function updateOnboardingState(statePath, updater) {
   return next;
 }
 
-export async function markGuidePromptShown(statePath, now = new Date()) {
-  return await updateOnboardingState(statePath, (state) => ({
-    ...state,
-    guideShownAt: now.toISOString(),
-  }));
-}
-
 export async function markWorkspaceInitialized(statePath, now = new Date()) {
   return await updateOnboardingState(statePath, (state) => ({
     ...state,

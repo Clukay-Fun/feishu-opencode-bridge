@@ -3,7 +3,7 @@
  * 关注点:
  * - 在用户目录准备 BRIDGE_HOME/config/data/logs/extensions。
  * - 用包内 npm cache 安装 bridge 自身依赖，不污染系统全局。
- * - 将 onboard、doctor、start、init、guide、backup/restore 继续交给既有脚本处理。
+ * - 将 onboard、doctor、start、init、backup/restore 继续交给既有脚本处理。
  */
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -11,7 +11,6 @@ import path from "node:path";
 import { runBackupCli } from "./backup.mjs";
 import { runCostCli } from "./cost.mjs";
 import { runDoctor } from "./doctor.mjs";
-import { runGuide } from "./guide.mjs";
 import { runOnboard } from "./onboard.mjs";
 import { runStart } from "./start.mjs";
 import { runUpdateCli } from "./update.mjs";
@@ -25,7 +24,7 @@ import {
 } from "./portable.mjs";
 import { findExecutable, isMainModule, runCommand } from "./checks.mjs";
 
-const SUPPORTED_COMMANDS = new Set(["onboard", "doctor", "start", "init", "guide", "backup", "restore", "cost", "update", "help"]);
+const SUPPORTED_COMMANDS = new Set(["onboard", "doctor", "start", "init", "backup", "restore", "cost", "update", "help"]);
 
 export async function runBootstrap(options = {}) {
   const cwd = options.cwd ?? resolvePackageRoot(import.meta.url);
@@ -92,15 +91,6 @@ export async function runBootstrap(options = {}) {
       runCommandFn: options.runCommandFn,
       findExecutableFn: options.findExecutableFn,
       fetchImpl: options.fetchImpl,
-    });
-  }
-
-  if (command === "guide") {
-    return await runGuide({
-      cwd,
-      env,
-      configPath,
-      logger,
     });
   }
 
@@ -208,7 +198,6 @@ function printHelp(logger, bridgeHome) {
   logger.log("");
   logger.log("用法：");
   logger.log("  bridge onboard   首次引导并生成配置");
-  logger.log("  bridge guide     查看当前阶段和下一步");
   logger.log("  bridge doctor    诊断当前环境");
   logger.log("  bridge doctor workspace   诊断飞书多维表格工作区");
   logger.log("  bridge start     启动 OpenCode + Bridge");

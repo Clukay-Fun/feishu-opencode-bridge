@@ -383,36 +383,6 @@ describe("startBridgeHttpServer", () => {
     }), "warn");
   });
 
-  it("handles callback demo buttons without entering permission handling", async () => {
-    const port = await reservePort();
-    const handlePermissionCardAction = vi.fn(async () => ({ card: { title: "权限已处理" } }));
-    const httpLogger = logger();
-    const server = await startBridgeHttpServer(
-      createConfig(port, { enabled: true }),
-      { handlePermissionCardAction },
-      httpLogger,
-    );
-    servers.push(server);
-
-    const response = await fetch(`http://127.0.0.1:${port}/webhook/card`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        operator: { operator_id: { open_id: "ou_demo" } },
-        context: { open_message_id: "om_demo", open_chat_id: "oc_demo_chat" },
-        action: { value: { kind: "callback-demo", nonce: "nonce_demo" } },
-      }),
-    });
-
-    expect(response.status).toBe(200);
-    expect(handlePermissionCardAction).not.toHaveBeenCalled();
-    expect(await response.text()).toContain("按钮回调已到达 Bridge");
-    expect(httpLogger.log).toHaveBeenCalledWith("http/server", "callback demo action handled", expect.objectContaining({
-      actionKind: "callback-demo",
-      nonce: "nonce_demo",
-    }));
-  });
-
   it("returns 400 with safe diagnostics when SDK adapter fails", async () => {
     const port = await reservePort();
     const httpLogger = logger();

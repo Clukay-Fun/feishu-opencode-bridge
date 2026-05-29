@@ -8,7 +8,7 @@
 
 **中文** | [English](README.en.md)
 
-Feishu OpenCode Bridge 是把 OpenCode 运行时接入飞书的本地优先工作入口。它让私聊、群聊和话题群拥有可控的 OpenCode 会话窗口、过程卡片、权限确认、材料处理、法律知识库和法律业务工作台。
+Feishu OpenCode Bridge 是飞书原生 OpenCode runtime + 法律材料工作台。它把 OpenCode 的 agent 执行接进飞书，让私聊、群聊和话题群拥有可控的会话窗口、过程卡片、权限确认、材料处理、法律知识库和法律业务模块。
 
 它不是只负责“收消息、问模型、回消息”的普通飞书机器人。Bridge 自己管理会话、权限、卡片、模块状态和飞书传输边界；OpenCode 仍负责真实 agent 执行。
 

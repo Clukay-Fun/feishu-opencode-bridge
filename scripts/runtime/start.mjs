@@ -14,7 +14,6 @@ import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 
 import { resolveProjectConfigPath } from "./portable.mjs";
-import { markGuidePromptShown, readOnboardingState, resolveOnboardingStatePath } from "./onboarding-state.mjs";
 import { maybeCheckForUpdateOnStart } from "./update.mjs";
 import {
   createAugmentedEnv,
@@ -70,7 +69,6 @@ export async function runStart(options = {}) {
   });
   if (bridgePort.alreadyRunning) {
     logger.log("Bridge 已在运行，可以直接回到飞书继续使用。");
-    await maybePrintGuidePrompt({ config: rawConfig, configPath, logger });
     return 0;
   }
 
@@ -92,7 +90,6 @@ export async function runStart(options = {}) {
     findExecutableFn: options.findExecutableFn ?? findExecutable,
   });
   logger.log(`[3/3] 启动 Bridge ... ${bridgeLaunch.command}`);
-  await maybePrintGuidePrompt({ config: rawConfig, configPath, logger });
   const bridgeProcess = (options.spawnFn ?? spawn)(bridgeLaunch.command, bridgeLaunch.args, {
     cwd,
     env: bridgeLaunch.env,
@@ -127,19 +124,6 @@ export async function runStart(options = {}) {
 
   await stopManagedProcess(opencode.child, { owned: opencode.ownedProcess });
   return process.exitCode ?? 0;
-}
-
-export async function maybePrintGuidePrompt(options) {
-  const statePath = resolveOnboardingStatePath(options.config, options.configPath);
-  const state = await readOnboardingState(statePath);
-  if (state.guideShownAt) {
-    return false;
-  }
-  options.logger.log("");
-  options.logger.log("新手提示：Bridge 启动后，回到飞书发送 /help 查看指令总览。");
-  options.logger.log("如果不确定下一步，终端运行 bridge guide。");
-  await markGuidePromptShown(statePath);
-  return true;
 }
 
 // Check whether the configured Bridge port is free or already served by this project.

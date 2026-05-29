@@ -208,17 +208,6 @@ export async function startBridgeHttpServer(
               return buildCardActionNotice("无法识别操作者，请使用文本命令兜底。");
             }
 
-            if (callback.actionValue.kind === "callback-demo") {
-              logger.log("http/server", "callback demo action handled", {
-                actorPresent: true,
-                openMessageId: callback.openMessageId,
-                actionKind: "callback-demo",
-                nonce: typeof callback.actionValue.nonce === "string" ? callback.actionValue.nonce : "",
-                chatSummary: summarizeIdentifier(callback.chatId),
-              });
-              return buildCardActionNotice("按钮回调已到达 Bridge，链路正常。");
-            }
-
             if (!callback.actionValue.kind || callback.actionValue.kind === "permission") {
               return await actions.handlePermissionCardAction(
                 callback.actorOpenId,

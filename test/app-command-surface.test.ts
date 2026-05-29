@@ -58,7 +58,7 @@ describe("BridgeApp command surface", () => {
     expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("当前没有正在执行的任务");
   });
 
-  it("returns a complete command help message without creating an OpenCode session", async () => {
+  it("returns base command help without disabled extension commands", async () => {
     const outbound = createOutbound();
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
     const ensureSession = vi.fn();
@@ -74,27 +74,33 @@ describe("BridgeApp command surface", () => {
     expect(helpText).toContain("Bridge 指令总览");
     expect(helpText).toContain("/commands");
     expect(helpText).toContain("/sessions all <关键词>");
-    expect(helpText).toContain("/法律问答 <问题>");
-    expect(helpText).toContain("/案件工作台");
-    expect(helpText).toContain("/完成上传");
+    expect(helpText).not.toContain("/法律问答 <问题>");
+    expect(helpText).not.toContain("/案件工作台");
+    expect(helpText).not.toContain("/完成上传");
   });
 
-  it("returns a callback demo card without creating an OpenCode session", async () => {
+  it("shows enabled extension commands in help", async () => {
     const outbound = createOutbound();
-    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
-    const ensureSession = vi.fn();
-    (app as unknown as { ensureSession: typeof ensureSession }).ensureSession = ensureSession;
+    const config = baseConfig();
+    config.knowledgeBase.enabled = true;
+    config.contractAssistant = { enabled: true } as NonNullable<AppConfig["contractAssistant"]>;
+    config.laborSkill = { enabled: true } as NonNullable<AppConfig["laborSkill"]>;
+    config.caseWorkbench.enabled = true;
+    const app = new BridgeApp(config, outbound, logger(), createWhitelist(), {
+      knowledge: createKnowledgePort(),
+    });
 
     await callHandleCommand(app, {
       kind: "command",
-      command: { kind: "button-test" },
+      command: { kind: "help" },
     });
 
-    expect(ensureSession).not.toHaveBeenCalled();
-    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("按钮回调测试");
-    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("点击测试回调");
+    const helpText = extractMarkdown(getReplyPayloads(outbound)[0]);
+    expect(helpText).toContain("/法律问答 <问题>");
+    expect(helpText).toContain("/起草合同 <需求>");
+    expect(helpText).toContain("/案件工作台");
+    expect(helpText).toContain("/完成上传");
   });
-
 
   it("aborts the active turn and returns a terminal notice card", async () => {
     const outbound = createOutbound();
@@ -1874,7 +1880,6 @@ type AppCommandSurfaceTestRoute = {
     | { kind: "rename"; title: string }
     | { kind: "abort" }
     | { kind: "help" }
-    | { kind: "button-test" }
     | { kind: "models"; provider?: string | undefined }
     | { kind: "model-use"; model: string }
     | { kind: "model-reset" }
@@ -2019,6 +2024,19 @@ function createWhitelist(): ChatWhitelist {
     count() {
       return 0;
     },
+  };
+}
+
+function createKnowledgePort() {
+  return {
+    async query() {
+      return { question: "", results: [] };
+    },
+    async ingestFile() {
+      throw new Error("not used");
+    },
+    async syncMirror() {},
+    close() {},
   };
 }
 

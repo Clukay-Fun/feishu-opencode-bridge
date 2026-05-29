@@ -29,7 +29,7 @@ import {
   buildTurnStatusCardPayload,
 } from "../src/feishu/formatter.js";
 import { buildCaseTodoReminderPayload } from "../src/feishu/contract-cards.js";
-import { buildButtonCallbackTestCardPayload, buildCostCommandCardPayload } from "../src/feishu/runtime-cards.js";
+import { buildCostCommandCardPayload } from "../src/feishu/runtime-cards.js";
 import { buildAssistantMarkdownPayload } from "../src/feishu/shared-primitives.js";
 
 describe("buildPostPayload", () => {
@@ -435,20 +435,6 @@ describe("buildPostPayload", () => {
     expect(content.body.elements[2].columns[0].elements[0].value.policy).toBe("once");
     expect(content.body.elements[2].columns[1].elements[0].text.content).toBe("始终允许");
     expect(content.body.elements[2].columns[2].elements[0].value.policy).toBe("deny");
-  });
-
-  it("renders a button callback test card with key-value diagnostics", () => {
-    const payload = buildButtonCallbackTestCardPayload({
-      nonce: "nonce_demo",
-      callbackPath: "/webhook/card",
-    });
-    const content = JSON.parse(payload.content) as any;
-    const serialized = JSON.stringify(content);
-    expect(content.header.title.content).toBe("按钮回调测试");
-    expect(serialized).toContain("回调路径");
-    expect(serialized).toContain("/webhook/card");
-    expect(serialized).toContain("测试 nonce");
-    expect(serialized).toContain("nonce_demo");
   });
 
   it("renders a knowledge query card with sources and disclaimer", () => {

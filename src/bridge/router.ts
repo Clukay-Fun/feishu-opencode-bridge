@@ -18,7 +18,6 @@ export type RoutedText =
       | { kind: "model-use"; model: string }
       | { kind: "model-reset" }
       | { kind: "help" }
-      | { kind: "button-test" }
       | { kind: "knowledge-query"; question: string; explicit?: boolean | undefined }
       | { kind: "knowledge-ingest" }
       | { kind: "knowledge-ingest-end" }
@@ -105,10 +104,6 @@ export function routeIncomingText(text: string): RoutedText {
 
   if (["help", "commands", "指令", "帮助"].includes(rawCommand) && args.length === 0) {
     return { kind: "command", command: { kind: "help" } };
-  }
-
-  if ((rawCommand === "button-test" || rawCommand === "callback-test") && args.length === 0) {
-    return { kind: "command", command: { kind: "button-test" } };
   }
 
   if ((rawCommand === "知识入库" || rawCommand === "kb-ingest" || rawCommand === "kb-ingest-start") && args.length === 0) {

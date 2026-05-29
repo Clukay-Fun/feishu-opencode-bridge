@@ -8,7 +8,6 @@
   - 启动前检查、doctor、onboard 共用的底层能力
 - `doctor.mjs`
   - 环境诊断入口
-- `guide.mjs`
   - 根据本地配置与 onboarding state 输出当前阶段和下一步
 - `onboard.mjs`
   - 首次引导入口
@@ -17,7 +16,7 @@
 - `start.mjs`
   - 本地启动编排入口
 - `bootstrap.mjs`
-  - portable 包统一入口，准备用户目录、项目依赖并分发 onboard / doctor / start / init / guide / backup / restore / cost / update
+  - portable 包统一入口，准备用户目录、项目依赖并分发 onboard / doctor / start / init / backup / restore / cost / update
 - `backup.mjs`
   - 备份和恢复本地用户数据目录
   - 不触达飞书远端 Base，也不备份 `.runtime`、`node_modules`
@@ -43,7 +42,6 @@
   - 诊断 Base token、表 ID、字段结构和当前用户访问权限
   - 检测权限或 scope 问题时输出需要补充的 Bitable scope 和飞书开放平台入口
   - 只诊断，不自动改配置或创建远端资源
-- `bridge guide`
   - 输出缺配置、缺 workspace、doctor 未通过或已就绪等阶段化下一步
   - 与飞书 `/help` 指令配合，帮助新用户跑通 Hero 路线
 - `bridge backup`

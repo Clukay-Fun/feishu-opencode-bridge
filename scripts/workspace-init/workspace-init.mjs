@@ -852,7 +852,7 @@ function workspaceFixForResult(result) {
   if (result.id.includes("field") || result.id.includes("table")) {
     return "确认远端表结构；需要切换到新工作区时运行 bridge init workspace --force。";
   }
-  return "运行 bridge guide 查看阶段化下一步，必要时重新运行 bridge onboard。";
+  return "运行 bridge doctor workspace 查看工作区状态，必要时重新运行 bridge onboard。";
 }
 
 function workspaceResult(id, label, status, detail, hint) {

@@ -4,11 +4,9 @@
  * - 处理 /new、/status、/sessions、/allow 等命令。
  * - 连接会话窗口状态、OpenCode 能力和飞书卡片输出。
  */
-import crypto from "node:crypto";
 import type { PendingInteraction, PendingPermissionInteraction, PendingSessionSelectionInteraction } from "../bridge/state.js";
 import type { RoutedText } from "../bridge/router.js";
 import {
-  buildButtonCallbackTestCardPayload,
   buildCostCommandCardPayload,
   buildModelListCardPayload,
   buildSessionListCardPayload,
@@ -16,6 +14,10 @@ import {
   buildStatusCommandCardPayload,
 } from "../feishu/runtime-cards.js";
 import { buildNoticeCardPayload, resolveNoticeLevelFromTemplate, type FeishuPostPayload } from "../feishu/shared-primitives.js";
+import { contractAssistantExtensionMeta } from "../contract-assistant/extension.meta.js";
+import type { ExtensionCommandDefinition } from "../extension-api/index.js";
+import { knowledgeBaseExtensionMeta } from "../knowledge/extension.meta.js";
+import { laborSkillExtensionMeta } from "../labor/extension.meta.js";
 import type { TranscriptType } from "../logging/logger.js";
 import type { OpenCodeMessage, OpenCodeProvidersResponse, OpenCodeSession, OpenCodeSessionStatus } from "../opencode/client.js";
 import type { BridgeWindowModelOverride, BridgeWindowRecord, SessionBindingRecord } from "../store/mappings.js";
@@ -69,6 +71,18 @@ export type BridgeAppContext = {
         path: string;
       };
     };
+    knowledgeBase?: {
+      enabled: boolean;
+    } | undefined;
+    contractAssistant?: {
+      enabled: boolean;
+    } | undefined;
+    laborSkill?: {
+      enabled: boolean;
+    } | undefined;
+    caseWorkbench?: {
+      enabled: boolean;
+    } | undefined;
   };
   costTracker?: CostTracker | undefined;
   opencode: {
@@ -139,7 +153,6 @@ const BRIDGE_OWNED_COMMAND_KINDS = new Set<Extract<RoutedText, { kind: "command"
   "cost",
   "abort",
   "help",
-  "button-test",
   "models",
   "model-use",
   "model-reset",
@@ -369,20 +382,7 @@ export class CommandHandler {
     }
 
     if (command.kind === "help") {
-      await this.context.sendMarkdown(message.chatId, buildCommandHelpText(), message.messageId);
-      return;
-    }
-
-    if (command.kind === "button-test") {
-      await this.context.sendPayload(message.chatId, buildButtonCallbackTestCardPayload({
-        nonce: crypto.randomUUID(),
-        callbackPath: this.context.config.feishu.cardActions.path,
-      }), {
-        event: "final message sent",
-        transcriptType: "outbound-final",
-        textPreview: "按钮回调测试",
-        len: 6,
-      }, { replyToMessageId: message.messageId });
+      await this.context.sendMarkdown(message.chatId, buildCommandHelpText(this.context.config), message.messageId);
       return;
     }
 
@@ -1079,8 +1079,8 @@ function buildDeleteConfirmMessage(input: { target: string; confirmCommand: stri
   ].join("\n");
 }
 
-function buildCommandHelpText(): string {
-  return [
+function buildCommandHelpText(config: BridgeAppContext["config"]): string {
+  const lines = [
     "### Bridge 指令总览",
     "",
     "本帮助覆盖 Bridge 接管的指令；未列入 Bridge 接管的 slash 命令会透传给 OpenCode，例如 `/review`、`/init`、`/compact`。",
@@ -1092,7 +1092,6 @@ function buildCommandHelpText(): string {
     "- `/status`：查看当前窗口、会话、队列和运行状态。",
     "- `/cost`：查看本地估算成本和用量。",
     "- `/abort`：中止当前正在执行的任务。",
-    "- `/button-test` 或 `/callback-test`：发送按钮回调测试卡。",
     "- `/help`、`/commands`、`/指令`、`/帮助`：显示本指令总览。",
     "",
     "### 会话管理",
@@ -1127,38 +1126,66 @@ function buildCommandHelpText(): string {
     "- `/allow always`：始终允许同类权限请求。",
     "- `/deny`：拒绝当前权限请求。",
     "",
-    "### 知识库",
-    "",
-    "- `/知识入库`、`/kb-ingest`、`/kb-ingest-start`：进入知识库材料入库模式。",
-    "- `/知识入库结束`、`/知识入库完成`、`/kb-ingest-end`：结束知识库材料入库模式。",
-    "- `/法律问答 <问题>` 或 `/kb-query <问题>`：显式查询法律知识库。",
-    "- `法律问答 <问题>`：自然语言入口，无需斜杠。",
-    "- `/法律咨询开始`、`/法律咨询结束`：群聊法律咨询模式入口，由知识库模块处理。",
-    "",
     "### 文件与材料",
     "",
     "- `总结这个文件`：回复文件消息，让 Bridge 走普通文件总结。",
-    "- `把这个文件入库`：回复文件消息，将材料送入知识库入库流程。",
-    "- 本地绝对路径也可作为材料上下文，例如 `/Users/clukay/Desktop/demo.pdf`。",
-    "",
-    "### 合同、发票与案件",
-    "",
-    "- `/合同起草开始`：进入合同起草工作会话。",
-    "- `/合同起草结束`：结束合同起草工作会话。",
-    "- `/起草合同 <需求>` 或 `/contract-draft <需求>`：按需求起草合同。",
-    "- `/合同录入 <材料或说明>` 或 `/contract-extract <材料或说明>`：提取合同字段并写入台账。",
-    "- `/识别发票 <材料或说明>` 或 `/invoice-recognize <材料或说明>`：识别发票并写入记录。",
-    "- `/案件录入 <案件信息>` 或 `/case-manage <案件信息>`：新增案件管理记录。",
-    "- `/案件更新 <更新内容>` 或 `/case-update <更新内容>`：更新案件管理记录。",
-    "- `/案件待办` 或 `/case-todos`：查询案件待办。",
-    "",
-    "### 案件工作台与劳动分析",
-    "",
-    "- `/案件工作台`：打开案件工作台材料收集流程。",
-    "- `/完成上传`：结束材料收集并开始劳动争议分析。",
-    "- 自然语言也可以触发，例如 `根据这些材料生成劳动争议分析`；低置信度时 Bridge 会继续普通会话或要求补充。",
-  ].join("\n");
+    "- 本地绝对路径也可作为材料上下文，例如 `/Users/clukay/Desktop/material.pdf`。",
+  ];
+
+  if (config.knowledgeBase?.enabled) {
+    lines.push(
+      "",
+      "### 知识库",
+      "",
+      ...formatExtensionCommands(knowledgeBaseExtensionMeta.commands),
+      "- `法律问答 <问题>`：自然语言入口，无需斜杠。",
+      "- `把这个文件入库`：回复文件消息，将材料送入知识库入库流程。",
+    );
+  }
+
+  if (config.contractAssistant?.enabled) {
+    lines.push(
+      "",
+      "### 合同、发票与案件",
+      "",
+      ...formatExtensionCommands(contractAssistantExtensionMeta.commands),
+    );
+  }
+
+  if (config.caseWorkbench?.enabled || config.laborSkill?.enabled) {
+    lines.push("", "### 案件工作台与劳动分析", "");
+    if (config.caseWorkbench?.enabled) {
+      lines.push("- `/案件工作台`：打开案件工作台材料收集流程。");
+    }
+    if (config.laborSkill?.enabled) {
+      lines.push(
+        ...formatExtensionCommands(laborSkillExtensionMeta.commands),
+        "- 自然语言也可以触发，例如 `根据这些材料生成劳动争议分析`；低置信度时 Bridge 会继续普通会话或要求补充。",
+      );
+    }
+  }
+
+  return lines.join("\n");
 }
+
+function formatExtensionCommands(commands: readonly ExtensionCommandDefinition[]): string[] {
+  return commands.map((command) => {
+    const override = HELP_COMMAND_OVERRIDES[command.name];
+    const names = override?.names ?? [`/${command.name}`, ...(command.aliases ?? []).map((alias) => `/${alias}`)];
+    return `- ${names.map((name) => `\`${name}\``).join("、")}：${command.description}。`;
+  });
+}
+
+const HELP_COMMAND_OVERRIDES: Record<string, { names: string[] }> = {
+  "法律问答": { names: ["/法律问答 <问题>", "/kb-query <问题>"] },
+  "kb-ingest-start": { names: ["/知识入库", "/kb-ingest", "/kb-ingest-start"] },
+  "kb-ingest-end": { names: ["/知识入库结束", "/知识入库完成", "/kb-ingest-end"] },
+  "起草合同": { names: ["/起草合同 <需求>", "/contract-draft <需求>"] },
+  "合同录入": { names: ["/合同录入 <材料或说明>", "/contract-extract <材料或说明>"] },
+  "识别发票": { names: ["/识别发票 <材料或说明>", "/invoice-recognize <材料或说明>"] },
+  "案件录入": { names: ["/案件录入 <案件信息>", "/case-manage <案件信息>"] },
+  "案件更新": { names: ["/案件更新 <更新内容>", "/case-update <更新内容>"] },
+};
 
 function sessionMatchesQuery(session: OpenCodeSession, normalizedQuery: string): boolean {
   return [

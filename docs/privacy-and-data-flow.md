@@ -61,7 +61,6 @@
 ```bash
 bridge doctor
 bridge doctor workspace
-bridge guide
 ```
 
 `bridge doctor` 会输出 Data Flow 分组，展示 AI provider 地址、外部 OCR、memory 和日志策略。它只做透明提示，不替你做合规判断。
