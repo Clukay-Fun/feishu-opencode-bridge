@@ -21,7 +21,7 @@
 
 根目录不应承载长期运行状态。新运行数据默认进入 `data/`、`logs/`、`.runtime/`、`turn-files/`、`artifacts/` 或 `outputs/`，并由 `.gitignore` 排除。
 
-一次性 Feishu Base payload、演示输出和排障临时文件不要提交。确实需要长期保留时，先移动到 `docs/archive/` 并写清背景。
+一次性 Feishu Base payload、临时输出和排障临时文件不要提交。确实需要长期保留时，先移动到 `docs/archive/` 并写清背景。
 
 ## portable 发布包边界
 

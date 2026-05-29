@@ -154,7 +154,7 @@ export const exampleExtension: BuiltinExtensionDefinition = {
 扩展仍是受信代码，配置变更和扩展版本变更仍需要重启。
 
 Phase 2 起，外部扩展可以通过 `ExtensionMetaDefinition.configDefinition` 声明自己的配置块。
-配置数据位于 `config.json` 的 `extensions` 对象下，例如 `extensions["demo-extension"]`。
+配置数据位于 `config.json` 的 `extensions` 对象下，例如 `extensions["sample-extension"]`。
 `ModuleConfigDefinition` 和 `ConfigLoadContext` 已纳入公共 API；`ConfigLoadContext` 字段集冻结，新增字段需要架构 review。
 
 外部 runtime module 由 adapter 接入内部 `RuntimeModule` seam。

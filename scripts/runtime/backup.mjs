@@ -28,7 +28,7 @@ export async function runBackupCli(args = process.argv.slice(2), options = {}) {
     if (parsed.command === "restore") {
       logger.log(`已恢复本地用户数据：${result.bridgeHome}`);
       logger.log("建议下一步：bridge doctor workspace");
-      logger.log("然后运行：bridge guide");
+      logger.log("然后运行：bridge start");
     } else {
       logger.log(`已创建备份：${result.outputPath}`);
       logger.log(`包含文件：${result.fileCount} 个`);

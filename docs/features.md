@@ -81,6 +81,17 @@ Bridge 提供 portable runtime 和源码开发两种路径。
 - **通用版（`profile: "general"`）**：保留基础运行时、基础卡片、文件/文档能力、记忆能力和外部扩展机制，不加载法律垂直扩展。配置模板见 [config.general.example.json](../config.general.example.json)。
 - **法律版（`profile: "legal"`，默认）**：在通用能力之上，默认启用法律知识库、合同助手、劳动案件和案件工作台。配置模板见 [config.legal.example.json](../config.legal.example.json)。
 
+边界口径：
+
+| 能力 | 通用版 | 法律版 |
+| :-- | :-- | :-- |
+| 飞书 OpenCode runtime、窗口/会话、权限、过程卡片 | 默认保留 | 默认保留 |
+| 文件识别、材料上下文、文档解析、OCR 编排 | 默认保留 | 默认保留 |
+| 记忆、基础 checklist、外部扩展机制 | 默认保留 | 默认保留 |
+| 知识库基础设施 | 默认关闭，可显式启用并换通用 prompt / 表结构 | 默认启用，使用法律知识库口径 |
+| 合同、发票、案件台账 | 默认关闭 | 默认启用 |
+| 劳动案件材料工作台 | 默认关闭 | 默认启用 |
+
 每个内置扩展都有独立的 `enabled` 开关：
 
 ```json
@@ -100,6 +111,8 @@ Bridge 提供 portable runtime 和源码开发两种路径。
 - 被关闭的扩展不会加载运行时模块，也不会认领命令、自然语言 routing 或业务卡片。
 - 法律版默认启用知识库需要配置 `embeddings.provider`（或 `knowledgeBase.embeddingProvider`）；未配置时知识库会被自动跳过并给出提示。
 - 案件工作台依赖劳动案件扩展提供采集能力，需与 `labor-skill` 一起启用。
+- `profile` 不应进入业务代码作为分支条件；差异通过扩展开关、模块配置、prompt 覆盖或外部扩展表达。
+- 通用版若显式开启 `knowledge-base`，需要把法律抽取 prompt、表字段和用户命令文案替换为通用口径。
 
 ## 架构边界
 
