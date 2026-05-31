@@ -5,5 +5,5 @@
  */
 export interface MemoryRetriever {
   // Recall up to `limit` memory snippets relevant to the current user query.
-  recall(userId: string, query: string, limit: number): Promise<string[]>;
+  recall(userId: string, query: string, limit: number, options?: { scope?: string }): Promise<string[]>;
 }

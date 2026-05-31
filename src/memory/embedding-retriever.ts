@@ -68,7 +68,7 @@ export class EmbeddingRetriever implements MemoryRetriever {
   ) {}
 
   /** 优先做向量召回；失败或无命中时退回备用检索器。 */
-  async recall(userId: string, query: string, limit: number): Promise<string[]> {
+  async recall(userId: string, query: string, limit: number, options?: { scope?: string }): Promise<string[]> {
     let queryEmbedding: number[];
     try {
       queryEmbedding = await this.embeddingClient.embed(query);
@@ -77,12 +77,12 @@ export class EmbeddingRetriever implements MemoryRetriever {
         userId,
         detail: error instanceof Error ? error.message : String(error),
       }, "warn");
-      return this.fallback.recall(userId, query, limit);
+      return this.fallback.recall(userId, query, limit, options);
     }
 
-    const candidates = this.db.listEmbeddingCandidates(userId, this.embeddingClient.model);
+    const candidates = this.db.listEmbeddingCandidates(userId, this.embeddingClient.model, options?.scope);
     if (candidates.length === 0) {
-      return this.fallback.recall(userId, query, limit);
+      return this.fallback.recall(userId, query, limit, options);
     }
 
     const matches = candidates
@@ -96,7 +96,7 @@ export class EmbeddingRetriever implements MemoryRetriever {
       .slice(0, limit);
 
     if (matches.length === 0) {
-      return this.fallback.recall(userId, query, limit);
+      return this.fallback.recall(userId, query, limit, options);
     }
 
     this.db.touch(matches.map((match) => match.id));

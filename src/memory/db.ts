@@ -3,6 +3,8 @@
  * 关注点:
  * - 持久化用户事实及其访问时间。
  * - 支持新增、查询、触碰更新时间等基础操作。
+ * - v2 扩展：scope / kind / confidence / status / expires_at / superseded_by 字段，
+ *   迁移幂等，旧数据自动取默认值。
  */
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
@@ -15,6 +17,12 @@ export type MemoryRow = {
   sourceMessage: string;
   createdAt: number;
   accessedAt: number;
+  scope: string;
+  kind: string;
+  confidence: number;
+  status: string;
+  expiresAt: number | null;
+  supersededBy: number | null;
 };
 
 export type MemoryFactRecord = {
@@ -22,12 +30,27 @@ export type MemoryFactRecord = {
   fact: string;
   createdAt: number;
   accessedAt: number;
+  scope: string;
+  kind: string;
+  confidence: number;
+  status: string;
 };
 
 type MemoryEmbeddingCandidate = {
   id: number;
   fact: string;
   embedding: number[];
+};
+
+export type SaveMemoryFactInput = {
+  fact: string;
+  sourceMessage: string;
+  scope?: string;
+  kind?: string;
+  confidence?: number;
+  status?: string;
+  expiresAt?: number | null;
+  supersededBy?: number | null;
 };
 
 export class MemoryDb {
@@ -55,7 +78,7 @@ export class MemoryDb {
   }
 
   /** 批量写入事实；重复事实只更新时间，不重复插入。 */
-  saveFacts(userId: string, facts: Array<{ fact: string; sourceMessage: string }>): number[] {
+  saveFacts(userId: string, facts: SaveMemoryFactInput[]): number[] {
     const normalizedFacts = dedupeFactEntries(facts, this.sourcePreviewLength);
     if (normalizedFacts.length === 0) {
       return [];
@@ -70,6 +93,12 @@ export class MemoryDb {
         source_message,
         created_at,
         accessed_at,
+        scope,
+        kind,
+        confidence,
+        status,
+        expires_at,
+        superseded_by,
         embedding_model,
         embedding_json
       )
@@ -79,6 +108,12 @@ export class MemoryDb {
         @sourceMessage,
         @now,
         @now,
+        @scope,
+        @kind,
+        @confidence,
+        @status,
+        @expiresAt,
+        @supersededBy,
         NULL,
         NULL
       )
@@ -93,13 +128,19 @@ export class MemoryDb {
       SET accessed_at = @now
       WHERE user_id = @userId AND fact = @fact
     `);
-    const transaction = this.db.transaction((rows: Array<{ fact: string; sourceMessage: string }>) => {
+    const transaction = this.db.transaction((rows: SaveMemoryFactInput[]) => {
       for (const row of rows) {
         const insertResult = insert.run({
           userId,
           fact: row.fact,
           sourceMessage: row.sourceMessage,
           now,
+          scope: normalizeScope(row.scope),
+          kind: row.kind ?? "fact",
+          confidence: clampConfidence(row.confidence ?? 0.8),
+          status: row.status ?? "active",
+          expiresAt: row.expiresAt ?? null,
+          supersededBy: row.supersededBy ?? null,
         });
         if (insertResult.changes === 0) {
           touchExisting.run({ userId, fact: row.fact, now });
@@ -135,15 +176,17 @@ export class MemoryDb {
   // #region 查询
 
   /** 返回具备 embedding 的召回候选。 */
-  listEmbeddingCandidates(userId: string, model: string): MemoryEmbeddingCandidate[] {
+  listEmbeddingCandidates(userId: string, model: string, scope?: string): MemoryEmbeddingCandidate[] {
+    const scopeClause = buildScopeClause(scope);
     const rows = this.db.prepare(`
       SELECT id, fact, embedding_json
       FROM memories
       WHERE user_id = @userId
         AND embedding_model = @model
         AND embedding_json IS NOT NULL
+        ${scopeClause.sql}
       ORDER BY accessed_at DESC, id DESC
-    `).all({ userId, model }) as Array<{
+    `).all({ userId, model, scope: scopeClause.scope }) as Array<{
       id: number;
       fact: string;
       embedding_json: string | null;
@@ -166,14 +209,16 @@ export class MemoryDb {
   }
 
   /** 返回最近访问的记忆。 */
-  listRecent(userId: string, limit: number): MemoryFactRecord[] {
+  listRecent(userId: string, limit: number, scope?: string): MemoryFactRecord[] {
+    const scopeClause = buildScopeClause(scope);
     return this.db.prepare(`
-      SELECT id, fact, created_at, accessed_at
+      SELECT id, fact, created_at AS createdAt, accessed_at AS accessedAt, scope, kind, confidence, status
       FROM memories
       WHERE user_id = @userId
+        ${scopeClause.sql}
       ORDER BY accessed_at DESC, id DESC
       LIMIT @limit
-    `).all({ userId, limit }) as MemoryFactRecord[];
+    `).all({ userId, limit, scope: scopeClause.scope }) as MemoryFactRecord[];
   }
 
   /** 更新若干记忆的 accessedAt 时间。 */
@@ -209,13 +254,15 @@ export class MemoryDb {
   }
 
   /** 列出指定用户的所有记忆。 */
-  listFactsForUser(userId: string): MemoryFactRecord[] {
+  listFactsForUser(userId: string, scope?: string): MemoryFactRecord[] {
+    const scopeClause = buildScopeClause(scope);
     return this.db.prepare(`
-      SELECT id, fact, created_at, accessed_at
+      SELECT id, fact, created_at AS createdAt, accessed_at AS accessedAt, scope, kind, confidence, status
       FROM memories
       WHERE user_id = @userId
+        ${scopeClause.sql}
       ORDER BY accessed_at DESC, id DESC
-    `).all({ userId }) as MemoryFactRecord[];
+    `).all({ userId, scope: scopeClause.scope }) as MemoryFactRecord[];
   }
 
   /** 读取 Obsidian 最近一次同步时间。 */
@@ -312,14 +359,48 @@ export class MemoryDb {
       END;
     `);
 
+    // v1 → v2 迁移：增量添加新字段，幂等
     const columns = this.db.prepare("PRAGMA table_info(memories)").all() as Array<{ name: string }>;
     const columnNames = new Set(columns.map((column) => column.name));
+
     if (!columnNames.has("embedding_model")) {
       this.db.exec("ALTER TABLE memories ADD COLUMN embedding_model TEXT");
     }
     if (!columnNames.has("embedding_json")) {
       this.db.exec("ALTER TABLE memories ADD COLUMN embedding_json TEXT");
     }
+    if (!columnNames.has("scope")) {
+      this.db.exec("ALTER TABLE memories ADD COLUMN scope TEXT NOT NULL DEFAULT 'user'");
+    }
+    if (!columnNames.has("kind")) {
+      this.db.exec("ALTER TABLE memories ADD COLUMN kind TEXT NOT NULL DEFAULT 'fact'");
+    }
+    if (!columnNames.has("confidence")) {
+      this.db.exec("ALTER TABLE memories ADD COLUMN confidence REAL NOT NULL DEFAULT 0.8");
+    }
+    if (!columnNames.has("status")) {
+      this.db.exec("ALTER TABLE memories ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
+    }
+    if (!columnNames.has("expires_at")) {
+      this.db.exec("ALTER TABLE memories ADD COLUMN expires_at INTEGER");
+    }
+    if (!columnNames.has("superseded_by")) {
+      this.db.exec("ALTER TABLE memories ADD COLUMN superseded_by INTEGER REFERENCES memories(id)");
+    }
+
+    // v2 索引
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_memories_user_kind
+        ON memories(user_id, kind, status);
+
+      CREATE TABLE IF NOT EXISTS memory_settings (
+        user_id TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (user_id, key)
+      );
+    `);
   }
 
   /** 控制单用户记忆上限，淘汰最久未访问的记录。 */
@@ -363,11 +444,11 @@ function truncateSourcePreview(text: string, maxLength: number): string {
 }
 
 function dedupeFactEntries(
-  facts: Array<{ fact: string; sourceMessage: string }>,
+  facts: SaveMemoryFactInput[],
   sourcePreviewLength: number,
-): Array<{ fact: string; sourceMessage: string }> {
+): SaveMemoryFactInput[] {
   const seen = new Set<string>();
-  const result: Array<{ fact: string; sourceMessage: string }> = [];
+  const result: SaveMemoryFactInput[] = [];
   for (const item of facts) {
     const fact = item.fact.trim();
     if (!fact || seen.has(fact)) {
@@ -375,9 +456,27 @@ function dedupeFactEntries(
     }
     seen.add(fact);
     result.push({
+      ...item,
       fact,
       sourceMessage: truncateSourcePreview(item.sourceMessage, sourcePreviewLength),
     });
   }
   return result;
+}
+
+function normalizeScope(scope: string | undefined): string {
+  const normalized = scope?.trim();
+  return normalized || "user";
+}
+
+function buildScopeClause(scope: string | undefined): { sql: string; scope: string } {
+  const normalized = normalizeScope(scope);
+  if (normalized === "user") {
+    return { sql: "", scope: normalized };
+  }
+  return { sql: "AND scope IN ('user', @scope)", scope: normalized };
+}
+
+function clampConfidence(value: number): number {
+  return Math.max(0, Math.min(1, value));
 }

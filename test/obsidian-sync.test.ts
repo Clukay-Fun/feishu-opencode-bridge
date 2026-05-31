@@ -41,6 +41,10 @@ describe("ObsidianSyncService", () => {
       fact: "用户维护 feishu-opencode-bridge",
       createdAt: 1,
       accessedAt: 1,
+      scope: "user",
+      kind: "fact",
+      confidence: 0.8,
+      status: "active",
     }], { enableWikiLinks: true });
 
     expect(markdown).toContain("[[feishu-opencode-bridge]]");

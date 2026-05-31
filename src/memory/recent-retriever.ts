@@ -11,8 +11,8 @@ export class RecentRetriever implements MemoryRetriever {
   constructor(private readonly db: MemoryDb) {}
 
   /** 直接按最近访问时间返回记忆，并刷新 accessedAt。 */
-  async recall(userId: string, _query: string, limit: number): Promise<string[]> {
-    const rows = this.db.listRecent(userId, limit);
+  async recall(userId: string, _query: string, limit: number, options?: { scope?: string }): Promise<string[]> {
+    const rows = this.db.listRecent(userId, limit, options?.scope);
     this.db.touch(rows.map((row) => row.id));
     return rows.map((row) => row.fact);
   }
