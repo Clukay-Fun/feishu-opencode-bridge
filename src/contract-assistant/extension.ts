@@ -25,6 +25,7 @@ export const contractAssistantExtension: BuiltinExtensionDefinition = {
         context.opencode as OpenCodeClient,
         context.logger,
         context.config.knowledgeBase?.parser,
+        context.workspaceService,
       )
       : null;
     return new ContractAssistantRuntimeModule({

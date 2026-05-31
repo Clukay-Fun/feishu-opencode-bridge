@@ -25,6 +25,7 @@ import type { WhitelistStore } from "../store/whitelist.js";
 import type { IncomingChatMessage } from "./app.js";
 import { createExternalRuntimeModule } from "./external-extension-adapter.js";
 import type { FeishuTransport } from "./feishu-transport.js";
+import { WorkspaceService } from "../workspace/service.js";
 
 export type RuntimeModuleAssemblyResult = {
   moduleManager: ModuleManager;
@@ -76,11 +77,18 @@ export function createRuntimeModules(options: {
   createAndBindSession(source: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey">): Promise<SessionBindingRecord>;
 }): RuntimeModuleAssemblyResult {
   const memory = options.memory ?? createMemoryService(options.config, options.logger, options.opencode as OpenCodeClient);
+  const workspaceService = new WorkspaceService({
+    dataDir: options.config.storage.dataDir,
+    logger: options.logger,
+    allowedExtensions: options.config.knowledgeBase?.ingest?.allowedExtensions,
+    maxFileSizeMb: options.config.knowledgeBase?.ingest?.maxFileSizeMb,
+  });
   const knowledge = options.knowledge ?? createKnowledgeService({
     config: options.config,
     resources: options.outbound,
     opencode: options.opencode as OpenCodeClient,
     logger: options.logger,
+    workspaceService,
   });
 
   const moduleManager = new RuntimeModuleManager(options.logger);
@@ -108,6 +116,7 @@ export function createRuntimeModules(options: {
       knowledge,
       costTracker: options.costTracker,
       caseContextStore,
+      workspaceService,
       whitelist: options.whitelist,
       getSessionWindow: options.getSessionWindow,
       saveSessionWindow: options.saveSessionWindow,

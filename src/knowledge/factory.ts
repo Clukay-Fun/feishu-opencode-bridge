@@ -9,6 +9,7 @@ import { loadConfig } from "../config/loader.js";
 import { FeishuApiClient } from "../feishu/api.js";
 import type { Logger } from "../logging/logger.js";
 import { OpenCodeClient } from "../opencode/client.js";
+import type { WorkspaceService } from "../workspace/service.js";
 import {
   KnowledgeBaseService,
   type KnowledgeBasePort,
@@ -59,6 +60,7 @@ type CreateKnowledgeServiceOptions = {
   resources: KnowledgeResourcePort;
   opencode: OpenCodeClient;
   logger: Logger;
+  workspaceService?: WorkspaceService;
 };
 
 // CLI 保持 JSON-only stdout；服务层日志暂时静默，后续可补 stderr logger 方便排障。
@@ -77,6 +79,7 @@ export function createKnowledgeService(options: CreateKnowledgeServiceOptions): 
     options.resources,
     options.opencode,
     options.logger,
+    options.workspaceService,
   );
 }
 

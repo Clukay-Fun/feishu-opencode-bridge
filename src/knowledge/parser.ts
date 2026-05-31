@@ -1,7 +1,7 @@
 /**
  * 职责: 解析知识库输入文档，并切分为适合检索的内容块。
  * 关注点:
- * - 通过通用 document-pipeline 获取 Markdown 与文本层。
+ * - 通过 WorkspaceService 或 document-pipeline 获取 Markdown 与文本层。
  * - 负责切块与结构信息整理，供后续摄入使用。
  */
 import {
@@ -11,6 +11,7 @@ import {
   type DocumentParserUsed,
   type ParsedDocumentSection,
 } from "../document-pipeline/index.js";
+import type { WorkspaceService } from "../workspace/service.js";
 
 export type KnowledgeParserUsed = DocumentParserUsed;
 
@@ -41,11 +42,29 @@ export type ParsedKnowledgeChapter = {
 
 //#region File parsing
 // Parse one uploaded file into normalized markdown plus structured sections.
+// When workspaceService is provided, uses WorkspaceService.parse() as the entry point.
 export async function parseKnowledgeFile(
   fileName: string,
   buffer: Buffer,
   options?: DocumentParserOptions,
+  workspaceService?: WorkspaceService,
 ): Promise<ParsedKnowledgeDocument> {
+  if (workspaceService) {
+    const result = await workspaceService.parse({ buffer, fileName, source: "upload" });
+    const single = Array.isArray(result) ? result[0] : result;
+    if (single) {
+      return {
+        normalizedMarkdown: single.content.markdown ?? "",
+        plainText: single.content.rawText ?? "",
+        sections: single.content.sections ?? [],
+        parserUsed: single.parse.used,
+        sourceFormat: single.meta.extension.slice(1) || "unknown",
+        quality: single.parse.quality,
+        fallbackChain: single.parse.fallbackChain,
+        warnings: single.parse.warnings,
+      };
+    }
+  }
   const parsed = await parseDocument(fileName, buffer, options);
   return {
     normalizedMarkdown: parsed.markdown,

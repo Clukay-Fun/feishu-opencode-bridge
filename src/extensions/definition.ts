@@ -18,8 +18,9 @@ import type { OpenCodeClient } from "../opencode/client.js";
 import type { IncomingChatMessage } from "../runtime/app.js";
 import type { CostTracker } from "../runtime/cost-tracker.js";
 import type { FeishuTransport } from "../runtime/feishu-transport.js";
-import type { SessionBindingRecord, BridgeWindowRecord } from "../store/mappings.js";
+import type { BridgeWindowRecord, SessionBindingRecord } from "../store/mappings.js";
 import type { WhitelistStore } from "../store/whitelist.js";
+import type { WorkspaceService } from "../workspace/service.js";
 import type { CaseWorkbenchContextStore } from "../case-workbench/context-store.js";
 
 export type RuntimeModuleOutboundPort = ExtensionOutboundPort;
@@ -43,6 +44,7 @@ export type RuntimeExtensionContext = {
   knowledge: KnowledgeBasePort | null;
   costTracker?: Pick<CostTracker, "recordExternalCall"> | undefined;
   caseContextStore?: CaseWorkbenchContextStore | undefined;
+  workspaceService?: WorkspaceService | undefined;
   whitelist: Pick<WhitelistStore, "bind">;
   getSessionWindow(conversationKey: string, chatType?: string): BridgeWindowRecord;
   saveSessionWindow(conversationKey: string, chatType: string | undefined, window: BridgeWindowRecord): Promise<void>;

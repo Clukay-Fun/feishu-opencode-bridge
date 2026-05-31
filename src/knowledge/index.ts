@@ -37,6 +37,7 @@ import {
 } from "./db.js";
 import { rerankWithConfiguredProvider } from "./rerank-provider.js";
 import { parseStatuteReferences } from "./statute-ref.js";
+import type { WorkspaceService } from "../workspace/service.js";
 
 export type { KnowledgeDocumentSummary, KnowledgeEntryRecord } from "./db.js";
 
@@ -213,6 +214,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     private readonly resources: KnowledgeResourcePort,
     private readonly opencode: OpenCodePort,
     private readonly logger: Logger,
+    private readonly workspaceService?: WorkspaceService,
   ) {
     if (!config.embeddingProvider) {
       throw new Error("knowledgeBase.embeddingProvider 未配置");
@@ -333,7 +335,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     const fileName = path.basename(resolvedPath);
     const buffer = await readFile(resolvedPath);
     validateUploadedFile(fileName, buffer, this.config.ingest.allowedExtensions, this.config.ingest.maxFileSizeMb);
-    const parsed = await parseKnowledgeFile(fileName, buffer, this.config.parser);
+    const parsed = await parseKnowledgeFile(fileName, buffer, this.config.parser, this.workspaceService);
     return {
       sourceFile: fileName,
       markdown: parsed.normalizedMarkdown,
@@ -351,7 +353,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     const fileName = path.basename(resolvedPath);
     const buffer = await readFile(resolvedPath);
     validateUploadedFile(fileName, buffer, this.config.ingest.allowedExtensions, this.config.ingest.maxFileSizeMb);
-    const parsedDocument = await parseKnowledgeFile(fileName, buffer, this.config.parser);
+    const parsedDocument = await parseKnowledgeFile(fileName, buffer, this.config.parser, this.workspaceService);
     const chapterGrouping = groupKnowledgeSectionsByChapter(parsedDocument.sections);
     const extractionSections = chapterGrouping.chapters.length > 0
       ? chapterGrouping.chapters.filter((chapter) => !chapter.skipped).flatMap((chapter) => chapter.sections)
@@ -501,7 +503,7 @@ export class KnowledgeBaseService implements KnowledgeBasePort {
     sourceUrl?: string | undefined;
   }, options?: KnowledgeIngestOptions): Promise<KnowledgeIngestResult> {
     const startedAt = Date.now();
-    const parsedDocument = await parseKnowledgeFile(input.fileName, input.buffer, this.config.parser);
+    const parsedDocument = await parseKnowledgeFile(input.fileName, input.buffer, this.config.parser, this.workspaceService);
     if (parsedDocument.normalizedMarkdown) {
       await this.reportProgress(options, {
         step: "read",

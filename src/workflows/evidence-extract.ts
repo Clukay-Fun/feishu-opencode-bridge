@@ -16,6 +16,7 @@ import type { OpenCodeClient, OpenCodeMessage, OpenCodeModelRef, OpenCodePromptR
 import { extractAssistantText } from "../runtime/app-helpers.js";
 import type { DocumentParserOptions } from "../document-pipeline/index.js";
 import { SUPPORTED_DOCUMENT_EXTENSIONS, normalizeAllowedExtensions } from "../document-pipeline/material-support.js";
+import type { WorkspaceService } from "../workspace/service.js";
 
 type OpenCodePort = Pick<OpenCodeClient, "createSession" | "postMessageSync" | "deleteSession">;
 const DEFAULT_PARSE_TEXT_EXTENSIONS = [...SUPPORTED_DOCUMENT_EXTENSIONS];
@@ -90,6 +91,7 @@ export class EvidenceExtractService {
     private readonly opencode: OpenCodePort,
     private readonly logger: Logger,
     private readonly parserOptions?: DocumentParserOptions | undefined,
+    private readonly workspaceService?: WorkspaceService,
   ) {}
 
   async prepareFile(
@@ -116,7 +118,7 @@ export class EvidenceExtractService {
       try {
         extractedText = isSpreadsheetExtension(extension)
           ? parseSpreadsheetFile(downloaded.fileName, downloaded.buffer).slice(0, options.maxExtractedTextLength ?? 12_000)
-          : (await parseKnowledgeFile(downloaded.fileName, downloaded.buffer, this.parserOptions)).normalizedMarkdown.slice(0, options.maxExtractedTextLength ?? 12_000);
+          : (await parseKnowledgeFile(downloaded.fileName, downloaded.buffer, this.parserOptions, this.workspaceService)).normalizedMarkdown.slice(0, options.maxExtractedTextLength ?? 12_000);
       } catch (error) {
         this.logger.log("evidence-extract", "parse text skipped", {
           fileName: downloaded.fileName,

@@ -14,6 +14,7 @@ import PizZip from "pizzip";
 
 import type { ContractAssistantConfig } from "../config/schema.js";
 import type { DocumentParserOptions } from "../document-pipeline/index.js";
+import type { WorkspaceService } from "../workspace/service.js";
 import { parseKnowledgeFile } from "../knowledge/parser.js";
 import type { Logger } from "../logging/logger.js";
 import type { OpenCodeClient, OpenCodeModelRef, OpenCodePromptRequest } from "../opencode/client.js";
@@ -252,8 +253,9 @@ export class ContractAssistantService {
     private readonly opencode: OpenCodePort,
     private readonly logger: Logger,
     parserOptions?: DocumentParserOptions | undefined,
+    workspaceService?: WorkspaceService,
   ) {
-    this.evidenceExtractor = new EvidenceExtractService(resources, opencode, logger, parserOptions);
+    this.evidenceExtractor = new EvidenceExtractService(resources, opencode, logger, parserOptions, workspaceService);
   }
 
   //#region Contract and document workflows

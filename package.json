@@ -25,6 +25,7 @@
     "ext:remove": "node scripts/ext/ext.mjs remove",
     "ext:pack": "node scripts/ext/ext.mjs pack",
     "kb": "tsx scripts/kb/kb.ts",
+    "files": "tsx bin/files.ts",
     "labor:harness": "tsx scripts/labor/harness.ts",
     "cards:preview": "tsx scripts/cards/preview.ts",
     "dev": "tsx watch src/index.ts",
