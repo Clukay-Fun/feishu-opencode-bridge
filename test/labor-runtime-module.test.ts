@@ -2,7 +2,7 @@
  * 职责: 覆盖劳动分析运行时模块接入流程。
  * 关注点: 验证核心路径、边界条件和回归场景。
  */
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -895,6 +895,103 @@ describe("LaborRuntimeModule", () => {
     } catch (error) {
       await cleanupModule(module, tempDir);
       throw error;
+    }
+  });
+
+  it("collects files from a local folder via natural language reference", async () => {
+    const { module, tempDir, expandMaterialFile, extractMaterial, finalizeAnalysis } = await createModule();
+    try {
+      const folderPath = path.join(tempDir, "劳动案件材料");
+      await mkdir(folderPath, { recursive: true });
+      await writeFile(path.join(folderPath, "劳动合同.pdf"), "contract content");
+      await writeFile(path.join(folderPath, "工资记录.txt"), "salary content");
+      await writeFile(path.join(folderPath, "聊天记录.md"), "chat content");
+
+      const start = createTextMessage("/案件工作台 测试案件");
+      await startCollectionFromWorkbench(module, start, "测试案件");
+
+      const result = await module.handleMessage({
+        message: createTextMessage(`分析 ${folderPath} 文件夹里的文件`, { chatId: "chat-1", chatType: "group", senderOpenId: "ou_user" }),
+        routed: null,
+      });
+      expect(result.claimed).toBe(true);
+
+      const interactions = (module as unknown as {
+        interactions: { get(key: string): { files: Array<{ fileName: string; localPath?: string }> } | undefined };
+      }).interactions;
+      const pending = interactions.get(start.conversationKey);
+      expect(pending).toBeDefined();
+      expect(pending!.files.length).toBe(3);
+      expect(pending!.files.map((f) => f.fileName).sort()).toEqual(["劳动合同.pdf", "工资记录.txt", "聊天记录.md"]);
+      expect(pending!.files.every((file) => typeof file.localPath === "string")).toBe(true);
+
+      const end = createTextMessage("/完成上传");
+      await module.handleMessage({ message: end, routed: routeIncomingText(end.plainText) });
+
+      await vi.waitFor(() => {
+        expect(expandMaterialFile).toHaveBeenCalledWith(expect.objectContaining({
+          fileName: "劳动合同.pdf",
+          localPath: path.join(folderPath, "劳动合同.pdf"),
+        }));
+        expect(extractMaterial).toHaveBeenCalledTimes(3);
+        expect(finalizeAnalysis).toHaveBeenCalledTimes(1);
+      });
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("skips unsupported file types when collecting from a folder", async () => {
+    const { module, tempDir } = await createModule();
+    try {
+      const folderPath = path.join(tempDir, "劳动案件材料");
+      await mkdir(folderPath, { recursive: true });
+      await writeFile(path.join(folderPath, "劳动合同.pdf"), "contract content");
+      await writeFile(path.join(folderPath, "程序.exe"), "executable content");
+      await writeFile(path.join(folderPath, "聊天记录.txt"), "chat content");
+
+      const start = createTextMessage("/案件工作台 测试案件");
+      await startCollectionFromWorkbench(module, start, "测试案件");
+
+      const result = await module.handleMessage({
+        message: createTextMessage(`分析 ${folderPath} 文件夹里的文件`, { chatId: "chat-1", chatType: "group", senderOpenId: "ou_user" }),
+        routed: null,
+      });
+      expect(result.claimed).toBe(true);
+
+      const interactions = (module as unknown as {
+        interactions: { get(key: string): { files: Array<{ fileName: string }> } | undefined };
+      }).interactions;
+      const pending = interactions.get(start.conversationKey);
+      expect(pending).toBeDefined();
+      expect(pending!.files.length).toBe(2);
+      expect(pending!.files.map((f) => f.fileName).sort()).toEqual(["劳动合同.pdf", "聊天记录.txt"]);
+    } finally {
+      await cleanupModule(module, tempDir);
+    }
+  });
+
+  it("does not claim text without folder keywords as folder collection", async () => {
+    const { module, tempDir } = await createModule();
+    try {
+      const start = createTextMessage("/案件工作台 测试案件");
+      await startCollectionFromWorkbench(module, start, "测试案件");
+
+      const result = await module.handleMessage({
+        message: createTextMessage("分析一下这个案子", { chatId: "chat-1", chatType: "group", senderOpenId: "ou_user" }),
+        routed: null,
+      });
+      expect(result.claimed).toBe(false);
+
+      const interactions = (module as unknown as {
+        interactions: { get(key: string): { files: Array<{ fileName: string }>; notes: string[] } | undefined };
+      }).interactions;
+      const pending = interactions.get(start.conversationKey);
+      expect(pending).toBeDefined();
+      expect(pending!.files.length).toBe(0);
+      expect(pending!.notes.length).toBe(0);
+    } finally {
+      await cleanupModule(module, tempDir);
     }
   });
 });

@@ -30,7 +30,6 @@ import { redactEvidenceRecord, redactEvidenceText } from "../runtime/sanitize.js
 import {
   EvidenceExtractService,
   type EvidenceExtractResourcePort,
-  type EvidenceFileRef,
   type EvidenceMaterialInput,
 } from "../workflows/evidence-extract.js";
 import { syncEvidenceLedger, type EvidenceLedgerResourcePort } from "../workflows/evidence-ledger.js";
@@ -285,7 +284,7 @@ export class LaborSkillService {
 
   /** 执行完整劳动分析流程：逐份提取后再统一汇总。 */
   async analyze(
-    files: EvidenceFileRef[],
+    files: LaborMaterialInput[],
     notes: string[],
     options?: { onProgress?: ((step: string) => Promise<void> | void) | undefined },
   ): Promise<LaborAnalyzeResult> {
@@ -304,7 +303,7 @@ export class LaborSkillService {
         }
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
-        const warning = `已跳过《${file.fileName}》：${detail}`;
+        const warning = `已跳过《${getLaborMaterialInputFileName(file)}》：${detail}`;
         warnings.push(warning);
         await onProgress?.(warning);
       }
@@ -325,12 +324,13 @@ export class LaborSkillService {
   }
 
   /** 提取单份材料中的事实、证据和风险信息。 */
-  async expandMaterialFile(file: EvidenceFileRef): Promise<LaborMaterialInput[]> {
-    if (!isArchiveFileName(file.fileName)) {
+  async expandMaterialFile(file: LaborMaterialInput): Promise<LaborMaterialInput[]> {
+    const fileName = getLaborMaterialInputFileName(file);
+    if (!isArchiveFileName(fileName)) {
       return [file];
     }
-    const downloaded = await this.resources.downloadMessageResource(file.messageId, file.fileKey, file.resourceType ?? "file");
-    const archiveFileName = path.extname(downloaded.fileName) ? downloaded.fileName : file.fileName;
+    const downloaded = await this.readArchiveMaterial(file);
+    const archiveFileName = path.extname(downloaded.fileName) ? downloaded.fileName : fileName;
     const entries = expandArchiveMaterialEntries(archiveFileName, downloaded.buffer, this.config.ingest.allowedExtensions);
     if (entries.length === 0) {
       throw new Error(`文件夹压缩包内未找到可分析材料；支持 ${this.config.ingest.allowedExtensions.filter((extension) => extension !== ".zip").join(" / ")} 文件`);
@@ -341,6 +341,20 @@ export class LaborSkillService {
       mimeType: extensionToMimeType(path.extname(entry.fileName).toLowerCase()),
       size: entry.buffer.byteLength,
     }));
+  }
+
+  private async readArchiveMaterial(file: LaborMaterialInput): Promise<{ fileName: string; buffer: Buffer }> {
+    if ("buffer" in file) {
+      return { fileName: file.fileName, buffer: file.buffer };
+    }
+    if ("localPath" in file) {
+      return {
+        fileName: file.fileName?.trim() || path.basename(file.localPath),
+        buffer: await readFile(file.localPath),
+      };
+    }
+    const downloaded = await this.resources.downloadMessageResource(file.messageId, file.fileKey, file.resourceType ?? "file");
+    return { fileName: downloaded.fileName, buffer: downloaded.buffer };
   }
 
   async extractMaterial(

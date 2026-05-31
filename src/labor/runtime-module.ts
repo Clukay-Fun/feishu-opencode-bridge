@@ -6,6 +6,8 @@
  * - 管理案件断点记忆，支持跨会话恢复。
  */
 import { DEFAULT_LABOR_SKILL_CONFIG, type AppConfig } from "../config/schema.js";
+import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import type { RuntimeModule, RuntimeModuleHandleResult, RuntimeModuleMessageContext } from "../bridge/module.js";
 import {
@@ -65,13 +67,7 @@ type PendingLaborInteraction = {
   deliveryMode: "group_thread" | "p2p_reply";
   title?: string | undefined;
   notes: string[];
-  files: Array<{
-    messageId: string;
-    fileKey: string;
-    fileName: string;
-    size?: number | undefined;
-    resourceType?: "file" | "image" | "folder" | undefined;
-  }>;
+  files: LaborMaterialInput[];
 };
 
 type LaborProgressState = {
@@ -306,8 +302,8 @@ export class LaborRuntimeModule implements RuntimeModule {
       });
       this.checkpoints.updateCollection(pending.caseId, {
         pendingMaterials: pending.files.map((file) => ({
-          fileName: file.fileName,
-          messageId: file.messageId,
+          fileName: getLaborMaterialInputName(file),
+          messageId: "messageId" in file ? file.messageId : message.messageId,
         })),
         lastStep: `已收集 ${pending.files.length} 份材料`,
       });
@@ -316,7 +312,40 @@ export class LaborRuntimeModule implements RuntimeModule {
     }
 
     if (message.plainText.trim()) {
-      pending.notes.push(message.plainText.trim());
+      const text = message.plainText.trim();
+      const folderResult = await this.resolveLocalFolderFiles(text);
+      if (folderResult) {
+        const addedCount = folderResult.files.length;
+        const skippedNames = folderResult.skipped.map((s) => s.fileName);
+        for (const filePath of folderResult.files) {
+          pending.files.push({
+            localPath: filePath,
+            fileName: path.basename(filePath),
+          });
+        }
+        this.checkpoints.updateCollection(pending.caseId, {
+          pendingMaterials: pending.files.map((file) => ({
+            fileName: getLaborMaterialInputName(file),
+            messageId: "messageId" in file ? file.messageId : message.messageId,
+          })),
+          lastStep: `已收集 ${pending.files.length} 份材料`,
+        });
+        this.interactions.touch(pending.conversationKey, pending.expiresAt);
+        const summary = [`本批新增 ${addedCount} 个文件，累计 ${pending.files.length} 个`];
+        if (skippedNames.length > 0) {
+          summary.push(`已跳过：${skippedNames.join("、")}`);
+        }
+        summary.push(`定位路径：${folderResult.resolvedPath}`);
+        await this.sendNotice(message, {
+          title: "文件夹收集完成",
+          template: "green",
+          icon: "check_circle_outlined",
+          message: summary.join("\n"),
+        }, this.getDelivery(pending));
+        return;
+      }
+
+      pending.notes.push(text);
       this.checkpoints.updateCollection(pending.caseId, {
         openIssues: pending.notes.slice(-5),
         lastStep: `已补充 ${pending.notes.length} 条背景说明`,
@@ -388,7 +417,7 @@ export class LaborRuntimeModule implements RuntimeModule {
 
     const progressState: LaborProgressState = {
       totalFiles: pending.files.length,
-      fileNames: pending.files.map((file) => file.fileName),
+      fileNames: pending.files.map(getLaborMaterialInputName),
       completedFiles: [],
       failedFiles: [],
       currentPhase: "正在准备证据链分析",
@@ -415,9 +444,10 @@ export class LaborRuntimeModule implements RuntimeModule {
         materialInputs.push(...expanded);
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
-        warnings.push(`已跳过《${file.fileName}》：${detail}`);
+        const fileName = getLaborMaterialInputName(file);
+        warnings.push(`已跳过《${fileName}》：${detail}`);
         progressState.failedFiles.push({
-          fileName: file.fileName,
+          fileName,
           elapsedMs: 0,
           detail,
         });
@@ -897,6 +927,57 @@ export class LaborRuntimeModule implements RuntimeModule {
     });
   }
 
+  /**
+   * 从自然语言文本中解析本地文件夹路径，收集目录内支持的文件。
+   * 返回 null 表示文本不含文件夹引用。
+   */
+  private async resolveLocalFolderFiles(text: string): Promise<{
+    resolvedPath: string;
+    files: string[];
+    skipped: Array<{ fileName: string; reason: string }>;
+  } | null> {
+    const folderPath = inferLaborFolderPath(text);
+    if (!folderPath) {
+      return null;
+    }
+    const normalizedPath = normalizeLocalPath(folderPath);
+    const stat = await fs.stat(normalizedPath).catch(() => null);
+    if (!stat) {
+      return null;
+    }
+    if (stat.isFile()) {
+      if (this.isLaborFileAcceptable(normalizedPath)) {
+        return { resolvedPath: normalizedPath, files: [normalizedPath], skipped: [] };
+      }
+      return null;
+    }
+    if (!stat.isDirectory()) {
+      return null;
+    }
+    const entries = await fs.readdir(normalizedPath, { withFileTypes: true }).catch(() => []);
+    const allowedExtensions = this.featureConfig.ingest.allowedExtensions;
+    const files: string[] = [];
+    const skipped: Array<{ fileName: string; reason: string }> = [];
+    for (const entry of entries) {
+      if (!entry.isFile()) {
+        continue;
+      }
+      const ext = path.extname(entry.name).toLowerCase();
+      if (!allowedExtensions.includes(ext)) {
+        skipped.push({ fileName: entry.name, reason: `不支持的类型 ${ext}` });
+        continue;
+      }
+      files.push(path.join(normalizedPath, entry.name));
+    }
+    files.sort((a, b) => path.basename(a).localeCompare(path.basename(b), "zh-Hans-CN"));
+    return { resolvedPath: normalizedPath, files, skipped };
+  }
+
+  private isLaborFileAcceptable(filePath: string): boolean {
+    const ext = path.extname(filePath).toLowerCase();
+    return this.featureConfig.ingest.allowedExtensions.includes(ext);
+  }
+
   // #endregion
 }
 
@@ -906,6 +987,44 @@ function isLaborFinishCommand(command: LaborCommand): boolean {
   }
   const normalized = command.name.trim().toLowerCase();
   return normalized === "完成上传" || normalized === "材料收集完成";
+}
+
+/** 从文本推断劳动案件文件夹路径。仅匹配低置信的自然语言模式。 */
+function inferLaborFolderPath(text: string): string | null {
+  const normalized = text.replace(/\s+/g, "");
+  const hasLaborKeyword = /劳动|案件|材料|证据|仲裁/.test(normalized);
+  const hasFolderKeyword = /文件夹|目录|folder/i.test(normalized);
+  if (!hasLaborKeyword || !hasFolderKeyword) {
+    return null;
+  }
+  const explicitPath = extractLocalPathFromText(text);
+  if (explicitPath) {
+    return explicitPath;
+  }
+  const home = process.env.HOME || os.homedir();
+  if (!home) {
+    return null;
+  }
+  const folderNameMatch = normalized.match(/(?:桌面(?:上|里|下)?)?([^，。；,;\s/]*(?:劳动|案件)[^，。；,;\s/]*)/);
+  const rawFolderName = folderNameMatch?.[1]?.replace(/(?:文件夹|目录|里面|里|下|中|所有|全部|的)+$/g, "") || "";
+  if (rawFolderName) {
+    return path.join(home, "Desktop", rawFolderName);
+  }
+  return path.join(home, "Desktop", "劳动案件");
+}
+
+function extractLocalPathFromText(text: string): string | null {
+  const trimmed = text.trim();
+  const quoted = trimmed.match(/[`"'""'']((?:~\/|\/)[^`"'""'']+)[`"'""'']/);
+  if (quoted?.[1]) {
+    return normalizeLocalPath(quoted[1]);
+  }
+  const absolute = trimmed.match(/(?:^|\s)((?:~\/|\/)[^\s，。；,;]+)/);
+  return absolute?.[1] ? normalizeLocalPath(absolute[1]) : null;
+}
+
+function normalizeLocalPath(value: string): string {
+  return value.replace(/^~/, process.env.HOME ?? "~").trim();
 }
 
 function shouldCollectLaborInput(message: IncomingChatMessage): boolean {
@@ -931,7 +1050,7 @@ function shouldCollectLaborInput(message: IncomingChatMessage): boolean {
   if (text.length < 12) {
     return false;
   }
-  return /(劳动|仲裁|工资|社保|解除|辞退|离职|赔偿|补偿|合同|考勤|绩效|证据|材料|公司|用人单位)/.test(text);
+  return /(劳动|仲裁|工资|社保|解除|辞退|离职|赔偿|补偿|合同|考勤|绩效|证据|材料|公司|用人单位|文件夹|目录|folder)/i.test(text);
 }
 
 function isCaseWorkbenchStartCommand(command: LaborCommand): boolean {
