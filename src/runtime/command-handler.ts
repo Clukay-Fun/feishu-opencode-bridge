@@ -91,7 +91,7 @@ export type BridgeAppContext = {
     listProviders(): Promise<OpenCodeProvidersResponse>;
     deleteSession(sessionId: string): Promise<boolean>;
     getSessionMessages(sessionId: string, limit?: number): Promise<OpenCodeMessage[]>;
-    runCommand(sessionId: string, input: { command: string; arguments: string[] }): Promise<OpenCodeMessage | null>;
+    runCommand(sessionId: string, input: { command: string; arguments: string }): Promise<OpenCodeMessage | null>;
   };
   whitelist: {
     count(chatId: string): number;
@@ -846,7 +846,7 @@ export class CommandHandler {
       return;
     }
     const sessionId = await this.context.ensureSession(message);
-    const result = await this.context.opencode.runCommand(sessionId, { command: command.name, arguments: command.arguments });
+    const result = await this.context.opencode.runCommand(sessionId, { command: command.name, arguments: command.arguments.join(" ") });
     const text = extractAssistantText(result) || "命令已执行。";
     await this.context.sendMarkdown(message.chatId, text, message.messageId);
   }

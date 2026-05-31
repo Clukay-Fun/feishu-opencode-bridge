@@ -41,6 +41,7 @@ import { cleanAssistantReply } from "./sanitize.js";
 
 const FIRST_SSE_FALLBACK_MS = 5_000;
 const PERMISSION_TTL_MS = 120_000;
+const QUESTION_TTL_MS = 10 * 60_000;
 
 /**
  * 负责管理一次 turn 执行的收敛过程，避免重复完成或重复报错。
@@ -596,6 +597,7 @@ export class TurnExecutor {
     if (event.type === "question.asked") {
       const request = toQuestionRequest(event.properties, turn.sessionId);
       if (!request) return;
+      runtime.snoozeWatchdog(QUESTION_TTL_MS);
       this.context.setPendingInteraction(turn.conversationKey, {
         kind: "question",
         turnId: turn.turnId,

@@ -88,7 +88,7 @@ export type OpenCodeCommandRequest = {
   agent?: string;
   model?: OpenCodeModelRef | Record<string, unknown>;
   command: string;
-  arguments: string[];
+  arguments: string;
 };
 
 export type OpenCodeProvidersResponse = {
@@ -113,6 +113,7 @@ type RequestOptions = {
   body?: unknown;
   query?: Record<string, string | number | undefined>;
   expectedStatus?: number;
+  timeoutMs?: number | undefined;
 };
 
 export class OpenCodeRequestError extends Error {
@@ -127,7 +128,7 @@ export class OpenCodeRequestError extends Error {
 }
 
 export class OpenCodeClient {
-  constructor(private readonly baseUrl: URL) {}
+  constructor(private readonly baseUrl: URL, private readonly requestTimeoutMs = 60_000) {}
 
   /** 检查 OpenCode 服务健康状态。 */
   async health(): Promise<OpenCodeHealth> {
@@ -247,15 +248,28 @@ export class OpenCodeClient {
     const headers = createOpenCodeHeaders(
       options.body !== undefined ? { "Content-Type": "application/json" } : undefined,
     );
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? this.requestTimeoutMs);
     const init: RequestInit = {
       method: options.method,
       headers,
+      signal: controller.signal,
     };
     if (options.body !== undefined) {
       init.body = JSON.stringify(options.body);
     }
 
-    const response = await fetch(url, init);
+    let response: Response;
+    try {
+      response = await fetch(url, init);
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw new OpenCodeRequestError(408, "Request Timeout", `OpenCode 请求超时：${options.timeoutMs ?? this.requestTimeoutMs}ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
 
     const expectedStatus = options.expectedStatus;
     if (expectedStatus !== undefined) {
@@ -291,6 +305,12 @@ export class OpenCodeClient {
       );
     }
   }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException
+    ? error.name === "AbortError"
+    : error instanceof Error && error.name === "AbortError";
 }
 
 async function buildOpenCodeRequestError(response: Response): Promise<OpenCodeRequestError> {

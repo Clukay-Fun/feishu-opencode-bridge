@@ -111,6 +111,38 @@ describe("TurnExecutor text buffering", () => {
     expect(text).toContain("`/allow always`：始终允许，后续同类权限不再弹出");
   });
 
+  it("snoozes the watchdog while waiting for a model question answer", async () => {
+    const context = createContext();
+    const setPendingInteraction = vi.fn();
+    context.setPendingInteraction = setPendingInteraction;
+    const executor = new TurnExecutor(context) as unknown as {
+      handleEvent: (turn: Record<string, unknown>, event: Record<string, unknown>, runtime: ReturnType<typeof createRuntime>) => Promise<void>;
+      flushPendingTextEvents: (
+        assistantMessageId: string,
+        pendingTextEvents: Array<{ messageId: string; kind: "delta" | "set"; value: string }>,
+        runtime: { appendFinalText: (delta: string) => Promise<void>; setFinalText: (value: string) => Promise<void> },
+      ) => Promise<void>;
+    };
+    const runtime = createRuntime(executor, []);
+    const snoozeWatchdog = vi.fn();
+    runtime.snoozeWatchdog = snoozeWatchdog;
+
+    await executor.handleEvent(createTurn(), {
+      type: "question.asked",
+      properties: {
+        sessionID: "ses_1",
+        requestID: "que_1",
+        questions: [{ header: "补充", question: "请补充合同金额" }],
+      },
+    }, runtime);
+
+    expect(snoozeWatchdog).toHaveBeenCalledWith(600_000);
+    expect(setPendingInteraction).toHaveBeenCalledWith("oc_p2p_1", expect.objectContaining({
+      kind: "question",
+      requestId: "que_1",
+    }));
+  });
+
   it("cleans turn-owned resources after a successful run", async () => {
     const context = createContext();
     const cleanupTurnResources = vi.fn(async () => {});

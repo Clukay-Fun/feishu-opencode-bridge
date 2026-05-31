@@ -72,7 +72,7 @@ export function isPermissionCardActionValue(value: Record<string, unknown>): val
 
 // Convert model-generated question requests into bridge-owned interaction state.
 export function toQuestionRequest(properties: Record<string, unknown>, sessionId: string): { id: string; sessionId: string; questions: Array<{ header: string; question: string }> } | null {
-  const requestId = readOptionalString(properties, "id");
+  const requestId = readOptionalString(properties, "id") ?? readOptionalString(properties, "requestID");
   const rawQuestions = properties.questions;
   if (!requestId || !Array.isArray(rawQuestions)) return null;
   const questions = rawQuestions

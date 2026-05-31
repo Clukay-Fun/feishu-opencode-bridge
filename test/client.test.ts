@@ -18,6 +18,7 @@ describe("OpenCodeClient", () => {
   afterEach(() => {
     process.env.OPENCODE_SERVER_PASSWORD = originalPassword;
     process.env.OPENCODE_SERVER_USERNAME = originalUsername;
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -73,6 +74,33 @@ describe("OpenCodeClient", () => {
     expect(String(url)).toBe("http://127.0.0.1:4096/question/que_7/reply");
     expect(init.method).toBe("POST");
     expect(init.body).toBe(JSON.stringify({ answers: [["answer"]] }));
+  });
+
+  it("sends command arguments as the OpenCode string payload", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ info: {}, parts: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+    const client = new OpenCodeClient(new URL("http://127.0.0.1:4096/"));
+
+    await client.runCommand("ses_7", { command: "model", arguments: "use provider/model" });
+
+    const [url, init] = fetch.mock.calls[0] as [URL, RequestInit];
+    expect(String(url)).toBe("http://127.0.0.1:4096/session/ses_7/command");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ command: "model", arguments: "use provider/model" }));
+  });
+
+  it("times out stuck OpenCode requests", async () => {
+    vi.useFakeTimers();
+    const fetch = vi.fn((_url: URL, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+    }));
+    vi.stubGlobal("fetch", fetch);
+    const client = new OpenCodeClient(new URL("http://127.0.0.1:4096/"), 50);
+
+    const request = expect(client.listProviders()).rejects.toThrow("OpenCode 请求超时");
+    await vi.advanceTimersByTimeAsync(50);
+
+    await request;
   });
 
   it("summarizes html responses instead of surfacing the OpenCode web page", async () => {

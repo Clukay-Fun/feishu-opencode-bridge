@@ -650,6 +650,12 @@ function parsePostMessage(rawContent: string, mentions: NormalizedMention[], bot
           continue;
         }
 
+        const mediaPlaceholder = postMediaPlaceholder(element);
+        if (mediaPlaceholder) {
+          rowParts.push(mediaPlaceholder);
+          continue;
+        }
+
         const text = extractPostElementText(element);
         if (text) {
           rowParts.push(text);
@@ -710,6 +716,17 @@ function extractPostElementText(value: unknown, seen = new Set<unknown>()): stri
   const directText = firstStringFromKeys(record, ["text", "un_escape", "href", "url"]);
   const nestedText = firstTextFromKeys(record, ["content", "elements", "children", "lines"], seen);
   return [directText, nestedText].filter(Boolean).join(nestedText ? "\n" : "");
+}
+
+function postMediaPlaceholder(element: Record<string, unknown>): string {
+  const tag = typeof element.tag === "string" ? element.tag : "";
+  if (tag === "img") {
+    return "[图片]";
+  }
+  if (tag === "media") {
+    return "[媒体]";
+  }
+  return "";
 }
 
 function firstStringFromKeys(record: Record<string, unknown>, keys: string[]): string {
