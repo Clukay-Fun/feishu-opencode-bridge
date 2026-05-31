@@ -26,6 +26,7 @@
     "ext:pack": "node scripts/ext/ext.mjs pack",
     "kb": "tsx scripts/kb/kb.ts",
     "files": "tsx bin/files.ts",
+    "bridge": "tsx bin/bridge.ts",
     "labor:harness": "tsx scripts/labor/harness.ts",
     "cards:preview": "tsx scripts/cards/preview.ts",
     "dev": "tsx watch src/index.ts",
@@ -37,6 +38,7 @@
     "release:portable": "node scripts/release/build-portable.mjs"
   },
   "dependencies": {
+    "@inquirer/prompts": "^8.5.1",
     "@larksuiteoapi/node-sdk": "^1.42.0",
     "better-sqlite3": "^12.8.0",
     "docxtemplater": "^3.68.4",

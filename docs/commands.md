@@ -125,3 +125,19 @@ npm run ext:pack -- ./my-extension
 ```
 
 这些命令只处理本地目录或本地 tarball，不连接 npm registry。
+
+## Bridge Setup UI
+
+终端向导命令，用于首次配置、profile 切换、扩展开关、诊断和启动。
+
+```bash
+npm run bridge -- setup               # 首次初始化向导
+npm run bridge -- profile              # 查看当前 profile
+npm run bridge -- profile --set=legal  # 切换 profile
+npm run bridge -- extensions           # 查看扩展开关
+npm run bridge -- extensions --enable=knowledge-base --disable=contract-assistant
+npm run bridge -- doctor               # 跑诊断（config / feishu / opencode / dataDir / port）
+npm run bridge -- start                # 启动服务
+```
+
+非交互式模式（CI / 脚本）所有命令支持 `--profile` / `--enable` / `--disable` flag，不弹 prompt。

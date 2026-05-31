@@ -4,7 +4,7 @@
  * - 从配置文件加载原始 JSON 并通过 schema 校验。
  * - 处理默认值、路径归一化和运行时友好的字段转换。
  */
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { AppConfig } from "./schema.js";
@@ -230,6 +230,29 @@ export async function loadConfigWithWarnings(
     config,
     warnings: [...builtinNamespace.warnings, ...profileResolution.warnings],
   };
+}
+
+/**
+ * 将配置写回 config.json。
+ * 写入前经 ConfigSchema 校验，失败时抛错且不落盘——避免坏配置悄悄写到磁盘。
+ * 校验仅做结构和必填检查，写入的内容仍是调用方提供的原始对象（不展开默认值，保持文件简洁）。
+ */
+export async function saveConfig(
+  configPath: string,
+  config: Record<string, unknown>,
+): Promise<void> {
+  const validation = ConfigSchema.safeParse(stripOverriddenLegacyModuleConfigs(asRecord(config)));
+  if (!validation.success) {
+    const issues = validation.error.errors
+      .map((err) => `${err.path.join(".") || "(root)"}: ${err.message}`)
+      .join("; ");
+    throw new Error(
+      `配置 schema 校验失败: ${issues}。下一步: 补全必填字段（如 feishu.appId / feishu.appSecret / opencode.baseUrl）后重试。`,
+    );
+  }
+  const resolvedPath = path.resolve(configPath);
+  await mkdir(path.dirname(resolvedPath), { recursive: true });
+  await writeFile(resolvedPath, JSON.stringify(config, null, 2) + "\n", "utf-8");
 }
 
 function normalizeExternalExtensionConfigs(

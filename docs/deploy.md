@@ -27,6 +27,22 @@ npm run build
 npm test
 ```
 
+## 3. 首次配置（推荐）
+
+使用 `bridge setup` 向导完成首次配置，无需手写 JSON：
+
+```bash
+npm run bridge -- setup
+```
+
+向导会引导选择 profile（通用/法律）、启用扩展、填写飞书凭据，完成后自动跑一次诊断。
+
+非交互式模式（CI / 脚本）：
+
+```bash
+npm run bridge -- setup --profile=legal --enable=knowledge-base,labor-skill --feishu-app-id=cli_xxx --feishu-app-secret=xxx
+```
+
 如果后续重新引入任何原生依赖，发布前必须在这台 Linux x64 机器上再次执行这三步验证。
 
 ## 3. 启动 OpenCode
