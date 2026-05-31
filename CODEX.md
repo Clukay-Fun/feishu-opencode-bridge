@@ -61,6 +61,14 @@
 - 用户可见行为、飞书卡片、命令输出、配置字段或迁移行为变化，要在 PR 影响区明确写出。
 - 发布相关 PR 要说明版本号、目标平台、artifact、回滚路径和人工验收结果。
 
+## CI 规范
+
+- GitHub Actions 是最低限度的质量闸门，不替代本地验证，但负责兜底本地漏跑的检查。
+- `.github/workflows/ci.yml` 必须在 push 到 `main` 或 `codex/dev` 时运行，并且所有 PR 都必须运行。
+- CI 至少覆盖 `npm run typecheck`、`npm test` 和 `npm run lint`；项目当前额外保留依赖边界、formatter export 和 docs-diff 检查。
+- PR 页面出现红叉时不要合并；先查看失败步骤和日志，修复后重新推送同一 feature 分支。
+- 面向律所部署或 release 前，应以最近一次 `main` 或 `codex/dev` 的 CI 绿色结果作为可部署信号之一。
+
 ## Release 流程
 
 - release 前先跑：`npm run lint`、`npm run typecheck`、`npm test`。
