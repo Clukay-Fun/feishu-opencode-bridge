@@ -45,6 +45,14 @@ npm run bridge -- setup --profile=legal --enable=knowledge-base,labor-skill --fe
 
 如果后续重新引入任何原生依赖，发布前必须在这台 Linux x64 机器上再次执行这三步验证。
 
+## Portable 包用户三步走
+
+1. 从 GitHub Release 下载对应平台的 portable 包（如 `feishu-opencode-bridge-macos-arm64.tar.gz`）
+2. 解压到任意目录
+3. 双击 `bridge`（macOS/Linux）或 `bridge.cmd`（Windows），首次运行自动进入配置向导
+
+配置向导会引导填写飞书 App 凭据、选择 profile、启用扩展，完成后自动跑诊断。
+
 ## 3. 启动 OpenCode
 
 在目标项目目录里启动：

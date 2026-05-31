@@ -24,14 +24,16 @@ import {
 } from "./portable.mjs";
 import { findExecutable, isMainModule, runCommand } from "./checks.mjs";
 
-const SUPPORTED_COMMANDS = new Set(["onboard", "doctor", "start", "init", "backup", "restore", "cost", "update", "help"]);
+const SUPPORTED_COMMANDS = new Set(["onboard", "setup", "doctor", "start", "init", "backup", "restore", "cost", "update", "help"]);
 
 export async function runBootstrap(options = {}) {
   const cwd = options.cwd ?? resolvePackageRoot(import.meta.url);
   const logger = options.logger ?? console;
   const rawArgs = options.args ?? process.argv.slice(2);
   const rawCommand = options.command ?? rawArgs[0] ?? "onboard";
-  const command = SUPPORTED_COMMANDS.has(rawCommand) ? rawCommand : "help";
+  // setup → onboard alias（向后兼容）
+  const resolvedCommand = rawCommand === "setup" ? "onboard" : rawCommand;
+  const command = SUPPORTED_COMMANDS.has(resolvedCommand) ? resolvedCommand : "help";
   const env = createPortableEnv({
     cwd,
     env: options.env ?? process.env,
@@ -197,7 +199,7 @@ function printHelp(logger, bridgeHome) {
   logger.log("Feishu OpenCode Bridge portable launcher");
   logger.log("");
   logger.log("用法：");
-  logger.log("  bridge onboard   首次引导并生成配置");
+    logger.log("  bridge setup     首次引导并生成配置（旧名 onboard 仍可用）");
   logger.log("  bridge doctor    诊断当前环境");
   logger.log("  bridge doctor workspace   诊断飞书多维表格工作区");
   logger.log("  bridge start     启动 OpenCode + Bridge");

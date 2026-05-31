@@ -57,6 +57,7 @@ export const PORTABLE_PACKAGE_MANIFEST = Object.freeze({
   directories: Object.freeze([
     "dist",
     "scripts/runtime",
+    "scripts/workspace-init",
   ]),
   emptyDirectories: Object.freeze([
     ".runtime",
@@ -127,6 +128,10 @@ export async function buildPortablePackage(options = {}) {
     platform,
     runCommandFn: options.runCommandFn ?? runCommand,
   });
+
+  // 构建后敏感数据泄漏检查
+  await verifyNoSensitiveDataLeak(packageDir, logger);
+
   logger.log(`portable 包已生成：${archivePath}`);
   return { packageDir, archivePath };
 }
@@ -168,6 +173,49 @@ function toPackagePlatform(platform) {
 
 function toPackageArch(arch) {
   return arch === "arm64" ? "arm64" : "x64";
+}
+
+/** 构建后校验：确保产物不含敏感数据。 */
+async function verifyNoSensitiveDataLeak(packageDir, logger) {
+  const { readdir, stat } = await import("node:fs/promises");
+  const forbiddenNames = new Set([
+    "config.json", ".env", "secrets.json", "secrets.yaml",
+    "knowledge-base.db", "memory.db", "usage-ledger.jsonl",
+    "mappings.json", "message-context.json", "active-knowledge-ingests.json",
+    ".git",
+  ]);
+  const forbiddenExtensions = new Set([".db", ".log", ".env"]);
+
+  async function walk(dir) {
+    const entries = await readdir(dir, { withFileTypes: true });
+    const results = [];
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        // 空的 logs/ 和 .runtime/ 目录是允许的
+        if (forbiddenNames.has(entry.name)) {
+          const subEntries = await readdir(fullPath);
+          if (subEntries.length > 0) {
+            results.push(fullPath);
+          }
+        }
+        results.push(...await walk(fullPath));
+      } else {
+        const ext = path.extname(entry.name).toLowerCase();
+        if (forbiddenNames.has(entry.name) || forbiddenExtensions.has(ext)) {
+          results.push(fullPath);
+        }
+      }
+    }
+    return results;
+  }
+
+  const leaks = await walk(packageDir);
+  if (leaks.length > 0) {
+    const relativeLeaks = leaks.map((f) => path.relative(packageDir, f));
+    throw new Error(`敏感数据泄漏！产物中发现禁止文件:\n${relativeLeaks.join("\n")}`);
+  }
+  logger.log("敏感数据校验通过：产物中未发现 data/logs/config.json/.db/.env/.git");
 }
 
 if (isMainModule(import.meta.url)) {

@@ -72,7 +72,10 @@ async function main() {
   }
 
   try {
-    switch (command) {
+    // onboard → setup alias（向后兼容）
+    const effectiveCommand = command === "onboard" ? "setup" : command;
+
+    switch (effectiveCommand) {
       case "setup": {
         const options: SetupOptions = {};
         const profileFlag = getArg(args, "--profile") as BridgeProfile | undefined;

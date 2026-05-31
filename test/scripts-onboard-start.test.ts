@@ -614,6 +614,7 @@ describe("scripts/release portable package", () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-release-portable-"));
     await mkdir(path.join(dir, "dist", "src"), { recursive: true });
     await mkdir(path.join(dir, "scripts", "runtime"), { recursive: true });
+    await mkdir(path.join(dir, "scripts", "workspace-init"), { recursive: true });
     await mkdir(path.join(dir, "src"), { recursive: true });
     await mkdir(path.join(dir, "test"), { recursive: true });
     await mkdir(path.join(dir, "data"), { recursive: true });
@@ -627,6 +628,7 @@ describe("scripts/release portable package", () => {
     await mkdir(path.join(dir, "bin"), { recursive: true });
     await writeFile(path.join(dir, "dist", "src", "index.js"), "console.log('ok');");
     await writeFile(path.join(dir, "scripts", "runtime", "bootstrap.mjs"), "export {};");
+    await writeFile(path.join(dir, "scripts", "workspace-init", "workspace-init.mjs"), "export {};");
     // bin/ 启动器文件（便携包会从这里拷贝到根目录）
     await writeFile(path.join(dir, "bin", "bridge"), "#!/bin/bash\nROOT=\"$(cd \"$(dirname \"$0\")/..\" && pwd)\"\nexec \"$ROOT/scripts/runtime/bootstrap.mjs\" \"$@\"\n");
     await writeFile(path.join(dir, "bin", "bridge.cmd"), "@echo off\nset \"ROOT=%~dp0..\\\"\n\"%ROOT%.runtime\\node\\node.exe\" \"%ROOT%scripts\\runtime\\bootstrap.mjs\" %*\n");

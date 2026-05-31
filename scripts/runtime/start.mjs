@@ -38,7 +38,7 @@ export async function runStart(options = {}) {
   const configState = await readProjectConfig(cwd, configPath);
 
   if (!configState.exists || configState.error || !configState.config) {
-    throw new Error(`缺少可用的 config.json：${configPath}，请先运行 bridge onboard 或 npm run onboard`);
+    throw new Error(`缺少可用的 config.json：${configPath}，请先运行 bridge setup 或 npm run bridge -- setup`);
   }
 
   const rawConfig = configState.config;
