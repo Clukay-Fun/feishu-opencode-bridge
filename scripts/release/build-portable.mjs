@@ -104,6 +104,7 @@ export async function buildPortablePackage(options = {}) {
   for (const file of PORTABLE_PACKAGE_MANIFEST.files) {
     await cp(path.join(cwd, file), path.join(packageDir, file), { recursive: true });
   }
+  await patchPortablePackageJson(path.join(packageDir, "package.json"));
   // 拷贝 bin/ 下的启动器到包根目录，同时替换 ROOT 为当前目录（包根目录）。
   for (const [source, dest] of Object.entries(PORTABLE_PACKAGE_MANIFEST.launcherFiles)) {
     const srcPath = path.join(cwd, source);
@@ -134,6 +135,17 @@ export async function buildPortablePackage(options = {}) {
 
   logger.log(`portable 包已生成：${archivePath}`);
   return { packageDir, archivePath };
+}
+
+async function patchPortablePackageJson(packageJsonPath) {
+  const raw = await readFile(packageJsonPath, "utf8");
+  const parsed = JSON.parse(raw);
+  parsed.scripts = {
+    ...(parsed.scripts ?? {}),
+    bridge: "node scripts/runtime/bootstrap.mjs",
+    files: "node dist/bin/files.js",
+  };
+  await writeFile(packageJsonPath, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
 }
 
 async function archivePackage(options) {

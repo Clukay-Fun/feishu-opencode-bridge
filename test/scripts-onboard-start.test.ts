@@ -612,6 +612,7 @@ describe("scripts/backup", () => {
 describe("scripts/release portable package", () => {
   it("builds a dist-only portable package layout", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-release-portable-"));
+    await mkdir(path.join(dir, "dist", "bin"), { recursive: true });
     await mkdir(path.join(dir, "dist", "src"), { recursive: true });
     await mkdir(path.join(dir, "scripts", "runtime"), { recursive: true });
     await mkdir(path.join(dir, "scripts", "workspace-init"), { recursive: true });
@@ -626,6 +627,7 @@ describe("scripts/release portable package", () => {
     await mkdir(path.join(dir, "examples"), { recursive: true });
     await mkdir(path.join(dir, ".runtime"), { recursive: true });
     await mkdir(path.join(dir, "bin"), { recursive: true });
+    await writeFile(path.join(dir, "dist", "bin", "files.js"), "console.log('files');");
     await writeFile(path.join(dir, "dist", "src", "index.js"), "console.log('ok');");
     await writeFile(path.join(dir, "scripts", "runtime", "bootstrap.mjs"), "export {};");
     await writeFile(path.join(dir, "scripts", "workspace-init", "workspace-init.mjs"), "export {};");
@@ -686,6 +688,8 @@ describe("scripts/release portable package", () => {
       "scripts",
     ]);
     await expect(readFile(path.join(result.packageDir, "dist", "src", "index.js"), "utf8")).resolves.toBe("console.log('ok');");
+    await expect(readFile(path.join(result.packageDir, "dist", "bin", "files.js"), "utf8")).resolves.toBe("console.log('files');");
+    await expect(readFile(path.join(result.packageDir, "package.json"), "utf8")).resolves.toContain('"files": "node dist/bin/files.js"');
     await expect(readFile(path.join(result.packageDir, "scripts", "runtime", "bootstrap.mjs"), "utf8")).resolves.toBe("export {};");
     await expect(readFile(path.join(result.packageDir, "bridge"), "utf8")).resolves.toContain('ROOT="$(cd "$(dirname "$0")" && pwd)"');
     await expect(readFile(path.join(result.packageDir, "bridge"), "utf8")).resolves.not.toContain('/.."');

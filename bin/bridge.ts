@@ -84,9 +84,12 @@ async function main() {
         const disable = getArg(args, "--disable");
         if (enable) options.enable = enable.split(",").map((s) => s.trim()) as ProfileManagedExtensionId[];
         if (disable) options.disable = disable.split(",").map((s) => s.trim()) as ProfileManagedExtensionId[];
-        options.feishuAppId = getArg(args, "--feishu-app-id");
-        options.feishuAppSecret = getArg(args, "--feishu-app-secret");
-        options.opencodeBaseUrl = getArg(args, "--opencode-url");
+        const feishuAppId = getArg(args, "--feishu-app-id");
+        const feishuAppSecret = getArg(args, "--feishu-app-secret");
+        const opencodeBaseUrl = getArg(args, "--opencode-url");
+        if (feishuAppId) options.feishuAppId = feishuAppId;
+        if (feishuAppSecret) options.feishuAppSecret = feishuAppSecret;
+        if (opencodeBaseUrl) options.opencodeBaseUrl = opencodeBaseUrl;
 
         // TTY 模式：缺什么问什么
         if (isInteractive()) {

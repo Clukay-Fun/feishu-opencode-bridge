@@ -6,12 +6,10 @@
  * - 默认输出 JSON，可切换 markdown/text。
  * - 错误输出 JSON 到 stderr，exit code 1。
  */
-import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { WorkspaceService } from "../src/workspace/service.js";
 import { DocumentOperationJournal } from "../src/workspace/journal-db.js";
-import { parseFeishuDocUrl } from "../src/workspace/feishu-doc-adapter.js";
 
 const USAGE = `Usage: npm run files -- <command> [options]
 
@@ -28,7 +26,7 @@ Options:
   --status <status>     Journal 过滤状态
   --type <type>         Journal 过滤操作类型
   --limit <N>           结果数量限制（默认 50）
-  --data-dir <path>     数据目录（默认 ./data）
+  --data-dir <path>     数据目录（默认 BRIDGE_HOME/data，未设置时 ./data）
 `;
 
 async function main() {
@@ -40,7 +38,7 @@ async function main() {
     process.exit(0);
   }
 
-  const dataDir = getArg(args, "--data-dir") ?? "./data";
+  const dataDir = getArg(args, "--data-dir") ?? resolveDefaultDataDir();
   const format = getArg(args, "--format") ?? "json";
 
   try {
@@ -110,6 +108,11 @@ function outputJson(data: unknown): void {
 
 function createSilentLogger() {
   return { log() {}, warn() {}, error() {}, logTranscript() {} };
+}
+
+function resolveDefaultDataDir(): string {
+  const bridgeHome = process.env.BRIDGE_HOME?.trim();
+  return bridgeHome ? path.join(bridgeHome, "data") : "./data";
 }
 
 main();
