@@ -224,6 +224,8 @@ type ContractTemplate = {
   fieldGuidePath?: string | undefined;
 };
 
+const BUILTIN_CIVIL_AGENCY_TEMPLATE_NAME = "委托代理合同-民事";
+
 type InvoiceRecognitionCachePayload = {
   version: 1;
   fileHash: string;
@@ -325,10 +327,11 @@ export class ContractAssistantService {
   async listDraftTemplates(): Promise<string[]> {
     const templateDir = path.resolve(process.cwd(), "templates/contracts");
     const entries = await readdir(templateDir, { withFileTypes: true }).catch(() => []);
-    return entries
+    const templates = entries
       .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".docx"))
       .map((entry) => entry.name.replace(/\.docx$/i, ""))
       .sort((left, right) => left.localeCompare(right, "zh-Hans-CN"));
+    return templates.length > 0 ? templates : [BUILTIN_CIVIL_AGENCY_TEMPLATE_NAME];
   }
 
   // Extract structured contract information from an uploaded document.
@@ -748,8 +751,15 @@ export class ContractAssistantService {
     const templateDir = path.resolve(process.cwd(), "templates/contracts");
     const templateNames = await this.listDraftTemplates();
     const docxFiles = templateNames.map((name) => `${name}.docx`);
-    if (docxFiles.length === 0) {
-      throw new Error("未找到本地合同模板，请先在 templates/contracts 下放置 .docx 模板。");
+    if (docxFiles.length === 1 && docxFiles[0] === `${BUILTIN_CIVIL_AGENCY_TEMPLATE_NAME}.docx`) {
+      const localPath = path.join(templateDir, docxFiles[0]);
+      const localStat = await stat(localPath).catch(() => null);
+      if (!localStat) {
+        return {
+          name: BUILTIN_CIVIL_AGENCY_TEMPLATE_NAME,
+          docxPath: await ensureBuiltInCivilAgencyContractTemplate(path.join(this.dataDir, "builtin-contract-templates")),
+        };
+      }
     }
 
     const normalizedRequest = request.replace(/\s+/g, "");
@@ -2085,6 +2095,125 @@ async function ensureTaggedContractTemplate(dataDir: string, templatePath: strin
   });
   await writeFile(cachePath, output);
   return cachePath;
+}
+
+export async function ensureBuiltInCivilAgencyContractTemplate(templateDir: string): Promise<string> {
+  await mkdir(templateDir, { recursive: true });
+  const outputPath = path.join(templateDir, `${BUILTIN_CIVIL_AGENCY_TEMPLATE_NAME}.docx`);
+  const existing = await stat(outputPath).catch(() => null);
+  if (existing?.isFile()) {
+    return outputPath;
+  }
+  await writeFile(outputPath, buildBuiltInCivilAgencyContractTemplate());
+  return outputPath;
+}
+
+function buildBuiltInCivilAgencyContractTemplate(): Buffer {
+  const zip = new PizZip();
+  zip.file("[Content_Types].xml", xmlHeader([
+    "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">",
+    "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>",
+    "<Default Extension=\"xml\" ContentType=\"application/xml\"/>",
+    "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>",
+    "<Override PartName=\"/word/header1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml\"/>",
+    "<Override PartName=\"/word/footer1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml\"/>",
+    "</Types>",
+  ]));
+  zip.folder("_rels")?.file(".rels", xmlHeader([
+    "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">",
+    "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>",
+    "</Relationships>",
+  ]));
+  zip.folder("word")?.file("_rels/document.xml.rels", xmlHeader([
+    "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">",
+    "<Relationship Id=\"rIdHeader1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/header\" Target=\"header1.xml\"/>",
+    "<Relationship Id=\"rIdFooter1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer\" Target=\"footer1.xml\"/>",
+    "</Relationships>",
+  ]));
+  zip.folder("word")?.file("header1.xml", wordDocumentXml("hdr", [wordParagraph("北京市隆安（深圳）律师事务所")]));
+  zip.folder("word")?.file("footer1.xml", wordDocumentXml("ftr", [wordParagraph("委托代理合同页脚")]));
+  zip.folder("word")?.file("document.xml", wordDocumentXml("document", [
+    wordParagraph("委托代理合同"),
+    wordParagraph("合同编号："),
+    wordParagraph("聘请方（甲方）：                                                        "),
+    wordParagraph("甲方（必填）：                                                        "),
+    wordParagraph("法定代表人/负责人：                                               "),
+    wordParagraph("证件号/社会统一信用代码：                                         "),
+    wordParagraph("地址：              "),
+    wordParagraph("电子邮箱：                   "),
+    wordParagraph("联系电话：                         "),
+    wordParagraph("受聘方（乙方）：北京市隆安（深圳）律师事务所"),
+    wordParagraph("甲方因与【案件当事人】【案由】纠纷          案件，委托乙方代理，经双方协商，订立下列各条款，共同遵照履行。"),
+    wordParagraph("第一条 委托事项"),
+    wordParagraph("□仲裁阶段；"),
+    wordParagraph("□一审诉讼；"),
+    wordParagraph("□二审诉讼；"),
+    wordParagraph("□执行程序；"),
+    wordParagraph("□上述案件代理程序中，有关调解、和解事宜。"),
+    wordParagraph("第二条 代理律师"),
+    wordParagraph("（一）乙方指派  ***  律师作为案件中甲方的委托代理人，甲方同意上述律师指派其他律师和助理配合完成辅助工作，但乙方更换代理律师应取得甲方认可。"),
+    wordParagraph("第三条 收费方式"),
+    wordParagraph("□按阶段收费"),
+    wordParagraph("甲乙双方约定乙方律师费如下："),
+    wordParagraph("1.仲裁阶段：律师代理费为￥*0,000.00元（大写人民币*万元整），甲方在本合同签署后"),
+    wordParagraph("三日内一次性向乙方支付。"),
+    wordParagraph("2.一审阶段：律师代理费为￥*0,000.00元（大写人民币*万元整），甲方在本合同签署后三日内一次性向乙方支付。"),
+    wordParagraph("3.二审阶段：律师代理费为￥*0,000.00元（大写人民币*万元整），若二审由甲方提起，则在甲方确定提起上诉之前一次性向乙方支付；若二审由其他诉讼当事人提起，则在收到上诉状之日起三日内一次性向乙方支付。"),
+    wordParagraph("4.执行阶段：律师代理费为￥*0,000.00元（大写人民币*万元整），在甲方确定乙方代理执行程序之前一次性支付。"),
+    wordParagraph("□基础收费+风险收费"),
+    wordParagraph("甲乙双方选择风险代理收费方式，即律师费由基础费用和风险收费两部分组成："),
+    wordParagraph("1.基础费用：￥***00.00元（大写***元整），在签订合同后三日内支付。"),
+    wordParagraph("2.风险收费：按照案件胜诉并收回款项金额的*%（百分之*）收取。"),
+    wordParagraph("如果甲方实际收到的是现金以外的有形资产或财产权益，乙方有权选择以评估金额或实际变现金额为依据计算律师费。"),
+    wordParagraph("对于风险收费，甲方只要有回款或有回收其他有形资产或财产权益，就应按照约定支付律师费。"),
+    wordParagraph("第四条 争议解决"),
+    wordParagraph("甲、乙双方如果发生争议，应当友好协商解决。如协商不成，任何一方均有权将争议提交至深圳国际仲裁院仲裁，按照提交仲裁时深圳国际仲裁院现行有效的仲裁规则进行仲裁。仲裁裁决是终局的，对双方当事人均有约束力。"),
+    wordParagraph("第十二条 特别约定"),
+    wordParagraph("2.甲方在本合同签署之前已经全部阅读并知悉合同内容。"),
+    wordParagraph("附：《风险代理告知书》"),
+    wordParagraph("（以下无正文，为本合同签署处及附件）"),
+    wordParagraph("甲方：                                   乙方：北京市隆安（深圳）律师事务所"),
+    wordParagraph("法定代表人/负责人/授权代表：__________   承办律师：_________________                                          "),
+    wordParagraph("签约时间：  202 年   月     日           "),
+    wordParagraph("附件"),
+    wordParagraph("风险代理告知书"),
+    wordParagraph("委托人："),
+    wordParagraph("日  期：   年  月  日"),
+    wordRevisionParagraph("修订标记"),
+  ]));
+  return zip.generate({ type: "nodebuffer", compression: "DEFLATE" });
+}
+
+function xmlHeader(lines: string[]): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>${lines.join("")}`;
+}
+
+function wordDocumentXml(kind: "document" | "hdr" | "ftr", body: string[]): string {
+  const root = kind === "document" ? "w:document" : `w:${kind}`;
+  const content = kind === "document"
+    ? `<w:body>${body.join("")}<w:sectPr><w:headerReference w:type="default" r:id="rIdHeader1"/><w:footerReference w:type="default" r:id="rIdFooter1"/></w:sectPr></w:body>`
+    : body.join("");
+  return xmlHeader([
+    `<${root} xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">`,
+    content,
+    `</${root}>`,
+  ]);
+}
+
+function wordParagraph(text: string): string {
+  return `<w:p><w:r><w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r></w:p>`;
+}
+
+function wordRevisionParagraph(text: string): string {
+  return `<w:p><w:ins w:id="1" w:author="bridge" w:date="2026-01-01T00:00:00Z"><w:r><w:t>${escapeXml(text)}</w:t></w:r></w:ins></w:p>`;
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function buildTaggedContractTemplateXml(sourceXml: string): string {

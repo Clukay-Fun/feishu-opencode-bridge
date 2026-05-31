@@ -6,11 +6,24 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { ensureBuiltInCivilAgencyContractTemplate } from "../src/contract-assistant/index.js";
 import { spawnPythonTool } from "../src/utils/python-tool.js";
 
 describe("spawnPythonTool", () => {
+  let templateRoot = "";
+  let templatePath = "";
+
+  beforeAll(async () => {
+    templateRoot = await mkdtemp(path.join(os.tmpdir(), "python-tool-template-"));
+    templatePath = await ensureBuiltInCivilAgencyContractTemplate(templateRoot);
+  });
+
+  afterAll(async () => {
+    await rm(templateRoot, { recursive: true, force: true });
+  });
+
   it("runs doc_to_text with unified stdin/stdout JSON protocol", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "python-tool-doc-to-text-"));
     try {
@@ -101,14 +114,12 @@ describe("spawnPythonTool", () => {
   });
 
   it("runs contract_parse on the bundled docx template", async () => {
-    const inputPath = path.resolve(process.cwd(), "templates/contracts/委托代理合同-民事.docx");
-
     const result = await spawnPythonTool<{
       title: string;
       clauses: Array<{ number: string; title: string; content: string }>;
       rawText: string;
     }>("contract_parse", {
-      inputPath,
+      inputPath: templatePath,
     });
 
     expect(result.ok).toBe(true);

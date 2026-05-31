@@ -7,15 +7,27 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { ensureBuiltInCivilAgencyContractTemplate } from "../src/contract-assistant/index.js";
 import { resolvePythonCommand, spawnPythonTool } from "../src/utils/python-tool.js";
 
 describe("contract_edit python tool", () => {
+  let templateRoot = "";
+  let templatePath = "";
+
+  beforeAll(async () => {
+    templateRoot = await mkdtemp(path.join(os.tmpdir(), "contract-edit-template-"));
+    templatePath = await ensureBuiltInCivilAgencyContractTemplate(templateRoot);
+  });
+
+  afterAll(async () => {
+    await rm(templateRoot, { recursive: true, force: true });
+  });
+
   it("deletes appendix content by heading and preserves edited docx output", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "contract-edit-python-"));
     try {
-      const inputPath = path.resolve(process.cwd(), "templates/contracts/委托代理合同-民事.docx");
       const outputPath = path.join(tempDir, "edited.docx");
 
       const editResult = await spawnPythonTool<{
@@ -23,7 +35,7 @@ describe("contract_edit python tool", () => {
         appliedOps: number;
         skippedOps: Array<Record<string, unknown>>;
       }>("contract_edit", {
-        inputPath,
+        inputPath: templatePath,
         outputPath,
         operations: [
           {

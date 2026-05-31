@@ -7,11 +7,13 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { ensureBuiltInCivilAgencyContractTemplate } from "../src/contract-assistant/index.js";
 import { resolvePythonCommand, spawnPythonTool } from "../src/utils/python-tool.js";
 
-const TEMPLATE_PATH = path.resolve(process.cwd(), "templates/contracts/委托代理合同-民事.docx");
+let templateRoot = "";
+let TEMPLATE_PATH = "";
 
 type DocxInspectResult = {
   hasDocumentXml: boolean;
@@ -44,6 +46,15 @@ type DocxReplaceResult = {
 };
 
 describe("docx_edit python PoC", () => {
+  beforeAll(async () => {
+    templateRoot = await mkdtemp(path.join(os.tmpdir(), "docx-edit-template-"));
+    TEMPLATE_PATH = await ensureBuiltInCivilAgencyContractTemplate(templateRoot);
+  });
+
+  afterAll(async () => {
+    await rm(templateRoot, { recursive: true, force: true });
+  });
+
   it("inspects a real contract docx and reports package boundaries", async () => {
     const result = await spawnPythonTool<DocxInspectResult>("docx_edit", {
       action: "inspect",
@@ -85,12 +96,12 @@ describe("docx_edit python PoC", () => {
         return;
       }
       expect(result.data.candidateCount).toBe(6);
-      expect(result.data.singleRunReachableCount).toBe(5);
-      expect(result.data.paragraphOnlyReachableCount).toBe(1);
-      expect(result.data.singleRunCoverageRate).toBeCloseTo(5 / 6, 5);
+      expect(result.data.singleRunReachableCount).toBe(6);
+      expect(result.data.paragraphOnlyReachableCount).toBe(0);
+      expect(result.data.singleRunCoverageRate).toBeCloseTo(1, 5);
       expect(result.data.items.find((item) => item.candidate === "聘请方（甲方）：")).toEqual(expect.objectContaining({
         paragraphReachable: true,
-        singleRunReachable: false,
+        singleRunReachable: true,
       }));
     } finally {
       await rm(tempDir, { recursive: true, force: true });
