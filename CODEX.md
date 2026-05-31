@@ -24,6 +24,16 @@
 - 不要在 `src/runtime/app.ts`、`src/runtime/turn-executor.ts`、`src/bridge/router.ts` 增加业务特定分支，除非同一改动更新架构基线。
 - 新能力应通过 runtime module、extension meta/runtime seam、shared service 或 workflow 专属模块进入。
 
+## 保留的工程纪律
+
+这些做法是当前项目治理中已经验证有效的基础习惯。后续优化可以继续叠加，但不要为了提速或省步骤而破坏它们。
+
+- 坚持 slice plan：每个较大变更先写清目标、范围、包含内容、不包含内容、行为规则和验收标准，再进入实现。slice 应能被独立执行、独立 review、独立验证。
+- 保持 audit 审查模式：执行完成后不要只看汇报，要跨文件、跨测试、跨文档验证 claim。重点检查是否存在未声明的范围缩减、遗漏验收项、行为变化未写文档、或测试只覆盖了表面路径。
+- 用 ADR 沉淀重大决策：影响术语、架构 seam、状态模型、数据迁移、权限边界或长期维护成本的决策，应写入 `docs/adr/`。ADR 记录“为什么这么定”，活规则仍以 `docs/architecture-baseline.md` 等当前文档为准。
+- 做好 issue 评论收口：关闭 issue 前应留下决策摘要、验收结果、实际验证命令和 follow-up 候选。不要只改代码或直接 close，让后续维护者能从 issue 读回完整上下文。
+- 让架构基线常驻：`docs/architecture-baseline.md` 是当前项目的运行时架构契约。所有 slice、PR 和重构都应能对齐它；如果对不上，要么调整方案，要么先更新架构基线并解释原因。
+
 ## Issue 规范
 
 - 新 issue 必须使用 `.github/ISSUE_TEMPLATE/` 下的模板，不开 blank issue。
@@ -36,6 +46,13 @@
 
 ## PR 规范
 
+- 单仓库、单人开发也必须走 PR 工作流；不要把功能改动直接推到 `codex/dev` 或 `main`。
+- 日常开发基线是 `codex/dev`；`main` 只接收阶段性稳定发布或明确要求的热修。
+- 每个功能、修复或文档收口都从最新 `codex/dev` 新建 feature 分支，命名格式为 `codex/<type>/<scope>-<short>`，例如 `codex/feat/memory-v2-slice-a`、`codex/fix/setup-ui-validation`、`codex/docs/pr-workflow`。
+- feature 分支提交并推送后，创建以 `codex/dev` 为 base 的 PR；即便没有外部 reviewer，也要在 PR 中完成自审、验证记录和影响说明。
+- PR 合并默认使用 squash merge，让 `codex/dev` 保持一条可回滚、可定位的功能级历史。
+- 合并后删除对应 feature 分支；未合并的实验分支要关闭 PR 并删除，避免干扰后续重构判断。
+- 只有纯本地临时试验可以不推 PR；一旦代码进入远端或需要保留，就补成 feature 分支和 PR。
 - PR 描述使用 `.github/PULL_REQUEST_TEMPLATE.md`，至少填写变更内容、变更原因、影响和验证。
 - 新功能 PR 应附上 `docs/guidelines/new-feature-checklist.md` 的自检结果。
 - 如果改了 framework seam、runtime module seam、transport、config、extension API 或观测事件，同一 PR 必须更新对应 docs。
