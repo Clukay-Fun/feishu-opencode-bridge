@@ -161,11 +161,16 @@ export function formatEvent(event, useColor = true) {
     const len = event.fields.replyLength ? `${event.fields.replyLength}字` : "";
     const chat = event.fields.chatId?.startsWith("oc_p2p_") ? "p2p" : event.fields.chatId?.startsWith("oc_") ? "chat" : "?";
     const sender = (event.fields.userId ?? "?").slice(0, 12);
-    const cost = event.cost && Number.isFinite(Number(event.cost.estimatedCostCny))
-      ? `¥${Number(event.cost.estimatedCostCny).toFixed(4)}`
-      : event.cost?.totalTokens ? `${event.cost.totalTokens}t` : "";
-    const tail = [duration, len, cost].filter(Boolean).join(" · ");
-    return `${tsCol}  ${co.green("✓")}  ${co.bold("turn")}     ${chat.padEnd(6)} ${co.dim(sender)}  ${co.dim(tail)}`;
+    const tail = [duration, len].filter(Boolean).join(" · ");
+    const head = `${tsCol}  ${co.green("✓")}  ${co.bold("turn")}     ${chat.padEnd(6)} ${co.dim(sender)}  ${co.dim(tail)}`;
+    // Q / A 各占一行,每段 40 字截断,dim 色 + 12 空格缩进
+    const userQ = truncatePreview(event.fields.userTextPreview, 40);
+    const replyA = truncatePreview(event.fields.replyTextPreview, 40);
+    const lines = [head];
+    const indent = "            ";
+    if (userQ) lines.push(`${indent}${co.dim("Q「" + userQ + "」")}`);
+    if (replyA) lines.push(`${indent}${co.dim("A「" + replyA + "」")}`);
+    return lines.join("\n");
   }
 
   // ws
@@ -211,7 +216,7 @@ export function formatEventJson(event) {
   if (event.cost) base.cost = event.cost;
   if (event.message) base.message = event.message;
   // 只挑常用字段,不全量倾倒
-  const picks = ["chatId", "userId", "turnId", "durationMs", "replyLength", "moduleId", "fileName", "chunks", "action"];
+  const picks = ["chatId", "userId", "turnId", "durationMs", "replyLength", "moduleId", "fileName", "chunks", "action", "userTextPreview", "replyTextPreview"];
   for (const k of picks) {
     if (event.fields?.[k] !== undefined) base[k] = event.fields[k];
   }
@@ -271,8 +276,8 @@ export function createActivityTicker(options = {}) {
       emit(out);
     },
 
-    /** 显示一行状态(uptime / session cost),作为定期心跳。 */
-    status({ uptimeSec, sessionCostCny, sessionTokens }) {
+    /** 显示一行心跳:uptime。让长时间无对话时也能确认 bridge 还活着。 */
+    status({ uptimeSec }) {
       const co = color ? c : noColor;
       const ts = co.grey(new Date().toTimeString().slice(0, 8));
       if (json) {
@@ -281,16 +286,21 @@ export function createActivityTicker(options = {}) {
           scope: "ticker",
           name: "status",
           uptimeSec,
-          sessionCostCny,
-          sessionTokens,
         }));
         return;
       }
       const uptime = formatUptime(uptimeSec);
-      const cost = sessionCostCny != null ? `¥${sessionCostCny.toFixed(4)}` : (sessionTokens != null ? `${sessionTokens}t` : "—");
-      emit(`${ts}  ${co.dim("·")}  ${co.dim("status")}   uptime ${co.bold(uptime)} · session cost ${co.bold(cost)}`);
+      emit(`${ts}  ${co.dim("·")}  ${co.dim("status")}   uptime ${co.bold(uptime)}`);
     },
   };
+}
+
+/** 安全截断文本预览,过长时加省略号。 */
+function truncatePreview(value, maxChars) {
+  if (!value || typeof value !== "string") return "";
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  return normalized.length > maxChars ? `${normalized.slice(0, maxChars - 1)}…` : normalized;
 }
 
 function formatUptime(sec) {

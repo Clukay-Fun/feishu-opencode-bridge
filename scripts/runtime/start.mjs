@@ -151,7 +151,6 @@ export async function runStart(options = {}) {
     const statusInterval = setInterval(() => {
       ticker.status({
         uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
-        sessionCostCny: null,
       });
     }, options.statusEverySec ? options.statusEverySec * 1000 : 30_000);
     activityTickerHandle = { tailer, statusInterval };
