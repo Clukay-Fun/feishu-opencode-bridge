@@ -19,6 +19,8 @@
 - [部署说明](deploy.md)：本地与服务器部署、环境变量、Caddy、健康检查和验收步骤。
 - [功能说明](features.md)：README 中移出的用户能力、模块边界和典型使用场景。
 - [命令手册](commands.md)：飞书命令、本地 runtime 命令、知识库 CLI 和外部扩展 CLI。
+- [Backlog 文档生命周期](backlog/README.md)：active / completed / audit-reports 的放置规则和归档信号。
+- [Changelog](../CHANGELOG.md)：版本发布前维护的用户可读变更记录。
 - [飞书卡片回调排障记录](troubleshooting-card-actions.md)：记录 quick tunnel、端口残留和“返回数据不是合法 JSON”的排查路径。
 - [数据流向与隐私说明](privacy-and-data-flow.md)：真实案件材料进入 Bridge 前的本地存储、外发路径和推荐配置。
 - [飞书 Markdown 输出规范](feishu-markdown.md)：面向飞书输出的 Markdown 规则与长文本排版约束。
