@@ -15,7 +15,7 @@ import { promisify } from "node:util";
 
 import { resolveProjectConfigPath } from "./portable.mjs";
 import { maybeCheckForUpdateOnStart } from "./update.mjs";
-import { createActivityTicker, createLogTailer } from "./activity-ticker.mjs";
+import { createActivityTicker, createLogTailer, createStickyWriter } from "./activity-ticker.mjs";
 import {
   createAugmentedEnv,
   assertPortAvailable,
@@ -134,12 +134,17 @@ export async function runStart(options = {}) {
   }
 
   // 启动 Activity Ticker:tail bridge-runtime.log,按白名单过滤渲染
+  // TTY 下用 sticky writer 把心跳钉在最后一行,事件在它上面滚,心跳原地刷新;
+  // 非 TTY(JSON / 重定向)走 append-only 走 logger.log。
   let activityTickerHandle = null;
   if (bridgeHealthy && options.activityTicker !== false) {
+    const isStickyMode = colorMode && !jsonMode && options.sticky !== false;
+    const sticky = isStickyMode ? (options.stickyWriter ?? createStickyWriter({ stdout: options.stdout ?? process.stdout })) : null;
+
     const ticker = createActivityTicker({
       color: colorMode,
       json: jsonMode,
-      emit: (line) => logger.log(line),
+      emit: sticky ? (line) => sticky.emit(line) : (line) => logger.log(line),
     });
     const tailer = createLogTailer({
       filePath: bridgeRuntimeLogPath,
@@ -148,12 +153,22 @@ export async function runStart(options = {}) {
       startFromEnd: true,
     });
     const startedAt = Date.now();
+    // sticky 模式 1s 一跳(原地刷新无成本);非 sticky 模式 30s 一行(避免刷屏)。
+    const intervalMs = sticky ? 1000 : (options.statusEverySec ? options.statusEverySec * 1000 : 30_000);
     const statusInterval = setInterval(() => {
-      ticker.status({
-        uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
-      });
-    }, options.statusEverySec ? options.statusEverySec * 1000 : 30_000);
-    activityTickerHandle = { tailer, statusInterval };
+      const text = ticker.status({ uptimeSec: Math.floor((Date.now() - startedAt) / 1000) });
+      if (sticky) {
+        sticky.setStatus(text);
+      } else if (jsonMode) {
+        logger.log(text); // JSON 行
+      }
+      // 普通追加模式(无颜色无 JSON 的奇怪场景):不打心跳,避免刷屏
+    }, intervalMs);
+    // 初次立刻显示一次心跳
+    if (sticky) {
+      sticky.setStatus(ticker.status({ uptimeSec: 0 }));
+    }
+    activityTickerHandle = { tailer, statusInterval, sticky };
   }
 
   let shuttingDown = false;
@@ -165,6 +180,7 @@ export async function runStart(options = {}) {
     if (activityTickerHandle) {
       activityTickerHandle.tailer.stop();
       clearInterval(activityTickerHandle.statusInterval);
+      activityTickerHandle.sticky?.cleanup();
     }
     await stopManagedProcess(bridgeProcess, { owned: true });
     await stopManagedProcess(opencode.child, { owned: opencode.ownedProcess });

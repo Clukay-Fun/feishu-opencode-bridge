@@ -1138,17 +1138,67 @@ describe("scripts/activity-ticker", () => {
     expect(parsed.cost).toEqual({ estimatedCostCny: "0.0124", totalTokens: "600" });
   });
 
-  it("ActivityTicker.status emits uptime heartbeat line, no cost field", async () => {
+  it("ActivityTicker.status returns formatted heartbeat string (does not auto-emit)", async () => {
     const { createActivityTicker } = await import("../scripts/runtime/activity-ticker.mjs");
     const out: string[] = [];
     const ticker = createActivityTicker({ color: false, json: false, emit: (l: string) => out.push(l) });
-    ticker.status({ uptimeSec: 125 });
-    expect(out).toHaveLength(1);
-    expect(out[0]).toContain("uptime");
-    expect(out[0]).toContain("2m 5s");
-    // 心跳行不再包含 session cost
-    expect(out[0]).not.toContain("¥");
-    expect(out[0]).not.toContain("session cost");
+    const returned = ticker.status({ uptimeSec: 125 });
+    // 不再自动 emit,由调用方决定怎么用
+    expect(out).toHaveLength(0);
+    expect(returned).toContain("uptime");
+    expect(returned).toContain("2m 5s");
+    expect(returned).not.toContain("¥");
+    expect(returned).not.toContain("session cost");
+  });
+
+  it("ActivityTicker.status returns JSON string in json mode", async () => {
+    const { createActivityTicker } = await import("../scripts/runtime/activity-ticker.mjs");
+    const ticker = createActivityTicker({ color: false, json: true, emit: () => {} });
+    const returned = ticker.status({ uptimeSec: 60 });
+    const parsed = JSON.parse(returned as string);
+    expect(parsed).toMatchObject({ scope: "ticker", name: "status", uptimeSec: 60 });
+  });
+});
+
+describe("scripts/activity-ticker createStickyWriter", () => {
+  function makeFakeStdout() {
+    const written: string[] = [];
+    return {
+      written,
+      write: (s: string) => { written.push(s); return true; },
+    };
+  }
+
+  it("setStatus draws sticky line; emit clears it, writes event, redraws", async () => {
+    const { createStickyWriter } = await import("../scripts/runtime/activity-ticker.mjs");
+    const stdout = makeFakeStdout();
+    const sticky = createStickyWriter({ stdout: stdout as unknown as NodeJS.WritableStream });
+    sticky.setStatus("status uptime 5s");
+    expect(stdout.written).toEqual(["status uptime 5s"]); // 无 newline,粘在底
+    sticky.emit("event A");
+    expect(stdout.written.slice(1)).toEqual([
+      "\r[2K",          // 清当前行
+      "event A\n",            // 写事件 + newline
+      "status uptime 5s",     // 重画 sticky
+    ]);
+  });
+
+  it("setStatus updates in-place (clear then re-draw)", async () => {
+    const { createStickyWriter } = await import("../scripts/runtime/activity-ticker.mjs");
+    const stdout = makeFakeStdout();
+    const sticky = createStickyWriter({ stdout: stdout as unknown as NodeJS.WritableStream });
+    sticky.setStatus("a");
+    sticky.setStatus("b");
+    expect(stdout.written).toEqual(["a", "\r[2K", "b"]);
+  });
+
+  it("cleanup clears sticky and adds final newline for prompt", async () => {
+    const { createStickyWriter } = await import("../scripts/runtime/activity-ticker.mjs");
+    const stdout = makeFakeStdout();
+    const sticky = createStickyWriter({ stdout: stdout as unknown as NodeJS.WritableStream });
+    sticky.setStatus("x");
+    sticky.cleanup();
+    expect(stdout.written).toEqual(["x", "\r[2K", "\n"]);
   });
 
   it("collectEnabledExtensions returns memory + legal defaults", async () => {
