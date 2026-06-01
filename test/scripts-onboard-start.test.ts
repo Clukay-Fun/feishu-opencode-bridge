@@ -1245,3 +1245,95 @@ describe("scripts/activity-ticker conversation preview", () => {
     expect(parsed.replyTextPreview).toBe("答案");
   });
 });
+
+describe("scripts/activity-ticker createDashboardRenderer", () => {
+  function makeFakeStdout() {
+    const written: string[] = [];
+    return {
+      written,
+      write: (s: string) => { written.push(s); return true; },
+    };
+  }
+
+  it("enter writes alt-screen-on + hide-cursor; leave writes show-cursor + alt-screen-off", async () => {
+    const { createDashboardRenderer } = await import("../scripts/runtime/activity-ticker.mjs");
+    const stdout = makeFakeStdout();
+    const dash = createDashboardRenderer({
+      color: false,
+      panel: { endpoint: "http://x", profile: "legal", extensions: [], logPath: "/x", startedAt: new Date() },
+      stdout: stdout as unknown as NodeJS.WritableStream,
+    });
+    dash.enter();
+    expect(stdout.written.join("")).toContain("[?1049h");
+    expect(stdout.written.join("")).toContain("[?25l");
+    stdout.written.length = 0;
+    dash.leave();
+    expect(stdout.written.join("")).toContain("[?25h");
+    expect(stdout.written.join("")).toContain("[?1049l");
+  });
+
+  it("recordEvent counts turn.completed / error / warn", async () => {
+    const { createDashboardRenderer } = await import("../scripts/runtime/activity-ticker.mjs");
+    const dash = createDashboardRenderer({
+      color: false,
+      panel: { endpoint: "x", profile: "legal", extensions: [], logPath: "x", startedAt: new Date() },
+      stdout: makeFakeStdout() as unknown as NodeJS.WritableStream,
+    });
+    dash.recordEvent({ scope: "bridge/queue", name: "turn.completed", level: "info" } as any);
+    dash.recordEvent({ scope: "bridge/queue", name: "turn.completed", level: "info" } as any);
+    dash.recordEvent({ scope: "runtime", level: "error" } as any);
+    dash.recordEvent({ scope: "runtime", level: "warn" } as any);
+    dash.recordEvent({ scope: "runtime", level: "warn" } as any);
+    const state = dash.getState();
+    expect(state.turnCount).toBe(2);
+    expect(state.errorCount).toBe(1);
+    expect(state.warnCount).toBe(2);
+  });
+
+  it("pushEvent enforces activityCapacity (rolling buffer)", async () => {
+    const { createDashboardRenderer } = await import("../scripts/runtime/activity-ticker.mjs");
+    const dash = createDashboardRenderer({
+      color: false,
+      panel: { endpoint: "x", profile: "legal", extensions: [], logPath: "x", startedAt: new Date() },
+      stdout: makeFakeStdout() as unknown as NodeJS.WritableStream,
+      activityCapacity: 3,
+    });
+    for (let i = 0; i < 5; i++) dash.pushEvent(`event-${i}`);
+    const state = dash.getState();
+    expect(state.activity).toEqual(["event-2", "event-3", "event-4"]);
+  });
+
+  it("render emits clear-screen + top panel + activity", async () => {
+    const { createDashboardRenderer } = await import("../scripts/runtime/activity-ticker.mjs");
+    const stdout = makeFakeStdout();
+    const dash = createDashboardRenderer({
+      color: false,
+      panel: { endpoint: "http://127.0.0.1:3000", profile: "legal", extensions: ["memory"], logPath: "/tmp/log", startedAt: new Date() },
+      stdout: stdout as unknown as NodeJS.WritableStream,
+    });
+    dash.enter();
+    stdout.written.length = 0;
+    dash.pushEvent("23:14:15  ↻  ws       connection opened");
+    dash.render();
+    const all = stdout.written.join("");
+    expect(all).toContain("[H[2J[H"); // clear screen sequence
+    expect(all).toContain("Feishu OpenCode Bridge");
+    expect(all).toContain("http://127.0.0.1:3000");
+    expect(all).toContain("Uptime");
+    expect(all).toContain("Turns");
+    expect(all).toContain("memory");
+    expect(all).toContain("connection opened");
+  });
+
+  it("render does nothing before enter()", async () => {
+    const { createDashboardRenderer } = await import("../scripts/runtime/activity-ticker.mjs");
+    const stdout = makeFakeStdout();
+    const dash = createDashboardRenderer({
+      color: false,
+      panel: { endpoint: "x", profile: "legal", extensions: [], logPath: "x", startedAt: new Date() },
+      stdout: stdout as unknown as NodeJS.WritableStream,
+    });
+    dash.render();
+    expect(stdout.written).toEqual([]);
+  });
+});

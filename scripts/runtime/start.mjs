@@ -15,7 +15,7 @@ import { promisify } from "node:util";
 
 import { resolveProjectConfigPath } from "./portable.mjs";
 import { maybeCheckForUpdateOnStart } from "./update.mjs";
-import { createActivityTicker, createLogTailer, createStickyWriter } from "./activity-ticker.mjs";
+import { createActivityTicker, createLogTailer, createStickyWriter, createDashboardRenderer } from "./activity-ticker.mjs";
 import {
   createAugmentedEnv,
   assertPortAvailable,
@@ -112,15 +112,19 @@ export async function runStart(options = {}) {
   bridgeProcess.stderr?.pipe(bridgeRuntimeLogStream);
 
   const bridgeHealthy = await waitForBridgeHealth(serverHost, serverPort, fetchImpl, options.bridgeHealthTimeoutMs ?? 30_000);
+  const dashboardMode = colorMode && !jsonMode && (process.env.BRIDGE_DASHBOARD !== "0") && options.dashboard !== false;
   if (bridgeHealthy) {
     logger.log(`[3/3] Bridge Runtime ... 已启动 http://${serverHost}:${serverPort}`);
-    ui.statusPanel({
-      endpoint: `http://${serverHost}:${serverPort}`,
-      profile: typeof rawConfig?.profile === "string" ? rawConfig.profile : "legal",
-      extensions: collectEnabledExtensions(rawConfig),
-      logPath: bridgeRuntimeLogPath,
-      startedAt: new Date(),
-    });
+    // Dashboard 模式下顶部 panel 由 dashboard 渲染,不在主屏打印(否则会在主屏留一份再被 alt-screen 覆盖)
+    if (!dashboardMode) {
+      ui.statusPanel({
+        endpoint: `http://${serverHost}:${serverPort}`,
+        profile: typeof rawConfig?.profile === "string" ? rawConfig.profile : "legal",
+        extensions: collectEnabledExtensions(rawConfig),
+        logPath: bridgeRuntimeLogPath,
+        startedAt: new Date(),
+      });
+    }
   } else {
     logger.warn?.(`[3/3] Bridge Runtime ... healthz 暂未就绪，Bridge 进程仍在运行`);
     logger.warn?.(`      运行日志: ${bridgeRuntimeLogPath}`);
@@ -134,41 +138,71 @@ export async function runStart(options = {}) {
   }
 
   // 启动 Activity Ticker:tail bridge-runtime.log,按白名单过滤渲染
-  // TTY 下用 sticky writer 把心跳钉在最后一行,事件在它上面滚,心跳原地刷新;
-  // 非 TTY(JSON / 重定向)走 append-only 走 logger.log。
+  // 三种模式:
+  //   - dashboard:alt-screen 全屏 dashboard(顶部 panel + 活动区,每秒重绘),TTY+彩色 默认走这条
+  //   - sticky:心跳钉在最后一行,事件在它上面滚(BRIDGE_DASHBOARD=0 时退回)
+  //   - append:JSON 行或非 TTY 走 logger.log
   let activityTickerHandle = null;
   if (bridgeHealthy && options.activityTicker !== false) {
-    const isStickyMode = colorMode && !jsonMode && options.sticky !== false;
+    const useDashboard = dashboardMode && options.dashboardRenderer !== false;
+    const isStickyMode = !useDashboard && colorMode && !jsonMode && options.sticky !== false;
+
+    const dashboard = useDashboard ? (options.dashboard ?? createDashboardRenderer({
+      color: colorMode,
+      panel: {
+        endpoint: `http://${serverHost}:${serverPort}`,
+        profile: typeof rawConfig?.profile === "string" ? rawConfig.profile : "legal",
+        extensions: collectEnabledExtensions(rawConfig),
+        logPath: bridgeRuntimeLogPath,
+        startedAt: new Date(),
+      },
+      stdout: options.stdout ?? process.stdout,
+    })) : null;
+
     const sticky = isStickyMode ? (options.stickyWriter ?? createStickyWriter({ stdout: options.stdout ?? process.stdout })) : null;
 
     const ticker = createActivityTicker({
       color: colorMode,
       json: jsonMode,
-      emit: sticky ? (line) => sticky.emit(line) : (line) => logger.log(line),
+      emit: dashboard
+        ? (line) => { dashboard.pushEvent(line); dashboard.render(); }
+        : sticky ? (line) => sticky.emit(line) : (line) => logger.log(line),
     });
+
+    if (dashboard) {
+      dashboard.enter();
+      dashboard.render();
+    }
+
     const tailer = createLogTailer({
       filePath: bridgeRuntimeLogPath,
       intervalMs: options.tickerPollMs ?? 500,
-      onLine: (line) => ticker.handle(line),
+      onLine: (line) => {
+        const parsed = ticker.handle(line);
+        if (dashboard && parsed) dashboard.recordEvent(parsed);
+      },
       startFromEnd: true,
     });
+
     const startedAt = Date.now();
-    // sticky 模式 1s 一跳(原地刷新无成本);非 sticky 模式 30s 一行(避免刷屏)。
-    const intervalMs = sticky ? 1000 : (options.statusEverySec ? options.statusEverySec * 1000 : 30_000);
+    // dashboard / sticky 模式 1s 一跳(原地或全屏重绘);append 模式 30s 一行(避免刷屏)。
+    const intervalMs = (dashboard || sticky) ? 1000 : (options.statusEverySec ? options.statusEverySec * 1000 : 30_000);
     const statusInterval = setInterval(() => {
-      const text = ticker.status({ uptimeSec: Math.floor((Date.now() - startedAt) / 1000) });
-      if (sticky) {
+      if (dashboard) {
+        dashboard.render();
+      } else if (sticky) {
+        const text = ticker.status({ uptimeSec: Math.floor((Date.now() - startedAt) / 1000) });
         sticky.setStatus(text);
       } else if (jsonMode) {
-        logger.log(text); // JSON 行
+        const text = ticker.status({ uptimeSec: Math.floor((Date.now() - startedAt) / 1000) });
+        logger.log(text);
       }
-      // 普通追加模式(无颜色无 JSON 的奇怪场景):不打心跳,避免刷屏
     }, intervalMs);
-    // 初次立刻显示一次心跳
+
     if (sticky) {
       sticky.setStatus(ticker.status({ uptimeSec: 0 }));
     }
-    activityTickerHandle = { tailer, statusInterval, sticky };
+    activityTickerHandle = { tailer, statusInterval, sticky, dashboard };
   }
 
   let shuttingDown = false;
@@ -181,6 +215,7 @@ export async function runStart(options = {}) {
       activityTickerHandle.tailer.stop();
       clearInterval(activityTickerHandle.statusInterval);
       activityTickerHandle.sticky?.cleanup();
+      activityTickerHandle.dashboard?.leave();
     }
     await stopManagedProcess(bridgeProcess, { owned: true });
     await stopManagedProcess(opencode.child, { owned: opencode.ownedProcess });

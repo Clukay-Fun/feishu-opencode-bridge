@@ -238,9 +238,13 @@ export function createActivityTicker(options = {}) {
   const COST_BUFFER_MAX = 100;
 
   return {
+    /**
+     * @returns 解析后的 event(被白名单接受时)或 null(未被接受 / 不可解析 / 是 cost 缓存)。
+     *          调用方可基于返回值挂钩计数(如 dashboard 的 turn / error 计数)。
+     */
     handle(rawLine) {
       const event = parseLogLine(rawLine);
-      if (!event) return;
+      if (!event) return null;
 
       // 缓存 cost,等 turn.completed 时合并
       if (event.scope === "cost/usage" && /usage recorded/i.test(event.name)) {
@@ -252,16 +256,15 @@ export function createActivityTicker(options = {}) {
             provider: event.fields.provider,
             model: event.fields.model,
           });
-          // 防止泄漏:超出上限时清最旧
           if (costBuffer.size > COST_BUFFER_MAX) {
             const firstKey = costBuffer.keys().next().value;
             costBuffer.delete(firstKey);
           }
         }
-        return;
+        return null;
       }
 
-      if (!shouldDisplay(event)) return;
+      if (!shouldDisplay(event)) return null;
 
       // turn.completed 合并 cost
       if (event.scope === "bridge/queue" && event.name === "turn.completed") {
@@ -274,6 +277,7 @@ export function createActivityTicker(options = {}) {
 
       const out = json ? formatEventJson(event) : formatEvent(event, color);
       emit(out);
+      return event;
     },
 
     /**
@@ -382,6 +386,121 @@ export function createLogTailer({ filePath, intervalMs = 500, onLine, startFromE
       stopped = true;
       if (timer) clearTimeout(timer);
     },
+  };
+}
+
+/**
+ * Dashboard renderer:alt-screen 全屏模式,顶部 status panel + 活动区,每秒/事件全屏重绘。
+ *
+ * 操作时序:
+ *   - enter():切到 alt screen + 隐藏光标,主屏不动
+ *   - recordEvent(parsed):收到一个 ticker.handle 返回的 event,更新内部计数
+ *   - pushEvent(line):把渲染好的事件 push 到活动缓冲(超出容量丢最早)
+ *   - render():全屏重绘 panel + 活动区
+ *   - leave():恢复光标 + 切回主屏(原终端历史完整恢复)
+ *
+ * 仅适用于 TTY + 彩色模式。代价:bridge 跑着时不能滚屏看历史(在 alt screen 内)。
+ * 完整日志仍写 bridge-runtime.log,需要历史用 `tail -f` 看。
+ *
+ * @param {object} options
+ * @param {boolean} [options.color=true]
+ * @param {{endpoint:string, profile:string, extensions:string[], logPath:string, startedAt:Date}} options.panel
+ * @param {NodeJS.WritableStream} [options.stdout=process.stdout]
+ * @param {number} [options.activityCapacity=20]
+ * @param {boolean} [options.hideCursor=true]
+ */
+export function createDashboardRenderer(options = {}) {
+  const color = options.color !== false;
+  const co = color ? c : noColor;
+  const stdout = options.stdout ?? process.stdout;
+  const capacity = options.activityCapacity ?? 20;
+  const hideCursor = options.hideCursor !== false;
+  const panel = options.panel ?? {};
+
+  const state = {
+    turnCount: 0,
+    errorCount: 0,
+    warnCount: 0,
+    activity: [],
+  };
+  let entered = false;
+
+  function enter() {
+    if (entered) return;
+    stdout.write("[?1049h"); // alt screen on
+    if (hideCursor) stdout.write("[?25l");
+    entered = true;
+  }
+
+  function leave() {
+    if (!entered) return;
+    if (hideCursor) stdout.write("[?25h");
+    stdout.write("[?1049l"); // back to main
+    entered = false;
+  }
+
+  function pushEvent(line) {
+    state.activity.push(line);
+    while (state.activity.length > capacity) state.activity.shift();
+  }
+
+  function recordEvent(parsed) {
+    if (!parsed) return;
+    if (parsed.scope === "bridge/queue" && parsed.name === "turn.completed") {
+      state.turnCount++;
+    } else if (parsed.level === "error") {
+      state.errorCount++;
+    } else if (parsed.level === "warn") {
+      state.warnCount++;
+    }
+  }
+
+  function render() {
+    if (!entered) return;
+    const startedMs = panel.startedAt instanceof Date ? panel.startedAt.getTime() : Date.now();
+    const uptimeSec = Math.max(0, Math.floor((Date.now() - startedMs) / 1000));
+
+    const out = [];
+    out.push("[H[2J[H"); // top-left + clear + top-left
+    out.push("");
+    out.push("═══════════════════════════════════════════════════════");
+    out.push(`  ${co.bold("Feishu OpenCode Bridge")}`);
+    out.push("═══════════════════════════════════════════════════════");
+    out.push("");
+    out.push(`  Status     ${co.green("● Running")}      ${co.dim("Uptime")} ${co.bold(formatUptime(uptimeSec))}`);
+    out.push(`  Endpoint   ${panel.endpoint ?? "?"}`);
+    out.push(
+      `  Profile    ${panel.profile ?? "?"}` +
+      `      ${co.dim("Turns")} ${co.bold(String(state.turnCount))}` +
+      `   ${co.dim("Errors")} ${co.bold(String(state.errorCount))}` +
+      `   ${co.dim("Warnings")} ${co.bold(String(state.warnCount))}`
+    );
+    if (panel.extensions && panel.extensions.length) {
+      out.push("");
+      const exts = panel.extensions.map((e) => `${co.green("●")} ${e}`).join("   ");
+      out.push(`  Extensions ${exts}`);
+    }
+    out.push("");
+    out.push(`  Logs       ${panel.logPath ?? "?"}`);
+    out.push(`  Quit       Ctrl+C`);
+    out.push("");
+    out.push("───────────────────────────────────────────────────────");
+    out.push(`  ${co.dim("Live activity (turns · ws · errors · kb · cards, last " + capacity + ")")}`);
+    out.push("───────────────────────────────────────────────────────");
+    out.push("");
+    for (const line of state.activity) {
+      out.push(line);
+    }
+    stdout.write(out.join("\n"));
+  }
+
+  return {
+    enter,
+    leave,
+    render,
+    pushEvent,
+    recordEvent,
+    getState: () => ({ ...state, activity: [...state.activity] }),
   };
 }
 
