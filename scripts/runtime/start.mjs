@@ -7,7 +7,7 @@
  */
 import { createWriteStream } from "node:fs";
 import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execFile, spawn } from "node:child_process";
@@ -15,6 +15,7 @@ import { promisify } from "node:util";
 
 import { resolveProjectConfigPath } from "./portable.mjs";
 import { maybeCheckForUpdateOnStart } from "./update.mjs";
+import { createActivityTicker, createLogTailer } from "./activity-ticker.mjs";
 import {
   createAugmentedEnv,
   assertPortAvailable,
@@ -54,7 +55,11 @@ export async function runStart(options = {}) {
 
   await mkdir(loggingDir, { recursive: true });
 
-  logger.log("Feishu OpenCode Bridge");
+  const colorMode = options.color ?? Boolean(process.stdout.isTTY);
+  const jsonMode = options.jsonOutput ?? (!process.stdout.isTTY);
+  const ui = options.ui ?? createStartUi(logger, { color: colorMode });
+
+  ui.header();
   await maybeCheckForUpdateOnStart({ cwd, env, logger, fetchImpl, platform: options.platform, home });
 
   const bridgePort = await ensureBridgePortAvailable({
@@ -89,13 +94,68 @@ export async function runStart(options = {}) {
     env,
     findExecutableFn: options.findExecutableFn ?? findExecutable,
   });
-  logger.log(`[3/3] 启动 Bridge ... ${bridgeLaunch.command}`);
+  const bridgeRuntimeLogPath = path.join(loggingDir, "bridge-runtime.log");
+  const bridgeRuntimeLogStream = createWriteStream(bridgeRuntimeLogPath, { flags: "a" });
+  const bridgeEnv = {
+    ...bridgeLaunch.env,
+    BRIDGE_CONSOLE_LOG: "0",
+  };
+  logger.log(`[3/3] 启动 Bridge Runtime ... ${bridgeLaunch.command}`);
+  logger.log(`      运行日志: ${bridgeRuntimeLogPath}`);
   const bridgeProcess = (options.spawnFn ?? spawn)(bridgeLaunch.command, bridgeLaunch.args, {
     cwd,
-    env: bridgeLaunch.env,
-    stdio: "inherit",
+    env: bridgeEnv,
+    stdio: ["ignore", "pipe", "pipe"],
     shell: process.platform === "win32",
   });
+  bridgeProcess.stdout?.pipe(bridgeRuntimeLogStream);
+  bridgeProcess.stderr?.pipe(bridgeRuntimeLogStream);
+
+  const bridgeHealthy = await waitForBridgeHealth(serverHost, serverPort, fetchImpl, options.bridgeHealthTimeoutMs ?? 30_000);
+  if (bridgeHealthy) {
+    logger.log(`[3/3] Bridge Runtime ... 已启动 http://${serverHost}:${serverPort}`);
+    ui.statusPanel({
+      endpoint: `http://${serverHost}:${serverPort}`,
+      profile: typeof rawConfig?.profile === "string" ? rawConfig.profile : "legal",
+      extensions: collectEnabledExtensions(rawConfig),
+      logPath: bridgeRuntimeLogPath,
+      startedAt: new Date(),
+    });
+  } else {
+    logger.warn?.(`[3/3] Bridge Runtime ... healthz 暂未就绪，Bridge 进程仍在运行`);
+    logger.warn?.(`      运行日志: ${bridgeRuntimeLogPath}`);
+    const recentRuntimeLogs = await readRecentLogLines(bridgeRuntimeLogPath, 12);
+    if (recentRuntimeLogs) {
+      logger.warn?.("      最近日志:");
+      for (const line of recentRuntimeLogs.split("\n")) {
+        logger.warn?.(`      ${line}`);
+      }
+    }
+  }
+
+  // 启动 Activity Ticker:tail bridge-runtime.log,按白名单过滤渲染
+  let activityTickerHandle = null;
+  if (bridgeHealthy && options.activityTicker !== false) {
+    const ticker = createActivityTicker({
+      color: colorMode,
+      json: jsonMode,
+      emit: (line) => logger.log(line),
+    });
+    const tailer = createLogTailer({
+      filePath: bridgeRuntimeLogPath,
+      intervalMs: options.tickerPollMs ?? 500,
+      onLine: (line) => ticker.handle(line),
+      startFromEnd: true,
+    });
+    const startedAt = Date.now();
+    const statusInterval = setInterval(() => {
+      ticker.status({
+        uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
+        sessionCostCny: null,
+      });
+    }, options.statusEverySec ? options.statusEverySec * 1000 : 30_000);
+    activityTickerHandle = { tailer, statusInterval };
+  }
 
   let shuttingDown = false;
   const shutdown = async () => {
@@ -103,8 +163,13 @@ export async function runStart(options = {}) {
       return;
     }
     shuttingDown = true;
+    if (activityTickerHandle) {
+      activityTickerHandle.tailer.stop();
+      clearInterval(activityTickerHandle.statusInterval);
+    }
     await stopManagedProcess(bridgeProcess, { owned: true });
     await stopManagedProcess(opencode.child, { owned: opencode.ownedProcess });
+    bridgeRuntimeLogStream.end();
   };
 
   process.once("SIGINT", () => {
@@ -118,12 +183,80 @@ export async function runStart(options = {}) {
     bridgeProcess.once("error", reject);
     bridgeProcess.once("close", (code) => {
       process.exitCode = code ?? 0;
+      bridgeRuntimeLogStream.end();
       resolve(undefined);
     });
   });
 
   await stopManagedProcess(opencode.child, { owned: opencode.ownedProcess });
   return process.exitCode ?? 0;
+}
+
+function createStartUi(logger, options = {}) {
+  const color = Boolean(options.color);
+  const style = {
+    bold: (value) => color ? `\u001b[1m${value}\u001b[22m` : value,
+    dim: (value) => color ? `\u001b[2m${value}\u001b[22m` : value,
+    green: (value) => color ? `\u001b[32m${value}\u001b[39m` : value,
+  };
+  return {
+    header() {
+      logger.log("");
+      logger.log(style.bold("Feishu OpenCode Bridge"));
+      logger.log(style.dim("Local runtime console"));
+      logger.log("--------------------------------------------------");
+    },
+    /** 启动成功后渲染完整状态面板。 */
+    statusPanel({ endpoint, profile, extensions, logPath, startedAt }) {
+      const ts = startedAt instanceof Date ? startedAt.toTimeString().slice(0, 8) : "?";
+      logger.log("");
+      logger.log("═══════════════════════════════════════════════════════");
+      logger.log(`  ${style.bold("Feishu OpenCode Bridge")}`);
+      logger.log("═══════════════════════════════════════════════════════");
+      logger.log("");
+      logger.log(`  Status     ${style.green("● Running")}`);
+      logger.log(`  Endpoint   ${endpoint}`);
+      logger.log(`  Profile    ${profile}`);
+      logger.log(`  Started    ${ts}`);
+      if (extensions && extensions.length > 0) {
+        logger.log("");
+        logger.log(`  Extensions`);
+        for (const ext of extensions) {
+          logger.log(`    ${style.green("●")} ${ext}`);
+        }
+      }
+      logger.log("");
+      logger.log(`  Logs       ${logPath}`);
+      logger.log(`  Quit       Ctrl+C`);
+      logger.log("");
+      logger.log("───────────────────────────────────────────────────────");
+      logger.log(`  ${style.dim("Live activity (turns · ws · errors · kb · cards)")}`);
+      logger.log("───────────────────────────────────────────────────────");
+      logger.log("");
+    },
+  };
+}
+
+/** 从 config 提取启用的扩展 id 列表(用于 status panel)。 */
+function collectEnabledExtensions(config) {
+  if (!config || typeof config !== "object") return [];
+  const result = [];
+  const extensions = config.extensions ?? {};
+  const KNOWN = ["memory", "knowledge-base", "contract-assistant", "labor-skill", "case-workbench"];
+  for (const id of KNOWN) {
+    const cfg = extensions[id];
+    if (cfg && typeof cfg.enabled === "boolean") {
+      if (cfg.enabled) result.push(id);
+      continue;
+    }
+    if (id === "memory") {
+      const memoryEnabled = config.memory?.enabled;
+      if (memoryEnabled !== false) result.push(id);
+    } else if (config.profile === "legal" || !config.profile) {
+      result.push(id);
+    }
+  }
+  return result;
 }
 
 // Check whether the configured Bridge port is free or already served by this project.
@@ -407,6 +540,31 @@ export async function waitForOpencodeHealth(baseUrl, fetchImpl = fetch, timeoutM
     await sleep(1_000);
   }
   return false;
+}
+
+// Poll until Bridge becomes healthy or the timeout elapses.
+export async function waitForBridgeHealth(host, port, fetchImpl = fetch, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await isBridgeHealthy(host, port, fetchImpl)) {
+      return true;
+    }
+    await sleep(500);
+  }
+  return false;
+}
+
+async function readRecentLogLines(logPath, maxLines = 12) {
+  try {
+    const content = await readFile(logPath, "utf8");
+    return content
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .slice(-maxLines)
+      .join("\n");
+  } catch {
+    return "";
+  }
 }
 
 // Restrict auto-start behavior to loopback OpenCode addresses.

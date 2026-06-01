@@ -140,4 +140,15 @@ npm run bridge -- doctor               # 跑诊断（config / feishu / opencode 
 npm run bridge -- start                # 启动服务
 ```
 
+`bridge start` / `npm start` 启动后会渲染**状态面板 + Activity 实时事件流**：
+
+- 状态面板（启动时打印一次）：Endpoint / Profile / 启用扩展 / 日志路径 / Ctrl+C 提示
+- Activity 事件流（追加式）：从 `bridge-runtime.log` tail 出 turn 完成 / WS 连接 / 错误警告 / 知识库入库 / 卡片回调 / 模块状态等关键事件，按白名单过滤，每条带时间戳和颜色
+- 每 30 秒打印一条 status 行（uptime + session cost）作为"心跳"
+- 单条事件示例：`22:58:48  ✓  turn     p2p    ou_abcdefghij12  2.3s · 13字 · ¥0.0124`
+
+非 TTY 场景（重定向到文件 / systemd / 被脚本管道消费）自动切到 JSON 行模式，每个事件一行 JSON，无颜色、无面板装饰，便于脚本解析。
+
+ANSI 颜色默认在 TTY 下开启，可通过 `BRIDGE_NO_COLOR=1` 关闭。Bridge 原始运行日志（含 `[info]` / `[error]` 全量）仍写入 `logs/bridge-runtime.log`，需要细节时直接 `tail -f` 查看。
+
 非交互式模式（CI / 脚本）所有命令支持 `--profile` / `--enable` / `--disable` flag，不弹 prompt。
