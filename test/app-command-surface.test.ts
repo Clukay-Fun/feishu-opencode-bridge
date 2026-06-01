@@ -929,11 +929,94 @@ describe("BridgeApp command surface", () => {
 
     const text = extractInteractiveText(getReplyPayloads(outbound)[0]);
     expect(text).not.toContain("已隐藏会话");
-    expect(text).toContain("未绑定会话 #2");
-    expect(text).toContain("未绑定");
+    expect(text).toContain("未归属会话 #2");
+    expect(text).toContain("未归属");
     expect(text).toContain("ses_2");
     expect(text).toContain("s_hidden");
     expect(text).not.toContain("已归档");
+  });
+
+  it("classifies sessions bound to other windows in /sessions all", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const listSessions = vi.fn(async () => ([
+      { id: "ses_current", title: "当前会话", time: { updated: 3 } },
+      { id: "ses_other", title: "另一个话题", time: { updated: 2 } },
+      { id: "ses_orphan", title: "未归属真实标题", time: { updated: 1 } },
+    ]));
+    const appAny = app as unknown as {
+      opencode: { listSessions: typeof listSessions };
+      sessionMap: Record<string, SessionWindowRecord>;
+    };
+    appAny.opencode = { listSessions };
+    appAny.sessionMap["oc_p2p_1"] = {
+      mode: "multi",
+      activeSessionId: "ses_current",
+      sessions: [
+        { sessionId: "ses_current", label: "当前会话", createdAt: 3, lastUsedAt: 3 },
+      ],
+    };
+    appAny.sessionMap["oc_p2p_1:topic"] = {
+      mode: "multi",
+      activeSessionId: "ses_other",
+      sessions: [
+        { sessionId: "ses_other", label: "另一个话题", createdAt: 2, lastUsedAt: 2 },
+      ],
+    };
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "sessions-all" },
+    });
+
+    const text = extractInteractiveText(getReplyPayloads(outbound)[0]);
+    expect(text).toContain("另一个话题");
+    expect(text).toContain("其他窗口");
+    expect(text).toContain("未归属会话 #3");
+    expect(text).not.toContain("未归属真实标题");
+  });
+
+  it("previews a session from the last list without switching", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const listSessions = vi.fn(async () => ([
+      { id: "ses_1", title: "当前会话", time: { created: 1, updated: 2 } },
+      { id: "ses_2", title: "预览目标", time: { created: 1, updated: 1 } },
+    ]));
+    const getSessionMessages = vi.fn(async () => ([
+      { info: { role: "user" }, parts: [{ type: "text", text: "用户问了什么" }] },
+      { info: { role: "assistant" }, parts: [{ type: "text", text: "助手答了什么" }] },
+    ]));
+    const appAny = app as unknown as {
+      opencode: { listSessions: typeof listSessions; getSessionMessages: typeof getSessionMessages };
+      sessionMap: Record<string, SessionWindowRecord>;
+    };
+    appAny.opencode = { listSessions, getSessionMessages };
+    appAny.sessionMap["oc_p2p_1"] = {
+      mode: "multi",
+      activeSessionId: "ses_1",
+      sessions: [
+        { sessionId: "ses_1", label: "当前会话", createdAt: 1, lastUsedAt: 2 },
+      ],
+    };
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "sessions-all" },
+    });
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "session-preview", index: 2 },
+    });
+
+    expect(appAny.sessionMap["oc_p2p_1"]?.activeSessionId).toBe("ses_1");
+    expect(extractInteractiveHeader(getReplyPayloads(outbound).at(-1))).toBe("会话预览");
+    const text = extractInteractiveText(getReplyPayloads(outbound).at(-1));
+    expect(text).toContain("预览目标");
+    expect(text).toContain("只读预览");
+    expect(text).toContain("会话回顾");
+    expect(text).toContain("用户：用户问了什么");
+    expect(text).toContain("助手：助手答了什么");
   });
 
   it("binds and switches to an unbound session from /sessions all", async () => {
@@ -1094,8 +1177,8 @@ describe("BridgeApp command surface", () => {
     const text = extractInteractiveText(getReplyPayloads(outbound)[0]);
     expect(text).not.toContain("会话12");
     expect(text).not.toContain("会话1");
-    expect(text).toContain("未绑定会话 #1");
-    expect(text).toContain("未绑定会话 #12");
+    expect(text).toContain("未归属会话 #1");
+    expect(text).toContain("未归属会话 #12");
   });
 
   it("filters /sessions all by keyword and keeps filtered numbering stable", async () => {
@@ -1121,7 +1204,7 @@ describe("BridgeApp command surface", () => {
     expect(pending.options).toEqual([expect.objectContaining({ index: 1, sessionId: "ses_labor" })]);
     const text = extractInteractiveText(getReplyPayloads(outbound)[0]);
     expect(text).not.toContain("劳动争议分析");
-    expect(text).toContain("未绑定会话 #1");
+    expect(text).toContain("未归属会话 #1");
     expect(text).toContain("es_labor");
     expect(text).not.toContain("发票识别");
     expect(text).toContain("关键词：劳动");
@@ -1148,10 +1231,10 @@ describe("BridgeApp command surface", () => {
 
     expect((appAny.pendingInteractions.get("oc_p2p_1") as Extract<PendingInteraction, { kind: "session-select" }>).options).toHaveLength(25);
     expect(getReplyPayloads(outbound)).toHaveLength(2);
-    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("未绑定会话 #1");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[0])).toContain("未归属会话 #1");
     expect(extractInteractiveText(getReplyPayloads(outbound)[0])).not.toContain("会话25");
     expect(extractInteractiveText(getReplyPayloads(outbound)[0])).not.toContain("会话5");
-    expect(extractInteractiveText(getReplyPayloads(outbound)[1])).toContain("未绑定会话 #25");
+    expect(extractInteractiveText(getReplyPayloads(outbound)[1])).toContain("未归属会话 #25");
     expect(extractInteractiveText(getReplyPayloads(outbound)[1])).not.toContain("会话5");
   });
 
@@ -1891,6 +1974,7 @@ type AppCommandSurfaceTestRoute = {
     | { kind: "sessions" }
     | { kind: "sessions-all"; query?: string | undefined }
     | { kind: "sessions-select"; index?: number | undefined; query?: string | undefined }
+    | { kind: "session-preview"; index?: number | undefined; sessionId?: string | undefined }
     | { kind: "close"; index?: number | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined }
     | { kind: "delete"; index?: number | undefined; sessionId?: string | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined; confirm: boolean };
 };

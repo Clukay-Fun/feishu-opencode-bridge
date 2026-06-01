@@ -26,6 +26,7 @@ export type RoutedText =
       | { kind: "sessions" }
       | { kind: "sessions-all"; query?: string | undefined }
       | { kind: "sessions-select"; index?: number | undefined; query?: string | undefined }
+      | { kind: "session-preview"; index?: number | undefined; sessionId?: string | undefined }
       | { kind: "close"; index?: number | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined }
       | { kind: "delete"; index?: number | undefined; sessionId?: string | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined; confirm: boolean }
       | { kind: "allow"; policy: "once" | "always" }
@@ -134,11 +135,31 @@ export function routeIncomingText(text: string): RoutedText {
     return { kind: "command", command: { kind: "sessions-all", query: args.slice(1).join(" ").trim() } };
   }
 
+  if (rawCommand === "sessions" && args.length === 2 && args[0] === "preview" && /^\d+$/.test(args[1] ?? "")) {
+    return { kind: "command", command: { kind: "session-preview", index: Number(args[1]) } };
+  }
+
+  if (rawCommand === "sessions" && args.length === 2 && args[0] === "preview" && args[1]) {
+    return { kind: "command", command: { kind: "session-preview", sessionId: args[1] } };
+  }
+
   if (rawCommand === "sessions" && args.length === 1 && /^\d+$/.test(args[0] ?? "")) {
     return {
       kind: "command",
       command: { kind: "sessions-select", index: Number(args[0]) },
     };
+  }
+
+  if (rawCommand === "preview" && args.length === 0) {
+    return { kind: "command", command: { kind: "session-preview" } };
+  }
+
+  if (rawCommand === "preview" && args.length === 1 && /^\d+$/.test(args[0] ?? "")) {
+    return { kind: "command", command: { kind: "session-preview", index: Number(args[0]) } };
+  }
+
+  if (rawCommand === "preview" && args.length === 1 && args[0]) {
+    return { kind: "command", command: { kind: "session-preview", sessionId: args[0] } };
   }
 
   if (rawCommand === "switch" && args.length === 1 && /^\d+$/.test(args[0] ?? "")) {

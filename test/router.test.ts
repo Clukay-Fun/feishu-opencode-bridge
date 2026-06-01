@@ -61,6 +61,14 @@ describe("routeIncomingText", () => {
       kind: "command",
       command: { kind: "sessions-select", index: 3 },
     });
+    expect(routeIncomingText("/sessions preview 3")).toEqual({
+      kind: "command",
+      command: { kind: "session-preview", index: 3 },
+    });
+    expect(routeIncomingText("/sessions preview ses_abc")).toEqual({
+      kind: "command",
+      command: { kind: "session-preview", sessionId: "ses_abc" },
+    });
     expect(routeIncomingText("3 个文件要处理")).toEqual({
       kind: "message",
       text: "3 个文件要处理",
@@ -71,6 +79,14 @@ describe("routeIncomingText", () => {
     expect(routeIncomingText("/switch 2")).toEqual({
       kind: "command",
       command: { kind: "sessions-select", index: 2 },
+    });
+    expect(routeIncomingText("/preview 2")).toEqual({
+      kind: "command",
+      command: { kind: "session-preview", index: 2 },
+    });
+    expect(routeIncomingText("/preview ses_abc")).toEqual({
+      kind: "command",
+      command: { kind: "session-preview", sessionId: "ses_abc" },
     });
     expect(routeIncomingText("/switch 日常聊天")).toEqual({
       kind: "command",
