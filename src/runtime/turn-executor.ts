@@ -293,6 +293,8 @@ export class TurnExecutor {
         durationMs: Date.now() - (turn.startedAt ?? Date.now()),
         replyLength: reply.length,
         processMessageId: turn.processMessageId,
+        userTextPreview: createTextPreview(turn.text ?? ""),
+        replyTextPreview: createTextPreview(reply),
       });
     } catch (error) {
       const detail = normalizeTurnFailureDetail(error);

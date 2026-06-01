@@ -1102,7 +1102,7 @@ describe("scripts/activity-ticker", () => {
     expect(shouldDisplay(noise)).toBe(false);
   });
 
-  it("formatEvent (no color) renders turn.completed with duration + cost", async () => {
+  it("formatEvent (no color) renders turn.completed with duration + length, no per-turn cost", async () => {
     const { formatEvent, parseLogLine } = await import("../scripts/runtime/activity-ticker.mjs");
     const event = parseLogLine('22:58:48 [bridge/queue] turn.completed { turnId="t1" durationMs=2300 replyLength=13 chatId="oc_p2p_1" userId="ou_abcdefghij12" }');
     expect(event).not.toBeNull();
@@ -1111,7 +1111,8 @@ describe("scripts/activity-ticker", () => {
     expect(out).toContain("turn");
     expect(out).toContain("2.3s");
     expect(out).toContain("13字");
-    expect(out).toContain("¥0.0124");
+    // per-turn 不再显示成本（session cost 仍在 30s status 行汇总）
+    expect(out).not.toContain("¥");
     expect(out).not.toContain("[");
   });
 
@@ -1137,15 +1138,17 @@ describe("scripts/activity-ticker", () => {
     expect(parsed.cost).toEqual({ estimatedCostCny: "0.0124", totalTokens: "600" });
   });
 
-  it("ActivityTicker.status emits status line in TTY mode", async () => {
+  it("ActivityTicker.status emits uptime heartbeat line, no cost field", async () => {
     const { createActivityTicker } = await import("../scripts/runtime/activity-ticker.mjs");
     const out: string[] = [];
     const ticker = createActivityTicker({ color: false, json: false, emit: (l: string) => out.push(l) });
-    ticker.status({ uptimeSec: 125, sessionCostCny: 0.0345 });
+    ticker.status({ uptimeSec: 125 });
     expect(out).toHaveLength(1);
     expect(out[0]).toContain("uptime");
     expect(out[0]).toContain("2m 5s");
-    expect(out[0]).toContain("¥0.0345");
+    // 心跳行不再包含 session cost
+    expect(out[0]).not.toContain("¥");
+    expect(out[0]).not.toContain("session cost");
   });
 
   it("collectEnabledExtensions returns memory + legal defaults", async () => {
@@ -1153,5 +1156,42 @@ describe("scripts/activity-ticker", () => {
     // collectEnabledExtensions 是内部函数，但我们通过 createActivityTicker 行为间接验证 status panel 不抛错
     // 这里只做最小冒烟:模块可导入。
     expect(typeof startMod.runStart).toBe("function");
+  });
+});
+
+describe("scripts/activity-ticker conversation preview", () => {
+  it("includes userTextPreview/replyTextPreview in turn.completed render", async () => {
+    const { formatEvent, parseLogLine } = await import("../scripts/runtime/activity-ticker.mjs");
+    const event = parseLogLine('22:58:48 [bridge/queue] turn.completed { turnId="t1" durationMs=2300 replyLength=13 chatId="oc_p2p_1" userId="ou_abc12" userTextPreview="帮我看下这个劳动合同有什么问题" replyTextPreview="收到,我会从条款合规性、风险点和签约程序三个方面分析" }');
+    expect(event).not.toBeNull();
+    const out = formatEvent(event!, false);
+    expect(out).toContain("turn");
+    expect(out).toContain("Q「帮我看下这个劳动合同有什么问题」");
+    expect(out).toContain("A「收到,我会从条款合规性、风险点和签约程序三个方面分析」");
+    expect(out.split("\n")).toHaveLength(3); // 三行:metadata + Q + A
+  });
+
+  it("truncates long previews at 40 chars with ellipsis", async () => {
+    const { formatEvent, parseLogLine } = await import("../scripts/runtime/activity-ticker.mjs");
+    const long = "A".repeat(60);
+    const event = parseLogLine(`22:58:48 [bridge/queue] turn.completed { turnId="t1" durationMs=2300 userTextPreview="${long}" replyTextPreview="ok" }`);
+    const out = formatEvent(event!, false);
+    expect(out).toContain("A".repeat(39) + "…");
+    expect(out).toContain("A「ok」");
+  });
+
+  it("omits preview line entirely when both previews missing", async () => {
+    const { formatEvent, parseLogLine } = await import("../scripts/runtime/activity-ticker.mjs");
+    const event = parseLogLine('22:58:48 [bridge/queue] turn.completed { turnId="t1" durationMs=2300 replyLength=13 chatId="oc_p2p_1" userId="ou_abc12" }');
+    const out = formatEvent(event!, false);
+    expect(out.split("\n")).toHaveLength(1);
+  });
+
+  it("includes previews in JSON mode", async () => {
+    const { formatEventJson, parseLogLine } = await import("../scripts/runtime/activity-ticker.mjs");
+    const event = parseLogLine('22:58:48 [bridge/queue] turn.completed { turnId="t1" durationMs=2300 userTextPreview="问题" replyTextPreview="答案" }');
+    const parsed = JSON.parse(formatEventJson(event!));
+    expect(parsed.userTextPreview).toBe("问题");
+    expect(parsed.replyTextPreview).toBe("答案");
   });
 });
