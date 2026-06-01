@@ -69,16 +69,62 @@
 - PR 页面出现红叉时不要合并；先查看失败步骤和日志，修复后重新推送同一 feature 分支。
 - 面向律所部署或 release 前，应以最近一次 `main` 或 `codex/dev` 的 CI 绿色结果作为可部署信号之一。
 
+## 自 Review 清单
+
+单人项目也要在 PR 提交前做 15 分钟自 review。重点看 diff，而不是只回到编辑器里看代码。
+
+- [ ] 重新通读 `git diff`，优先用 diff 视角找 typo、遗漏、误删和无关改动。
+- [ ] 确认测试覆盖了关键路径；不要求覆盖所有路径，但关键行为必须有信号。
+- [ ] 如果删了一段代码、命令、卡片、配置或文档入口，用 `rg` 搜一下是否还有引用。
+- [ ] 检查 commit message 或 PR 标题描述的 what 是否和 diff 一致；不要写 X，实际提交 X + Y。
+- [ ] 判断 `CHANGELOG`、README、docs、架构基线、卡片规范或命令手册是否需要同步更新。
+- [ ] 对照 slice plan 检查范围是否一致，是否有“顺手”超出或未声明的范围缩减。
+- [ ] 重新跑 `npm run typecheck` 和相关测试；不要用“上次跑过了”代替本次验证。
+
+## 文档生命周期
+
+文档也有生命周期。不要让已完成 slice、过期设计和当前有效规范长期混在同一个目录里。
+
+- `docs/architecture-baseline.md`：实时维护的架构契约，是项目当前“宪法”。
+- `docs/adr/`：永久决策记录，只增不删。ADR 过时时不要直接删除；新增 ADR 并在旧 ADR 顶部标记 `Superseded by ADR xxxx`。
+- `docs/backlog/active/`：正在做、下个 sprint 准备做、或仍需执行的 slice plan。
+- `docs/backlog/completed/`：已完成的 slice plan。完成后移动到这里，保留验收和复盘价值。
+- `docs/backlog/audit-reports/`：审查报告、差距分析、收口决策矩阵。
+- `docs/archive/`：完全过时、几乎不再读取但仍有历史价值的材料。
+- `docs/modules/`：模块说明，必须随代码和用户行为变化持续维护。
+
+移动规则：
+
+- slice 完成后，相关 plan 移到 `docs/backlog/completed/`，不要继续堆在 active backlog 里。
+- 模块整体废弃后，相关模块文档移到 `docs/archive/`，并在仍被引用的位置留下新入口。
+- audit 报告放入 `docs/backlog/audit-reports/`，不要和待执行 slice plan 混放。
+- ADR 不删除；被新决策推翻时，用新 ADR 记录，并在旧 ADR 顶部标记 superseded。
+
+过期信号：
+
+- 文档提到的源码路径、命令、配置字段或卡片入口已经不存在。
+- 文档里的决策被新 ADR、架构基线或当前实现推翻。
+- 文档超过 6 个月没人引用，且不属于 ADR、架构基线、模块说明或历史归档。
+- 文档描述的是一次性执行计划，但对应 issue / PR 已完成。
+
 ## Release 流程
 
 - release 前先跑：`npm run lint`、`npm run typecheck`、`npm test`。
 - 如果改了 dependency boundary、formatter export、docs seam，再补跑：`npm run lint:deps`、`npm run check:formatter-exports`、`npm run check:docs-diff`。
+- release 前必须更新 `CHANGELOG.md`，把 `Unreleased` 中已发布内容移动到对应版本，并填写日期。
 - 先构建产物：`npm run build`。
 - 生成 portable 包：`npm run release:portable`。脚本输出到 `release/`，包名形如 `feishu-opencode-bridge-<platform>-<arch>.*`。
 - 发布 artifact 前确认包内包含 `dist/`、`scripts/runtime/`、启动器、配置样例和 README，不包含 `src/`。
 - 发布说明应覆盖：版本号、主要变化、兼容性/迁移说明、验证命令、已知风险、回滚方式。
 - portable 更新链路以 `scripts/runtime/update.mjs` 为准；下载、切换、回滚都必须显式触发，不覆盖用户数据目录。
 - 如果重新引入或升级原生依赖，按 `docs/deploy.md` 的目标环境要求，在 Linux x64 上重新验证 `npm ci`、`npm run build`、`npm test`。
+
+版本号规则按简化 SemVer 执行：
+
+- `0.X.Y -> 0.X.(Y+1)`：bug fix、文档修正或不改变行为的小修。
+- `0.X.Y -> 0.(X+1).0`：新增功能、较大内部改造或可能存在轻微 breaking 的开发版。
+- `0.X.Y -> 1.0.0`：正式稳定发布或需要向外承诺兼容性边界。
+- `1.0.0` 之后遵循 `MAJOR.MINOR.PATCH`，breaking change 必须升 MAJOR。
 
 ## 飞书、Lark 与知识库操作
 

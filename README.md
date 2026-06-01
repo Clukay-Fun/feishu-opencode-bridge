@@ -92,10 +92,12 @@ npm run dev
 | :-- | :-- |
 | [功能说明](docs/features.md) | 用户能力、模块边界和典型使用场景 |
 | [命令手册](docs/commands.md) | 飞书命令、本地 CLI 和常见操作 |
+| [Changelog](CHANGELOG.md) | 版本发布前维护的用户可读变更记录 |
 | [文档索引](docs/README.md) | 当前活跃文档入口 |
 | [架构基线](docs/architecture-baseline.md) | framework freeze 后的核心边界和 reviewer 规则 |
 | [配置样例](config.example.json) | 用户配置模板 |
 | [部署说明](docs/deploy.md) | 本地、服务器、Caddy、健康检查和验收步骤 |
+| [Backlog 文档生命周期](docs/backlog/README.md) | active / completed / audit-reports 的放置规则和归档信号 |
 | [飞书卡片规范](docs/cards/spec.md) | 卡片 active / retired 状态和准入规则 |
 | [可观测性事件规范](docs/observability/event-schema.md) | runtime、transport、module 事件命名和字段 |
 | [新功能自检清单](docs/guidelines/new-feature-checklist.md) | 新功能 PR 的架构、测试、文档检查 |

@@ -92,10 +92,12 @@ See [Commands](docs/commands.md) for the full command guide.
 | :-- | :-- |
 | [Features](docs/features.md) | User capabilities, module boundaries, and typical scenarios |
 | [Commands](docs/commands.md) | Feishu commands, local CLI, and common operations |
+| [Changelog](CHANGELOG.md) | User-readable release notes maintained before each release |
 | [Docs Index](docs/README.md) | Active documentation entry points |
 | [Architecture Baseline](docs/architecture-baseline.md) | Core boundaries and reviewer rules after framework freeze |
 | [Config Example](config.example.json) | User configuration template |
 | [Deployment](docs/deploy.md) | Local/server deployment, Caddy, health checks, and acceptance |
+| [Backlog Document Lifecycle](docs/backlog/README.md) | Placement rules and archive signals for active / completed / audit-reports |
 | [Feishu Card Spec](docs/cards/spec.md) | Active / retired card status and card admission rules |
 | [Observability Event Schema](docs/observability/event-schema.md) | Runtime, transport, and module event names and fields |
 | [New Feature Checklist](docs/guidelines/new-feature-checklist.md) | Architecture, test, and documentation checks for feature PRs |

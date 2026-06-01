@@ -21,7 +21,10 @@ async function main(): Promise<void> {
   const { config, warnings: configWarnings } = await loadConfigWithWarnings({ extensionMetas: externalExtensions.metas });
   const outbound = new FeishuApiClient(config.feishu.appId, config.feishu.appSecret);
   await runStartupPreflight(config, outbound);
-  const logger = await createLogger(config.logging.dir, config.logging);
+  const logger = await createLogger(config.logging.dir, {
+    ...config.logging,
+    enableConsole: process.env.BRIDGE_CONSOLE_LOG === "0" ? false : config.logging.enableConsole,
+  });
   for (const warning of configWarnings) {
     logger.log("config/loader", warning.message, {
       code: warning.code,
