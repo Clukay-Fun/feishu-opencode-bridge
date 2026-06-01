@@ -33,7 +33,7 @@
     "dev:once": "tsx src/index.ts",
     "dev:bridge": "tsx watch src/index.ts",
     "dev:stack": ".\\start-local-stack.cmd",
-    "start": "node dist/src/index.js",
+    "start": "node scripts/runtime/start.mjs",
     "start:stack": "node scripts/runtime/start.mjs",
     "release:portable": "node scripts/release/build-portable.mjs"
   },
