@@ -86,6 +86,25 @@ export type SessionTransitionCardView = {
   footer: string;
 };
 
+type SessionReviewCardView = {
+  meta: string;
+  recentMessages: string[];
+};
+
+export type SessionPreviewCardView = {
+  title: string;
+  state: string;
+  ownership: string;
+  shortId: string;
+  review?: SessionReviewCardView | undefined;
+  actions?: Array<{
+    label: string;
+    command: string;
+    type: "primary" | "default" | "danger";
+  }>;
+  footer: string;
+};
+
 export type ModelListCardView = {
   currentModelLabel: string;
   providers: Array<{
@@ -220,7 +239,40 @@ export function buildSessionTransitionCardPayload(view: SessionTransitionCardVie
   });
 }
 
-function buildSessionReviewBlock(review: NonNullable<SessionTransitionCardView["review"]>): Record<string, unknown> {
+/** 构建只读会话预览卡，不改变当前窗口 active session。 */
+export function buildSessionPreviewCardPayload(view: SessionPreviewCardView): FeishuPostPayload {
+  const bodyElements: Array<Record<string, unknown>> = [
+    columnSet([
+      column([
+        markdown([
+          `**${escapeText(view.title)}**`,
+          `\`${escapeText(view.shortId)}\``,
+          `状态：${escapeText(view.state)}`,
+          `所属：${escapeText(view.ownership)}`,
+        ].join("\n"), { icon: { token: "preview-open_outlined", color: "blue" } }),
+      ], { bg: "wathet-50", weight: 1 }),
+    ]),
+  ];
+  if (view.review) {
+    bodyElements.push(buildSessionReviewBlock(view.review));
+  }
+  bodyElements.push(buildDivider());
+  if (view.actions && view.actions.length > 0) {
+    bodyElements.push(buildRuntimeActionBlock(view.actions.map((action) => (
+      runtimeCommandButton(action.label, action.command, action.type, "send-message")
+    ))));
+  }
+  bodyElements.push(buildFooterTipBlock(view.footer, "info-hollow_filled", "blue", "notation"));
+
+  return buildInteractivePayload({
+    title: "会话预览",
+    template: "wathet",
+    iconToken: "preview-open_outlined",
+    bodyElements,
+  });
+}
+
+function buildSessionReviewBlock(review: SessionReviewCardView): Record<string, unknown> {
   const lines = [
     `**会话回顾**\n${escapeText(review.meta)}`,
     ...review.recentMessages.map((line, index) => `最近 ${index + 1}：${escapeText(line)}`),
@@ -601,9 +653,15 @@ function mapStatusChipBackground(status: string): string {
 
 function buildSessionListItemBlock(item: SessionListCardView["items"][number]): Record<string, unknown> {
   const meta = item.current ? "当前" : item.archived ? "已归档" : escapeText(item.meta ?? "");
-  const rightElements = item.current || item.archived
+  const previewButton = buildCompactRuntimeButton(runtimeCommandButton("预览", `/preview ${item.index}`, "default", "send-message"));
+  const rightElements = item.archived
     ? [{ ...markdown(meta), text_align: "right" }]
-    : [buildCompactRuntimeButton(runtimeCommandButton("切换", `/switch ${item.index}`, "default", "send-message"))];
+    : item.current
+      ? [previewButton, { ...markdown(meta), text_align: "right" }]
+      : [
+        previewButton,
+        buildCompactRuntimeButton(runtimeCommandButton("切换", `/switch ${item.index}`, "default", "send-message")),
+      ];
   return columnSet([
     column([
       columnSet([
@@ -633,6 +691,7 @@ function buildSessionListItemBlock(item: SessionListCardView["items"][number]): 
 
 function formatSessionListTitle(item: SessionListCardView["items"][number]): string {
   const title = escapeText(item.title);
+  const meta = item.meta && !item.current && !item.archived ? `\n状态：${escapeText(item.meta)}` : "";
   const shortId = item.shortId ? `\n\`${escapeText(item.shortId)}\`` : "";
   if (item.archived) {
     return `~~${title}~~${shortId}`;
@@ -640,7 +699,7 @@ function formatSessionListTitle(item: SessionListCardView["items"][number]): str
   if (item.current) {
     return `**${title}**${shortId}`;
   }
-  return `${title}${shortId}`;
+  return `${title}${meta}${shortId}`;
 }
 
 function normalizeSessionListFooter(footer: string): string {

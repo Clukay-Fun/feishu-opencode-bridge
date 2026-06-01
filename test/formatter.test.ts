@@ -316,8 +316,10 @@ describe("buildPostPayload", () => {
     expect(content.header.title.content).toBe("会话列表");
     expect(content.body.elements[0].columns[0].background_style).toBe("wathet-100");
     expect(content.body.elements[0].columns[0].elements[0].columns[1].elements[0].content).toBe("**开一个新闻获取的话题**");
-    expect(content.body.elements[1].columns[0].elements[0].columns[2].elements[0].text.content).toBe("切换");
-    expect(content.body.elements[1].columns[0].elements[0].columns[2].elements[0].value.command).toBe("/switch 2");
+    expect(content.body.elements[1].columns[0].elements[0].columns[2].elements[0].text.content).toBe("预览");
+    expect(content.body.elements[1].columns[0].elements[0].columns[2].elements[0].value.command).toBe("/preview 2");
+    expect(content.body.elements[1].columns[0].elements[0].columns[2].elements[1].text.content).toBe("切换");
+    expect(content.body.elements[1].columns[0].elements[0].columns[2].elements[1].value.command).toBe("/switch 2");
     expect(content.body.elements[2].columns[0].background_style).toBe("grey-50");
     expect(content.body.elements[2].columns[0].elements[0].columns[1].elements[0].content).toBe("~~代码审查~~");
     expect(content.body.elements[2].columns[0].elements[0].columns[2].elements[0].content).toBe("已归档");

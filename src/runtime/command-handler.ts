@@ -10,6 +10,7 @@ import {
   buildCostCommandCardPayload,
   buildModelListCardPayload,
   buildSessionListCardPayload,
+  buildSessionPreviewCardPayload,
   buildSessionTransitionCardPayload,
   buildStatusCommandCardPayload,
 } from "../feishu/runtime-cards.js";
@@ -56,6 +57,11 @@ type CommandMessage = Pick<IncomingChatMessage, "chatId" | "chatType" | "message
 type CommandRouted = Extract<RoutedText, { kind: "command" }>;
 type PermissionResolution = "once" | "always" | "deny" | "timeout" | "upstream-expired";
 type SessionSelectionOption = PendingSessionSelectionInteraction["options"][number];
+type SessionOwnership = {
+  conversationKey: string;
+  active: boolean;
+  label: string;
+};
 
 export type BridgeAppContext = {
   config: {
@@ -126,6 +132,7 @@ export type BridgeAppContext = {
   setPendingInteraction(conversationKey: string, interaction: PendingInteraction): void;
   clearPendingInteraction(conversationKey: string, keepNonExpiring: boolean): void;
   listOpenCodeSessionsById(): Promise<Map<string, OpenCodeSession>>;
+  getSessionOwnership(sessionId: string): SessionOwnership[];
   saveSessionWindow(conversationKey: string, chatType: string | undefined, window: BridgeWindowRecord): Promise<void>;
   getSessionMessageCount(sessionId: string): Promise<number>;
   ensureSession(source: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey">): Promise<string>;
@@ -159,6 +166,7 @@ const BRIDGE_OWNED_COMMAND_KINDS = new Set<Extract<RoutedText, { kind: "command"
   "sessions",
   "sessions-all",
   "sessions-select",
+  "session-preview",
   "close",
   "delete",
   "allow",
@@ -497,13 +505,21 @@ export class CommandHandler {
       }
       const options = sessions.map((session, index) => {
         const inWindow = visibleIds.has(session.id);
+        const ownership = this.context.getSessionOwnership(session.id);
+        const ownershipState = resolveSessionOwnershipState({
+          current: session.id === currentSession?.sessionId,
+          inWindow,
+          ownershipCount: ownership.length,
+        });
+        const title = resolveDisplayLabel(session, session.title ?? session.slug ?? session.id, session.id);
         return {
           index: index + 1,
           sessionId: session.id,
-          title: resolveDisplayLabel(session, session.title ?? session.slug ?? session.id, session.id),
-          displayTitle: inWindow ? resolveDisplayLabel(session, session.title ?? session.slug ?? session.id, session.id) : formatUnboundSessionDisplayTitle(index + 1, session.id),
+          title,
+          displayTitle: ownershipState === "unowned" ? formatUnownedSessionDisplayTitle(index + 1, session.id) : title,
           current: session.id === currentSession?.sessionId,
           inWindow,
+          ownershipState,
         };
       });
       this.context.setPendingInteraction(message.conversationKey, { kind: "session-select", options, expiresAt: Date.now() + SESSION_SELECTION_TTL_MS });
@@ -511,10 +527,15 @@ export class CommandHandler {
       for (const [pageIndex, page] of pages.entries()) {
         const footer = `${query ? `关键词：${command.query?.trim()} · ` : ""}全部 OpenCode 会话 · 第 ${pageIndex + 1}/${pages.length} 页 · 发送 \`/switch <编号>\` 绑定并切换 · \`/delete <编号>\` 或 \`/delete <sessionId>\` 彻底删除 · 3 分钟内有效`;
         await this.context.sendPayload(message.chatId, buildSessionListCardPayload({
-          items: page.map((option) => ({ index: option.index, title: option.displayTitle ?? option.title, current: option.current, meta: option.current ? "当前" : option.inWindow ? "窗口中" : "未绑定", shortId: shortSessionId(option.sessionId) })),
+          items: page.map((option) => ({ index: option.index, title: option.displayTitle ?? option.title, current: option.current, meta: resolveSessionOwnershipLabel(option.ownershipState), shortId: shortSessionId(option.sessionId) })),
           footer,
         }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "全部会话", len: 4 }, { replyToMessageId: message.messageId });
       }
+      return;
+    }
+
+    if (command.kind === "session-preview") {
+      await this.previewSession(message, command);
       return;
     }
 
@@ -907,6 +928,108 @@ export class CommandHandler {
     await this.switchToSession(message, window, matches[0] as SessionSelectionOption, { clearPending: false });
   }
 
+  private async previewSession(
+    message: CommandMessage,
+    command: Extract<CommandRouted["command"], { kind: "session-preview" }>,
+  ): Promise<void> {
+    const pending = this.context.pendingInteractions.get(message.conversationKey);
+    let match: SessionSelectionOption | null = null;
+
+    if (command.index !== undefined) {
+      if (!pending || pending.kind !== "session-select" || pending.expiresAt <= Date.now()) {
+        this.context.clearPendingInteraction(message.conversationKey, false);
+        await this.context.sendMarkdown(message.chatId, "会话列表已过期，请先重新执行 `/sessions` 或 `/sessions all`。", message.messageId);
+        return;
+      }
+      match = pending.options.find((option) => option.index === command.index) ?? null;
+      if (!match) {
+        await this.context.sendMarkdown(message.chatId, "无效的会话编号，请重新执行 `/sessions` 或 `/sessions all` 查看列表。", message.messageId);
+        return;
+      }
+    } else if (command.sessionId) {
+      match = await this.resolvePreviewSessionById(command.sessionId);
+    } else {
+      await this.context.sendMarkdown(message.chatId, "请发送 `/preview <编号>` 或 `/preview <sessionId>`。编号来自最近一次 `/sessions` 或 `/sessions all`。", message.messageId);
+      return;
+    }
+
+    if (!match) {
+      await this.context.sendMarkdown(message.chatId, "未找到匹配的 OpenCode 会话，请发送 `/sessions all <关键词>` 搜索。", message.messageId);
+      return;
+    }
+
+    const openCodeSessions = await this.context.listOpenCodeSessionsById();
+    const sessionMeta = openCodeSessions.get(match.sessionId);
+    if (!sessionMeta) {
+      await this.context.sendMarkdown(message.chatId, "目标 OpenCode 会话已不存在，请重新执行 `/sessions all`。", message.messageId);
+      return;
+    }
+
+    const window = this.context.getSessionWindow(message.conversationKey, message.chatType);
+    const currentSession = getActiveSession(window);
+    const windowBinding = window.sessions.find((session) => session.sessionId === match?.sessionId) ?? null;
+    const ownership = this.context.getSessionOwnership(match.sessionId);
+    const ownershipState = resolveSessionOwnershipState({
+      current: match.sessionId === currentSession?.sessionId,
+      inWindow: Boolean(windowBinding),
+      ownershipCount: ownership.length,
+    });
+    const messageCount = await this.context.getSessionMessageCount(match.sessionId);
+    const review = await this.buildSessionReview(match.sessionId, windowBinding, sessionMeta, messageCount);
+    const title = resolveDisplayLabel(sessionMeta, match.title, match.sessionId);
+    const actions = command.index !== undefined
+      ? [
+        { label: "切换", command: `/switch ${command.index}`, type: "primary" as const },
+        { label: "彻底删除", command: `/delete ${command.index}`, type: "danger" as const },
+      ]
+      : [
+        { label: "彻底删除", command: `/delete ${match.sessionId}`, type: "danger" as const },
+      ];
+
+    await this.context.sendPayload(message.chatId, buildSessionPreviewCardPayload({
+      title,
+      state: resolveSessionOwnershipLabel(ownershipState),
+      ownership: formatOwnershipSummary(ownership),
+      shortId: shortSessionId(match.sessionId),
+      review,
+      actions,
+      footer: "只读预览，不会切换当前窗口会话。需要继续使用时再点切换或发送 `/switch <编号>`。",
+    }), { event: "final message sent", transcriptType: "outbound-final", textPreview: "会话预览", len: 4 }, { replyToMessageId: message.messageId });
+  }
+
+  private async resolvePreviewSessionById(rawSessionId: string): Promise<SessionSelectionOption | null> {
+    const sessionId = rawSessionId.trim();
+    if (!sessionId) {
+      return null;
+    }
+    const openCodeSessions = await this.context.listOpenCodeSessionsById();
+    const direct = openCodeSessions.get(sessionId);
+    if (direct) {
+      return {
+        index: 1,
+        sessionId,
+        title: resolveDisplayLabel(direct, direct.title ?? direct.slug ?? direct.id, direct.id),
+      };
+    }
+    const normalized = normalizeSessionLookupText(sessionId);
+    const matches = [...openCodeSessions.values()].filter((session) => (
+      normalizeSessionLookupText(session.id) === normalized
+      || shortSessionId(session.id).toLowerCase() === normalized
+    ));
+    if (matches.length !== 1) {
+      return null;
+    }
+    const session = matches[0];
+    if (!session) {
+      return null;
+    }
+    return {
+      index: 1,
+      sessionId: session.id,
+      title: resolveDisplayLabel(session, session.title ?? session.slug ?? session.id, session.id),
+    };
+  }
+
   private async resolveDeleteSessionById(
     message: CommandMessage,
     rawSessionId: string,
@@ -1099,6 +1222,8 @@ function buildCommandHelpText(config: BridgeAppContext["config"]): string {
     "- `/sessions`：查看当前窗口绑定的 OpenCode 会话。",
     "- `/sessions all`：查看全部 OpenCode 会话。",
     "- `/sessions all <关键词>` 或 `/sessions find <关键词>`：按关键词搜索全部 OpenCode 会话。",
+    "- `/preview <编号>` 或 `/sessions preview <编号>`：预览最近一次会话列表中的会话，不切换。",
+    "- `/preview <sessionId>`：按 sessionId 预览 OpenCode 会话。",
     "- `/sessions <编号>`：选择最近一次会话列表里的编号。",
     "- `/switch <编号>`：切换或绑定并切换最近一次会话列表里的编号。",
     "- `/switch <关键词>`：按标题或摘要匹配并切换当前窗口绑定会话。",
@@ -1199,9 +1324,47 @@ function normalizeSessionLookupText(value: string | undefined): string {
   return (value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function formatUnboundSessionDisplayTitle(index: number, sessionId: string): string {
+function resolveSessionOwnershipState(input: {
+  current: boolean;
+  inWindow: boolean;
+  ownershipCount: number;
+}): NonNullable<SessionSelectionOption["ownershipState"]> {
+  if (input.current) {
+    return "current";
+  }
+  if (input.inWindow) {
+    return "in-window";
+  }
+  if (input.ownershipCount > 0) {
+    return "other-window";
+  }
+  return "unowned";
+}
+
+function resolveSessionOwnershipLabel(state: SessionSelectionOption["ownershipState"]): string {
+  if (state === "current") {
+    return "当前";
+  }
+  if (state === "in-window") {
+    return "窗口中";
+  }
+  if (state === "other-window") {
+    return "其他窗口";
+  }
+  return "未归属";
+}
+
+function formatOwnershipSummary(ownership: SessionOwnership[]): string {
+  if (ownership.length === 0) {
+    return "未绑定到任何 Bridge 窗口";
+  }
+  const activeCount = ownership.filter((owner) => owner.active).length;
+  return `${ownership.length} 个 Bridge 窗口${activeCount > 0 ? `，其中 ${activeCount} 个为当前会话` : ""}`;
+}
+
+function formatUnownedSessionDisplayTitle(index: number, sessionId: string): string {
   const suffix = sessionId.length > 8 ? sessionId.slice(-8) : sessionId;
-  return `未绑定会话 #${index} · ${suffix}`;
+  return `未归属会话 #${index} · ${suffix}`;
 }
 
 function shortSessionId(sessionId: string): string {

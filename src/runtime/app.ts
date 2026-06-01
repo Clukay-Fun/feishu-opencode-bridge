@@ -652,6 +652,7 @@ export class BridgeApp {
         setPendingInteraction: (conversationKey, interaction) => this.setPendingInteraction(conversationKey, interaction),
         clearPendingInteraction: (conversationKey, keepNonExpiring) => this.clearPendingInteraction(conversationKey, keepNonExpiring),
         listOpenCodeSessionsById: async () => await this.listOpenCodeSessionsById(),
+        getSessionOwnership: (sessionId) => this.getSessionOwnership(sessionId),
         saveSessionWindow: async (conversationKey, chatType, window) => await this.saveSessionWindow(conversationKey, chatType, window),
         getSessionMessageCount: async (sessionId) => await this.getSessionMessageCount(sessionId),
         isSessionBusy: (conversationKey, sessionId) => this.isSessionBusy(conversationKey, sessionId),
@@ -1193,6 +1194,23 @@ export class BridgeApp {
       delete this.sessionMap[legacyKey];
     }
     await this.mappings.save(this.sessionMap);
+  }
+
+  /** 只读扫描 Bridge Window 绑定关系，用于展示 OpenCode session 归属。 */
+  private getSessionOwnership(sessionId: string): Array<{ conversationKey: string; active: boolean; label: string }> {
+    const owners: Array<{ conversationKey: string; active: boolean; label: string }> = [];
+    for (const [conversationKey, window] of Object.entries(this.sessionMap)) {
+      const binding = window.sessions.find((session) => session.sessionId === sessionId);
+      if (!binding) {
+        continue;
+      }
+      owners.push({
+        conversationKey,
+        active: window.activeSessionId === sessionId,
+        label: binding.label,
+      });
+    }
+    return owners;
   }
 
   /**
