@@ -276,21 +276,25 @@ export function createActivityTicker(options = {}) {
       emit(out);
     },
 
-    /** 显示一行心跳:uptime。让长时间无对话时也能确认 bridge 还活着。 */
+    /**
+     * 生成心跳字符串(uptime),不自己 emit——交给调用方决定怎么显示。
+     * - sticky 模式:调用方用 \r\x1b[K 原地刷新
+     * - JSON 模式:调用方 emit JSON 行
+     * - 普通追加模式:调用方加 \n 后 emit
+     */
     status({ uptimeSec }) {
       const co = color ? c : noColor;
       const ts = co.grey(new Date().toTimeString().slice(0, 8));
       if (json) {
-        emit(JSON.stringify({
+        return JSON.stringify({
           ts: new Date().toISOString().slice(11, 19),
           scope: "ticker",
           name: "status",
           uptimeSec,
-        }));
-        return;
+        });
       }
       const uptime = formatUptime(uptimeSec);
-      emit(`${ts}  ${co.dim("·")}  ${co.dim("status")}   uptime ${co.bold(uptime)}`);
+      return `${ts}  ${co.dim("·")}  ${co.dim("status")}   uptime ${co.bold(uptime)}`;
     },
   };
 }
@@ -377,6 +381,58 @@ export function createLogTailer({ filePath, intervalMs = 500, onLine, startFromE
     stop() {
       stopped = true;
       if (timer) clearTimeout(timer);
+    },
+  };
+}
+
+/**
+ * Sticky writer:把一行"心跳状态"钉在终端底部,事件在它上面滚,它原地刷新。
+ * 用 ANSI \r\x1b[K 清当前行后重写,无需 scroll region 这种复杂招数。
+ *
+ * 调用流:
+ *   - emit(line):事件来了 → 清 sticky → 输出 line+\n → 重画 sticky
+ *   - setStatus(text):心跳更新 → 清 sticky → 存 text → 重画 sticky
+ *   - cleanup():进程退出 → 清 sticky + 输出 \n,留干净 prompt
+ *
+ * 仅适用于 TTY。非 TTY(管道 / 重定向)请用普通 emit,不要走 sticky。
+ *
+ * @param {object} options
+ * @param {NodeJS.WritableStream} options.stdout - 默认 process.stdout
+ * @returns {{emit(line: string): void, setStatus(text: string): void, cleanup(): void}}
+ */
+export function createStickyWriter(options = {}) {
+  const stdout = options.stdout ?? process.stdout;
+  let stickyText = "";
+  let stickyVisible = false;
+
+  function clearSticky() {
+    if (stickyVisible) {
+      stdout.write("\r\u001b[2K");
+      stickyVisible = false;
+    }
+  }
+
+  function drawSticky() {
+    if (stickyText) {
+      stdout.write(stickyText);
+      stickyVisible = true;
+    }
+  }
+
+  return {
+    emit(line) {
+      clearSticky();
+      stdout.write(line + "\n");
+      drawSticky();
+    },
+    setStatus(text) {
+      clearSticky();
+      stickyText = text;
+      drawSticky();
+    },
+    cleanup() {
+      clearSticky();
+      stdout.write("\n");
     },
   };
 }
