@@ -390,7 +390,11 @@ export class CommandHandler {
     }
 
     if (command.kind === "help") {
-      await this.context.sendMarkdown(message.chatId, buildCommandHelpText(this.context.config), message.messageId);
+      await this.context.sendMarkdown(
+        message.chatId,
+        command.scope === "sessions" ? buildSessionHelpText() : buildCommandHelpText(this.context.config),
+        message.messageId,
+      );
       return;
     }
 
@@ -1199,6 +1203,23 @@ function buildDeleteConfirmMessage(input: { target: string; confirmCommand: stri
     input.target,
     "",
     `确认请发送 \`${input.confirmCommand}\`。`,
+  ].join("\n");
+}
+
+function buildSessionHelpText(): string {
+  return [
+    "### 会话操作速查",
+    "",
+    "不用背完整命令，优先点会话列表卡片上的按钮。",
+    "",
+    "- `/sessions`：看当前窗口绑定的 OpenCode 会话。",
+    "- `/sessions all`：看全部 OpenCode 会话，包含其他窗口和未归属会话。",
+    "- `/preview <编号>`：先看这个会话最近聊了什么，不切换。",
+    "- `/switch <编号>`：切换；如果来自 `/sessions all`，会先绑定到当前窗口。",
+    "- `/close <编号>`：只从当前窗口移除绑定，不删除真实 OpenCode 会话。",
+    "- `/delete <编号>`：彻底删除 OpenCode 会话，会先要求确认。",
+    "",
+    "建议流程：先 `/sessions all`，点“预览”，确认内容后再点“切换”或“删除”。",
   ].join("\n");
 }
 

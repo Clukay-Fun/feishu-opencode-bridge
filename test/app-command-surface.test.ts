@@ -79,6 +79,22 @@ describe("BridgeApp command surface", () => {
     expect(helpText).not.toContain("/完成上传");
   });
 
+  it("returns focused session help", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+
+    await callHandleCommand(app, {
+      kind: "command",
+      command: { kind: "help", scope: "sessions" },
+    });
+
+    const helpText = extractMarkdown(getReplyPayloads(outbound)[0]);
+    expect(helpText).toContain("会话操作速查");
+    expect(helpText).toContain("/sessions all");
+    expect(helpText).toContain("/preview <编号>");
+    expect(helpText).toContain("先 `/sessions all`");
+  });
+
   it("shows enabled extension commands in help", async () => {
     const outbound = createOutbound();
     const config = baseConfig();
@@ -1962,7 +1978,7 @@ type AppCommandSurfaceTestRoute = {
     | { kind: "new"; title?: string | undefined }
     | { kind: "rename"; title: string }
     | { kind: "abort" }
-    | { kind: "help" }
+    | { kind: "help"; scope?: "sessions" | undefined }
     | { kind: "models"; provider?: string | undefined }
     | { kind: "model-use"; model: string }
     | { kind: "model-reset" }

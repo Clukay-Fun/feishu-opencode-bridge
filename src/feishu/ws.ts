@@ -137,6 +137,10 @@ export class FeishuWsClient {
       // We do not need it for runtime behavior, but registering a no-op
       // handler keeps the SDK from logging an avoidable warning.
       "im.chat.access_event.bot_p2p_chat_entered_v1": async () => {},
+      // Message read receipts (someone marked the message as read).
+      // Bridge has no business logic depending on read state; no-op silences
+      // the SDK warning that otherwise floods logs on every chat read.
+      "im.message.message_read_v1": async () => {},
     });
 
     this.client = new lark.WSClient({
