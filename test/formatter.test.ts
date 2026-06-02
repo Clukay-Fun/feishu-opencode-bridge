@@ -320,6 +320,8 @@ describe("buildPostPayload", () => {
     expect(content.body.elements[1].columns[0].elements[0].columns[2].elements[0].value.command).toBe("/preview 2");
     expect(content.body.elements[1].columns[0].elements[0].columns[2].elements[1].text.content).toBe("切换");
     expect(content.body.elements[1].columns[0].elements[0].columns[2].elements[1].value.command).toBe("/switch 2");
+    expect(content.body.elements[1].columns[0].elements[0].columns[2].elements[2].text.content).toBe("删除");
+    expect(content.body.elements[1].columns[0].elements[0].columns[2].elements[2].value.command).toBe("/delete 2");
     expect(content.body.elements[2].columns[0].background_style).toBe("grey-50");
     expect(content.body.elements[2].columns[0].elements[0].columns[1].elements[0].content).toBe("~~代码审查~~");
     expect(content.body.elements[2].columns[0].elements[0].columns[2].elements[0].content).toBe("已归档");
@@ -334,6 +336,10 @@ describe("buildPostPayload", () => {
     const content = JSON.parse(payload.content) as any;
     expect(content.body.elements[0].columns[0].elements[0].content).toBe("暂无会话");
     expect(content.body.elements[2].columns[0].elements[0].text.content).toBe("新建会话");
+    expect(content.body.elements[2].columns[1].elements[0].text.content).toBe("全部会话");
+    expect(content.body.elements[2].columns[1].elements[0].value.command).toBe("/sessions all");
+    expect(content.body.elements[2].columns[2].elements[0].text.content).toBe("会话帮助");
+    expect(content.body.elements[2].columns[2].elements[0].value.command).toBe("/sessions help");
     expect(content.body.elements[3].columns[0].elements[0].content).toBe("创建第一个会话");
     expect(content.body.elements[3].columns[0].elements[0].text_size).toBe("notation");
   });

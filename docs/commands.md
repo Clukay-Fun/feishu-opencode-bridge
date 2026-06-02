@@ -13,6 +13,7 @@
 | `/cost` | 查看本地 token 与成本估算 |
 | `/sessions` | 查看当前窗口绑定的 OpenCode 会话 |
 | `/sessions all` | 查看全部 OpenCode 会话 |
+| `/sessions help` | 查看会话操作速查 |
 | `/preview <编号>` | 预览最近一次会话列表中的会话 |
 | `/preview <sessionId>` | 按 sessionId 预览 OpenCode 会话 |
 | `/switch <编号>` | 切换或绑定并切换会话 |

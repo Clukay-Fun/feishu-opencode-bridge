@@ -28,6 +28,14 @@ describe("routeIncomingText", () => {
       kind: "command",
       command: { kind: "help" },
     });
+    expect(routeIncomingText("/help sessions")).toEqual({
+      kind: "command",
+      command: { kind: "help", scope: "sessions" },
+    });
+    expect(routeIncomingText("/sessions help")).toEqual({
+      kind: "command",
+      command: { kind: "help", scope: "sessions" },
+    });
     expect(routeIncomingText("/commands")).toEqual({
       kind: "command",
       command: { kind: "help" },

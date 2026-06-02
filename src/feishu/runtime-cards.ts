@@ -198,6 +198,8 @@ export function buildSessionListCardPayload(view: SessionListCardView): FeishuPo
       buildDivider(),
       buildRuntimeActionBlock([
         runtimeCommandButton("新建会话", "/new", "primary", "send-message", "fill"),
+        runtimeCommandButton("全部会话", "/sessions all", "default", "send-message", "fill"),
+        runtimeCommandButton("会话帮助", "/sessions help", "default", "send-message", "fill"),
       ]),
       buildFooterTipBlock(normalizeSessionListFooter(view.footer), "efficiency_outlined", "grey", "notation"),
     ]
@@ -661,6 +663,7 @@ function buildSessionListItemBlock(item: SessionListCardView["items"][number]): 
       : [
         previewButton,
         buildCompactRuntimeButton(runtimeCommandButton("切换", `/switch ${item.index}`, "default", "send-message")),
+        buildCompactRuntimeButton(runtimeCommandButton("删除", `/delete ${item.index}`, "danger", "send-message")),
       ];
   return columnSet([
     column([
@@ -718,6 +721,8 @@ function normalizeSessionListFooter(footer: string): string {
 function buildSessionListActionBlock(view: SessionListCardView): Record<string, unknown> {
   const buttons = [
     runtimeCommandButton("新建会话", "/new", "primary", "send-message"),
+    runtimeCommandButton("全部会话", "/sessions all", "default", "send-message"),
+    runtimeCommandButton("会话帮助", "/sessions help", "default", "send-message"),
   ];
   if (view.items.some((item) => item.archived)) {
     buttons.push(runtimeCardActionButton("清理已归档", "clean-archived", "danger", "update-card", "default", {
