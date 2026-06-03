@@ -1,11 +1,53 @@
 {
   "name": "feishu-opencode-bridge",
   "version": "0.2.2",
+  "description": "Run OpenCode AI agents inside Feishu / Lark, with first-class support for legal-practice workflows (knowledge base, contract, labor cases).",
   "private": true,
   "type": "module",
+  "license": "Apache-2.0",
+  "author": "Clukay-Fun",
+  "homepage": "https://github.com/Clukay-Fun/feishu-opencode-bridge#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Clukay-Fun/feishu-opencode-bridge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Clukay-Fun/feishu-opencode-bridge/issues"
+  },
+  "keywords": [
+    "feishu",
+    "lark",
+    "opencode",
+    "agentic-cli",
+    "ai-agent",
+    "ai-runtime",
+    "bridge",
+    "chatbot",
+    "legal-ai",
+    "knowledge-base",
+    "rag",
+    "feishu-bot"
+  ],
   "engines": {
     "node": ">=20.0.0"
   },
+  "main": "dist/src/index.js",
+  "bin": {
+    "feishu-opencode-bridge": "./bin/bridge"
+  },
+  "files": [
+    "dist/src/",
+    "bin/",
+    "scripts/runtime/",
+    "scripts/release/build-portable.mjs",
+    "config.example.json",
+    "config.general.example.json",
+    "config.legal.example.json",
+    "README.md",
+    "README.en.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
