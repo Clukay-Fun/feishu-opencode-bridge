@@ -1,10 +1,10 @@
 # Feishu OpenCode Bridge
 
+[![CI](https://github.com/Clukay-Fun/feishu-opencode-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/Clukay-Fun/feishu-opencode-bridge/actions/workflows/ci.yml)
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6)](https://www.typescriptlang.org/)
 [![Feishu](https://img.shields.io/badge/Feishu-Bridge-0F6FFF)](https://open.feishu.cn/)
-[![测试](https://img.shields.io/badge/tests-passing-success)](#开发者入口)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 **中文** | [English](README.en.md)
 

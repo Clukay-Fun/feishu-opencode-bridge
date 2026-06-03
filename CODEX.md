@@ -81,6 +81,56 @@
 - [ ] 对照 slice plan 检查范围是否一致，是否有“顺手”超出或未声明的范围缩减。
 - [ ] 重新跑 `npm run typecheck` 和相关测试；不要用“上次跑过了”代替本次验证。
 
+## 外部审查交接流程
+
+当用户希望先交给其他 agent 做一审，再由 Codex 二审和修复时，使用两段式流程。
+
+一审 agent 只审查，不修改文件：
+
+- 先读 `AGENTS.md` 和 `CODEX.md`，再看 `git status`、`git diff --stat`、`git diff`。
+- 明确审查范围：仅 dirty diff、某个 issue/PR，或全项目常规审查。
+- Findings 必须按 `P1/P2/P3` 排序，并包含文件、行号、问题、影响、证据、建议修复和测试建议。
+- 不确定的问题放入 `Open Questions`；不要把风格建议伪装成 bug。
+- 不 stage、不 commit、不修复，只输出结构化审查报告。
+
+推荐报告结构：
+
+```md
+# Code Review Report
+
+## Scope
+- Branch / commit:
+- Compared against:
+- Reviewed areas:
+- Not reviewed:
+
+## Findings
+### P1 / P2 / P3: 标题
+- File:
+- Lines:
+- Problem:
+- Impact:
+- Evidence:
+- Suggested fix:
+- Test suggestion:
+
+## Open Questions
+
+## Validation
+- Commands run:
+- Results:
+- Known failures:
+
+## Residual Risks
+```
+
+Codex 接到一审报告后负责二审和落地：
+
+- 逐条复核 finding 是否成立，合并重复项，剔除误报。
+- 按优先级修复成立的问题，保持改动聚焦，不接管无关 dirty worktree。
+- 为修复补最窄有效测试，再跑相关检查；较大修复应补跑 `npm run typecheck`、`npm run lint`、`npm test`。
+- 最终回复说明采纳了哪些 finding、拒绝了哪些误报、实际验证命令和剩余风险。
+
 ## 文档生命周期
 
 文档也有生命周期。不要让已完成 slice、过期设计和当前有效规范长期混在同一个目录里。
@@ -145,9 +195,96 @@
 - runtime 和 transport 事件必须使用 `docs/observability/event-schema.md`，不要发明临时事件名。
 - 如果功能改变 architecture seam，合并前必须更新 `docs/architecture-baseline.md`。
 - 代码注释默认使用中文，除非注释内容是外部 API 原文、协议字段、错误码或必须保持英文的术语。
-- 为新增的重要文件添加文件头注释，沿用项目现有的 `职责 / 关注点` 模板。
-- 为非显而易见的代码路径添加简洁注释，尤其是兼容逻辑、fallback 行为、并发/定时器处理、外部 API 特殊行为和跨模块契约。
-- 注释应解释代码为什么存在、保护什么不变量、或规避什么历史问题；不要添加逐行复述代码的低价值注释。
+- 遵守下面的注释维护标准；新增代码文件、重要重构和测试文件都要同步维护头注释。
+
+## 注释维护标准
+
+注释是给后续维护者和 coding agent 的导航，不是给每一行代码配字幕。目标是让人快速知道文件负责什么、边界在哪里、哪些路径需要小心。
+
+文件头注释：
+
+- 所有仓库自有代码文件都应有文件头注释，包括 `src/`、`scripts/`、`test/`、根目录代码配置文件，以及声明文件。
+- 排除依赖、构建产物和缓存目录，例如 `node_modules`、`.opencode`、`dist`、`coverage`。
+- TypeScript、JavaScript、CJS、MJS 文件使用块注释模板：
+
+```ts
+/**
+ * 职责: 一句话说明这个文件负责什么。
+ * 关注点:
+ * - 说明主要输入、输出、边界或副作用。
+ * - 说明容易误用的约束、fallback 或跨模块契约。
+ */
+```
+
+- Python 文件使用模块 docstring；带 shebang 的脚本要把 docstring 放在 shebang 后、import 前：
+
+```python
+"""
+职责: 一句话说明这个脚本或模块负责什么。
+关注点:
+- 说明主要输入、输出、边界或副作用。
+- 说明容易误用的约束、fallback 或跨模块契约。
+"""
+```
+
+- 空包入口如 `__init__.py` 可以使用一行 docstring，但应放在文件最前面的有效语句位置。
+- 测试文件头注释保持轻量，说明覆盖对象和关注点即可，不要把测试用例逐条复述一遍。
+- 根目录配置脚本也要有头注释，例如 `.eslintrc.cjs`、`.dependency-cruiser.cjs`。
+
+函数和区域注释：
+
+- 复杂文件可以使用 `//#region <Name>` / `//#endregion` 分区，优先按生命周期、入口、解析、持久化、渲染、内部 helper 等职责分组。
+- 对导出的函数、类方法和关键内部 helper 添加一句短注释；简单 getter、纯类型定义和一眼可懂的小函数可以不写。
+- 以下代码路径必须优先注释：兼容逻辑、fallback 行为、重试/定时器/并发处理、外部 API 特殊行为、跨模块契约、状态迁移、数据脱敏、权限/安全边界。
+- 注释要解释“为什么存在、保护什么不变量、规避什么历史问题”，不要写“把 A 赋值给 B”这类逐行复述。
+- 注释风格要克制、稳定、可维护；避免口号化、修辞化或把实现细节写成文件职责。
+
+检查流程：
+
+1. 先扫描缺少文件头注释的自有代码文件：
+
+```bash
+node - <<'NODE'
+const { execFileSync } = require("child_process");
+const { readFileSync } = require("fs");
+
+const files = execFileSync("rg", [
+  "--files",
+  "-g", "*.ts",
+  "-g", "*.tsx",
+  "-g", "*.js",
+  "-g", "*.mjs",
+  "-g", "*.cjs",
+  "-g", "*.py",
+  "-g", "!node_modules",
+  "-g", "!.opencode",
+  "-g", "!dist",
+  "-g", "!coverage",
+], { encoding: "utf8" }).trim().split("\n").filter(Boolean).sort();
+
+for (const file of files) {
+  const text = readFileSync(file, "utf8");
+  const trimmed = text.replace(/^#!.*\n/, "").trimStart();
+  const hasHeader = trimmed.startsWith("/**")
+    || trimmed.startsWith("\"\"\"")
+    || trimmed.startsWith("'''");
+  if (!hasHeader) {
+    console.log(file);
+  }
+}
+NODE
+```
+
+2. 对扫描结果逐个判断是否属于仓库自有代码；不要给依赖缓存、生成产物或外部 vendored 文件补注释。
+3. 补注释后复跑扫描命令，确认没有遗漏。
+4. 跑格式检查，至少覆盖本次涉及的代码范围：
+
+```bash
+git diff --check -- src scripts test .dependency-cruiser.cjs .eslintrc.cjs
+```
+
+5. 如果注释整理移动了 import、shebang、docstring 或声明文件开头，再补跑相关最窄测试或 `npm run typecheck`，确认没有破坏语法和模块解析。
+6. 最后通读 `git diff`，确认本轮只改注释或注释位置；如果顺手改了逻辑，必须单独说明并补验证。
 
 ## 检查命令
 

@@ -1,0 +1,21 @@
+services:
+  bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:20-bookworm-slim}
+    image: feishu-opencode-bridge:local
+    container_name: feishu-opencode-bridge
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      BRIDGE_CONFIG_PATH: /app/config.json
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./vault:/app/vault

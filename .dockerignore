@@ -2,10 +2,16 @@ node_modules
 dist
 .git
 .github
+.DS_Store
 coverage
 logs
 data
 config.json
 docs
 test
+.runtime
+artifacts
+release
+turn-files
+vault
 *.log

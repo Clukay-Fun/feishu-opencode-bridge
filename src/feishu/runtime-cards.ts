@@ -26,7 +26,12 @@ export type TurnStatusCardView = {
   toolUpdates: ReadonlyArray<ToolUpdateView>;
   output: OutputView;
   costSummary?: string | undefined;
+  /** 完整 AI 推理文本(累积),折叠面板用。空字符串则不渲染该面板。 */
+  reasoningText?: string | undefined;
 };
+
+/** 思考过程面板最大字符数,超出截断加省略号——避免单卡片 payload 超限。 */
+const REASONING_MAX_CHARS = 3000;
 
 export type StatusCommandCardView = {
   currentSession: { sessionId: string; label: string } | null;
@@ -510,6 +515,12 @@ function buildTurnBodyElements(
 ): Array<Record<string, unknown>> {
   const elements: Array<Record<string, unknown>> = [];
 
+  // 思考过程折叠面板:运行中默认展开(看推理),完成后折叠(节省屏幕)
+  if (view.reasoningText && view.reasoningText.trim()) {
+    const expanded = state.kind !== "completed";
+    elements.push(buildReasoningPanel(view.reasoningText, expanded));
+  }
+
   if (state.kind !== "completed" && toolElements.length > 0) {
     elements.push(buildToolBlock(toolElements));
   }
@@ -518,6 +529,37 @@ function buildTurnBodyElements(
   elements.push(buildDivider());
   elements.push(buildFooter(view.sessionId, view.durationText));
   return elements;
+}
+
+/**
+ * 构造"思考过程"折叠面板。
+ * 飞书卡片 schema 2.0 原生支持 collapsible_panel,点击 header 自动展开/折叠,bridge 不需要写回调。
+ */
+function buildReasoningPanel(text: string, expanded: boolean): Record<string, unknown> {
+  const trimmed = text.trim();
+  const truncated = trimmed.length > REASONING_MAX_CHARS
+    ? `${trimmed.slice(0, REASONING_MAX_CHARS - 1)}…`
+    : trimmed;
+  const title = expanded ? "**正在推理**" : "**思考过程**";
+  return {
+    tag: "collapsible_panel",
+    expanded,
+    header: {
+      title: { tag: "markdown", content: title },
+      vertical_align: "center",
+      icon: { tag: "standard_icon", token: "down-small-ccm_outlined", size: "16px 16px" },
+      icon_position: "follow_text",
+      icon_expanded_angle: -180,
+    },
+    border: { color: "grey", corner_radius: "5px" },
+    vertical_spacing: "8px",
+    padding: "8px 8px 8px 8px",
+    elements: [{ tag: "markdown", content: escapeReasoningMarkdown(truncated), text_size: "notation" }],
+  };
+}
+
+function escapeReasoningMarkdown(text: string): string {
+  return normalizeAssistantMarkdown(escapeText(text)).replace(/([\\`*_[\]#])/g, "\\$1");
 }
 
 function buildToolElements(lines: ReadonlyArray<ToolUpdateView>): Array<Record<string, unknown>> {

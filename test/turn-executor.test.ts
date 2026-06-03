@@ -443,6 +443,7 @@ function createContext(): TurnExecutorContext {
       async flushStreamUpdate() {},
       async updateTurnCard() {},
       async scheduleStreamUpdate() {},
+      appendReasoning() {},
       cleanup() {},
     },
     permissionManager: {

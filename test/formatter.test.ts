@@ -115,6 +115,79 @@ describe("buildPostPayload", () => {
     expect(serialized).not.toContain("tokens");
   });
 
+  it("renders reasoning text in a collapsible panel while the turn is running", () => {
+    const payload = buildTurnStatusCardPayload({
+      title: "处理中",
+      status: "处理中",
+      sessionId: "ses_reasoning",
+      durationText: "",
+      progressUpdates: ["正在处理中"],
+      toolUpdates: [],
+      output: { text: "", paths: [], commands: [] },
+      reasoningText: "先分析需求\n再检查代码",
+    });
+    const panel = findByTag(JSON.parse(payload.content), "collapsible_panel");
+    const headerTitle = findByPath(panel, ["header", "title", "content"]);
+    const markdown = readPanelBodyMarkdown(panel);
+
+    expect(panel?.expanded).toBe(true);
+    expect(headerTitle).toBe("**正在推理**");
+    expect(markdown?.content).toContain("先分析需求\n再检查代码");
+  });
+
+  it("renders completed reasoning panel collapsed and escapes markdown controls", () => {
+    const payload = buildTurnStatusCardPayload({
+      title: "已完成",
+      status: "已完成",
+      sessionId: "ses_reasoning",
+      durationText: "约 3s",
+      progressUpdates: ["最终回复已生成"],
+      toolUpdates: [],
+      output: { text: "完成", paths: [], commands: [] },
+      reasoningText: "**unclosed [link <unsafe>",
+    });
+    const panel = findByTag(JSON.parse(payload.content), "collapsible_panel");
+    const headerTitle = findByPath(panel, ["header", "title", "content"]);
+    const markdown = readPanelBodyMarkdown(panel);
+
+    expect(panel?.expanded).toBe(false);
+    expect(headerTitle).toBe("**思考过程**");
+    expect(markdown?.content).toContain("\\*\\*unclosed \\[link &lt;unsafe&gt;");
+  });
+
+  it("does not render a reasoning panel for blank reasoning text", () => {
+    const payload = buildTurnStatusCardPayload({
+      title: "处理中",
+      status: "处理中",
+      sessionId: "ses_reasoning",
+      durationText: "",
+      progressUpdates: ["正在处理中"],
+      toolUpdates: [],
+      output: { text: "", paths: [], commands: [] },
+      reasoningText: "   \n  ",
+    });
+
+    expect(findByTag(JSON.parse(payload.content), "collapsible_panel")).toBeNull();
+  });
+
+  it("truncates long reasoning panel content to the card payload limit", () => {
+    const payload = buildTurnStatusCardPayload({
+      title: "处理中",
+      status: "处理中",
+      sessionId: "ses_reasoning",
+      durationText: "",
+      progressUpdates: ["正在处理中"],
+      toolUpdates: [],
+      output: { text: "", paths: [], commands: [] },
+      reasoningText: "a".repeat(3_001),
+    });
+    const panel = findByTag(JSON.parse(payload.content), "collapsible_panel");
+    const markdown = readPanelBodyMarkdown(panel);
+
+    expect(markdown?.content).toHaveLength(3_000);
+    expect(markdown?.content).toBe(`${"a".repeat(2_999)}…`);
+  });
+
   it("preserves fenced code blocks without escaping arrows", () => {
     const payload = buildTurnStatusCardPayload({
       title: "处理中",
@@ -865,3 +938,34 @@ describe("buildPostPayload", () => {
     expect(content.body.elements[0].columns[0].elements[0].icon).toBeUndefined();
   });
 });
+
+function findByTag(value: unknown, tag: string): Record<string, any> | null {
+  if (!value || typeof value !== "object") return null;
+  if ((value as Record<string, unknown>).tag === tag) return value as Record<string, any>;
+  for (const child of Object.values(value as Record<string, unknown>)) {
+    if (Array.isArray(child)) {
+      for (const item of child) {
+        const found = findByTag(item, tag);
+        if (found) return found;
+      }
+      continue;
+    }
+    const found = findByTag(child, tag);
+    if (found) return found;
+  }
+  return null;
+}
+
+function findByPath(value: unknown, path: string[]): unknown {
+  return path.reduce<unknown>((current, key) => {
+    if (!current || typeof current !== "object") return undefined;
+    return (current as Record<string, unknown>)[key];
+  }, value);
+}
+
+function readPanelBodyMarkdown(panel: Record<string, any> | null): Record<string, any> | null {
+  const elements = panel?.elements;
+  if (!Array.isArray(elements)) return null;
+  const first = elements[0];
+  return first && typeof first === "object" ? first as Record<string, any> : null;
+}
