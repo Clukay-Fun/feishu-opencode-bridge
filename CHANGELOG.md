@@ -6,6 +6,32 @@
 
 ### Added
 
+- 无。
+
+### Changed
+
+- 无。
+
+### Deprecated
+
+- 无。
+
+### Removed
+
+- 无。
+
+### Fixed
+
+- 无。
+
+### Security
+
+- 无。
+
+## [0.3.0] - 2026-06-03
+
+### Added
+
 - README 瘦身，新增 `docs/features.md` 和 `docs/commands.md` 承接功能与命令细节。
 - `CODEX.md` 新增工程纪律、自 review 清单、文档生命周期和 release changelog 规则。
 - Docker 部署支持：Dockerfile 多阶段构建参数化、HEALTHCHECK、`docker-compose.yml`、`docs/deploy-docker.md`。
