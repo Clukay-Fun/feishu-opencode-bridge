@@ -7,6 +7,8 @@
 - 通过 Caddy 暴露 HTTPS
 - 飞书卡片 action 回调走公开域名
 
+如果使用 Docker 部署 Bridge 本体，优先参考 [Docker 部署说明](deploy-docker.md)。
+
 ## 1. 环境准备
 
 安装 Node.js 20+、Caddy、OpenCode。

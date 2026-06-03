@@ -8,10 +8,14 @@
 
 - README 瘦身，新增 `docs/features.md` 和 `docs/commands.md` 承接功能与命令细节。
 - `CODEX.md` 新增工程纪律、自 review 清单、文档生命周期和 release changelog 规则。
+- Docker 部署支持：Dockerfile 多阶段构建参数化、HEALTHCHECK、`docker-compose.yml`、`docs/deploy-docker.md`。
+- `package.json` 补充 description、license、repository、keywords 等元数据字段。
+- README 新增 CI 状态徽章。
 
 ### Changed
 
 - 文档入口补充功能说明、命令手册和 backlog 生命周期入口。
+- `.dockerignore` 扩充忽略范围（`.DS_Store`、`.runtime`、`artifacts`、`release`、`turn-files`、`vault`）。
 
 ### Deprecated
 
@@ -23,7 +27,7 @@
 
 ### Fixed
 
-- 无。
+- 修正 README 许可证徽章从 MIT 为 Apache-2.0，与 LICENSE 文件保持一致。
 
 ### Security
 
