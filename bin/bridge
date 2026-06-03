@@ -4,9 +4,20 @@
 # - 优先使用包内 .runtime/node，不要求用户预装 Node。
 # - 缺 Node 时自动下载 portable Node。
 # - 后续命令统一交给 scripts/runtime/bootstrap.mjs。
+# - 跟随软链接,兼容 `npm i -g` 安装后被 symlink 到 /usr/local/bin/ 的情况。
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# 解析软链接到真实文件位置(跨 macOS / Linux 兼容,不依赖 GNU readlink -f)
+SOURCE="$0"
+while [ -L "$SOURCE" ]; do
+  LINK_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  case "$SOURCE" in
+    /*) ;;
+    *) SOURCE="$LINK_DIR/$SOURCE" ;;
+  esac
+done
+ROOT="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
 NODE_BIN="$ROOT/.runtime/node/bin/node"
 
 if [ ! -x "$NODE_BIN" ]; then
