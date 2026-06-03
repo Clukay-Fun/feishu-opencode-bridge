@@ -39,7 +39,12 @@ type TurnCardState = {
   toolUpdates: Array<{ key: string; view: ToolUpdateView }>;
   output: OutputView;
   costSummary?: string | undefined;
+  /** 累积的 AI 推理文本(本 turn 全部 reasoning 片段拼接),用于思考过程折叠面板。 */
+  reasoningText: string;
 };
+
+/** 单 turn 累积 reasoning 上限,超出后停止追加——避免内存膨胀。 */
+const REASONING_ACCUMULATION_LIMIT = 8000;
 
 type StreamFlushState = {
   flushedLength: number;
@@ -94,6 +99,7 @@ export class TurnCardManager {
       progressUpdates: [INITIAL_CARD_SUMMARY],
       toolUpdates: [],
       output: { text: "", paths: [], commands: [] },
+      reasoningText: "",
     };
     try {
       const payload = buildTurnStatusCardPayload(this.toTurnCardView(state));
@@ -147,6 +153,21 @@ export class TurnCardManager {
       state.timer = null;
       void this.flushStreamUpdate(turnId, text, false);
     }, delay);
+  }
+
+  /**
+   * 累积 AI reasoning 文本,供"思考过程"折叠面板使用。
+   * 只在内存里累积,不立刻刷卡片——节流由 updateTurnCard 的常规调用兜底。
+   */
+  appendReasoning(turnId: string, text: string): void {
+    const card = this.turnCards.get(turnId);
+    const normalizedText = text.trim();
+    if (!card || !normalizedText) return;
+    const separator = card.reasoningText ? "\n\n" : "";
+    const remaining = REASONING_ACCUMULATION_LIMIT - card.reasoningText.length - separator.length;
+    if (remaining <= 0) return;
+    const chunk = normalizedText.length > remaining ? normalizedText.slice(0, remaining) : normalizedText;
+    card.reasoningText = `${card.reasoningText}${separator}${chunk}`;
   }
 
   /** 立即把当前文本刷新到卡片。 */
@@ -252,6 +273,7 @@ export class TurnCardManager {
       toolUpdates: card.toolUpdates.map((item) => item.view),
       output: card.output,
       costSummary: card.costSummary,
+      reasoningText: card.reasoningText,
     };
   }
 

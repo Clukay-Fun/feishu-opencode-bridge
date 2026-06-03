@@ -157,6 +157,7 @@ export type TurnExecutorContext = {
     flushStreamUpdate(turnId: string, text: string, force: boolean): Promise<void>;
     updateTurnCard(turnId: string, update: { status?: string; sessionId?: string; update?: string; sanitize?: boolean; target?: "step" | "tool" | "final"; toolKey?: string; costSummary?: string }): Promise<void>;
     scheduleStreamUpdate(turnId: string, text: string): Promise<void>;
+    appendReasoning(turnId: string, text: string): void;
     cleanup(turnId: string): void;
   };
   costTracker?: CostTracker | undefined;
@@ -568,6 +569,10 @@ export class TurnExecutor {
         if (partId) {
           this.context.logger.log("opencode/events", "reasoning received", { turnId: turn.turnId, sessionId: turn.sessionId, len: text.length });
           this.context.logger.logTranscript("reasoning-raw", { turnId: turn.turnId, sessionId: turn.sessionId, partId, len: text.length }, text);
+          // 累积完整 reasoning,渲染到"思考过程"折叠面板;updateTurnCard 触发卡片刷新
+          if (text.trim()) {
+            this.context.turnCardManager.appendReasoning(turn.turnId, text);
+          }
           const step = summarizeReasoningToProgress(text);
           if (step) {
             await this.context.turnCardManager.updateTurnCard(turn.turnId, { status: "处理中", update: step, sanitize: false, target: "step" });
