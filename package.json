@@ -2,7 +2,7 @@
   "name": "feishu-opencode-bridge",
   "version": "0.2.2",
   "description": "Run OpenCode AI agents inside Feishu / Lark, with first-class support for legal-practice workflows (knowledge base, contract, labor cases).",
-  "private": true,
+  "private": false,
   "type": "module",
   "license": "Apache-2.0",
   "author": "Clukay-Fun",
