@@ -168,6 +168,16 @@ Codex 接到一审报告后负责二审和落地：
 - 发布说明应覆盖：版本号、主要变化、兼容性/迁移说明、验证命令、已知风险、回滚方式。
 - portable 更新链路以 `scripts/runtime/update.mjs` 为准；下载、切换、回滚都必须显式触发，不覆盖用户数据目录。
 - 如果重新引入或升级原生依赖，按 `docs/deploy.md` 的目标环境要求，在 Linux x64 上重新验证 `npm ci`、`npm run build`、`npm test`。
+- npm beta 版本不能复用同一个版本号。已经发布过 `0.3.0-beta.0` 后，下一次 beta 必须递增为 `0.3.0-beta.1`，再下一次为 `0.3.0-beta.2`，直到正式发布 `0.3.0`。
+- beta bump 推荐命令是 `npm version prerelease --preid beta`。它会要求工作树干净，并自动更新 `package.json`、`package-lock.json`、生成 commit 和 `v<version>` tag。
+- 如果只是先调整版本文件、不想自动 commit 或打 tag，使用 `npm version 0.3.0-beta.N --no-git-tag-version`，随后手动更新 `CHANGELOG.md`、提交、PR 合并，再单独打 tag。
+- npm 包以 `dist/` 为准。每次 bump 后、publish 前都必须运行 `npm run build`，否则可能发布旧代码。
+- 手动发布 npm beta 包时使用 `npm publish --tag beta --auth-type=web`；正式版使用默认 `latest` tag，除非明确指定其他 dist-tag。
+- 发布后用 `npm view feishu-opencode-bridge versions` 和 `npm view feishu-opencode-bridge dist-tags` 确认版本和 dist-tag 指向正确。
+- GitHub Release 与 npm 版本要同一 tag 收口：`git tag v<version>`、`git push origin v<version>`，再创建对应 GitHub Release；beta tag 必须标记为 prerelease。
+- GitHub Release 应挂载 `npm run release:portable` 生成的 portable artifact，并在 release notes 中说明 npm dist-tag、artifact、验证命令和已知风险。
+- 仓库提供 `.github/workflows/release.yml`：推送 `v*` tag 后自动验证 tag/package 版本一致，运行检查、build、生成 portable artifact、npm publish、创建 GitHub Release。使用前必须在 GitHub Secrets 配置 `NPM_TOKEN`。
+- 自动 release workflow 会根据版本号是否包含预发布段选择 npm dist-tag：`0.3.0-beta.N` 发布到 `beta`，稳定版本发布到 `latest`。
 
 版本号规则按简化 SemVer 执行：
 
