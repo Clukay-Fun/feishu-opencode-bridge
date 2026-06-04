@@ -355,15 +355,6 @@ export function mapToolStatus(status: string | undefined): string {
   }
 }
 
-export function summarizeReasoningToProgress(text: string): string {
-  const normalized = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, "").trim();
-  if (!normalized) return "";
-  if (/considering user response/i.test(normalized)) return "";
-  if (/news|headline|search/i.test(normalized)) return "正在检索相关信息";
-  if (/project|package\.json|file/i.test(normalized)) return "正在整理上下文信息";
-  return "正在处理中";
-}
-
 export function formatToolRecord(toolName: string, status: string | undefined, title: string | undefined): string {
   const statusLabel = mapToolStatus(status);
   const detail = formatToolTarget(title) || "-";

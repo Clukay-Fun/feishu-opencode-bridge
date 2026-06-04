@@ -34,7 +34,6 @@ import {
   readOptionalBoolean,
   readOptionalRecord,
   readOptionalString,
-  summarizeReasoningToProgress,
   toQuestionRequest,
 } from "./app-helpers.js";
 import { cleanAssistantReply } from "./sanitize.js";
@@ -42,6 +41,15 @@ import { cleanAssistantReply } from "./sanitize.js";
 const FIRST_SSE_FALLBACK_MS = 5_000;
 const PERMISSION_TTL_MS = 120_000;
 const QUESTION_TTL_MS = 10 * 60_000;
+
+type PendingTextEvent = {
+  messageId: string;
+  kind: "delta" | "set";
+  value: string;
+  partId?: string | undefined;
+};
+
+type TextPartKind = "text" | "reasoning" | "ignored";
 
 /**
  * 负责管理一次 turn 执行的收敛过程，避免重复完成或重复报错。
@@ -204,8 +212,10 @@ export class TurnExecutor {
   /** 在 assistant 消息 id 确定后回放之前积压的文本事件。 */
   private async flushPendingTextEvents(
     assistantMessageId: string,
-    pendingTextEvents: Array<{ messageId: string; kind: "delta" | "set"; value: string }>,
+    pendingTextEvents: PendingTextEvent[],
     runtime: {
+      textPartTypes: Map<string, TextPartKind>;
+      pendingTextPartDeltas: Map<string, string>;
       appendFinalText: (delta: string) => Promise<void>;
       setFinalText: (value: string) => Promise<void>;
     },
@@ -214,6 +224,15 @@ export class TurnExecutor {
     pendingTextEvents.length = 0;
 
     for (const event of matchingEvents) {
+      if (event.partId) {
+        const partKind = runtime.textPartTypes.get(event.partId);
+        if (partKind === "reasoning" || partKind === "ignored") continue;
+        if (!partKind && event.kind === "delta") {
+          runtime.pendingTextPartDeltas.set(event.partId, `${runtime.pendingTextPartDeltas.get(event.partId) ?? ""}${event.value}`);
+          continue;
+        }
+      }
+
       if (event.kind === "set") {
         await runtime.setFinalText(event.value);
         continue;
@@ -289,6 +308,8 @@ export class TurnExecutor {
       await this.context.turnCardManager.updateTurnCard(turn.turnId, { status: "已完成", update: `最终回复已生成（${reply.length} 字）`, target: "step", ...(costSummary ? { costSummary } : {}) });
       queue.replaceActive(transitionTurn({ ...turn, sessionId }, "done"));
       logEvent(this.context.logger, "bridge/queue", "turn.completed", {
+        chatType: turn.chatType,
+        conversationKey: turn.conversationKey,
         turnId: turn.turnId,
         sessionId,
         durationMs: Date.now() - (turn.startedAt ?? Date.now()),
@@ -392,7 +413,9 @@ export class TurnExecutor {
       let assistantMessageId: string | null = null;
       let finalText = "";
       const ignoredTextPartIds = new Set<string>();
-      const pendingTextEvents: Array<{ messageId: string; kind: "delta" | "set"; value: string }> = [];
+      const textPartTypes = new Map<string, TextPartKind>();
+      const pendingTextPartDeltas = new Map<string, string>();
+      const pendingTextEvents: PendingTextEvent[] = [];
 
       let unsubscribe = (): void => {};
       const settleWithError = (error: Error): void => { settlement.settleWithError(error); };
@@ -432,6 +455,8 @@ export class TurnExecutor {
               assistantMessageId = value;
               if (assistantMessageId) {
                 await this.flushPendingTextEvents(assistantMessageId, pendingTextEvents, {
+                  textPartTypes,
+                  pendingTextPartDeltas,
                   appendFinalText: async (delta) => {
                     finalText += delta;
                     await this.context.turnCardManager.scheduleStreamUpdate(turn.turnId, finalText);
@@ -444,8 +469,10 @@ export class TurnExecutor {
               }
             },
             ignoredTextPartIds,
-            queuePendingTextEvent: (messageId, eventType, value) => {
-              pendingTextEvents.push({ messageId, kind: eventType, value });
+            textPartTypes,
+            pendingTextPartDeltas,
+            queuePendingTextEvent: (messageId, eventType, value, partId) => {
+              pendingTextEvents.push({ messageId, kind: eventType, value, partId });
             },
             appendFinalText: async (delta) => {
               finalText += delta;
@@ -503,7 +530,9 @@ export class TurnExecutor {
       getAssistantMessageId: () => string | null;
       setAssistantMessageId: (value: string | null) => Promise<void>;
       ignoredTextPartIds: Set<string>;
-      queuePendingTextEvent: (messageId: string, eventType: "delta" | "set", value: string) => void;
+      textPartTypes: Map<string, TextPartKind>;
+      pendingTextPartDeltas: Map<string, string>;
+      queuePendingTextEvent: (messageId: string, eventType: "delta" | "set", value: string, partId?: string | undefined) => void;
       appendFinalText: (delta: string) => Promise<void>;
       setFinalText: (value: string) => Promise<void>;
       finish: () => Promise<void>;
@@ -529,9 +558,17 @@ export class TurnExecutor {
         const delta = readOptionalString(event.properties, "delta") ?? "";
         if (!runtime.getAssistantMessageId()) {
           if (messageId) {
-            runtime.queuePendingTextEvent(messageId, "delta", delta);
+            runtime.queuePendingTextEvent(messageId, "delta", delta, partId);
           }
           return;
+        }
+        if (partId) {
+          const partKind = runtime.textPartTypes.get(partId);
+          if (partKind === "reasoning" || partKind === "ignored") return;
+          if (!partKind) {
+            runtime.pendingTextPartDeltas.set(partId, `${runtime.pendingTextPartDeltas.get(partId) ?? ""}${delta}`);
+            return;
+          }
         }
         await runtime.appendFinalText(delta);
       }
@@ -548,18 +585,32 @@ export class TurnExecutor {
 
       if (partType === "text") {
         if (readOptionalBoolean(part, "synthetic") || readOptionalBoolean(part, "ignored")) {
-          if (partId) runtime.ignoredTextPartIds.add(partId);
+          if (partId) {
+            runtime.ignoredTextPartIds.add(partId);
+            runtime.textPartTypes.set(partId, "ignored");
+            runtime.pendingTextPartDeltas.delete(partId);
+          }
           return;
         }
+        if (partId) runtime.textPartTypes.set(partId, "text");
         const text = readOptionalString(part, "text");
         if (text !== undefined) {
           if (!runtime.getAssistantMessageId()) {
             if (messageId) {
-              runtime.queuePendingTextEvent(messageId, "set", text);
+              runtime.queuePendingTextEvent(messageId, "set", text, partId);
             }
             return;
           }
           await runtime.setFinalText(text);
+          if (partId) runtime.pendingTextPartDeltas.delete(partId);
+          return;
+        }
+        if (partId) {
+          const pendingDelta = runtime.pendingTextPartDeltas.get(partId);
+          if (pendingDelta) {
+            runtime.pendingTextPartDeltas.delete(partId);
+            await runtime.appendFinalText(pendingDelta);
+          }
         }
         return;
       }
@@ -567,15 +618,19 @@ export class TurnExecutor {
       if (partType === "reasoning") {
         const text = readOptionalString(part, "text") ?? "";
         if (partId) {
+          runtime.ignoredTextPartIds.add(partId);
+          runtime.textPartTypes.set(partId, "reasoning");
+          runtime.pendingTextPartDeltas.delete(partId);
           this.context.logger.log("opencode/events", "reasoning received", { turnId: turn.turnId, sessionId: turn.sessionId, len: text.length });
           this.context.logger.logTranscript("reasoning-raw", { turnId: turn.turnId, sessionId: turn.sessionId, partId, len: text.length }, text);
-          // 累积完整 reasoning,渲染到"思考过程"折叠面板;updateTurnCard 触发卡片刷新
           if (text.trim()) {
+            const currentFinalText = runtime.getFinalText();
+            const nextFinalText = removeLeakedReasoningText(currentFinalText, text);
+            if (nextFinalText !== currentFinalText) {
+              await runtime.setFinalText(nextFinalText);
+            }
             this.context.turnCardManager.appendReasoning(turn.turnId, text);
-          }
-          const step = summarizeReasoningToProgress(text);
-          if (step) {
-            await this.context.turnCardManager.updateTurnCard(turn.turnId, { status: "处理中", update: step, sanitize: false, target: "step" });
+            await this.context.turnCardManager.updateTurnCard(turn.turnId, { status: "处理中" });
           }
         }
         return;
@@ -887,4 +942,13 @@ function serializeErrorValue(value: unknown): string {
 
 function normalizeMissingModelName(value: string | undefined): string | undefined {
   return value?.trim().replace(/\.$/, "");
+}
+
+function removeLeakedReasoningText(finalText: string, reasoningText: string): string {
+  const leaked = reasoningText.trim();
+  if (!finalText || !leaked) return finalText;
+  if (finalText === leaked) return "";
+  if (finalText.startsWith(leaked)) return finalText.slice(leaked.length).trimStart();
+  if (finalText.endsWith(leaked)) return finalText.slice(0, -leaked.length).trimEnd();
+  return finalText;
 }
