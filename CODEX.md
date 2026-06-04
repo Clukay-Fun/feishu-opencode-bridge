@@ -176,6 +176,18 @@ Codex 接到一审报告后负责二审和落地：
 - `0.X.Y -> 1.0.0`：正式稳定发布或需要向外承诺兼容性边界。
 - `1.0.0` 之后遵循 `MAJOR.MINOR.PATCH`，breaking change 必须升 MAJOR。
 
+## 服务器部署规则
+
+- 服务器只作为运行环境，不作为开发环境或文档归档环境。
+- 服务器目录默认是 `/srv/feishu-opencode-bridge`，运行私有文件包括 `config.json`、`.env`、`.env.tunnel`、`data/`、`logs/`、`vault/`，同步或清理时不得覆盖或删除。
+- 服务器不需要同步开发资料、计划文档、测试、CI 配置或本地运行产物；尤其不要同步 `docs/`、`test/`、`.github/`、`artifacts/`、`release/`、`.runtime/`、`turn-files/`、`node_modules/`、`dist/`。
+- 服务器更新优先使用 `ops/deploy-server.sh` 从本机白名单同步运行必需文件；该脚本负责保留运行私有文件，并清理之前误同步的非运行目录。
+- 当前服务器直连 GitHub 不稳定，不把 `git pull` 作为主更新方式，除非先解决服务器网络或配置可靠代理。
+- 当前服务器规格较小，不要在服务器上执行重型源码构建或 `docker compose up -d --build`。如需重建镜像，应优先在本机或 CI 构建并推送镜像，服务器只拉取/重启。
+- 如必须临时在服务器构建，先确认 CPU、内存、磁盘和 SSH 可恢复方案；构建后立即验证 `docker compose ps`、`systemctl --user status opencode-bridge.service` 和公开 health check URL。
+- Cloudflare Tunnel 使用 `docker-compose.tunnel.yml` 和服务器侧 `.env.tunnel`；`.env.tunnel` 属于敏感运行配置，不提交、不同步覆盖。
+- 服务器宿主工具更新使用 `ops/update-server-tools.sh`。默认只更新 `@larksuite/cli`；OpenCode 和 Cloudflare Tunnel 镜像需要显式传 `--opencode` 或 `--cloudflared`，避免自动升级影响运行中的 bridge。
+
 ## 飞书、Lark 与知识库操作
 
 - 只有用户明确要求操作飞书或 Lark 资源时，才使用 `lark-cli`。
