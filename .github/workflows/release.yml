@@ -1,0 +1,128 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Python dependencies
+        run: python -m pip install -r scripts/python/requirements.txt
+
+      - name: Verify tag matches package version
+        run: |
+          set -euo pipefail
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          LOCK_VERSION="$(node -p "require('./package-lock.json').version")"
+          ROOT_LOCK_VERSION="$(node -p "require('./package-lock.json').packages[''].version")"
+          test "$TAG_VERSION" = "$PACKAGE_VERSION"
+          test "$PACKAGE_VERSION" = "$LOCK_VERSION"
+          test "$PACKAGE_VERSION" = "$ROOT_LOCK_VERSION"
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Dependency boundaries
+        run: npm run lint:deps
+
+      - name: Formatter export snapshot
+        run: npm run check:formatter-exports
+
+      - name: Architecture baseline reminder
+        run: npm run check:docs-diff
+        env:
+          BASE_SHA: ${{ github.event.before }}
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Build portable artifact
+        run: npm run release:portable
+
+      - name: Resolve release metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "$VERSION" == *-* ]]; then
+            echo "npm_tag=beta" >> "$GITHUB_OUTPUT"
+            echo "release_flags=--prerelease" >> "$GITHUB_OUTPUT"
+          else
+            echo "npm_tag=latest" >> "$GITHUB_OUTPUT"
+            echo "release_flags=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish npm package
+        run: npm publish --tag "${{ steps.meta.outputs.npm_tag }}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        run: |
+          set -euo pipefail
+          mapfile -t ASSETS < <(find release -maxdepth 1 -type f \( -name "*.tar.gz" -o -name "*.zip" \) | sort)
+          if [[ "${#ASSETS[@]}" -eq 0 ]]; then
+            echo "No portable release artifacts found." >&2
+            exit 1
+          fi
+          {
+            printf 'npm dist-tag: %s\n\n' '${{ steps.meta.outputs.npm_tag }}'
+            printf 'Validation:\n'
+            printf -- '- npm run typecheck\n'
+            printf -- '- npm run lint\n'
+            printf -- '- npm run lint:deps\n'
+            printf -- '- npm run check:formatter-exports\n'
+            printf -- '- npm run check:docs-diff\n'
+            printf -- '- npm test\n'
+            printf -- '- npm run build\n'
+            printf -- '- npm run release:portable\n'
+          } > release-notes.md
+          gh release create "$GITHUB_REF_NAME" "${ASSETS[@]}" \
+            ${{ steps.meta.outputs.release_flags }} \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file release-notes.md
+        env:
+          GH_TOKEN: ${{ github.token }}
