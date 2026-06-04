@@ -16,6 +16,7 @@ export type LogLevel = "debug" | "info" | "warn" | "error";
 export type LogFormat = "pretty" | "json";
 export type LogMessagePolicy = "full" | "preview" | "hash" | "none";
 export type BridgeEventName =
+  | "inbound.received"
   | "turn.started"
   | "turn.completed"
   | "turn.failed"
@@ -32,6 +33,9 @@ export type LogContext = {
   turnId?: string | undefined;
   userId?: string | undefined;
   chatId?: string | undefined;
+  chatType?: string | undefined;
+  conversationKey?: string | undefined;
+  threadKey?: string | undefined;
   messageId?: string | undefined;
   sessionId?: string | undefined;
 };

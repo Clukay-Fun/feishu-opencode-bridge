@@ -1,6 +1,6 @@
 # 可观测性事件规范
 
-> 最后更新：2026-04-19
+> 最后更新：2026-06-03
 >
 > 这份文档定义了 bridge 运行时第一版稳定事件词表。
 > 它刻意采用“文档先行”的方式：代码应逐步收敛到这些事件名，而不是在各调用点继续自由发明日志文本。
@@ -35,6 +35,30 @@
 - transcript 文件与结构化 bridge 事件应保持分离。
 
 ## 事件名
+
+### `inbound.received`
+
+在 Bridge 接受一条 Feishu 入站消息并进入核心处理链路时发出。
+
+必填字段：
+
+- `chatId`
+- `chatType`
+- `conversationKey`
+- `senderId`
+- `messageId`
+- `messageType`
+
+可选字段：
+
+- `threadKey`
+- `textPreview`
+- `len`
+
+触发点：
+
+- `BridgeApp.handleIncomingMessage()` 完成白名单和限流检查之后。
+- `textPreview` 遵循 logger 的 message logging policy，仅用于本地运行台和排障摘要。
 
 ### `turn.checkpoint`
 

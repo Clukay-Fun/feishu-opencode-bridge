@@ -2,7 +2,7 @@
  * 职责: 把 Bridge runtime 日志过滤、格式化成终端 Activity 面板。
  * 关注点:
  * - 解析 `HH:MM:SS [scope] event_name { k="v" ... }` 格式日志行。
- * - 白名单过滤(turn / ws / error / kb / card / module / boot)。
+ * - 白名单过滤(message / reply / turn / ws / error / kb / card / module / boot)。
  * - TTY 输出彩色单行,非 TTY 输出 JSON 行。
  * - 关联 turn.completed 和 cost/usage,把 cost 信息合并到 turn 完成行。
  * - 不引入第三方依赖,只用 Node 内置 + 裸 ANSI 转义。
@@ -50,6 +50,8 @@ const noColor = {
 
 const LINE_REGEX = /^(\d\d:\d\d:\d\d)\s+\[([^\]]+)\]\s+(\S+(?:\s\S+)*?)\s*\{(.*)\}\s*$/;
 const BRACKET_LEVEL_REGEX = /^\[(warn|error|info)\]:\s*(.*)$/;
+const TURN_PREVIEW_CHARS = 140;
+const MESSAGE_PREVIEW_CHARS = 220;
 
 /** 解析一行日志,返回 { ts, scope, name, fields, level } 或 null。 */
 export function parseLogLine(rawLine) {
@@ -103,7 +105,7 @@ function stripAnsi(s) {
 
 /**
  * 决定一个 parsed event 是否进入 ticker。
- * 白名单:turn 完成 / WS 连接事件 / 错误警告 / 卡片回调 / 知识库入库 / 模块状态 / 启动期。
+ * 白名单:对话摘要 / turn 完成 / WS 连接事件 / 错误警告 / 卡片回调 / 知识库入库 / 模块状态 / 启动期。
  */
 export function shouldDisplay(event) {
   if (!event) return false;
@@ -114,6 +116,12 @@ export function shouldDisplay(event) {
 
   // turn 完成
   if (event.scope === "bridge/queue" && event.name === "turn.completed") return true;
+
+  // 普通对话摘要
+  if (event.scope === "bridge/message" && event.name === "inbound.received") return true;
+  if (event.scope === "feishu/reply" && event.name === "transport.sent") {
+    return event.fields.legacyEvent === "final message sent" || event.fields.legacyEvent === "fallback final message sent";
+  }
 
   // 飞书 WS 连接事件
   if (event.scope === "feishu/ws" || event.scope === "feishu/connection") {
@@ -159,17 +167,43 @@ export function formatEvent(event, useColor = true) {
   if (event.scope === "bridge/queue" && event.name === "turn.completed") {
     const duration = event.fields.durationMs ? `${(Number(event.fields.durationMs) / 1000).toFixed(1)}s` : "?";
     const len = event.fields.replyLength ? `${event.fields.replyLength}字` : "";
-    const chat = event.fields.chatId?.startsWith("oc_p2p_") ? "p2p" : event.fields.chatId?.startsWith("oc_") ? "chat" : "?";
+    const chat = formatChatLabel(event.fields.chatId, event.fields.chatType, event.fields.conversationKey);
     const sender = (event.fields.userId ?? "?").slice(0, 12);
-    const tail = [duration, len].filter(Boolean).join(" · ");
-    const head = `${tsCol}  ${co.green("✓")}  ${co.bold("turn")}     ${chat.padEnd(6)} ${co.dim(sender)}  ${co.dim(tail)}`;
-    // Q / A 各占一行,每段 40 字截断,dim 色 + 12 空格缩进
-    const userQ = truncatePreview(event.fields.userTextPreview, 40);
-    const replyA = truncatePreview(event.fields.replyTextPreview, 40);
+    const summary = [duration, len].filter(Boolean).join(" · ");
+    const head = `${tsCol}  ${co.green("✓")}  ${co.bold("turn")}     ${chat} ${co.dim(sender)}  ${co.dim(summary)}`;
+    const userQ = truncatePreview(event.fields.userTextPreview, TURN_PREVIEW_CHARS);
+    const replyA = truncatePreview(event.fields.replyTextPreview, TURN_PREVIEW_CHARS);
     const lines = [head];
-    const indent = "            ";
-    if (userQ) lines.push(`${indent}${co.dim("Q「" + userQ + "」")}`);
-    if (replyA) lines.push(`${indent}${co.dim("A「" + replyA + "」")}`);
+    pushDetail(lines, co, "session", event.fields.sessionId);
+    pushDetail(lines, co, "turn", event.fields.turnId);
+    pushDetail(lines, co, "window", event.fields.conversationKey);
+    if (userQ) pushDetail(lines, co, "Q", `「${userQ}」`);
+    if (replyA) pushDetail(lines, co, "A", `「${replyA}」`);
+    return lines.join("\n");
+  }
+
+  // 入站用户消息
+  if (event.scope === "bridge/message" && event.name === "inbound.received") {
+    const chat = formatChatLabel(event.fields.chatId, event.fields.chatType, event.fields.conversationKey);
+    const sender = (event.fields.senderId ?? "?").slice(0, 12);
+    const text = truncatePreview(event.fields.textPreview, MESSAGE_PREVIEW_CHARS);
+    const len = event.fields.len ? `${event.fields.len}字` : "";
+    const lines = [`${tsCol}  ${co.cyan("←")}  ${co.bold("user")}     ${chat} ${co.dim(sender)}  ${co.dim(len)}`];
+    pushDetail(lines, co, "msg", event.fields.messageId);
+    pushDetail(lines, co, "window", event.fields.conversationKey);
+    if (text) pushDetail(lines, co, "text", `「${text}」`);
+    return lines.join("\n");
+  }
+
+  // 出站最终回复或命令结果
+  if (event.scope === "feishu/reply" && event.name === "transport.sent") {
+    const chat = formatChatLabel(event.fields.chatId, event.fields.chatType, event.fields.conversationKey);
+    const kind = event.fields.payloadKind ?? "?";
+    const text = truncatePreview(event.fields.textPreview, MESSAGE_PREVIEW_CHARS);
+    const len = event.fields.len ? `${event.fields.len}字` : "";
+    const lines = [`${tsCol}  ${co.green("→")}  ${co.bold("bot")}      ${chat} ${co.dim(`${kind} · ${len}`)}`];
+    pushDetail(lines, co, "msg", event.fields.messageId);
+    if (text) pushDetail(lines, co, "text", `「${text}」`);
     return lines.join("\n");
   }
 
@@ -216,7 +250,7 @@ export function formatEventJson(event) {
   if (event.cost) base.cost = event.cost;
   if (event.message) base.message = event.message;
   // 只挑常用字段,不全量倾倒
-  const picks = ["chatId", "userId", "turnId", "durationMs", "replyLength", "moduleId", "fileName", "chunks", "action", "userTextPreview", "replyTextPreview"];
+  const picks = ["chatId", "chatType", "conversationKey", "threadKey", "senderId", "messageId", "userId", "turnId", "sessionId", "durationMs", "replyLength", "moduleId", "fileName", "chunks", "action", "userTextPreview", "replyTextPreview", "textPreview", "payloadKind", "legacyEvent"];
   for (const k of picks) {
     if (event.fields?.[k] !== undefined) base[k] = event.fields[k];
   }
@@ -309,6 +343,17 @@ function truncatePreview(value, maxChars) {
   const normalized = value.replace(/\s+/g, " ").trim();
   if (!normalized) return "";
   return normalized.length > maxChars ? `${normalized.slice(0, maxChars - 1)}…` : normalized;
+}
+
+function pushDetail(lines, co, label, value) {
+  if (!value) return;
+  lines.push(`            ${co.dim(label.padEnd(7))} ${value}`);
+}
+
+function formatChatLabel(chatId, chatType, conversationKey) {
+  if (chatType === "p2p" || (typeof chatId === "string" && chatId.startsWith("oc_p2p_")) || (typeof conversationKey === "string" && conversationKey.endsWith(":main"))) return "p2p";
+  if (chatType === "group" || chatType === "chat" || (typeof chatId === "string" && chatId.startsWith("oc_"))) return "chat";
+  return "?";
 }
 
 function formatUptime(sec) {
@@ -485,7 +530,7 @@ export function createDashboardRenderer(options = {}) {
     out.push(`  Quit       Ctrl+C`);
     out.push("");
     out.push("───────────────────────────────────────────────────────");
-    out.push(`  ${co.dim("Live activity (turns · ws · errors · kb · cards, last " + capacity + ")")}`);
+    out.push(`  ${co.dim("Live activity (messages · replies · turns · ws · errors, last " + capacity + ")")}`);
     out.push("───────────────────────────────────────────────────────");
     out.push("");
     for (const line of state.activity) {

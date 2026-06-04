@@ -95,6 +95,7 @@ export async function runStart(options = {}) {
     findExecutableFn: options.findExecutableFn ?? findExecutable,
   });
   const bridgeRuntimeLogPath = path.join(loggingDir, "bridge-runtime.log");
+  const bridgeActivityLogPath = resolveBridgeStructuredLogPath(loggingDir, rawConfig?.logging?.rotateDaily);
   const bridgeRuntimeLogStream = createWriteStream(bridgeRuntimeLogPath, { flags: "a" });
   const bridgeEnv = {
     ...bridgeLaunch.env,
@@ -102,6 +103,7 @@ export async function runStart(options = {}) {
   };
   logger.log(`[3/3] 启动 Bridge Runtime ... ${bridgeLaunch.command}`);
   logger.log(`      运行日志: ${bridgeRuntimeLogPath}`);
+  logger.log(`      活动日志: ${bridgeActivityLogPath}`);
   const bridgeProcess = (options.spawnFn ?? spawn)(bridgeLaunch.command, bridgeLaunch.args, {
     cwd,
     env: bridgeEnv,
@@ -121,7 +123,7 @@ export async function runStart(options = {}) {
         endpoint: `http://${serverHost}:${serverPort}`,
         profile: typeof rawConfig?.profile === "string" ? rawConfig.profile : "legal",
         extensions: collectEnabledExtensions(rawConfig),
-        logPath: bridgeRuntimeLogPath,
+        logPath: bridgeActivityLogPath,
         startedAt: new Date(),
       });
     }
@@ -137,7 +139,7 @@ export async function runStart(options = {}) {
     }
   }
 
-  // 启动 Activity Ticker:tail bridge-runtime.log,按白名单过滤渲染
+  // 启动 Activity Ticker:tail Bridge 结构化日志,按白名单过滤渲染
   // 三种模式:
   //   - dashboard:alt-screen 全屏 dashboard(顶部 panel + 活动区,每秒重绘),TTY+彩色 默认走这条
   //   - sticky:心跳钉在最后一行,事件在它上面滚(BRIDGE_DASHBOARD=0 时退回)
@@ -153,7 +155,7 @@ export async function runStart(options = {}) {
         endpoint: `http://${serverHost}:${serverPort}`,
         profile: typeof rawConfig?.profile === "string" ? rawConfig.profile : "legal",
         extensions: collectEnabledExtensions(rawConfig),
-        logPath: bridgeRuntimeLogPath,
+        logPath: bridgeActivityLogPath,
         startedAt: new Date(),
       },
       stdout: options.stdout ?? process.stdout,
@@ -175,7 +177,7 @@ export async function runStart(options = {}) {
     }
 
     const tailer = createLogTailer({
-      filePath: bridgeRuntimeLogPath,
+      filePath: bridgeActivityLogPath,
       intervalMs: options.tickerPollMs ?? 500,
       onLine: (line) => {
         const parsed = ticker.handle(line);
@@ -537,10 +539,20 @@ export async function ensureOpencodeServer(options) {
   };
 }
 
-// Resolve whether to launch the built output or fall back to `tsx src/index.ts`.
+// Resolve whether to launch local source or built output.
 export function resolveBridgeLaunch(options) {
   const cwd = options.cwd ?? process.cwd();
   const env = createAugmentedEnv(cwd, options.env ?? process.env);
+  const srcEntry = path.join(cwd, "src", "index.ts");
+  const tsxPath = (options.findExecutableFn ?? findExecutable)("tsx", { cwd, env });
+  if (pathExists(srcEntry) && tsxPath) {
+    return {
+      command: tsxPath,
+      args: ["src/index.ts"],
+      env,
+    };
+  }
+
   const distEntry = findBuildEntry(cwd);
   if (distEntry && pathExists(distEntry)) {
     return {
@@ -550,7 +562,6 @@ export function resolveBridgeLaunch(options) {
     };
   }
 
-  const tsxPath = (options.findExecutableFn ?? findExecutable)("tsx", { cwd, env });
   if (tsxPath) {
     return {
       command: tsxPath,
@@ -615,6 +626,21 @@ async function readRecentLogLines(logPath, maxLines = 12) {
   } catch {
     return "";
   }
+}
+
+// Match src/logging/logger.ts bridge log file naming.
+export function resolveBridgeStructuredLogPath(loggingDir, rotateDaily = true, now = new Date()) {
+  if (rotateDaily === false) {
+    return path.join(loggingDir, "bridge.log");
+  }
+  return path.join(loggingDir, `bridge-${formatLocalDay(now)}.log`);
+}
+
+function formatLocalDay(value) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 // Restrict auto-start behavior to loopback OpenCode addresses.
