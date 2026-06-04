@@ -1,5 +1,6 @@
 # Feishu OpenCode Bridge
 
+[![npm](https://img.shields.io/npm/v/feishu-opencode-bridge/beta.svg?label=npm%20beta)](https://www.npmjs.com/package/feishu-opencode-bridge)
 [![CI](https://github.com/Clukay-Fun/feishu-opencode-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/Clukay-Fun/feishu-opencode-bridge/actions/workflows/ci.yml)
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6)](https://www.typescriptlang.org/)
@@ -31,6 +32,21 @@ By default, text goes through your configured OpenCode / AI provider. Contract, 
 See [Features](docs/features.md) for details.
 
 ## Quick Start
+
+### npm Install (Beta)
+
+```bash
+npm i -g feishu-opencode-bridge@beta
+feishu-opencode-bridge setup
+feishu-opencode-bridge start
+```
+
+You can also use the short alias:
+
+```bash
+fob setup
+fob start
+```
 
 Release users should start from the portable launcher (source developers can skip to the npm section below):
 

@@ -168,6 +168,7 @@ export class FeishuWsClient {
     await runWithLogContext({
       correlationId: randomUUID(),
       chatId: payload.message?.chat_id,
+      chatType: payload.message?.chat_type,
       messageId: payload.message?.message_id,
       userId: payload.sender?.sender_id?.open_id,
     }, async () => {

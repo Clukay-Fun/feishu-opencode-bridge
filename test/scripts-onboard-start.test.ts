@@ -957,7 +957,24 @@ describe("scripts/start", () => {
     expect(launch.args).toEqual(["src/index.ts"]);
   });
 
-  it("prefers dist/src/index.js when build output exists", async () => {
+  it("prefers local TypeScript source over stale build output when tsx is available", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-start-source-"));
+    await mkdir(path.join(dir, "src"), { recursive: true });
+    await mkdir(path.join(dir, "dist", "src"), { recursive: true });
+    await writeFile(path.join(dir, "src", "index.ts"), "console.log('source');");
+    await writeFile(path.join(dir, "dist", "src", "index.js"), "console.log('old build');");
+
+    const launch = resolveBridgeLaunch({
+      cwd: dir,
+      env: {},
+      findExecutableFn: (command: string) => command === "tsx" ? "/tmp/node_modules/.bin/tsx" : null,
+    });
+
+    expect(launch.command).toBe("/tmp/node_modules/.bin/tsx");
+    expect(launch.args).toEqual(["src/index.ts"]);
+  });
+
+  it("uses dist/src/index.js when source or tsx is missing", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-start-build-"));
     await mkdir(path.join(dir, "dist", "src"), { recursive: true });
     await writeFile(path.join(dir, "dist", "src", "index.js"), "console.log('ok');");
@@ -1090,15 +1107,21 @@ describe("scripts/activity-ticker", () => {
     expect(parseLogLine("not a log line at all")).toBeNull();
   });
 
-  it("shouldDisplay whitelist includes turn.completed / ws / errors / kb", async () => {
+  it("shouldDisplay whitelist includes messages / replies / turn.completed / ws / errors / kb", async () => {
     const { shouldDisplay, parseLogLine } = await import("../scripts/runtime/activity-ticker.mjs");
+    const inbound = parseLogLine('22:58:46 [bridge/message] inbound.received { chatId="oc_p2p_1" chatType="p2p" senderId="ou_1" textPreview="你好" }');
+    const outbound = parseLogLine('22:58:47 [feishu/reply] transport.sent { chatId="oc_p2p_1" payloadKind="post" legacyEvent="final message sent" textPreview="收到" }');
     const turn = parseLogLine('22:58:48 [bridge/queue] turn.completed { turnId="t1" durationMs=1000 }');
     const ws = parseLogLine('22:58:51 [feishu/ws] connection reconnected { }');
     const kb = parseLogLine('22:59:00 [knowledge/ingest] file added { fileName="a.pdf" chunks=12 }');
+    const processCard = parseLogLine('22:58:47 [feishu/reply] transport.sent { chatId="oc_p2p_1" payloadKind="card" legacyEvent="process message updated" textPreview="处理中" }');
     const noise = parseLogLine('22:58:33 [runtime/modules] module.invoked { moduleId="persona" hook="beforeTurn" result="completed" durationMs=0 }');
+    expect(shouldDisplay(inbound)).toBe(true);
+    expect(shouldDisplay(outbound)).toBe(true);
     expect(shouldDisplay(turn)).toBe(true);
     expect(shouldDisplay(ws)).toBe(true);
     expect(shouldDisplay(kb)).toBe(true);
+    expect(shouldDisplay(processCard)).toBe(false);
     expect(shouldDisplay(noise)).toBe(false);
   });
 
@@ -1207,42 +1230,83 @@ describe("scripts/activity-ticker createStickyWriter", () => {
     // 这里只做最小冒烟:模块可导入。
     expect(typeof startMod.runStart).toBe("function");
   });
+
+  it("resolves the structured bridge log used by the local activity dashboard", async () => {
+    const { resolveBridgeStructuredLogPath } = await import("../scripts/runtime/start.mjs");
+    const now = new Date("2026-06-04T10:20:30+08:00");
+
+    expect(resolveBridgeStructuredLogPath("/tmp/logs", true, now)).toBe(path.join("/tmp/logs", "bridge-2026-06-04.log"));
+    expect(resolveBridgeStructuredLogPath("/tmp/logs", false, now)).toBe(path.join("/tmp/logs", "bridge.log"));
+  });
 });
 
 describe("scripts/activity-ticker conversation preview", () => {
+  it("renders inbound user message summaries", async () => {
+    const { formatEvent, parseLogLine } = await import("../scripts/runtime/activity-ticker.mjs");
+    const event = parseLogLine('22:58:46 [bridge/message] inbound.received { chatId="oc_p2p_1" chatType="p2p" conversationKey="oc_p2p_1:main" messageId="om_1" senderId="ou_abcdef123456" len=5 textPreview="你好呀" }');
+    const out = formatEvent(event!, false);
+    expect(out).toContain("user");
+    expect(out).toContain("p2p");
+    expect(out).toContain("ou_abcdef12");
+    expect(out).toContain("msg     om_1");
+    expect(out).toContain("window  oc_p2p_1:main");
+    expect(out).toContain("text    「你好呀」");
+    expect(out.split("\n")).toHaveLength(4);
+  });
+
+  it("renders outbound final reply summaries", async () => {
+    const { formatEvent, parseLogLine } = await import("../scripts/runtime/activity-ticker.mjs");
+    const event = parseLogLine('22:58:47 [feishu/reply] transport.sent { chatId="oc_p2p_1" messageId="om_reply" payloadKind="post" legacyEvent="final message sent" len=6 textPreview="收到,我看看" }');
+    const out = formatEvent(event!, false);
+    expect(out).toContain("bot");
+    expect(out).toContain("p2p");
+    expect(out).toContain("post");
+    expect(out).toContain("msg     om_reply");
+    expect(out).toContain("text    「收到,我看看」");
+    expect(out.split("\n")).toHaveLength(3);
+  });
+
   it("includes userTextPreview/replyTextPreview in turn.completed render", async () => {
     const { formatEvent, parseLogLine } = await import("../scripts/runtime/activity-ticker.mjs");
-    const event = parseLogLine('22:58:48 [bridge/queue] turn.completed { turnId="t1" durationMs=2300 replyLength=13 chatId="oc_p2p_1" userId="ou_abc12" userTextPreview="帮我看下这个劳动合同有什么问题" replyTextPreview="收到,我会从条款合规性、风险点和签约程序三个方面分析" }');
+    const event = parseLogLine('22:58:48 [bridge/queue] turn.completed { turnId="t1" sessionId="ses_1" durationMs=2300 replyLength=13 chatId="oc_p2p_1" userId="ou_abc12" userTextPreview="帮我看下这个劳动合同有什么问题" replyTextPreview="收到,我会从条款合规性、风险点和签约程序三个方面分析" }');
     expect(event).not.toBeNull();
     const out = formatEvent(event!, false);
     expect(out).toContain("turn");
-    expect(out).toContain("Q「帮我看下这个劳动合同有什么问题」");
-    expect(out).toContain("A「收到,我会从条款合规性、风险点和签约程序三个方面分析」");
-    expect(out.split("\n")).toHaveLength(3); // 三行:metadata + Q + A
+    expect(out).toContain("session ses_1");
+    expect(out).toContain("turn    t1");
+    expect(out).toContain("Q       「帮我看下这个劳动合同有什么问题」");
+    expect(out).toContain("A       「收到,我会从条款合规性、风险点和签约程序三个方面分析」");
+    expect(out.split("\n")).toHaveLength(5);
   });
 
-  it("truncates long previews at 40 chars with ellipsis", async () => {
+  it("keeps longer previews in local dashboard before truncating", async () => {
     const { formatEvent, parseLogLine } = await import("../scripts/runtime/activity-ticker.mjs");
-    const long = "A".repeat(60);
+    const long = "A".repeat(160);
     const event = parseLogLine(`22:58:48 [bridge/queue] turn.completed { turnId="t1" durationMs=2300 userTextPreview="${long}" replyTextPreview="ok" }`);
     const out = formatEvent(event!, false);
-    expect(out).toContain("A".repeat(39) + "…");
-    expect(out).toContain("A「ok」");
+    expect(out).toContain("A".repeat(139) + "…");
+    expect(out).toContain("A       「ok」");
   });
 
-  it("omits preview line entirely when both previews missing", async () => {
+  it("omits preview lines when both previews are missing", async () => {
     const { formatEvent, parseLogLine } = await import("../scripts/runtime/activity-ticker.mjs");
     const event = parseLogLine('22:58:48 [bridge/queue] turn.completed { turnId="t1" durationMs=2300 replyLength=13 chatId="oc_p2p_1" userId="ou_abc12" }');
     const out = formatEvent(event!, false);
-    expect(out.split("\n")).toHaveLength(1);
+    expect(out).not.toContain("Q       ");
+    expect(out).not.toContain("A       ");
+    expect(out.split("\n")).toHaveLength(2);
   });
 
   it("includes previews in JSON mode", async () => {
     const { formatEventJson, parseLogLine } = await import("../scripts/runtime/activity-ticker.mjs");
-    const event = parseLogLine('22:58:48 [bridge/queue] turn.completed { turnId="t1" durationMs=2300 userTextPreview="问题" replyTextPreview="答案" }');
+    const event = parseLogLine('22:58:48 [bridge/queue] turn.completed { turnId="t1" sessionId="ses_1" chatId="oc_p2p_1" conversationKey="oc_p2p_1:main" durationMs=2300 userTextPreview="问题" replyTextPreview="答案" textPreview="摘要" }');
     const parsed = JSON.parse(formatEventJson(event!));
+    expect(parsed.chatId).toBe("oc_p2p_1");
+    expect(parsed.sessionId).toBe("ses_1");
+    expect(parsed.conversationKey).toBe("oc_p2p_1:main");
     expect(parsed.userTextPreview).toBe("问题");
     expect(parsed.replyTextPreview).toBe("答案");
+    expect(parsed.textPreview).toBe("摘要");
   });
 });
 

@@ -1,5 +1,6 @@
 # Feishu OpenCode Bridge
 
+[![npm](https://img.shields.io/npm/v/feishu-opencode-bridge/beta.svg?label=npm%20beta)](https://www.npmjs.com/package/feishu-opencode-bridge)
 [![CI](https://github.com/Clukay-Fun/feishu-opencode-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/Clukay-Fun/feishu-opencode-bridge/actions/workflows/ci.yml)
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6)](https://www.typescriptlang.org/)
@@ -31,6 +32,21 @@ Feishu OpenCode Bridge 是飞书原生 OpenCode runtime + 法律材料工作台�
 更多功能说明见 [功能说明](docs/features.md)。
 
 ## 快速开始
+
+### npm 安装（预览版）
+
+```bash
+npm i -g feishu-opencode-bridge@beta
+feishu-opencode-bridge setup
+feishu-opencode-bridge start
+```
+
+安装后也可以使用短命令：
+
+```bash
+fob setup
+fob start
+```
 
 Release 包用户优先使用 portable 入口（源码开发者请直接跳到下方 npm 段）：
 

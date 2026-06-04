@@ -394,6 +394,17 @@ export class BridgeApp {
       messageId: message.messageId,
       messageType: message.messageType,
     }, message.plainText);
+    logEvent(this.logger, "bridge/message", "inbound.received", {
+      chatId: message.chatId,
+      chatType: message.chatType,
+      conversationKey: message.conversationKey,
+      threadKey: message.threadKey,
+      senderId: message.senderOpenId,
+      messageId: message.messageId,
+      messageType: message.messageType,
+      textPreview: message.plainText,
+      len: message.plainText.length,
+    });
     this.messageContextStore.rememberInbound(message);
     const messageContext = this.messageContextStore.buildRuntimeContext(message);
 
@@ -1730,7 +1741,7 @@ export class BridgeApp {
    * 为当前 turn 组装统一的日志上下文字段。
    */
   private buildTurnLogContext(
-    message: Pick<IncomingChatMessage, "chatId" | "senderOpenId" | "messageId">,
+    message: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey" | "senderOpenId" | "messageId">,
     turnId: string,
     sessionId?: string,
   ): LogContext {
@@ -1738,6 +1749,9 @@ export class BridgeApp {
       ...getLogContext(),
       turnId,
       chatId: message.chatId,
+      chatType: message.chatType,
+      conversationKey: message.conversationKey,
+      threadKey: message.threadKey,
       userId: message.senderOpenId,
       messageId: message.messageId,
       sessionId,

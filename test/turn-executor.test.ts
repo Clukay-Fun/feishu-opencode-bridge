@@ -7,6 +7,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { TurnExecutor, type TurnExecutorContext } from "../src/runtime/turn-executor.js";
 import type { BridgeMessageContextStore } from "../src/runtime/message-context.js";
 
+type PendingTextEvent = { messageId: string; kind: "delta" | "set"; value: string; partId?: string | undefined };
+type TextPartKind = "text" | "reasoning" | "ignored";
+type FlushRuntime = {
+  textPartTypes: Map<string, TextPartKind>;
+  pendingTextPartDeltas: Map<string, string>;
+  appendFinalText: (delta: string) => Promise<void>;
+  setFinalText: (value: string) => Promise<void>;
+};
+
 describe("TurnExecutor text buffering", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -17,11 +26,11 @@ describe("TurnExecutor text buffering", () => {
       handleEvent: (turn: Record<string, unknown>, event: Record<string, unknown>, runtime: ReturnType<typeof createRuntime>) => Promise<void>;
       flushPendingTextEvents: (
         assistantMessageId: string,
-        pendingTextEvents: Array<{ messageId: string; kind: "delta" | "set"; value: string }>,
-        runtime: { appendFinalText: (delta: string) => Promise<void>; setFinalText: (value: string) => Promise<void> },
+        pendingTextEvents: PendingTextEvent[],
+        runtime: FlushRuntime,
       ) => Promise<void>;
     };
-    const pendingTextEvents: Array<{ messageId: string; kind: "delta" | "set"; value: string }> = [];
+    const pendingTextEvents: PendingTextEvent[] = [];
     const runtime = createRuntime(executor, pendingTextEvents);
 
     await executor.handleEvent(createTurn(), {
@@ -52,11 +61,11 @@ describe("TurnExecutor text buffering", () => {
       handleEvent: (turn: Record<string, unknown>, event: Record<string, unknown>, runtime: ReturnType<typeof createRuntime>) => Promise<void>;
       flushPendingTextEvents: (
         assistantMessageId: string,
-        pendingTextEvents: Array<{ messageId: string; kind: "delta" | "set"; value: string }>,
-        runtime: { appendFinalText: (delta: string) => Promise<void>; setFinalText: (value: string) => Promise<void> },
+        pendingTextEvents: PendingTextEvent[],
+        runtime: FlushRuntime,
       ) => Promise<void>;
     };
-    const pendingTextEvents: Array<{ messageId: string; kind: "delta" | "set"; value: string }> = [];
+    const pendingTextEvents: PendingTextEvent[] = [];
     const runtime = createRuntime(executor, pendingTextEvents);
 
     await executor.handleEvent(createTurn(), {
@@ -81,6 +90,132 @@ describe("TurnExecutor text buffering", () => {
     expect(runtime.getFinalText()).toBe("完整回答");
   });
 
+  it("keeps reasoning deltas out of the final answer until the part type is known", async () => {
+    const context = createContext();
+    const appendReasoning = vi.fn();
+    const updateTurnCard = vi.fn(async () => {});
+    context.turnCardManager.appendReasoning = appendReasoning;
+    context.turnCardManager.updateTurnCard = updateTurnCard;
+    const executor = new TurnExecutor(context) as unknown as {
+      handleEvent: (turn: Record<string, unknown>, event: Record<string, unknown>, runtime: ReturnType<typeof createRuntime>) => Promise<void>;
+      flushPendingTextEvents: (
+        assistantMessageId: string,
+        pendingTextEvents: PendingTextEvent[],
+        runtime: FlushRuntime,
+      ) => Promise<void>;
+    };
+    const runtime = createRuntime(executor, []);
+
+    await executor.handleEvent(createTurn(), {
+      type: "message.updated",
+      properties: { info: { id: "msg_assistant", role: "assistant", sessionID: "ses_1" } },
+    }, runtime);
+    await executor.handleEvent(createTurn(), {
+      type: "message.part.delta",
+      properties: { sessionID: "ses_1", messageID: "msg_assistant", partID: "part_reasoning", field: "text", delta: "先分析需求" },
+    }, runtime);
+
+    expect(runtime.getFinalText()).toBe("");
+
+    await executor.handleEvent(createTurn(), {
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "part_reasoning",
+          type: "reasoning",
+          messageID: "msg_assistant",
+          text: "先分析需求",
+        },
+      },
+    }, runtime);
+
+    expect(runtime.getFinalText()).toBe("");
+    expect(runtime.ignoredTextPartIds.has("part_reasoning")).toBe(true);
+    expect(appendReasoning).toHaveBeenCalledWith("turn_1", "先分析需求");
+    expect(updateTurnCard).toHaveBeenCalledWith("turn_1", { status: "处理中" });
+    expect(updateTurnCard).not.toHaveBeenCalledWith("turn_1", expect.objectContaining({
+      target: "step",
+      update: expect.stringContaining("先分析需求"),
+    }));
+  });
+
+  it("removes reasoning text that was already leaked into the final answer", async () => {
+    const context = createContext();
+    const appendReasoning = vi.fn();
+    context.turnCardManager.appendReasoning = appendReasoning;
+    const executor = new TurnExecutor(context) as unknown as {
+      handleEvent: (turn: Record<string, unknown>, event: Record<string, unknown>, runtime: ReturnType<typeof createRuntime>) => Promise<void>;
+      flushPendingTextEvents: (
+        assistantMessageId: string,
+        pendingTextEvents: PendingTextEvent[],
+        runtime: FlushRuntime,
+      ) => Promise<void>;
+    };
+    const runtime = createRuntime(executor, []);
+
+    await executor.handleEvent(createTurn(), {
+      type: "message.updated",
+      properties: { info: { id: "msg_assistant", role: "assistant", sessionID: "ses_1" } },
+    }, runtime);
+    await executor.handleEvent(createTurn(), {
+      type: "message.part.delta",
+      properties: { sessionID: "ses_1", messageID: "msg_assistant", field: "text", delta: "先分析需求" },
+    }, runtime);
+
+    expect(runtime.getFinalText()).toBe("先分析需求");
+
+    await executor.handleEvent(createTurn(), {
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "part_reasoning",
+          type: "reasoning",
+          messageID: "msg_assistant",
+          text: "先分析需求",
+        },
+      },
+    }, runtime);
+
+    expect(runtime.getFinalText()).toBe("");
+    expect(appendReasoning).toHaveBeenCalledWith("turn_1", "先分析需求");
+  });
+
+  it("flushes buffered text deltas once a part is confirmed as final text", async () => {
+    const executor = new TurnExecutor(createContext()) as unknown as {
+      handleEvent: (turn: Record<string, unknown>, event: Record<string, unknown>, runtime: ReturnType<typeof createRuntime>) => Promise<void>;
+      flushPendingTextEvents: (
+        assistantMessageId: string,
+        pendingTextEvents: PendingTextEvent[],
+        runtime: FlushRuntime,
+      ) => Promise<void>;
+    };
+    const runtime = createRuntime(executor, []);
+
+    await executor.handleEvent(createTurn(), {
+      type: "message.updated",
+      properties: { info: { id: "msg_assistant", role: "assistant", sessionID: "ses_1" } },
+    }, runtime);
+    await executor.handleEvent(createTurn(), {
+      type: "message.part.delta",
+      properties: { sessionID: "ses_1", messageID: "msg_assistant", partID: "part_text", field: "text", delta: "助手开头" },
+    }, runtime);
+
+    expect(runtime.getFinalText()).toBe("");
+
+    await executor.handleEvent(createTurn(), {
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "part_text",
+          type: "text",
+          messageID: "msg_assistant",
+        },
+      },
+    }, runtime);
+
+    expect(runtime.getFinalText()).toBe("助手开头");
+  });
+
   it("renders a clear text fallback for permission requests", async () => {
     const context = createContext();
     let capturedPayload: { content: string } | null = null;
@@ -93,8 +228,8 @@ describe("TurnExecutor text buffering", () => {
       handleEvent: (turn: Record<string, unknown>, event: Record<string, unknown>, runtime: ReturnType<typeof createRuntime>) => Promise<void>;
       flushPendingTextEvents: (
         assistantMessageId: string,
-        pendingTextEvents: Array<{ messageId: string; kind: "delta" | "set"; value: string }>,
-        runtime: { appendFinalText: (delta: string) => Promise<void>; setFinalText: (value: string) => Promise<void> },
+        pendingTextEvents: PendingTextEvent[],
+        runtime: FlushRuntime,
       ) => Promise<void>;
     };
     const runtime = createRuntime(executor, []);
@@ -119,8 +254,8 @@ describe("TurnExecutor text buffering", () => {
       handleEvent: (turn: Record<string, unknown>, event: Record<string, unknown>, runtime: ReturnType<typeof createRuntime>) => Promise<void>;
       flushPendingTextEvents: (
         assistantMessageId: string,
-        pendingTextEvents: Array<{ messageId: string; kind: "delta" | "set"; value: string }>,
-        runtime: { appendFinalText: (delta: string) => Promise<void>; setFinalText: (value: string) => Promise<void> },
+        pendingTextEvents: PendingTextEvent[],
+        runtime: FlushRuntime,
       ) => Promise<void>;
     };
     const runtime = createRuntime(executor, []);
@@ -494,14 +629,16 @@ function createRuntime(
   executor: {
     flushPendingTextEvents: (
       assistantMessageId: string,
-      pendingTextEvents: Array<{ messageId: string; kind: "delta" | "set"; value: string }>,
-      runtime: { appendFinalText: (delta: string) => Promise<void>; setFinalText: (value: string) => Promise<void> },
+      pendingTextEvents: PendingTextEvent[],
+      runtime: FlushRuntime,
     ) => Promise<void>;
   },
-  pendingTextEvents: Array<{ messageId: string; kind: "delta" | "set"; value: string }>,
+  pendingTextEvents: PendingTextEvent[],
 ) {
   let assistantMessageId: string | null = null;
   let finalText = "";
+  const textPartTypes = new Map<string, TextPartKind>();
+  const pendingTextPartDeltas = new Map<string, string>();
 
   return {
     getAssistantMessageId: () => assistantMessageId,
@@ -509,6 +646,8 @@ function createRuntime(
       assistantMessageId = value;
       if (assistantMessageId) {
         await executor.flushPendingTextEvents(assistantMessageId, pendingTextEvents, {
+          textPartTypes,
+          pendingTextPartDeltas,
           appendFinalText: async (delta: string) => {
             finalText += delta;
           },
@@ -519,8 +658,10 @@ function createRuntime(
       }
     },
     ignoredTextPartIds: new Set<string>(),
-    queuePendingTextEvent: (messageId: string, eventType: "delta" | "set", value: string) => {
-      pendingTextEvents.push({ messageId, kind: eventType, value });
+    textPartTypes,
+    pendingTextPartDeltas,
+    queuePendingTextEvent: (messageId: string, eventType: "delta" | "set", value: string, partId?: string | undefined) => {
+      pendingTextEvents.push({ messageId, kind: eventType, value, partId });
     },
     appendFinalText: async (delta: string) => {
       finalText += delta;
