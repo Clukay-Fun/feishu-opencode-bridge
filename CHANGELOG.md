@@ -28,6 +28,40 @@
 
 - 无。
 
+## [0.3.0-beta.0] - 2026-06-04
+
+### Added
+
+- 新增 npm beta 安装入口，`feishu-opencode-bridge` 与 `fob` 全局命令统一分发到跨平台启动器。
+- README 与 README.en 增加 beta 安装示例和 npm beta 徽章。
+- 新增服务器部署脚本、服务器工具更新脚本和 Cloudflare Tunnel compose 示例。
+- 运行台活动视图新增用户入站消息、机器人最终回复和 turn 摘要展示。
+- 结构化日志新增 `bridge/message inbound.received` 事件，补充 chat、conversation、thread 和 message 上下文字段。
+
+### Changed
+
+- 运行台启动脚本优先使用本地 TypeScript 源码启动，避免开发时误跑过期 `dist` 产物。
+- 活动视图改为 tail bridge 结构化日志，并输出更适合排查的 JSON 字段。
+- Docker builder 阶段补充 native 依赖安装，提升 npm 安装与构建兼容性。
+- 服务器部署规范收口到 `CODEX.md`，明确 runtime 私有文件不可被覆盖。
+
+### Deprecated
+
+- 无。
+
+### Removed
+
+- 无。
+
+### Fixed
+
+- 修复 OpenCode reasoning 文本流可能混入最终回复的问题，只有确认的 text part 会进入最终答案。
+- 服务器部署脚本不再内置具体服务器地址、用户和 SSH key 路径，改为运行时显式传入环境变量。
+
+### Security
+
+- 部署脚本移除仓库内硬编码的服务器连接信息，降低误提交部署细节的风险。
+
 ## [0.3.0] - 2026-06-03
 
 ### Added
