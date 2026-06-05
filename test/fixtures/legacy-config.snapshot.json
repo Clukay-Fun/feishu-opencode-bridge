@@ -108,6 +108,10 @@
     "profile": "xiaojing",
     "scope": "legal"
   },
+  "scheduler": {
+    "enabled": true,
+    "maxConcurrentRuns": 1
+  },
   "memory": {
     "enabled": true,
     "dbPath": "<fixtureDir>/data/memory.db",
@@ -218,11 +222,15 @@
     "parser": {
       "externalApiEnabled": false,
       "pdfProviderOrder": [
-        "pdf-parse",
+        "mineru-agent",
+        "paddleocr-vl-aistudio",
         "pymupdf4llm",
-        "docling"
+        "docling",
+        "pdf-parse"
       ],
       "imageProviderOrder": [
+        "paddleocr-vl-aistudio",
+        "mineru-agent",
         "tesseract"
       ],
       "ocrLang": "chi_sim+eng",

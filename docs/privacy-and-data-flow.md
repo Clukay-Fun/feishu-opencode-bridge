@@ -17,7 +17,7 @@
 | 合同 / 案件文件 | 本地临时文件、飞书 Base、必要时进入 OpenCode 上下文 | 是 | 文件内容用于提取、起草、分析时会作为上下文发送给模型。 |
 | 合同 / 发票 / 案件台账 | 用户自己的飞书 Base | 否，除飞书自身云端 | `bridge init workspace` 创建正式 Base；Bridge 不把这些数据同步到项目维护者。 |
 | 知识库条目 | 飞书 Base + 本地 SQLite / FTS | 是 | 入库抽取问答时会调用模型；检索索引存本地。 |
-| 图片 / 扫描件 OCR | 默认本地 Tesseract；外部 OCR 默认关闭 | 仅显式开启时 | `knowledgeBase.parser.externalApiEnabled=true` 后，材料可能上传到配置的 OCR provider。 |
+| 图片 / 扫描件 OCR | 外部 OCR 默认关闭；开启后按 PaddleOCR AIStudio / MinerU / Tesseract 降级 | 仅显式开启时 | `knowledgeBase.parser.externalApiEnabled=true` 后，材料可能上传到配置的 OCR provider。 |
 | 长期记忆 memory | 本地 SQLite，可选 Obsidian | 否，除模型抽取步骤 | 默认关闭。启用后会从对话中提取长期事实并写本地。 |
 | 日志 | 本地 `logs/` | 否 | 默认 `messagePolicy=preview`。真实案件不建议开启 `full`。 |
 | 外部扩展 | 用户安装的本地扩展目录 | 取决于扩展 | 外部扩展是受信代码，不是沙箱。安装前应审查来源和依赖。 |
