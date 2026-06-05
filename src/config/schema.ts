@@ -165,6 +165,10 @@ export const ConfigSchema = z.object({
   costs: CostsConfigSchema,
   updates: UpdatesConfigSchema,
   persona: PersonaConfigSchema,
+  scheduler: z.object({
+    enabled: z.boolean().default(true),
+    maxConcurrentRuns: z.number().int().positive().default(1),
+  }).default({}),
   memory: MemoryConfigSchema.default({}),
   caseWorkbench: CaseWorkbenchConfigSchema,
   extensions: z.record(z.unknown()).default({}),
@@ -289,6 +293,10 @@ export type AppConfig = {
     profile: "xiaojing";
     scope: "legal" | "global";
   } | undefined;
+  scheduler: {
+    enabled: boolean;
+    maxConcurrentRuns: number;
+  };
   memory: {
     enabled: boolean;
     dbPath: string;

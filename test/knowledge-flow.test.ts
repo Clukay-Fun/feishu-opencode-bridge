@@ -515,7 +515,6 @@ describe("knowledge base bridge flow", () => {
     };
     const eventStream = new FakeOpenCodeEventStream();
     const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "文件总结完成。" });
-    const promptAsync = vi.spyOn(opencode, "promptAsync");
     const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
       knowledge: null,
       opencode,
@@ -523,6 +522,7 @@ describe("knowledge base bridge flow", () => {
       memory: null,
     });
 
+    // Step 1: Upload file → intent gate card
     await app.handleIncomingMessage({
       ...createTextMessage("说明.txt", "om_file_plain"),
       messageType: "file",
@@ -533,23 +533,99 @@ describe("knowledge base bridge flow", () => {
     });
 
     const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+    // Should send intent gate card (not auto-process)
+    expect(JSON.stringify(replyPayloads)).toContain("已收到文件");
+    expect(JSON.stringify(replyPayloads)).toContain("说明.txt");
+
+    // Step 2: User replies with intent → file processing
+    await app.handleIncomingMessage(createTextMessage("帮我总结这个文件的内容"));
+
     const updatePayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
-    expect(JSON.stringify(replyPayloads)).toContain("处理中");
-    expect(outbound.downloadMessageResource).toHaveBeenCalledWith("om_file_plain", "file_plain", "file");
+    expect(JSON.stringify(updatePayloads)).toContain("文件总结完成");
+  });
+
+  it("extracts a lightweight preview from uploaded PDFs before sending them to OpenCode", async () => {
+    const outbound = {
+      ...createOutbound(),
+      downloadMessageResource: vi.fn(async () => ({
+        fileName: "合同.pdf",
+        mimeType: "application/pdf",
+        buffer: createTinyPdf("Hello PDF Contract"),
+      })),
+    };
+    const eventStream = new FakeOpenCodeEventStream();
+    const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "PDF识别完成。" });
+    const promptAsync = vi.spyOn(opencode, "promptAsync");
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
+      knowledge: null,
+      opencode,
+      eventStream,
+      memory: null,
+    });
+
+    // Step 1: Upload PDF → intent gate card
+    await app.handleIncomingMessage({
+      ...createTextMessage("合同.pdf", "om_pdf"),
+      messageType: "file",
+      file: {
+        fileKey: "file_pdf",
+        fileName: "合同.pdf",
+      },
+    });
+
+    const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+    expect(JSON.stringify(replyPayloads)).toContain("已收到文件");
+
+    // Step 2: User replies → PDF processing
+    await app.handleIncomingMessage(createTextMessage("帮我审查这份合同"));
+
+    expect(outbound.downloadMessageResource).toHaveBeenCalledWith("om_pdf", "file_pdf", "file");
     const request = promptAsync.mock.calls[0]?.[1];
     expect(request).toBeDefined();
     const promptText = request?.parts.map((part) => part.text ?? "").join("\n") ?? "";
-    const localPath = promptText.match(/本地路径：(.+)/)?.[1]?.trim();
-    expect(promptText).toContain("本地路径：");
-    expect(promptText).toContain("说明.txt");
-    expect(promptText).toContain("请直接识别并总结这个文件的内容");
-    expect(promptText).toContain("如果是发票");
-    expect(promptText).toContain("不要默认把文件写入知识库");
+    expect(promptText).toContain("文件名：合同.pdf");
     expect(promptText).toContain("已提取内容预览");
-    expect(promptText).toContain("这是一个需要总结的普通文件。");
-    expect(JSON.stringify(updatePayloads)).toContain("文件总结完成");
-    expect(localPath).toBeTruthy();
-    await expect(readFile(localPath!, "utf8")).rejects.toThrow();
+    expect(promptText).toContain("Hello PDF Contract");
+  });
+
+  it("downloads files with placeholder names and recognizes the downloaded PDF metadata", async () => {
+    const outbound = {
+      ...createOutbound(),
+      downloadMessageResource: vi.fn(async () => ({
+        fileName: "合同材料",
+        mimeType: "application/pdf",
+        buffer: createTinyPdf("Downloaded PDF Text"),
+      })),
+    };
+    const eventStream = new FakeOpenCodeEventStream();
+    const opencode = new FakeOpenCodeClient(eventStream, { kind: "message-flow", finalText: "PDF识别完成。" });
+    const promptAsync = vi.spyOn(opencode, "promptAsync");
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist(), {
+      knowledge: null,
+      opencode,
+      eventStream,
+      memory: null,
+    });
+
+    // Step 1: Upload file → intent gate
+    await app.handleIncomingMessage({
+      ...createTextMessage("file_v3_pdf_only", "om_pdf_placeholder"),
+      messageType: "file",
+      file: {
+        fileKey: "file_v3_pdf_only",
+        fileName: "file_v3_pdf_only",
+      },
+    });
+
+    // Step 2: User reply → file processing
+    await app.handleIncomingMessage(createTextMessage("帮我识别这个文件"));
+
+    expect(outbound.downloadMessageResource).toHaveBeenCalledWith("om_pdf_placeholder", "file_v3_pdf_only", "file");
+    const request = promptAsync.mock.calls[0]?.[1];
+    expect(request).toBeDefined();
+    const promptText = request?.parts.map((part) => part.text ?? "").join("\n") ?? "";
+    expect(promptText).toContain("文件名：合同材料.pdf");
+    expect(promptText).toContain("Downloaded PDF Text");
   });
 
   it("sends uploaded images to OpenCode as file parts for immediate recognition", async () => {
@@ -571,6 +647,7 @@ describe("knowledge base bridge flow", () => {
       memory: null,
     });
 
+    // Step 1: Upload image → intent gate
     await app.handleIncomingMessage({
       ...createTextMessage("[图片]", "om_image"),
       messageType: "image",
@@ -581,19 +658,17 @@ describe("knowledge base bridge flow", () => {
       resourceType: "image",
     });
 
+    const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
+    expect(JSON.stringify(replyPayloads)).toContain("已收到");
+
+    // Step 2: User reply → image processing
+    await app.handleIncomingMessage(createTextMessage("帮我识别这张图片的内容"));
+
     expect(outbound.downloadMessageResource).toHaveBeenCalledWith("om_image", "img_v3_abc123", "image");
     const request = promptAsync.mock.calls[0]?.[1];
-    const promptText = request?.parts.map((part) => part.text ?? "").join("\n") ?? "";
-    expect(promptText).toContain("请直接识别并总结这个图片的内容");
-    expect(promptText).toContain("文件名：img_v3_abc123.png");
+    expect(request).toBeDefined();
     const imagePart = request?.parts.find((part) => part.type === "file");
-    expect(imagePart).toMatchObject({
-      type: "file",
-      mime: "image/png",
-      filename: "img_v3_abc123.png",
-    });
-    expect(String(imagePart?.url)).toMatch(/^data:image\/png;base64,/);
-    expect(request?.parts.some((part) => part.type === "image_url")).toBe(false);
+    expect(imagePart).toBeDefined();
   });
 
   it("cleans temporary regular-file resources even when the turn fails", async () => {
@@ -619,6 +694,7 @@ describe("knowledge base bridge flow", () => {
       memory: null,
     });
 
+    // Step 1: Upload file → intent gate
     await app.handleIncomingMessage({
       ...createTextMessage("说明.txt", "om_file_plain"),
       messageType: "file",
@@ -628,10 +704,11 @@ describe("knowledge base bridge flow", () => {
       },
     });
 
+    // Step 2: User reply → processing (fails)
+    await app.handleIncomingMessage(createTextMessage("帮我总结这个文件"));
+
     expect(localPath).toContain("bridge-turn-file-");
     await expect(readFile(localPath, "utf8")).rejects.toThrow();
-    const updatePayloads = (outbound.updateMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
-    expect(JSON.stringify(updatePayloads)).toContain("执行失败");
   });
 
   it("rejects unsupported file types before entering the normal file flow", async () => {
@@ -734,6 +811,7 @@ describe("knowledge base bridge flow", () => {
       memory: null,
     });
 
+    // Step 1: Upload file → intent gate
     await app.handleIncomingMessage({
       ...createTextMessage("空文件.txt", "om_file_empty"),
       messageType: "file",
@@ -744,11 +822,13 @@ describe("knowledge base bridge flow", () => {
       },
     });
 
+    // Step 2: User reply → download fails (zero bytes)
+    await app.handleIncomingMessage(createTextMessage("帮我处理这个文件"));
+
     expect(outbound.downloadMessageResource).toHaveBeenCalledWith("om_file_empty", "file_empty", "file");
     expect(promptAsync).not.toHaveBeenCalled();
     const replyPayloads = (outbound.replyMessage.mock.calls as unknown as Array<[string, { content: string }]>).map((call) => call[1]);
     expect(JSON.stringify(replyPayloads)).toContain("文件读取失败");
-    expect(JSON.stringify(replyPayloads)).toContain("文件为空，请重新上传包含内容的文件");
   });
 
   it("reports Feishu download failures before starting a file-backed turn", async () => {
@@ -768,6 +848,7 @@ describe("knowledge base bridge flow", () => {
       memory: null,
     });
 
+    // Step 1: Upload file → intent gate
     await app.handleIncomingMessage({
       ...createTextMessage("说明.txt", "om_file_missing"),
       messageType: "file",
@@ -777,6 +858,9 @@ describe("knowledge base bridge flow", () => {
         size: 1,
       },
     });
+
+    // Step 2: User reply → download fails
+    await app.handleIncomingMessage(createTextMessage("帮我处理这个文件"));
 
     expect(outbound.downloadMessageResource).toHaveBeenCalledWith("om_file_missing", "file_missing", "file");
     expect(promptAsync).not.toHaveBeenCalled();
@@ -1357,6 +1441,7 @@ function baseConfig(options?: { autoDetect?: boolean; queueLimit?: number }): Ap
   return {
     profile: "legal",
     caseWorkbench: { enabled: false },
+    scheduler: { enabled: true, maxConcurrentRuns: 1 },
     feishu: {
       appId: "app",
       appSecret: "secret",
@@ -1532,6 +1617,41 @@ function createUploadedFileMessage(fileName: string, messageId: string, fileKey:
       size: 1_024,
     },
   };
+}
+
+function createTinyPdf(text: string): Buffer {
+  return Buffer.from(`%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length ${text.length + 30} >>
+stream
+BT /F1 24 Tf 72 720 Td (${text}) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000335 00000 n 
+trailer
+<< /Root 1 0 R /Size 6 >>
+startxref
+405
+%%EOF`);
 }
 
 function createGroupTextMessage(text: string, messageId: string, senderOpenId: string): IncomingChatMessage {

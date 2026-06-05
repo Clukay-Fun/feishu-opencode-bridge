@@ -2,7 +2,7 @@
  * 职责: 覆盖BridgeApp 命令入口和用户可见命令面。
  * 关注点: 验证核心路径、边界条件和回归场景。
  */
-import { mkdir } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -1935,6 +1935,131 @@ describe("BridgeApp command surface", () => {
 
     expect(appAny.pendingInteractions.has("oc_p2p_1")).toBe(false);
   });
+
+  it("renders scheduler command cards through the command surface", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-schedule-command-"));
+    const outbound = createOutbound();
+    const config = { ...baseConfig(), storage: { ...baseConfig().storage, dataDir: dir, mappingsFile: "mappings.json" } };
+    const app = new BridgeApp(config, outbound, logger(), createWhitelist());
+    const appAny = app as unknown as {
+      scheduler: { start(handler: () => Promise<{ status: "success" }>): Promise<void>; stop(): Promise<void> };
+    };
+    await appAny.scheduler.start(async () => ({ status: "success" }));
+    try {
+      await callHandleCommand(app, {
+        kind: "command",
+        command: { kind: "schedule", subcommand: "add", args: ["cron", "0 9 * * *", "每日早报"] },
+      });
+      expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("定时任务");
+      expect(extractInteractiveAnyText(getReplyPayloads(outbound)[0])).toContain("sched-001");
+
+      await callHandleCommand(app, {
+        kind: "command",
+        command: { kind: "schedule", subcommand: "list", args: [] },
+      });
+      expect(extractInteractiveHeader(getReplyPayloads(outbound)[1])).toBe("我的定时任务");
+      expect(extractInteractiveAnyText(getReplyPayloads(outbound)[1])).toContain("每日早报");
+    } finally {
+      await appAny.scheduler.stop();
+      await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 10 });
+    }
+  });
+
+  it("handles scheduler delete confirmation card actions", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-schedule-delete-"));
+    const outbound = createOutbound();
+    const config = { ...baseConfig(), storage: { ...baseConfig().storage, dataDir: dir, mappingsFile: "mappings.json" } };
+    const app = new BridgeApp(config, outbound, logger(), createWhitelist());
+    const appAny = app as unknown as {
+      scheduler: { start(handler: () => Promise<{ status: "success" }>): Promise<void>; stop(): Promise<void> };
+    };
+    await appAny.scheduler.start(async () => ({ status: "success" }));
+    try {
+      await callHandleCommand(app, {
+        kind: "command",
+        command: { kind: "schedule", subcommand: "add", args: ["cron", "0 9 * * *", "每日早报"] },
+      });
+
+      const result = await app.handleCardAction("ou_123", "om_card", {
+        kind: "schedule-delete-confirm",
+        shortId: "sched-001",
+      });
+      expect(JSON.stringify(result)).toContain("已删除");
+
+      await callHandleCommand(app, {
+        kind: "command",
+        command: { kind: "schedule", subcommand: "list", args: [] },
+      });
+      expect(extractInteractiveAnyText(getReplyPayloads(outbound).at(-1))).toContain("暂无任务");
+    } finally {
+      await appAny.scheduler.stop();
+      await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 10 });
+    }
+  });
+
+  it("handles Chinese scheduler confirmation card actions", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "bridge-schedule-nl-"));
+    const outbound = createOutbound();
+    const config = { ...baseConfig(), storage: { ...baseConfig().storage, dataDir: dir, mappingsFile: "mappings.json" } };
+    const app = new BridgeApp(config, outbound, logger(), createWhitelist());
+    const appAny = app as unknown as {
+      scheduler: { start(handler: () => Promise<{ status: "success" }>): Promise<void>; stop(): Promise<void> };
+    };
+    await appAny.scheduler.start(async () => ({ status: "success" }));
+    try {
+      await callHandleCommand(app, {
+        kind: "command",
+        command: { kind: "schedule-nl", args: ["每天上午9点生成今日简报"] },
+      });
+
+      const confirmCard = getReplyPayloads(outbound)[0];
+      expect(extractInteractiveHeader(confirmCard)).toBe("确认创建定时任务");
+      expect(extractInteractiveAnyText(confirmCard)).toContain("生成今日简报");
+      const pendingKey = extractInteractiveActionValue(confirmCard, "schedule-nl-confirm").pendingKey;
+      expect(pendingKey).toEqual(expect.any(String));
+
+      const denied = await app.handleCardAction("ou_other", "om_card", {
+        kind: "schedule-nl-confirm",
+        pendingKey,
+      });
+      expect(JSON.stringify(denied)).toContain("创建者");
+
+      const confirmed = await app.handleCardAction("ou_123", "om_card", {
+        kind: "schedule-nl-confirm",
+        pendingKey,
+      });
+      expect(JSON.stringify(confirmed)).toContain("sched-001");
+
+      await callHandleCommand(app, {
+        kind: "command",
+        command: { kind: "schedule", subcommand: "list", args: [] },
+      });
+      expect(extractInteractiveAnyText(getReplyPayloads(outbound).at(-1))).toContain("生成今日简报");
+    } finally {
+      await appAny.scheduler.stop();
+      await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 10 });
+    }
+  });
+
+  it("answers scheduler capability questions before OpenCode", async () => {
+    const outbound = createOutbound();
+    const app = new BridgeApp(baseConfig(), outbound, logger(), createWhitelist());
+    const ensureSession = vi.fn();
+    (app as unknown as { ensureSession: typeof ensureSession }).ensureSession = ensureSession;
+
+    await app.handleIncomingMessage({
+      ...createIncomingMessage("om_schedule_capability"),
+      plainText: "现在有定时功能了吗",
+      rawContent: "现在有定时功能了吗",
+    });
+
+    expect(ensureSession).not.toHaveBeenCalled();
+    expect(extractInteractiveHeader(getReplyPayloads(outbound)[0])).toBe("定时任务已启用");
+    const text = extractInteractiveAnyText(getReplyPayloads(outbound)[0]);
+    expect(text).toContain("Bridge 已启用定时任务能力");
+    expect(text).toContain("1分钟后发个问候给我");
+    expect(text).toContain("/cron help");
+  });
 });
 
 async function callHandleCommand(
@@ -1992,7 +2117,9 @@ type AppCommandSurfaceTestRoute = {
     | { kind: "sessions-select"; index?: number | undefined; query?: string | undefined }
     | { kind: "session-preview"; index?: number | undefined; sessionId?: string | undefined }
     | { kind: "close"; index?: number | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined }
-    | { kind: "delete"; index?: number | undefined; sessionId?: string | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined; confirm: boolean };
+    | { kind: "delete"; index?: number | undefined; sessionId?: string | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined; confirm: boolean }
+    | { kind: "schedule"; subcommand: string; args: string[] }
+    | { kind: "schedule-nl"; args: string[] };
 };
 
 // 知识库命令相关用例需要 knowledge 模块实际注册（enabled=true），
@@ -2006,6 +2133,7 @@ function baseConfig(): AppConfig {
   return {
     profile: "legal",
     caseWorkbench: { enabled: false },
+    scheduler: { enabled: true, maxConcurrentRuns: 1 },
     feishu: {
       appId: "app",
       appSecret: "secret",
@@ -2181,12 +2309,35 @@ function extractInteractiveText(payload: { content: string } | undefined): strin
   return JSON.stringify(parsed.body?.elements ?? []);
 }
 
+function extractInteractiveAnyText(payload: { content: string } | undefined): string {
+  if (!payload) {
+    return "";
+  }
+  const parsed = JSON.parse(payload.content) as { body?: { elements?: unknown[] }; elements?: unknown[] };
+  return JSON.stringify(parsed.body?.elements ?? parsed.elements ?? []);
+}
+
 function extractInteractiveHeader(payload: { content: string } | undefined): string {
   if (!payload) {
     return "";
   }
   const parsed = JSON.parse(payload.content) as { header?: { title?: { content?: string } } };
   return parsed.header?.title?.content ?? "";
+}
+
+function extractInteractiveActionValue(payload: { content: string } | undefined, kind: string): Record<string, unknown> {
+  if (!payload) {
+    return {};
+  }
+  const parsed = JSON.parse(payload.content) as {
+    body?: { elements?: Array<{ actions?: Array<{ value?: Record<string, unknown> }> }> };
+    elements?: Array<{ actions?: Array<{ value?: Record<string, unknown> }> }>;
+  };
+  const elements = parsed.body?.elements ?? parsed.elements ?? [];
+  return elements
+    .flatMap((element) => element.actions ?? [])
+    .find((action) => action.value?.kind === kind)
+    ?.value ?? {};
 }
 
 function getReplyPayloads(outbound: ReturnType<typeof createOutbound>): Array<{ content: string } | undefined> {

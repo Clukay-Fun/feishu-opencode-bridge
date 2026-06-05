@@ -41,10 +41,26 @@ describe("runtime prompt helpers", () => {
     expect(prompt).toContain("modelOverride: openai/gpt-5.4-mini");
     expect(prompt).toContain("activeSessionId: ses_2");
     expect(prompt).toContain("* 当前会话 (ses_2)");
-    expect(prompt).toContain("Bridge owns /new /sessions /switch /status");
-    expect(prompt).toContain("prefer the project's Feishu knowledge base and Bitable records");
-    expect(prompt).toContain("prefer existing bridge or lark-cli capabilities over chat-only Markdown");
+    expect(prompt).toContain("AGENTS.md as the active runtime/product contract");
+    expect(prompt).toContain("CODEX.md as the development workflow contract");
+    expect(prompt).toContain("default to lark-cli and installed lark-* skills");
+    expect(prompt).toContain("[Bridge Capabilities]");
+    expect(prompt).toContain("Bridge owns window/session management, scheduling, file materials, and the knowledge base");
+    expect(prompt).toContain("Do not deny these capabilities");
+    expect(prompt).toContain("call the Bridge_* MCP tools");
+    expect(prompt).not.toContain("call the Bridge_*_status MCP tools");
+    expect(prompt).toContain("Bridge_window_state");
+    expect(prompt).toContain("Bridge_scheduler_status");
+    expect(prompt).toContain("Bridge_recent_materials");
+    expect(prompt).toContain("follow the loaded skills (bridge-sessions, scheduler, file-materials, knowledge-base)");
+    expect(prompt).toContain("Bridge is the only owner of side effects");
+    expect(prompt).toContain("Prefer existing Bridge / lark-cli capabilities");
     expect(prompt).toContain("write, overwrite, delete, or batch-update operations must ask for confirmation");
+    // 旧的 scheduler/window 详细文本已迁出到 MCP+skill,不应再出现在 system prompt
+    expect(prompt).not.toContain("/cron list");
+    expect(prompt).not.toContain("1分钟后提醒我喝水");
+    expect(prompt).not.toContain("Scheduling is a Bridge capability, not a native model tool");
+    expect(prompt).not.toContain("Do not pretend to switch");
   });
 
   it("keeps local labels until they are still raw session ids", () => {

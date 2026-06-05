@@ -155,3 +155,29 @@ npm run bridge -- start                # 启动服务
 ANSI 颜色默认在 TTY 下开启，可通过 `BRIDGE_NO_COLOR=1` 关闭。Bridge 原始运行日志（含 `[info]` / `[error]` 全量）仍写入 `logs/bridge-runtime.log`，需要细节时直接 `tail -f` 查看。
 
 非交互式模式（CI / 脚本）所有命令支持 `--profile` / `--enable` / `--disable` flag，不弹 prompt。
+
+## 定时任务（自然语言 + `/cron` 管理）
+
+直接发送自然语言即可创建定时任务，无需命令：
+
+```
+1分钟后发个问候给我
+明天上午9点提醒我开会
+每天早上9点生成今日简报
+每周五下午5点总结本周工作
+```
+
+**管理命令**（需要任务 ID）：
+
+| 命令 | 说明 |
+| :-- | :-- |
+| `/cron help` | 显示帮助 |
+| `/cron list` | 查看自己创建的任务 |
+| `/cron show sched-001` | 查看任务详情 |
+| `/cron pause sched-001` | 暂停任务 |
+| `/cron resume sched-001` | 恢复任务 |
+| `/cron run sched-001` | 立即执行 |
+| `/cron delete sched-001` | 删除任务（需二次确认） |
+| `/cron runs sched-001` | 查看执行记录 |
+
+`/schedule` 仍可使用，作为 `/cron` 的兼容别名。

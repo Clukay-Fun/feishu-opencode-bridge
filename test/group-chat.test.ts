@@ -995,6 +995,44 @@ describe("group chat support", () => {
     expect(passedMessage.plainText).toBe("[图片]");
   });
 
+  it("accepts file messages when Feishu omits file name but provides file_key", async () => {
+    const handler = vi.fn(async (message: IncomingChatMessage) => {
+      void message;
+    });
+    const logger = { log: vi.fn() };
+    const client = new FeishuWsClient(
+      "app",
+      "secret",
+      makeOptions({ enableP2p: true }),
+      createWhitelist(),
+      handler,
+      logger,
+    );
+
+    await (client as unknown as { handleEvent(payload: unknown): Promise<void> }).handleEvent({
+      message: {
+        chat_id: "oc_p2p_file_1",
+        chat_type: "p2p",
+        message_id: "om_file_1",
+        message_type: "file",
+        content: JSON.stringify({ file_key: "file_v3_pdf_only" }),
+      },
+      sender: { sender_id: { open_id: "ou_123" } },
+    });
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    const passedMessage = handler.mock.calls[0]?.[0] as IncomingChatMessage;
+    expect(passedMessage.messageType).toBe("file");
+    if (passedMessage.messageType !== "file") {
+      throw new Error("expected file message");
+    }
+    expect(passedMessage.file).toEqual(expect.objectContaining({
+      fileKey: "file_v3_pdf_only",
+      fileName: "file_v3_pdf_only",
+    }));
+    expect(passedMessage.plainText).toBe("file_v3_pdf_only");
+  });
+
   it("accepts folder messages as downloadable zip-like file payloads", async () => {
     const handler = vi.fn(async (message: IncomingChatMessage) => {
       void message;

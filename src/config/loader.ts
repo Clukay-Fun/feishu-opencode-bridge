@@ -192,6 +192,10 @@ export async function loadConfigWithWarnings(
       profile: parsed.persona.profile,
       scope: parsed.persona.scope,
     },
+    scheduler: {
+      enabled: parsed.scheduler.enabled,
+      maxConcurrentRuns: parsed.scheduler.maxConcurrentRuns,
+    },
     memory: {
       enabled: profileResolution.enabled["memory"],
       dbPath: resolveRelative(baseDir, parsed.memory.dbPath ?? path.join(dataDir, "memory.db")),

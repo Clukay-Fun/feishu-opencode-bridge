@@ -75,6 +75,7 @@ function baseConfig(dir: string): AppConfig {
   return {
     profile: "legal",
     caseWorkbench: { enabled: false },
+    scheduler: { enabled: true, maxConcurrentRuns: 1 },
     feishu: {
       appId: "app",
       appSecret: "secret",
