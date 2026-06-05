@@ -28,6 +28,43 @@
 
 - 无。
 
+## [0.3.0-beta.1] - 2026-06-05
+
+### Added
+
+- 新增 Bridge Scheduler 能力，支持自然语言创建定时任务，并通过 `/cron` 管理查看、暂停、恢复、立即执行、删除和查看运行记录。
+- 新增 scheduler 独立运行时、持久化 store、执行 runner、确认卡片和防递归执行上下文。
+- 新增 Bridge MCP 只读工具：`Bridge_scheduler_status`、`Bridge_window_state`、`Bridge_recent_materials`。
+- 新增 agent 可见性快照，Bridge 会写入当前窗口和最近材料状态，供 MCP 工具读取。
+- 新增 `.opencode/skills/bridge-sessions`、`scheduler`、`file-materials`、`knowledge-base`，帮助 agent 正确认知 Bridge 能力边界。
+- 新增 scheduler 与 agent visibility ADR、slice plan 和 MCP 使用说明。
+
+### Changed
+
+- 系统提示收敛为能力边界说明，实时窗口、调度器和材料状态改由 Bridge MCP 工具读取。
+- 文件上传默认先形成材料上下文和意图确认，不再把所有普通文件立即推入深度处理。
+- 本地运行台改为更简洁的对话流预览，默认保留 scrollback，dashboard/sticky 需要显式开启。
+- 知识库解析 provider 默认顺序改为质量优先，外部 OCR 仍需显式开启后才会调用。
+- `fob mcp` / `feishu-opencode-bridge mcp` 可直接启动 Bridge MCP stdio server。
+
+### Deprecated
+
+- 无。
+
+### Removed
+
+- 无。
+
+### Fixed
+
+- 修复飞书卡片回调返回 `{toast}` 或发送消息 payload 时可能不符合 CardActionHandler 返回格式的问题。
+- 修复文件消息缺少文件名但带 `file_key` 时无法作为材料上下文继续处理的问题。
+- 修复运行台 turn 完成摘要重复展示用户输入的问题。
+
+### Security
+
+- MCP 工具仅暴露只读快照，不提供写入、删除或任务创建入口。
+
 ## [0.3.0-beta.0] - 2026-06-04
 
 ### Added
