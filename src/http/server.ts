@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import http from "node:http";
 
 import type { AppConfig } from "../config/schema.js";
+import { buildNoticeCardPayload, toInteractiveCardContent, type FeishuPostPayload } from "../feishu/shared-primitives.js";
 import { runWithLogContext } from "../logging/logger.js";
 import { APP_VERSION } from "../version.js";
 
@@ -205,26 +206,26 @@ export async function startBridgeHttpServer(
                 openMessageId: callback.openMessageId,
                 actionKind: typeof callback.actionValue.kind === "string" ? callback.actionValue.kind : "",
               }, "warn");
-              return buildCardActionNotice("无法识别操作者，请使用文本命令兜底。");
+              return buildCardActionNotice("无法识别操作者，请使用文本命令兜底。", "warning");
             }
 
             if (!callback.actionValue.kind || callback.actionValue.kind === "permission") {
-              return await actions.handlePermissionCardAction(
+              return normalizeCardActionResponse(await actions.handlePermissionCardAction(
                 callback.actorOpenId,
                 callback.openMessageId,
                 callback.actionValue,
-              );
+              ));
             }
 
             if (actions.handleCardAction) {
-              return await actions.handleCardAction(
+              return normalizeCardActionResponse(await actions.handleCardAction(
                 callback.actorOpenId,
                 callback.openMessageId,
                 callback.actionValue,
-              );
+              ));
             }
 
-            return buildCardActionNotice("未识别的卡片操作，请使用文本命令兜底。");
+            return buildCardActionNotice("未识别的卡片操作，请使用文本命令兜底。", "warning");
           });
         },
       ),
@@ -336,12 +337,50 @@ function summarizeIdentifier(value: string): string {
   return `${value.slice(0, 6)}...${value.slice(-4)}`;
 }
 
-/** 构建卡片 action 的轻量提示响应。 */
-function buildCardActionNotice(content: string): Record<string, unknown> {
-  return {
-    toast: {
-      type: "warning",
-      content,
-    },
-  };
+/**
+ * 将业务层卡片回调结果归一成飞书 CardActionHandler 可接受的纯卡片 content。
+ *
+ * SDK 会把 handler 返回值直接作为“更新被点击消息卡片”的内容返回给飞书；
+ * 这里不能返回发送消息用的 `{msg_type, content}` 包装，也不能返回 `{toast}`。
+ */
+function normalizeCardActionResponse(result: Record<string, unknown>): Record<string, unknown> {
+  if (isFeishuPostPayload(result)) {
+    return result.msg_type === "interactive"
+      ? toInteractiveCardContent(result)
+      : buildCardActionNotice("操作已处理。", "info");
+  }
+
+  const toast = asRecord(result.toast);
+  if (toast) {
+    const content = typeof toast.content === "string" && toast.content.trim()
+      ? toast.content.trim()
+      : "操作已处理。";
+    return buildCardActionNotice(content, mapToastType(toast.type));
+  }
+
+  return result;
+}
+
+function isFeishuPostPayload(value: Record<string, unknown>): value is FeishuPostPayload {
+  return (value.msg_type === "interactive" || value.msg_type === "post")
+    && typeof value.content === "string";
+}
+
+function mapToastType(value: unknown): "info" | "warning" | "error" {
+  if (value === "success" || value === "info") {
+    return "info";
+  }
+  if (value === "error") {
+    return "error";
+  }
+  return "warning";
+}
+
+/** 构建卡片 action 的提示卡片响应。 */
+function buildCardActionNotice(content: string, level: "info" | "warning" | "error"): Record<string, unknown> {
+  return toInteractiveCardContent(buildNoticeCardPayload({
+    title: level === "error" ? "错误" : "提醒",
+    level,
+    message: content,
+  }));
 }

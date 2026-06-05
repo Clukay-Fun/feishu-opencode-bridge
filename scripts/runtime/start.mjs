@@ -114,7 +114,9 @@ export async function runStart(options = {}) {
   bridgeProcess.stderr?.pipe(bridgeRuntimeLogStream);
 
   const bridgeHealthy = await waitForBridgeHealth(serverHost, serverPort, fetchImpl, options.bridgeHealthTimeoutMs ?? 30_000);
-  const dashboardMode = colorMode && !jsonMode && (process.env.BRIDGE_DASHBOARD !== "0") && options.dashboard !== false;
+  // 默认 append 模式(终端 scrollback 可用,事件直接追加)。
+  // BRIDGE_DASHBOARD=1 显式开启 alt-screen 全屏 dashboard。
+  const dashboardMode = colorMode && !jsonMode && (process.env.BRIDGE_DASHBOARD === "1") && options.dashboard === true;
   if (bridgeHealthy) {
     logger.log(`[3/3] Bridge Runtime ... 已启动 http://${serverHost}:${serverPort}`);
     // Dashboard 模式下顶部 panel 由 dashboard 渲染,不在主屏打印(否则会在主屏留一份再被 alt-screen 覆盖)
@@ -147,7 +149,9 @@ export async function runStart(options = {}) {
   let activityTickerHandle = null;
   if (bridgeHealthy && options.activityTicker !== false) {
     const useDashboard = dashboardMode && options.dashboardRenderer !== false;
-    const isStickyMode = !useDashboard && colorMode && !jsonMode && options.sticky !== false;
+    // 默认不再启用 sticky(会和事件混排,且 scrollback 体验和纯 append 接近)。
+    // BRIDGE_STICKY=1 显式开启。
+    const isStickyMode = !useDashboard && colorMode && !jsonMode && process.env.BRIDGE_STICKY === "1" && options.sticky === true;
 
     const dashboard = useDashboard ? (options.dashboard ?? createDashboardRenderer({
       color: colorMode,
