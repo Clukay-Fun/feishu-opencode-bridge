@@ -38,6 +38,10 @@ import { getEventSessionId, OpenCodeEventStream, type OpenCodeEvent } from "../o
 import { MappingStore, type MappingRecord, type SessionBindingRecord, type BridgeWindowRecord } from "../store/mappings.js";
 import type { WhitelistStore } from "../store/whitelist.js";
 import type { AppConfig } from "../config/schema.js";
+import { SchedulerRuntime } from "../scheduler/runtime.js";
+import { ScheduledRunner } from "../scheduler/runner.js";
+import { ScheduleCommands, type SchedulerCommandRuntimePort } from "../scheduler/commands.js";
+import type { ScheduledJob } from "../scheduler/types.js";
 import { SUPPORTED_MATERIAL_EXTENSIONS } from "../document-pipeline/material-support.js";
 import {
   buildSessionRangeIndices,
@@ -61,6 +65,7 @@ import { TurnOwnedResourceStore } from "./turn-owned-resources.js";
 import { SlidingWindowRateLimiter } from "./rate-limiter.js";
 import { BridgeMessageContextStore, prependBridgeMessageContext, type BridgeOutputContext } from "./message-context.js";
 import { CostTracker } from "./cost-tracker.js";
+import { VisibilityStore } from "../mcp/visibility-store.js";
 import {
   addSession,
   addSessionWithoutActivating,
@@ -124,6 +129,7 @@ type KnowledgeResourcePort = {
 type BridgeAppDeps = {
   opencode?: OpenCodePort;
   eventStream?: OpenCodeEventStreamPort;
+  scheduler?: SchedulerPort | null;
   memory?: MemoryService | null;
   knowledge?: KnowledgeBasePort | null;
   externalExtensions?: readonly ExtensionDefinition[] | undefined;
@@ -148,8 +154,22 @@ type OpenCodePort = Pick<OpenCodeClient,
 
 type OpenCodeEventStreamPort = Pick<OpenCodeEventStream, "start" | "stop" | "subscribe" | "getConnectionState">;
 
+type SchedulerPort = Pick<SchedulerRuntime, "start" | "stop" | "getStore" | "pauseJob">;
+
 const REGULAR_FILE_ALLOWED_EXTENSIONS = SUPPORTED_MATERIAL_EXTENSIONS;
 const PENDING_NEW_SESSION_TTL_MS = 10 * 60_000;
+
+function isSchedulerCommandRuntime(scheduler: SchedulerPort | null): scheduler is SchedulerPort & SchedulerCommandRuntimePort {
+  return Boolean(
+    scheduler &&
+    "getStore" in scheduler &&
+    "addJob" in scheduler &&
+    "pauseJob" in scheduler &&
+    "resumeJob" in scheduler &&
+    "removeJob" in scheduler &&
+    "triggerJobNow" in scheduler,
+  );
+}
 
 type PendingNewSessionAnchor = {
   replyMessageId: string;
@@ -195,6 +215,9 @@ export class BridgeApp {
   private readonly moduleManager: ModuleManager;
   private readonly knowledgeModule: KnowledgeRuntimeModule;
   private readonly knowledgeIngestInteractions: PersistedInteractionManager<PendingKnowledgeIngestInteraction>;
+  private readonly scheduler: SchedulerPort | null;
+  private readonly schedulerCommands: ScheduleCommands | null;
+  private readonly visibilityStore: VisibilityStore;
   private readonly rateLimiter = new SlidingWindowRateLimiter(20, 60_000);
   private sessionMap: MappingRecord = {};
   private readonly runningChats = new Map<string, Promise<void>>();
@@ -222,6 +245,16 @@ export class BridgeApp {
     });
     this.costTracker = new CostTracker(config.costs, config.storage.dataDir, logger);
     this.turnOwnedResources = new TurnOwnedResourceStore(this.logger);
+    this.scheduler = deps && "scheduler" in deps
+      ? deps.scheduler ?? null
+      : (config.scheduler.enabled
+        ? new SchedulerRuntime({
+          dataDir: path.join(config.storage.dataDir, "schedules"),
+          maxConcurrentRuns: config.scheduler.maxConcurrentRuns,
+        }, logger)
+        : null);
+    this.schedulerCommands = isSchedulerCommandRuntime(this.scheduler) ? new ScheduleCommands(this.scheduler, this.logger) : null;
+    this.visibilityStore = new VisibilityStore(config.storage.dataDir);
     this.permissionManager = new PermissionManager({
       replyPermission: async (sessionId, permissionId, policy, remember) => {
         return await this.opencode.replyPermission(sessionId, permissionId, policy, remember);
@@ -301,6 +334,7 @@ export class BridgeApp {
     }
     await this.syncStoredSessionLabels();
     await this.moduleManager.start();
+    await this.scheduler?.start(this.createSchedulerTriggerHandler());
 
     await this.eventStream.start();
     this.globalEventUnsubscribe = this.eventStream.subscribe(async (event) => {
@@ -326,9 +360,41 @@ export class BridgeApp {
     }
     this.pendingInteractionTimers.clear();
     this.turnCardManager.stop();
+    await this.scheduler?.stop();
     await this.moduleManager.stop();
     await this.turnOwnedResources.cleanupAll();
     await this.eventStream.stop();
+  }
+
+  private createSchedulerTriggerHandler() {
+    const store = this.scheduler?.getStore();
+    const pauseJob = async (id: string) => this.scheduler?.pauseJob(id) ?? false;
+    if (!store) {
+      return async () => ({ status: "error" as const, detail: "scheduler-store-unavailable" });
+    }
+
+    const runner = new ScheduledRunner({
+      opencode: {
+        createSession: (title) => this.opencode.createSession(title),
+        promptAsync: (sessionId, request) => this.opencode.promptAsync(sessionId, request),
+        abort: (sessionId) => this.opencode.abort(sessionId),
+        deleteSession: (sessionId) => this.opencode.deleteSession(sessionId),
+        getSessionMessages: (sessionId, limit) => this.opencode.getSessionMessages(sessionId, limit),
+      },
+      sendPayload: async (chatId, payload, metadata) => {
+        return await this.sendPayload(chatId, payload, {
+          event: metadata.event,
+          transcriptType: "outbound-final",
+          textPreview: "scheduled",
+          len: 0,
+        });
+      },
+      logger: this.logger,
+    }, store, pauseJob);
+
+    return async (job: ScheduledJob) => {
+      return runner.run(job);
+    };
   }
 
   /**
@@ -342,12 +408,136 @@ export class BridgeApp {
     return await this.permissionManager.handleCardAction(actorOpenId, openMessageId, value);
   }
 
+  /**
+   * 自然语言定时任务检测。命中时发确认卡并返回 true，未命中返回 false。
+   */
+  private async tryScheduleCapabilityQuestion(message: IncomingChatMessage): Promise<boolean> {
+    if (!this.schedulerCommands || !isScheduleCapabilityQuestion(message.plainText)) {
+      return false;
+    }
+
+    const text = [
+      "可以。Bridge 已启用定时任务能力。",
+      "",
+      "直接发送自然语言即可创建，例如：",
+      "- `1分钟后发个问候给我`",
+      "- `明天上午9点提醒我开会`",
+      "- `每天早上9点生成今日简报`",
+      "",
+      "创建时会先弹确认卡。已有任务用 `/cron help`、`/cron list`、`/cron delete <ID>` 管理。",
+    ].join("\n");
+
+    await this.sendPayload(
+      message.chatId,
+      buildNoticeCardPayload({
+        title: "定时任务已启用",
+        level: "info",
+        message: text,
+        showMessageIcon: false,
+      }),
+      {
+        event: "schedule capability answered",
+        transcriptType: "outbound-final",
+        textPreview: "定时任务已启用",
+        len: text.length,
+      },
+      { replyToMessageId: message.messageId },
+    );
+    return true;
+  }
+
+  private async tryScheduleNaturalTrigger(message: IncomingChatMessage): Promise<boolean> {
+    if (!this.schedulerCommands) return false;
+
+    const text = message.plainText.trim();
+    const result = await this.schedulerCommands.handleNlCreate(
+      message.senderOpenId,
+      message.chatId,
+      message.conversationKey,
+      text,
+      message.messageId,
+    );
+
+    if (!result.ok || !result.payload) {
+      return false;
+    }
+
+    try {
+      await this.sendPayload(
+        message.chatId,
+        result.payload as FeishuPostPayload,
+        {
+          event: "schedule natural trigger",
+          transcriptType: "outbound-final",
+          textPreview: "请确认定时任务",
+          len: 20,
+        },
+        { replyToMessageId: message.messageId },
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** 处理业务模块卡片回调。 */
   async handleCardAction(
     actorOpenId: string,
     openMessageId: string,
     value: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
+    if (value.kind === "schedule-delete-confirm" && typeof value.shortId === "string") {
+      const result = await this.schedulerCommands?.handleDeleteConfirm(actorOpenId, value.shortId);
+      return {
+        toast: {
+          type: result?.ok ? "success" : "warning",
+          content: result?.message ?? "定时任务功能未启用。",
+        },
+      };
+    }
+    if (value.kind === "schedule-cancel") {
+      return {
+        toast: {
+          type: "info",
+          content: "已取消。",
+        },
+      };
+    }
+    if (value.kind === "schedule-nl-confirm") {
+      if (typeof value.pendingKey !== "string") {
+        return {
+          toast: {
+            type: "warning",
+            content: "定时任务确认信息已失效，请重新创建。",
+          },
+        };
+      }
+      const result = await this.schedulerCommands?.handleNlConfirm(actorOpenId, value.pendingKey);
+      return {
+        toast: {
+          type: result?.ok ? "success" : "warning",
+          content: result?.message ?? "定时任务功能未启用。",
+        },
+      };
+    }
+    if (value.kind === "schedule-nl-cancel") {
+      if (typeof value.pendingKey !== "string") {
+        return {
+          toast: {
+            type: "info",
+            content: "已取消。",
+          },
+        };
+      }
+      const result = await this.schedulerCommands?.handleNlCancel(actorOpenId, value.pendingKey);
+      return {
+        toast: {
+          type: result?.ok ? "info" : "warning",
+          content: result?.message ?? "已取消。",
+        },
+      };
+    }
+
     const result = await this.moduleManager.handleCardAction(actorOpenId, openMessageId, value);
     return result ?? {
       toast: {
@@ -407,16 +597,20 @@ export class BridgeApp {
     });
     this.messageContextStore.rememberInbound(message);
     const messageContext = this.messageContextStore.buildRuntimeContext(message);
+    const pending = this.pendingInteractions.get(message.conversationKey);
 
     const routed = message.messageType === "file" || message.messageType === "image"
       ? null
       : routeIncomingText(message.plainText);
     if (routed?.kind === "command") {
+      if (pending?.kind === "file-await-instruction") {
+        this.clearPendingInteraction(message.conversationKey, false);
+      }
       await this.handleCommand(message, routed);
+      this.writeWindowSnapshot(message);
       return;
     }
 
-    const pending = this.pendingInteractions.get(message.conversationKey);
     const bypassCorePending = pending?.kind === "question" && shouldBypassQuestionForBusinessEntrypoint(message);
     if (bypassCorePending) {
       this.clearPendingInteraction(message.conversationKey, false);
@@ -435,8 +629,23 @@ export class BridgeApp {
       pendingInteraction: pending ?? null,
       messageContext,
     });
+
     if (moduleResult.claimed) {
+      this.writeWindowSnapshot(message);
       return;
+    }
+
+    // 自然语言定时任务识别：在进入 OpenCode 前拦截
+    if (message.messageType === "text" && message.plainText.trim().length >= 6) {
+      const capabilityAnswered = await this.tryScheduleCapabilityQuestion(message);
+      if (capabilityAnswered) {
+        return;
+      }
+
+      const nlHandled = await this.tryScheduleNaturalTrigger(message);
+      if (nlHandled) {
+        return;
+      }
     }
 
     if (pending?.kind === "file-await-instruction") {
@@ -453,7 +662,7 @@ export class BridgeApp {
 
     if (message.messageType === "file" || message.messageType === "image") {
       try {
-        this.validateRegularFileInput(message.file.fileName, message.file.size);
+        this.validateRegularFileInput(message.file.fileName, message.file.size, { allowMissingExtension: true });
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         await this.sendPayload(message.chatId, buildNoticeCardPayload({
@@ -484,7 +693,14 @@ export class BridgeApp {
         },
         resourceType,
       };
-      await this.handleFileInstructionPending(this.buildAutoFileInstructionMessage(message), pending);
+      const explicitInstruction = extractExplicitFileInstruction(message);
+      this.trackRecentMaterial(message);
+      if (explicitInstruction) {
+        await this.handleFileInstructionPending(this.buildFileInstructionMessage(message, explicitInstruction), pending);
+        return;
+      }
+      // 建立材料上下文，询问处理方式，不自动执行深度任务
+      await this.sendFileIntentGateCard(message, pending);
       return;
     }
 
@@ -508,6 +724,7 @@ export class BridgeApp {
     }
 
     const sessionId = await this.ensureSession(message);
+    this.writeWindowSnapshot(message);
     const executionKey = this.buildExecutionKey(message.conversationKey, sessionId);
     const queue = this.queues.get(executionKey);
     const window = this.getSessionWindow(message.conversationKey, message.chatType);
@@ -670,6 +887,7 @@ export class BridgeApp {
         resolveSessionCommandTarget: async (msg, index) => await this.resolveSessionCommandTarget(msg, index),
         resolveSessionCommandTargets: async (msg, range) => await this.resolveSessionCommandTargets(msg, range),
         ensureSession: async (source: Pick<IncomingChatMessage, "chatId" | "chatType" | "conversationKey" | "threadKey">) => await this.ensureSession(source),
+        scheduler: this.schedulerCommands ?? undefined,
       }).handleCommand(message, routed);
     }
 
@@ -753,6 +971,129 @@ export class BridgeApp {
    */
   private isCorePendingInteraction(pending: PendingInteraction): boolean {
     return pending.kind === "question" || pending.kind === "permission";
+  }
+
+  /**
+   * 发送文件意图确认卡：告知用户已收到文件，询问处理方式。
+   */
+  /**
+   * 写入窗口快照供 MCP 工具只读访问。
+   * 忽略错误，不影响主流程。
+   */
+  private writeWindowSnapshot(message: IncomingChatMessage): void {
+    try {
+      const window = this.getSessionWindow(message.conversationKey, message.chatType);
+      this.visibilityStore.writeWindowSnapshot(message.conversationKey, {
+        window: {
+          window_key: message.conversationKey,
+          chat_type: message.chatType,
+          mode: window.mode,
+          interaction_mode: window.interactionMode ?? "default",
+          active_session_id: window.activeSessionId,
+          bound_sessions: window.sessions.map((s) => ({
+            session_id: s.sessionId,
+            short_id: s.sessionId.slice(0, 8),
+            label: s.label,
+            is_active: s.sessionId === window.activeSessionId,
+            last_used_at: s.lastUsedAt ? new Date(s.lastUsedAt).toISOString() : null,
+          })),
+        },
+        management_commands: ["/sessions", "/sessions all", "/switch <id>", "/new", "/close", "/delete"],
+      });
+    } catch {
+      // 静默失败
+    }
+  }
+
+  /**
+   * 追踪最近收到的材料，供 MCP 工具只读查询。
+   * 这里只记录元数据；本地文件路径会在后续下载/解析阶段由对应 workflow 自己掌握。
+   */
+  private trackRecentMaterial(message: IncomingFileMessage): void {
+    try {
+      this.visibilityStore.appendMaterial({
+        window_key: message.conversationKey,
+        message_id: message.messageId,
+        file_name: message.file.fileName,
+        type: message.messageType === "image"
+          ? "image"
+          : path.extname(message.file.fileName).slice(1).toLowerCase() || "unknown",
+        size: message.file.size ?? 0,
+        received_at: new Date().toISOString(),
+      });
+    } catch {
+      // 可见性快照不影响主流程。
+    }
+  }
+
+  private async sendFileIntentGateCard(
+    message: IncomingFileMessage,
+    pending: PendingFileInstructionInteraction,
+  ): Promise<void> {
+    const noun = message.messageType === "image" ? "图片" : "文件";
+    const fileName = message.file.fileName;
+    const ext = path.extname(fileName).toLowerCase();
+    const fileSize = message.file.size;
+    const isSupported = this.validateRegularFileInputQuiet(fileName, fileSize, { allowMissingExtension: true });
+
+    const lines = [
+      `已收到${noun}`,
+      "",
+      `文件名：${fileName}`,
+      `大小：${formatUploadedFileSize(fileSize)}`,
+    ];
+    if (isSupported && ext) {
+      lines.push(`类型：${ext}`);
+    }
+
+    lines.push("", "你可以直接告诉我处理方式，例如：");
+    lines.push("1. 总结主要内容");
+    lines.push("2. 审查合同风险");
+    lines.push("3. 提取关键信息");
+    lines.push("4. 收入知识库");
+    lines.push("5. 识别发票信息");
+    lines.push("6. 其他处理方式");
+    lines.push("", "如果只是暂时放着，我会记住这份材料，你随时可以说出处理方式。");
+
+    await this.sendPayload(message.chatId, buildNoticeCardPayload({
+      title: `${noun}已收到`,
+      level: "info",
+      message: lines.join("\n"),
+      showMessageIcon: false,
+    }), {
+      event: "file intent gate",
+      transcriptType: "outbound-final",
+      textPreview: `${noun}已收到：${fileName}`,
+      len: fileName.length,
+    }, { replyToMessageId: message.messageId });
+
+    // 保留 pending 交互，等待用户补充说明
+    this.setPendingInteraction(message.conversationKey, pending);
+  }
+
+  private validateRegularFileInputQuiet(fileName: string, size: number | undefined, options?: { allowMissingExtension?: boolean }): boolean {
+    try {
+      this.validateRegularFileInput(fileName, size, options);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private buildFileInstructionMessage(message: IncomingFileMessage, instruction: string): IncomingTextMessage {
+    return {
+      chatId: message.chatId,
+      chatType: message.chatType,
+      senderOpenId: message.senderOpenId,
+      messageId: message.messageId,
+      rawContent: message.rawContent,
+      plainText: instruction,
+      rootId: message.rootId,
+      parentId: message.parentId,
+      threadKey: message.threadKey,
+      conversationKey: message.conversationKey,
+      messageType: "text",
+    };
   }
 
   private buildAutoFileInstructionMessage(message: IncomingFileMessage): IncomingTextMessage {
@@ -1110,11 +1451,19 @@ export class BridgeApp {
   /**
    * 校验普通附件的扩展名与大小限制。
    */
-  private validateRegularFileInput(fileName: string, sizeBytes?: number): void {
+  private validateRegularFileInput(fileName: string, sizeBytes?: number, options: { allowMissingExtension?: boolean } = {}): void {
     const extension = fileName.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? "";
+    if (!extension && options.allowMissingExtension) {
+      this.validateRegularFileSize(sizeBytes);
+      return;
+    }
     if (!REGULAR_FILE_ALLOWED_EXTENSIONS.includes(extension as typeof REGULAR_FILE_ALLOWED_EXTENSIONS[number])) {
       throw new Error(`仅支持 ${REGULAR_FILE_ALLOWED_EXTENSIONS.join(" / ")} 文件`);
     }
+    this.validateRegularFileSize(sizeBytes);
+  }
+
+  private validateRegularFileSize(sizeBytes?: number): void {
     if (typeof sizeBytes !== "number") {
       return;
     }
@@ -1829,6 +2178,52 @@ function inferBridgeOutputTitle(kind: BridgeOutputContext["kind"], event: string
     default:
       return event || "Bridge 输出";
   }
+}
+
+function isScheduleCapabilityQuestion(input: string): boolean {
+  const text = input.trim().replace(/\s+/g, "");
+  if (!text || text.length > 40) {
+    return false;
+  }
+  const asksAvailability = /有没有|有吗|有.*了吗|能不能|可以.*吗|可不可以|支持.*吗|支持不支持|能.*吗/.test(text);
+  const mentionsScheduling = /定时|调度|提醒|稍后|之后/.test(text);
+  const asksTaskDesign = /怎么|如何|设计|实现|架构|方案|原理/.test(text);
+  return asksAvailability && mentionsScheduling && !asksTaskDesign;
+}
+
+function extractExplicitFileInstruction(message: IncomingFileMessage): string | null {
+  const text = message.plainText.trim();
+  if (!text) {
+    return null;
+  }
+  const fileName = message.file.fileName.trim();
+  const normalized = text.replace(/\s+/g, "");
+  if (
+    normalized === fileName.replace(/\s+/g, "")
+    || normalized === `[图片]`
+    || normalized === message.file.fileKey
+  ) {
+    return null;
+  }
+  if (/总结|审查|审核|识别|提取|分析|处理|入库|知识库|录入|写入|生成|改写|翻译|读取|看看|看一下|风险|发票|合同|判决书|材料/.test(text)) {
+    return text;
+  }
+  return null;
+}
+
+function formatUploadedFileSize(sizeBytes: number | undefined): string {
+  if (typeof sizeBytes !== "number") {
+    return "未上报";
+  }
+  if (sizeBytes < 1024) {
+    return sizeBytes <= 0 ? "0 B" : "< 1 KB";
+  }
+  const sizeKb = sizeBytes / 1024;
+  if (sizeKb < 1024) {
+    return `${Math.round(sizeKb)} KB`;
+  }
+  const sizeMb = sizeKb / 1024;
+  return `${sizeMb.toFixed(sizeMb >= 10 ? 0 : 1)} MB`;
 }
 
 type PermissionTextResolution = "once" | "always" | "deny";

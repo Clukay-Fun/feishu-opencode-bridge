@@ -52,6 +52,60 @@ const LINE_REGEX = /^(\d\d:\d\d:\d\d)\s+\[([^\]]+)\]\s+(\S+(?:\s\S+)*?)\s*\{(.*)
 const BRACKET_LEVEL_REGEX = /^\[(warn|error|info)\]:\s*(.*)$/;
 const TURN_PREVIEW_CHARS = 140;
 const MESSAGE_PREVIEW_CHARS = 220;
+/** verbose 模式:显示所有 ID(session/turn/window/msg);默认隐藏。 */
+const VERBOSE = process.env.BRIDGE_TICKER_VERBOSE === "1";
+
+/** 剥离常见 Markdown 标记(粗体 / 斜体 / 删除线 / 行内代码 / 链接),保留纯文本。 */
+export function stripMarkdown(text) {
+  if (!text) return "";
+  return String(text)
+    .replace(/\*\*([^*]+)\*\*/g, "$1")     // **bold**
+    .replace(/__([^_]+)__/g, "$1")           // __bold__
+    .replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, "$1")  // *italic*(避开 **)
+    .replace(/(?<!_)_([^_\n]+)_(?!_)/g, "$1")      // _italic_
+    .replace(/~~([^~]+)~~/g, "$1")           // ~~strike~~
+    .replace(/`([^`]+)`/g, "$1")             // `code`
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1") // ![alt](url) -> alt
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")  // [text](url) -> text
+    .replace(/^#{1,6}\s+/gm, "")             // # heading
+    .replace(/^\s*[-*+]\s+/gm, "")           // - bullet
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** 智能截断:优先在句末标点,其次在词/标点边界,最后硬切。 */
+export function smartTruncate(text, maxChars) {
+  if (!text) return "";
+  const cleaned = stripMarkdown(text);
+  if (cleaned.length <= maxChars) return cleaned;
+
+  const slice = cleaned.slice(0, maxChars);
+  // 优先句末标点(60% 以内不接受)
+  const sentenceEnd = Math.max(
+    slice.lastIndexOf("。"),
+    slice.lastIndexOf("！"),
+    slice.lastIndexOf("？"),
+    slice.lastIndexOf("."),
+    slice.lastIndexOf("!"),
+    slice.lastIndexOf("?"),
+  );
+  if (sentenceEnd >= maxChars * 0.6) {
+    return cleaned.slice(0, sentenceEnd + 1);
+  }
+  // 次选词/中点标点
+  const wordBoundary = Math.max(
+    slice.lastIndexOf("，"),
+    slice.lastIndexOf("、"),
+    slice.lastIndexOf("；"),
+    slice.lastIndexOf(","),
+    slice.lastIndexOf(";"),
+    slice.lastIndexOf(" "),
+  );
+  if (wordBoundary >= maxChars * 0.6) {
+    return cleaned.slice(0, wordBoundary) + "…";
+  }
+  return cleaned.slice(0, maxChars - 1) + "…";
+}
 
 /** 解析一行日志,返回 { ts, scope, name, fields, level } 或 null。 */
 export function parseLogLine(rawLine) {
@@ -114,8 +168,8 @@ export function shouldDisplay(event) {
   if (event.level === "error") return true;
   if (event.level === "warn") return true;
 
-  // turn 完成
-  if (event.scope === "bridge/queue" && event.name === "turn.completed") return true;
+  // turn 开始 / 完成 / 失败(turn.started 不渲染但 dashboard 用来跟踪 in-flight 心跳)
+  if (event.scope === "bridge/queue" && (event.name === "turn.completed" || event.name === "turn.started" || event.name === "turn.failed")) return true;
 
   // 普通对话摘要
   if (event.scope === "bridge/message" && event.name === "inbound.received") return true;
@@ -148,7 +202,7 @@ export function shouldDisplay(event) {
  * @param {object} event - parseLogLine 的输出 + 可选 cost 信息
  * @param {boolean} useColor
  */
-export function formatEvent(event, useColor = true) {
+export function formatEvent(event, useColor = true, lastChatContext = null) {
   const co = useColor ? c : noColor;
   const ts = event.ts ?? new Date().toTimeString().slice(0, 8);
   const tsCol = co.grey(ts);
@@ -163,47 +217,55 @@ export function formatEvent(event, useColor = true) {
     return `${tsCol}  ${co.yellow("⚠")}  ${co.yellow("WARN")}     ${co.dim(event.scope ?? "")} ${detail}`;
   }
 
+  // turn.started 只用于 dashboard 跟踪 in-flight,不渲染独立行
+  if (event.scope === "bridge/queue" && event.name === "turn.started") {
+    return "";
+  }
+
   // turn.completed
   if (event.scope === "bridge/queue" && event.name === "turn.completed") {
     const duration = event.fields.durationMs ? `${(Number(event.fields.durationMs) / 1000).toFixed(1)}s` : "?";
     const len = event.fields.replyLength ? `${event.fields.replyLength}字` : "";
-    const chat = formatChatLabel(event.fields.chatId, event.fields.chatType, event.fields.conversationKey);
-    const sender = (event.fields.userId ?? "?").slice(0, 12);
+    const chatCtx = buildChatContext(event.fields, lastChatContext);
     const summary = [duration, len].filter(Boolean).join(" · ");
-    const head = `${tsCol}  ${co.green("✓")}  ${co.bold("turn")}     ${chat} ${co.dim(sender)}  ${co.dim(summary)}`;
-    const userQ = truncatePreview(event.fields.userTextPreview, TURN_PREVIEW_CHARS);
-    const replyA = truncatePreview(event.fields.replyTextPreview, TURN_PREVIEW_CHARS);
+    const head = `${tsCol}  ${co.green("✓")}  ${co.bold("turn")}    ${chatCtx.chat} · ${co.dim(chatCtx.sender)}  ${co.dim(summary)}`;
+    const replyA = smartTruncate(event.fields.replyTextPreview, TURN_PREVIEW_CHARS);
     const lines = [head];
-    pushDetail(lines, co, "session", event.fields.sessionId);
-    pushDetail(lines, co, "turn", event.fields.turnId);
-    pushDetail(lines, co, "window", event.fields.conversationKey);
-    if (userQ) pushDetail(lines, co, "Q", `「${userQ}」`);
-    if (replyA) pushDetail(lines, co, "A", `「${replyA}」`);
+    const indent = "            ";
+    // 用户输入在 inbound.received 已展示过,turn.completed 只显示 bot 回复
+    if (replyA) lines.push(`${indent}${co.green("◂")} ${replyA}`);
+    // VERBOSE 模式才显示 IDs
+    if (VERBOSE) {
+      pushDetail(lines, co, "session", event.fields.sessionId);
+      pushDetail(lines, co, "turn", event.fields.turnId);
+      pushDetail(lines, co, "window", event.fields.conversationKey);
+    }
     return lines.join("\n");
   }
 
   // 入站用户消息
   if (event.scope === "bridge/message" && event.name === "inbound.received") {
-    const chat = formatChatLabel(event.fields.chatId, event.fields.chatType, event.fields.conversationKey);
-    const sender = (event.fields.senderId ?? "?").slice(0, 12);
-    const text = truncatePreview(event.fields.textPreview, MESSAGE_PREVIEW_CHARS);
-    const len = event.fields.len ? `${event.fields.len}字` : "";
-    const lines = [`${tsCol}  ${co.cyan("←")}  ${co.bold("user")}     ${chat} ${co.dim(sender)}  ${co.dim(len)}`];
-    pushDetail(lines, co, "msg", event.fields.messageId);
-    pushDetail(lines, co, "window", event.fields.conversationKey);
-    if (text) pushDetail(lines, co, "text", `「${text}」`);
+    const chatCtx = buildChatContext({ ...event.fields, userId: event.fields.senderId }, lastChatContext);
+    const text = smartTruncate(event.fields.textPreview, MESSAGE_PREVIEW_CHARS);
+    const kind = event.fields.messageType ?? "text";
+    const lines = [`${tsCol}  ${co.cyan("▸")}  ${co.bold("user")}    ${chatCtx.chat} · ${co.dim(chatCtx.sender)}  ${co.dim(kind)}`];
+    if (text) lines.push(`            ${`「${text}」`}`);
+    if (VERBOSE) {
+      pushDetail(lines, co, "msg", event.fields.messageId);
+      pushDetail(lines, co, "window", event.fields.conversationKey);
+    }
     return lines.join("\n");
   }
 
   // 出站最终回复或命令结果
   if (event.scope === "feishu/reply" && event.name === "transport.sent") {
-    const chat = formatChatLabel(event.fields.chatId, event.fields.chatType, event.fields.conversationKey);
+    const chatCtx = buildChatContext(event.fields, lastChatContext);
     const kind = event.fields.payloadKind ?? "?";
-    const text = truncatePreview(event.fields.textPreview, MESSAGE_PREVIEW_CHARS);
+    const text = smartTruncate(event.fields.textPreview, MESSAGE_PREVIEW_CHARS);
     const len = event.fields.len ? `${event.fields.len}字` : "";
-    const lines = [`${tsCol}  ${co.green("→")}  ${co.bold("bot")}      ${chat} ${co.dim(`${kind} · ${len}`)}`];
-    pushDetail(lines, co, "msg", event.fields.messageId);
-    if (text) pushDetail(lines, co, "text", `「${text}」`);
+    const lines = [`${tsCol}  ${co.green("◂")}  ${co.bold("bot")}     ${chatCtx.chat} · ${co.dim(chatCtx.sender)}  ${co.dim(`${kind} · ${len}`)}`];
+    if (text) lines.push(`            ${`「${text}」`}`);
+    if (VERBOSE) pushDetail(lines, co, "msg", event.fields.messageId);
     return lines.join("\n");
   }
 
@@ -270,6 +332,10 @@ export function createActivityTicker(options = {}) {
   const emit = options.emit ?? ((line) => process.stdout.write(line + "\n"));
   const costBuffer = new Map();
   const COST_BUFFER_MAX = 100;
+  // 上一次同类事件的 chat fingerprint,用于"↑同上"压缩
+  let lastChatContext = null;
+  const CHAT_CONTEXT_TTL_MS = 5 * 60 * 1000; // 5 分钟内才算"连续"
+  let lastChatContextAt = 0;
 
   return {
     /**
@@ -309,7 +375,34 @@ export function createActivityTicker(options = {}) {
         }
       }
 
-      const out = json ? formatEventJson(event) : formatEvent(event, color);
+      // chat context 过期重置(避免"↑同上"挂到 5 分钟前的别的对话)
+      const now = Date.now();
+      if (lastChatContext && now - lastChatContextAt > CHAT_CONTEXT_TTL_MS) {
+        lastChatContext = null;
+      }
+
+      const out = json
+        ? formatEventJson(event)
+        : formatEvent(event, color, lastChatContext);
+
+      // formatEvent 返回 "" 表示"流过但不渲染"(如 turn.started,仅供 dashboard 跟踪)
+      if (out === "") {
+        return event;
+      }
+
+      // 更新 lastChatContext 仅在涉及 chat 的事件类型
+      const isChatEvent = (
+        (event.scope === "bridge/queue" && event.name === "turn.completed") ||
+        (event.scope === "bridge/message" && event.name === "inbound.received") ||
+        (event.scope === "feishu/reply" && event.name === "transport.sent")
+      );
+      if (isChatEvent && event.fields) {
+        const chat = formatChatLabel(event.fields.chatId, event.fields.chatType, event.fields.conversationKey);
+        const sender = (event.fields.userId ?? event.fields.senderId ?? "?").slice(0, 12);
+        lastChatContext = { fingerprint: `${chat}:${sender}` };
+        lastChatContextAt = now;
+      }
+
       emit(out);
       return event;
     },
@@ -348,6 +441,19 @@ function truncatePreview(value, maxChars) {
 function pushDetail(lines, co, label, value) {
   if (!value) return;
   lines.push(`            ${co.dim(label.padEnd(7))} ${value}`);
+}
+
+/**
+ * 构造 chat context:返回 { chat, sender, compact, current }。
+ * compact=true 表示跟上一条同一 chat+sender,前端用"↑同上"占位。
+ * current 是供调用方记录给下一次比较的 fingerprint。
+ */
+function buildChatContext(fields, lastChatContext) {
+  const chat = formatChatLabel(fields.chatId, fields.chatType, fields.conversationKey);
+  const sender = (fields.userId ?? fields.senderId ?? "?").slice(0, 12);
+  const fingerprint = `${chat}:${sender}`;
+  const compact = lastChatContext && lastChatContext.fingerprint === fingerprint;
+  return { chat, sender, compact, fingerprint, current: { fingerprint } };
 }
 
 function formatChatLabel(chatId, chatType, conversationKey) {
@@ -458,7 +564,8 @@ export function createDashboardRenderer(options = {}) {
   const color = options.color !== false;
   const co = color ? c : noColor;
   const stdout = options.stdout ?? process.stdout;
-  const capacity = options.activityCapacity ?? 20;
+  // 仍允许显式传 activityCapacity 作上限,但实际渲染容量按终端高度动态算
+  const maxCapacity = options.activityCapacity ?? 100;
   const hideCursor = options.hideCursor !== false;
   const panel = options.panel ?? {};
 
@@ -466,33 +573,91 @@ export function createDashboardRenderer(options = {}) {
     turnCount: 0,
     errorCount: 0,
     warnCount: 0,
-    activity: [],
+    activity: [],            // 已完成事件的渲染行(每条可能多行)
+    pendingTurns: new Map(), // turnId → { chatId, userId, startedAt }
   };
   let entered = false;
+  let resizeHandler = null;
+
+  function computePanelLines() {
+    // 静态 panel 行数估算:7 + (扩展 2 行) + 4 行 logs/quit/sep = ~17
+    return panel.extensions && panel.extensions.length ? 19 : 17;
+  }
+
+  function computeActivityBudget() {
+    // 返回活动区可用"物理行数"(不是条目数),render 会按事件实际行数从后往前装填
+    const rows = stdout.rows ?? 30;
+    const panelLines = computePanelLines();
+    const pendingLines = state.pendingTurns.size;
+    return Math.max(3, rows - panelLines - pendingLines - 1);
+  }
+
+  function pickVisibleActivity(budgetLines) {
+    // 每个事件可能多行,加 1 行空行分隔。从最新事件往前填,直到耗尽预算
+    const out = [];
+    let used = 0;
+    for (let i = state.activity.length - 1; i >= 0; i--) {
+      const entry = state.activity[i];
+      const entryLines = entry.split("\n").length + 1; // +1 是事件间空行
+      if (used + entryLines > budgetLines && out.length > 0) break;
+      out.unshift(entry);
+      used += entryLines;
+    }
+    return out;
+  }
+
+  function makeSeparator() {
+    const cols = Math.max(20, (stdout.columns ?? 60) - 1);
+    return "─".repeat(cols);
+  }
+
+  function makeHeader() {
+    const cols = Math.max(20, (stdout.columns ?? 60) - 1);
+    return "═".repeat(cols);
+  }
 
   function enter() {
     if (entered) return;
-    stdout.write("[?1049h"); // alt screen on
-    if (hideCursor) stdout.write("[?25l");
+    stdout.write("\u001b[?1049h");      // alt screen on
+    if (hideCursor) stdout.write("\u001b[?25l");
     entered = true;
+    // 监听 resize,屏幕变化时重画
+    resizeHandler = () => render();
+    stdout.on?.("resize", resizeHandler);
   }
 
   function leave() {
     if (!entered) return;
-    if (hideCursor) stdout.write("[?25h");
-    stdout.write("[?1049l"); // back to main
+    if (resizeHandler && stdout.off) stdout.off("resize", resizeHandler);
+    resizeHandler = null;
+    if (hideCursor) stdout.write("\u001b[?25h");
+    stdout.write("\u001b[?1049l");      // back to main
     entered = false;
   }
 
   function pushEvent(line) {
     state.activity.push(line);
-    while (state.activity.length > capacity) state.activity.shift();
+    while (state.activity.length > maxCapacity) state.activity.shift();
   }
 
   function recordEvent(parsed) {
     if (!parsed) return;
-    if (parsed.scope === "bridge/queue" && parsed.name === "turn.completed") {
-      state.turnCount++;
+    // 跟踪 in-flight turn(实时心跳用):turn.started → pending,turn.completed/failed → 移除
+    const fields = parsed.fields ?? {};
+    if (parsed.scope === "bridge/queue") {
+      if (parsed.name === "turn.started" && fields.turnId) {
+        state.pendingTurns.set(fields.turnId, {
+          turnId: fields.turnId,
+          chatId: fields.chatId,
+          userId: fields.userId,
+          conversationKey: fields.conversationKey,
+          chatType: fields.chatType,
+          startedAt: Date.now(),
+        });
+      } else if (parsed.name === "turn.completed" || parsed.name === "turn.failed") {
+        state.turnCount++;
+        if (fields.turnId) state.pendingTurns.delete(fields.turnId);
+      }
     } else if (parsed.level === "error") {
       state.errorCount++;
     } else if (parsed.level === "warn") {
@@ -500,25 +665,39 @@ export function createDashboardRenderer(options = {}) {
     }
   }
 
+  function renderPendingTurn(p, now) {
+    const elapsedSec = Math.floor((now - p.startedAt) / 1000);
+    const chat = formatChatLabel(p.chatId, p.chatType, p.conversationKey);
+    const sender = (p.userId ?? "?").slice(0, 12);
+    const ts = new Date(p.startedAt).toTimeString().slice(0, 8);
+    return `${co.grey(ts)}  ${co.yellow("⋯")}  ${co.bold("bot")}     ${chat} · ${co.dim(sender)}  ${co.dim(`${elapsedSec}s · processing`)}`;
+  }
+
   function render() {
     if (!entered) return;
     const startedMs = panel.startedAt instanceof Date ? panel.startedAt.getTime() : Date.now();
-    const uptimeSec = Math.max(0, Math.floor((Date.now() - startedMs) / 1000));
+    const now = Date.now();
+    const uptimeSec = Math.max(0, Math.floor((now - startedMs) / 1000));
+    const budget = computeActivityBudget();
+    const visibleActivity = pickVisibleActivity(budget);
+    const sep = makeSeparator();
+    const hdr = makeHeader();
 
     const out = [];
-    out.push("[H[2J[H"); // top-left + clear + top-left
+    out.push("\u001b[H\u001b[2J\u001b[H"); // top-left + clear + top-left
     out.push("");
-    out.push("═══════════════════════════════════════════════════════");
+    out.push(hdr);
     out.push(`  ${co.bold("Feishu OpenCode Bridge")}`);
-    out.push("═══════════════════════════════════════════════════════");
+    out.push(hdr);
     out.push("");
-    out.push(`  Status     ${co.green("● Running")}      ${co.dim("Uptime")} ${co.bold(formatUptime(uptimeSec))}`);
+    out.push(`  Status     ${co.green("● Running")}      Uptime ${co.bold(formatUptime(uptimeSec))}`);
     out.push(`  Endpoint   ${panel.endpoint ?? "?"}`);
     out.push(
       `  Profile    ${panel.profile ?? "?"}` +
-      `      ${co.dim("Turns")} ${co.bold(String(state.turnCount))}` +
-      `   ${co.dim("Errors")} ${co.bold(String(state.errorCount))}` +
-      `   ${co.dim("Warnings")} ${co.bold(String(state.warnCount))}`
+      `      Turns ${co.bold(String(state.turnCount))}` +
+      `   Errors ${co.bold(String(state.errorCount))}` +
+      `   Warnings ${co.bold(String(state.warnCount))}` +
+      (state.pendingTurns.size ? `   In-flight ${co.bold(String(state.pendingTurns.size))}` : "")
     );
     if (panel.extensions && panel.extensions.length) {
       out.push("");
@@ -529,12 +708,17 @@ export function createDashboardRenderer(options = {}) {
     out.push(`  Logs       ${panel.logPath ?? "?"}`);
     out.push(`  Quit       Ctrl+C`);
     out.push("");
-    out.push("───────────────────────────────────────────────────────");
-    out.push(`  ${co.dim("Live activity (messages · replies · turns · ws · errors, last " + capacity + ")")}`);
-    out.push("───────────────────────────────────────────────────────");
+    out.push(sep);
+    out.push(`  ${co.bold("Live activity")}`);
+    out.push(sep);
     out.push("");
-    for (const line of state.activity) {
-      out.push(line);
+    for (let i = 0; i < visibleActivity.length; i++) {
+      out.push(visibleActivity[i]);
+      if (i < visibleActivity.length - 1) out.push("");
+    }
+    // 进行中的 turn(实时心跳):跟在活动区后面,每次重绘秒数往上跳
+    for (const p of state.pendingTurns.values()) {
+      out.push(renderPendingTurn(p, now));
     }
     stdout.write(out.join("\n"));
   }
@@ -545,25 +729,10 @@ export function createDashboardRenderer(options = {}) {
     render,
     pushEvent,
     recordEvent,
-    getState: () => ({ ...state, activity: [...state.activity] }),
+    getState: () => ({ ...state, activity: [...state.activity], pendingTurns: new Map(state.pendingTurns) }),
   };
 }
 
-/**
- * Sticky writer:把一行"心跳状态"钉在终端底部,事件在它上面滚,它原地刷新。
- * 用 ANSI \r\x1b[K 清当前行后重写,无需 scroll region 这种复杂招数。
- *
- * 调用流:
- *   - emit(line):事件来了 → 清 sticky → 输出 line+\n → 重画 sticky
- *   - setStatus(text):心跳更新 → 清 sticky → 存 text → 重画 sticky
- *   - cleanup():进程退出 → 清 sticky + 输出 \n,留干净 prompt
- *
- * 仅适用于 TTY。非 TTY(管道 / 重定向)请用普通 emit,不要走 sticky。
- *
- * @param {object} options
- * @param {NodeJS.WritableStream} options.stdout - 默认 process.stdout
- * @returns {{emit(line: string): void, setStatus(text: string): void, cleanup(): void}}
- */
 export function createStickyWriter(options = {}) {
   const stdout = options.stdout ?? process.stdout;
   let stickyText = "";

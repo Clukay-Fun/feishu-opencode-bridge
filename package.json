@@ -1,6 +1,6 @@
 {
   "name": "feishu-opencode-bridge",
-  "version": "0.3.0-beta.0",
+  "version": "0.3.0-beta.1",
   "description": "Run OpenCode AI agents inside Feishu / Lark, with first-class support for legal-practice workflows (knowledge base, contract, labor cases).",
   "private": false,
   "type": "module",
@@ -90,6 +90,7 @@
   "dependencies": {
     "@inquirer/prompts": "^8.5.1",
     "@larksuiteoapi/node-sdk": "^1.42.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^12.8.0",
     "docxtemplater": "^3.68.4",
     "mammoth": "^1.12.0",

@@ -7,6 +7,13 @@
 import type { PendingInteraction, PendingPermissionInteraction, PendingSessionSelectionInteraction } from "../bridge/state.js";
 import type { RoutedText } from "../bridge/router.js";
 import {
+  buildScheduleConfirmCardPayload,
+  buildScheduleListCardPayload,
+  buildScheduleNoticeCardPayload,
+  buildScheduleRunsCardPayload,
+  buildScheduleShowCardPayload,
+} from "../feishu/scheduler-cards.js";
+import {
   buildCostCommandCardPayload,
   buildModelListCardPayload,
   buildSessionListCardPayload,
@@ -21,6 +28,8 @@ import { knowledgeBaseExtensionMeta } from "../knowledge/extension.meta.js";
 import { laborSkillExtensionMeta } from "../labor/extension.meta.js";
 import type { TranscriptType } from "../logging/logger.js";
 import type { OpenCodeMessage, OpenCodeProvidersResponse, OpenCodeSession, OpenCodeSessionStatus } from "../opencode/client.js";
+import type { JobRun, JobState, ScheduledJob } from "../scheduler/types.js";
+import type { ScheduleCommands } from "../scheduler/commands.js";
 import type { BridgeWindowModelOverride, BridgeWindowRecord, SessionBindingRecord } from "../store/mappings.js";
 import type { CostTracker } from "./cost-tracker.js";
 import type { IncomingChatMessage } from "./app.js";
@@ -132,6 +141,7 @@ export type BridgeAppContext = {
   setPendingInteraction(conversationKey: string, interaction: PendingInteraction): void;
   clearPendingInteraction(conversationKey: string, keepNonExpiring: boolean): void;
   listOpenCodeSessionsById(): Promise<Map<string, OpenCodeSession>>;
+  scheduler?: ScheduleCommands | undefined;
   getSessionOwnership(sessionId: string): SessionOwnership[];
   saveSessionWindow(conversationKey: string, chatType: string | undefined, window: BridgeWindowRecord): Promise<void>;
   getSessionMessageCount(sessionId: string): Promise<number>;
@@ -171,8 +181,27 @@ const BRIDGE_OWNED_COMMAND_KINDS = new Set<Extract<RoutedText, { kind: "command"
   "delete",
   "allow",
   "deny",
+  "schedule",
+  "schedule-nl",
   "passthrough",
 ]);
+
+function buildScheduleCommandPayload(result: { card?: string; data?: unknown }): FeishuPostPayload | null {
+  switch (result.card) {
+    case "list":
+      return buildScheduleListCardPayload(result.data as { jobs: ScheduledJob[]; states: Record<string, JobState>; showAll: boolean });
+    case "show":
+      return buildScheduleShowCardPayload(result.data as { job: ScheduledJob; state: JobState | undefined; runs: JobRun[] });
+    case "confirm":
+      return buildScheduleConfirmCardPayload(result.data as { job: ScheduledJob; action: "delete" });
+    case "runs":
+      return buildScheduleRunsCardPayload(result.data as { job: ScheduledJob; runs: JobRun[] });
+    case "notice":
+      return buildScheduleNoticeCardPayload(result.data as { job: ScheduledJob; action: "created" | "deleted" | "triggered" });
+    default:
+      return null;
+  }
+}
 
 /**
  * 统一查找挂起的权限交互。
@@ -857,6 +886,16 @@ export class CommandHandler {
       return;
     }
 
+    if (command.kind === "schedule") {
+      await this.handleScheduleCommand(message, command);
+      return;
+    }
+
+    if (command.kind === "schedule-nl") {
+      await this.handleScheduleNl(message, command.args);
+      return;
+    }
+
     if (command.kind !== "passthrough") {
       return;
     }
@@ -874,6 +913,119 @@ export class CommandHandler {
     const result = await this.context.opencode.runCommand(sessionId, { command: command.name, arguments: command.arguments.join(" ") });
     const text = extractAssistantText(result) || "命令已执行。";
     await this.context.sendMarkdown(message.chatId, text, message.messageId);
+  }
+
+  private async handleScheduleCommand(
+    message: CommandMessage,
+    command: { kind: "schedule"; subcommand: string; args: string[] },
+  ): Promise<void> {
+    const scheduler = this.context.scheduler;
+    if (!scheduler) {
+      await this.sendNotice(message, {
+        title: "定时任务功能未启用",
+        template: "yellow",
+        icon: "maybe_outlined",
+        message: "Scheduler 模块未初始化。",
+      });
+      return;
+    }
+
+    const { subcommand, args } = command;
+    const senderOpenId = message.senderOpenId;
+    const chatId = message.chatId;
+    const conversationKey = message.conversationKey;
+
+    let result;
+    switch (subcommand) {
+      case "add":
+        result = await scheduler.handleAdd(senderOpenId, chatId, conversationKey, args, {
+          scheduledRun: (message as CommandMessage & { scheduledRun?: boolean }).scheduledRun === true,
+        });
+        break;
+      case "list":
+        result = await scheduler.handleList(senderOpenId, args);
+        break;
+      case "show":
+        result = await scheduler.handleShow(senderOpenId, args);
+        break;
+      case "pause":
+        result = await scheduler.handlePause(senderOpenId, args);
+        break;
+      case "resume":
+        result = await scheduler.handleResume(senderOpenId, args);
+        break;
+      case "run":
+        result = await scheduler.handleRun(senderOpenId, args);
+        break;
+      case "delete":
+        result = await scheduler.handleDelete(senderOpenId, args);
+        break;
+      case "runs":
+        result = await scheduler.handleRuns(senderOpenId, args);
+        break;
+      case "help":
+        result = await scheduler.handleHelp();
+        break;
+      default:
+        result = await scheduler.handleHelp();
+    }
+
+    const payload = buildScheduleCommandPayload(result);
+    if (payload) {
+      await this.context.sendPayload(message.chatId, payload, {
+        event: "final message sent",
+        transcriptType: "outbound-final",
+        textPreview: result.message,
+        len: result.message.length,
+      }, { replyToMessageId: message.messageId });
+      return;
+    }
+
+    await this.context.sendMarkdown(message.chatId, result.message, message.messageId);
+  }
+
+  private async handleScheduleNl(message: CommandMessage, args: string[]): Promise<void> {
+    const scheduler = this.context.scheduler;
+    if (!scheduler) {
+      await this.sendNotice(message, {
+        title: "定时任务功能未启用",
+        template: "yellow",
+        icon: "maybe_outlined",
+        message: "Scheduler 模块未初始化。",
+      });
+      return;
+    }
+
+    const input = args.join(" ").trim();
+    if (!input) {
+      await this.sendNotice(message, {
+        title: "请输入定时任务描述",
+        template: "yellow",
+        icon: "maybe_outlined",
+        message: "示例：`1分钟后发个问候给我`",
+      });
+      return;
+    }
+
+    const result = await scheduler.handleNlCreate(
+      message.senderOpenId,
+      message.chatId,
+      message.conversationKey,
+      input,
+      message.messageId,
+    );
+
+    if (result.payload) {
+      await this.context.sendPayload(message.chatId, result.payload as FeishuPostPayload, {
+        event: "schedule nl confirm",
+        transcriptType: "outbound-final",
+        textPreview: result.message,
+        len: result.message.length,
+      }, { replyToMessageId: message.messageId });
+      return;
+    }
+
+    await this.context.sendMarkdown(message.chatId, result.message, message.messageId);
   }
 
   private async switchSessionByName(message: CommandMessage, window: BridgeWindowRecord, rawQuery: string): Promise<void> {

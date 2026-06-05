@@ -1006,12 +1006,13 @@ function neutralizeMarkdownTables(text: string): string {
       continue;
     }
 
-    output.push(formatMarkdownTableRowAsText(line));
+    const tableLines = [line, nextLine];
     index += 2;
     while (index < lines.length && isMarkdownTableRow(lines[index] ?? "")) {
-      output.push(formatMarkdownTableRowAsText(lines[index] ?? ""));
+      tableLines.push(lines[index] ?? "");
       index += 1;
     }
+    output.push(formatMarkdownTableAsCodeBlock(tableLines));
     index -= 1;
   }
 
@@ -1040,8 +1041,8 @@ function splitMarkdownTableCells(line: string): string[] {
     .filter((cell) => cell.length > 0);
 }
 
-function formatMarkdownTableRowAsText(line: string): string {
-  return `- ${splitMarkdownTableCells(line).join(" ｜ ")}`;
+function formatMarkdownTableAsCodeBlock(lines: readonly string[]): string {
+  return ["```", ...lines, "```"].join("\n");
 }
 
 function splitMarkdownByCodeFence(text: string): Array<{ kind: "text" | "code"; content: string }> {

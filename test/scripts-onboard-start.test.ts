@@ -1248,10 +1248,7 @@ describe("scripts/activity-ticker conversation preview", () => {
     expect(out).toContain("user");
     expect(out).toContain("p2p");
     expect(out).toContain("ou_abcdef12");
-    expect(out).toContain("msg     om_1");
-    expect(out).toContain("window  oc_p2p_1:main");
-    expect(out).toContain("text    「你好呀」");
-    expect(out.split("\n")).toHaveLength(4);
+    expect(out).toContain("「你好呀」");
   });
 
   it("renders outbound final reply summaries", async () => {
@@ -1259,42 +1256,35 @@ describe("scripts/activity-ticker conversation preview", () => {
     const event = parseLogLine('22:58:47 [feishu/reply] transport.sent { chatId="oc_p2p_1" messageId="om_reply" payloadKind="post" legacyEvent="final message sent" len=6 textPreview="收到,我看看" }');
     const out = formatEvent(event!, false);
     expect(out).toContain("bot");
-    expect(out).toContain("p2p");
     expect(out).toContain("post");
-    expect(out).toContain("msg     om_reply");
-    expect(out).toContain("text    「收到,我看看」");
-    expect(out.split("\n")).toHaveLength(3);
+    expect(out).toContain("「收到,我看看」");
   });
 
-  it("includes userTextPreview/replyTextPreview in turn.completed render", async () => {
+  it("renders only bot reply in turn.completed (user input already shown via inbound.received)", async () => {
     const { formatEvent, parseLogLine } = await import("../scripts/runtime/activity-ticker.mjs");
     const event = parseLogLine('22:58:48 [bridge/queue] turn.completed { turnId="t1" sessionId="ses_1" durationMs=2300 replyLength=13 chatId="oc_p2p_1" userId="ou_abc12" userTextPreview="帮我看下这个劳动合同有什么问题" replyTextPreview="收到,我会从条款合规性、风险点和签约程序三个方面分析" }');
     expect(event).not.toBeNull();
     const out = formatEvent(event!, false);
     expect(out).toContain("turn");
-    expect(out).toContain("session ses_1");
-    expect(out).toContain("turn    t1");
-    expect(out).toContain("Q       「帮我看下这个劳动合同有什么问题」");
-    expect(out).toContain("A       「收到,我会从条款合规性、风险点和签约程序三个方面分析」");
-    expect(out.split("\n")).toHaveLength(5);
+    expect(out).toContain("◂ 收到,我会从条款合规性、风险点和签约程序三个方面分析");
+    // 用户输入不应在 turn.completed 中重复(已在 inbound.received 显示过)
+    expect(out).not.toContain("▸ 帮我看下这个劳动合同有什么问题");
   });
 
-  it("keeps longer previews in local dashboard before truncating", async () => {
+  it("keeps longer reply previews in local dashboard before truncating", async () => {
     const { formatEvent, parseLogLine } = await import("../scripts/runtime/activity-ticker.mjs");
     const long = "A".repeat(160);
-    const event = parseLogLine(`22:58:48 [bridge/queue] turn.completed { turnId="t1" durationMs=2300 userTextPreview="${long}" replyTextPreview="ok" }`);
+    const event = parseLogLine(`22:58:48 [bridge/queue] turn.completed { turnId="t1" durationMs=2300 userTextPreview="ignored" replyTextPreview="${long}" }`);
     const out = formatEvent(event!, false);
-    expect(out).toContain("A".repeat(139) + "…");
-    expect(out).toContain("A       「ok」");
+    expect(out).toContain("…");
+    expect(out).toContain("◂ ");
   });
 
-  it("omits preview lines when both previews are missing", async () => {
+  it("omits reply line when reply preview is missing", async () => {
     const { formatEvent, parseLogLine } = await import("../scripts/runtime/activity-ticker.mjs");
     const event = parseLogLine('22:58:48 [bridge/queue] turn.completed { turnId="t1" durationMs=2300 replyLength=13 chatId="oc_p2p_1" userId="ou_abc12" }');
     const out = formatEvent(event!, false);
-    expect(out).not.toContain("Q       ");
-    expect(out).not.toContain("A       ");
-    expect(out.split("\n")).toHaveLength(2);
+    expect(out).not.toContain("◂");
   });
 
   it("includes previews in JSON mode", async () => {

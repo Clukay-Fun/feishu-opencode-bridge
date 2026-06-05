@@ -210,7 +210,13 @@ describe("startBridgeHttpServer", () => {
     expect(response.status).toBe(200);
     expect(handlePermissionCardAction).not.toHaveBeenCalled();
     expect(handleCardAction).toHaveBeenCalledWith("ou_requester", "om_labor_1", value);
-    expect(await response.json()).toEqual({ toast: { type: "success", content: "已处理" } });
+    const responseBody = await response.json();
+    expect(responseBody).toEqual(expect.objectContaining({
+      schema: "2.0",
+      header: expect.any(Object),
+      body: expect.any(Object),
+    }));
+    expect(JSON.stringify(responseBody)).toContain("已处理");
   });
 
   it("extracts nested callback identifiers for permission actions", async () => {
@@ -423,6 +429,7 @@ function createConfig(
   return {
     profile: "legal",
     caseWorkbench: { enabled: false },
+    scheduler: { enabled: true, maxConcurrentRuns: 1 },
     feishu: {
       appId: "app",
       appSecret: "secret",

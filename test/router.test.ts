@@ -180,6 +180,36 @@ describe("routeIncomingText", () => {
     });
   });
 
+  it("routes cron management commands only", () => {
+    expect(routeIncomingText("/cron help")).toEqual({
+      kind: "command",
+      command: { kind: "schedule", subcommand: "help", args: [] },
+    });
+    expect(routeIncomingText("/cron list")).toEqual({
+      kind: "command",
+      command: { kind: "schedule", subcommand: "list", args: [] },
+    });
+    expect(routeIncomingText("/cron delete sched-001")).toEqual({
+      kind: "command",
+      command: { kind: "schedule", subcommand: "delete", args: ["sched-001"] },
+    });
+  });
+
+  it("does not route scheduler creation commands", () => {
+    expect(routeIncomingText('/cron add "0 9 * * *" "每日早报"')).toEqual({
+      kind: "command",
+      command: { kind: "passthrough", name: "cron", arguments: ["add", "0 9 * * *", "每日早报"] },
+    });
+    expect(routeIncomingText("/cron create 每天上午9点生成今日简报")).toEqual({
+      kind: "command",
+      command: { kind: "passthrough", name: "cron", arguments: ["create", "每天上午9点生成今日简报"] },
+    });
+    expect(routeIncomingText('/schedule add cron "0 9 * * *" "每日早报"')).toEqual({
+      kind: "command",
+      command: { kind: "passthrough", name: "schedule", arguments: ["add", "cron", "0 9 * * *", "每日早报"] },
+    });
+  });
+
   it("treats removed and unknown commands as passthrough", () => {
     expect(routeIncomingText("/who")).toEqual({
       kind: "command",

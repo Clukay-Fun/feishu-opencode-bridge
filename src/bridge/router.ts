@@ -31,6 +31,8 @@ export type RoutedText =
       | { kind: "delete"; index?: number | undefined; sessionId?: string | undefined; range?: { start: number; end: number } | undefined; all?: boolean | undefined; confirm: boolean }
       | { kind: "allow"; policy: "once" | "always" }
       | { kind: "deny" }
+      | { kind: "schedule"; subcommand: string; args: string[] }
+      | { kind: "schedule-nl"; args: string[] }
       | { kind: "passthrough"; name: string; arguments: string[] };
   }
   | { kind: "message"; text: string };
@@ -45,7 +47,7 @@ export function routeIncomingText(text: string): RoutedText {
     return { kind: "message", text };
   }
 
-  const parts = normalized.split(/\s+/);
+  const parts = splitCommandParts(normalized);
   const rawCommand = parts[0]?.slice(1) ?? "";
   const args = parts.slice(1);
 
@@ -314,6 +316,14 @@ export function routeIncomingText(text: string): RoutedText {
     return { kind: "command", command: { kind: "deny" } };
   }
 
+  if (rawCommand === "cron") {
+    const subcommand = args.length === 0 ? "help" : args[0]!;
+    const rest = args.length === 0 ? [] : args.slice(1);
+    if (["help", "list", "show", "runs", "pause", "resume", "run", "delete"].includes(subcommand)) {
+      return { kind: "command", command: { kind: "schedule", subcommand, args: rest } };
+    }
+  }
+
   return {
     kind: "command",
     command: {
@@ -322,6 +332,49 @@ export function routeIncomingText(text: string): RoutedText {
       arguments: args,
     },
   };
+}
+
+function splitCommandParts(input: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let quote: "\"" | "'" | null = null;
+  let escaping = false;
+
+  for (const char of input.trim()) {
+    if (escaping) {
+      current += char;
+      escaping = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaping = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      } else {
+        current += char;
+      }
+      continue;
+    }
+    if (char === "\"" || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      if (current) {
+        parts.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += char;
+  }
+
+  if (escaping) current += "\\";
+  if (current) parts.push(current);
+  return parts;
 }
 
 function normalizeCommandCandidate(text: string): string {

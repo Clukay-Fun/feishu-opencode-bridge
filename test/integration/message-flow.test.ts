@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AppConfig } from "../../src/config/schema.js";
 import { BridgeApp, type IncomingChatMessage } from "../../src/runtime/app.js";
+import type { TriggerHandler } from "../../src/scheduler/runtime.js";
 import { createLogger, createOutbound, createWhitelist, FakeOpenCodeClient, FakeOpenCodeEventStream } from "./fakes.js";
 
 const tempDirs: string[] = [];
@@ -56,12 +57,41 @@ describe("integration/message-flow", () => {
     expect(appAny.sessionMap["oc_p2p_1"]?.activeSessionId).toBeTruthy();
     expect(appAny.queues.get("oc_p2p_1").current()).toBeNull();
   });
+
+  it("starts and stops scheduler with the app lifecycle", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "bridge-scheduler-lifecycle-"));
+    tempDirs.push(dir);
+
+    const stream = new FakeOpenCodeEventStream();
+    const opencode = new FakeOpenCodeClient(stream, { kind: "message-flow", finalText: "ok" });
+    const outbound = createOutbound();
+    const scheduler = {
+      start: vi.fn<(handler: TriggerHandler) => Promise<void>>(async () => undefined),
+      stop: vi.fn(async () => undefined),
+      getStore: vi.fn(() => undefined),
+      pauseJob: vi.fn(async () => true),
+    } as any;
+    const app = new BridgeApp(baseConfig(dir), outbound, createLogger(), createWhitelist(), {
+      opencode,
+      eventStream: stream,
+      scheduler,
+      memory: null,
+    });
+
+    await app.start();
+    expect(scheduler.start).toHaveBeenCalledTimes(1);
+    expect(typeof scheduler.start.mock.calls[0]?.[0]).toBe("function");
+
+    await app.stop();
+    expect(scheduler.stop).toHaveBeenCalledTimes(1);
+  });
 });
 
 function baseConfig(dir: string): AppConfig {
   return {
     profile: "legal",
     caseWorkbench: { enabled: false },
+    scheduler: { enabled: true, maxConcurrentRuns: 1 },
     feishu: {
       appId: "app",
       appSecret: "secret",

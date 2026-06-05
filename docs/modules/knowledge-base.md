@@ -424,7 +424,7 @@ SQLite 表结构：
 
 | 格式         | 解析方式                       | 依赖        |
 | ------------ | ------------------------------ | ----------- |
-| PDF          | pdf-parse / PyMuPDF4LLM / Docling / PaddleOCR-VL AIStudio / MinerU 按配置降级 | pdf-parse / Python 工具 / API |
+| PDF          | MinerU / PaddleOCR-VL AIStudio / PyMuPDF4LLM / Docling / pdf-parse 按配置降级 | API / Python 工具 / pdf-parse |
 | 图片/扫描件  | PaddleOCR-VL AIStudio / MinerU / Tesseract 按配置降级 | API / tesseract |
 | Word (.docx) | `mammoth` 提取原始文本，再按段落切分 | mammoth     |
 | TXT/MD       | 直接读取（支持 GB18030 自动检测） | 无          |
@@ -433,7 +433,7 @@ SQLite 表结构：
 外部 OCR API 默认关闭。
 只有显式设置 `knowledgeBase.parser.externalApiEnabled=true` 并启用对应 provider 时，才会上传材料到 MinerU 或 PaddleOCR-VL。
 
-默认策略优先零外部依赖：电子 PDF 先读文字层，复杂版式 PDF 再走本地 Markdown 解析；图片材料默认只尝试本地 Tesseract。MinerU、PaddleOCR-VL 和 PaddleOCR-VL AIStudio 只有在显式启用 `externalApiEnabled` 并放入 provider order 后才会参与解析。
+默认 provider order 面向“质量优先”：PDF 类材料优先 MinerU，再尝试 PaddleOCR-VL AIStudio，最后降级到本地解析；图片/扫描件优先 PaddleOCR-VL AIStudio，再尝试 MinerU，最后降级到 Tesseract。外部 OCR 默认仍关闭，MinerU、PaddleOCR-VL 和 PaddleOCR-VL AIStudio 只有在显式启用 `externalApiEnabled` 并配置凭证后才会参与解析。
 
 ### 分块策略
 

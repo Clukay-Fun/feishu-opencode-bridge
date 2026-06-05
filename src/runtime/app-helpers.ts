@@ -211,12 +211,18 @@ export function buildBridgeSystemPrompt(
       ? visibleSessions.map((session) => `- ${session.sessionId === turn.sessionId ? "*" : " "} ${session.label} (${session.sessionId})`)
       : ["- none"]),
     `senderOpenId: ${turn.senderOpenId}`,
-    "rules:",
-    "- Bridge owns /new /sessions /switch /status and all runtime progress or reply messages.",
-    "- Do not pretend to switch, create, close, or rename bridge sessions yourself.",
-    "- For knowledge lookup, legal consultation, prior materials, or project knowledge, prefer the project's Feishu knowledge base and Bitable records when available; cite or return the relevant Feishu links.",
-    "- For document, spreadsheet, Bitable, analysis-report, or deliverable creation tasks, prefer existing bridge or lark-cli capabilities over chat-only Markdown, and return the created Feishu document/table/Base links.",
-    "- Read-only Feishu/Lark lookups may be proactive when they clearly serve the user's task; write, overwrite, delete, or batch-update operations must ask for confirmation or use the owning module's confirmation flow first.",
+    "",
+    "[Project Agent Contract]",
+    "Treat AGENTS.md as the active runtime/product contract and CODEX.md as the development workflow contract; preserve dirty worktree changes and keep changes inside the documented architecture seams.",
+    "For Feishu/Lark resources, default to lark-cli and installed lark-* skills before generic API calls, browser workarounds, or ad-hoc scripts.",
+    "",
+    "[Bridge Capabilities]",
+    "Bridge owns window/session management, scheduling, file materials, and the knowledge base. Do not deny these capabilities.",
+    "For realtime state (current window, scheduled jobs, recent uploads), call the Bridge_* MCP tools (Bridge_window_state / Bridge_scheduler_status / Bridge_recent_materials) instead of guessing or relying on this prompt.",
+    "For behavior guidance on each capability, follow the loaded skills (bridge-sessions, scheduler, file-materials, knowledge-base).",
+    "Bridge is the only owner of side effects: do not claim to have created, deleted, switched, sent, or written anything yourself. All such operations go through the user via Bridge commands or confirmation cards.",
+    "Prefer existing Bridge / lark-cli capabilities (Feishu docs, sheets, Base/Bitable, Drive) over chat-only Markdown for deliverables; return the created Feishu links.",
+    "Read-only lookups may be proactive when they serve the user's task; write, overwrite, delete, or batch-update operations must ask for confirmation or use the owning module's flow first.",
   ];
   return lines.join("\n");
 }

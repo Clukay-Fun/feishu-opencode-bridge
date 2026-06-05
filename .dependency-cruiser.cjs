@@ -17,8 +17,12 @@ const FRAMEWORK_TOP_LEVEL_DIRS = [
   "logging",
   // memory 当前作为共享运行时上下文服务处理，暂不纳入业务扩展横向依赖规则。
   "memory",
+  // mcp 是 agent 只读可见性边界，属于 framework context/observability 能力。
+  "mcp",
   "opencode",
   "runtime",
+  // scheduler 是通用 workflow orchestration 能力，不包含法律/合同/劳动等业务语义。
+  "scheduler",
   "store",
   "types",
   "utils",

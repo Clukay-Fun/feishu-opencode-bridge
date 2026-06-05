@@ -759,7 +759,7 @@ function parseFileMessage(rawContent: string): TextParseResult {
   try {
     const parsed = JSON.parse(rawContent) as Record<string, unknown>;
     const fileKey = nonEmptyStringFromKeys(parsed, ["file_key", "fileKey", "key"]);
-    const fileName = nonEmptyStringFromKeys(parsed, ["file_name", "name"]);
+    const fileName = nonEmptyStringFromKeys(parsed, ["file_name", "name"]) || fileKey;
     const sizeRaw = parsed.file_size ?? parsed.size;
     const size = typeof sizeRaw === "number" && Number.isFinite(sizeRaw)
       ? sizeRaw
