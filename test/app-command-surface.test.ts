@@ -1985,6 +1985,8 @@ describe("BridgeApp command surface", () => {
         shortId: "sched-001",
       });
       expect(JSON.stringify(result)).toContain("已删除");
+      expect((result as { msg_type?: string }).msg_type).toBe("interactive");
+      expect(extractInteractiveHeader(result as any)).toBe("定时任务");
 
       await callHandleCommand(app, {
         kind: "command",
@@ -2029,6 +2031,9 @@ describe("BridgeApp command surface", () => {
         pendingKey,
       });
       expect(JSON.stringify(confirmed)).toContain("sched-001");
+      expect((confirmed as { msg_type?: string }).msg_type).toBe("interactive");
+      expect(extractInteractiveHeader(confirmed as any)).toBe("定时任务");
+      expect(extractInteractiveAnyText(confirmed as any)).toContain("已创建");
 
       await callHandleCommand(app, {
         kind: "command",

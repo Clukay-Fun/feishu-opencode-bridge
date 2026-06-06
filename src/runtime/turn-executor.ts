@@ -162,8 +162,8 @@ export type TurnExecutorContext = {
   sessionStatuses: Map<string, OpenCodeSessionStatus>;
   turnCardManager: {
     createTurnCard(chatId: string, turnId: string, sessionId: string, replyToMessageId: string): Promise<{ messageId: string } | null>;
-    flushStreamUpdate(turnId: string, text: string, force: boolean): Promise<void>;
-    updateTurnCard(turnId: string, update: { status?: string; sessionId?: string; update?: string; sanitize?: boolean; target?: "step" | "tool" | "final"; toolKey?: string; costSummary?: string }): Promise<void>;
+    flushStreamUpdate(turnId: string, text: string, force: boolean): Promise<boolean>;
+    updateTurnCard(turnId: string, update: { status?: string; sessionId?: string; update?: string; sanitize?: boolean; target?: "step" | "tool" | "final"; toolKey?: string; costSummary?: string }): Promise<boolean>;
     scheduleStreamUpdate(turnId: string, text: string): Promise<void>;
     appendReasoning(turnId: string, text: string): void;
     cleanup(turnId: string): void;
@@ -301,11 +301,23 @@ export class TurnExecutor {
           window: this.context.getSessionWindow(turn.conversationKey, turn.chatType),
         });
       }
+      let fallbackSent = false;
       if (!initialCard && reply) {
         await this.sendTurnFallbackMarkdown(turn.chatId, reply, turn.inboundMessageId);
+        fallbackSent = true;
       }
-      await this.context.turnCardManager.flushStreamUpdate(turn.turnId, reply, true);
-      await this.context.turnCardManager.updateTurnCard(turn.turnId, { status: "已完成", update: `最终回复已生成（${reply.length} 字）`, target: "step", ...(costSummary ? { costSummary } : {}) });
+      const finalOutputUpdated = await this.context.turnCardManager.flushStreamUpdate(turn.turnId, reply, true);
+      const finalStatusUpdated = await this.context.turnCardManager.updateTurnCard(turn.turnId, { status: "已完成", update: `最终回复已生成（${reply.length} 字）`, target: "step", ...(costSummary ? { costSummary } : {}) });
+      if (initialCard && reply && !fallbackSent && (!finalOutputUpdated || !finalStatusUpdated)) {
+        logEvent(this.context.logger, "bridge/queue", "turn.fallback_triggered", {
+          turnId: turn.turnId,
+          sessionId,
+          chatId: turn.chatId,
+          fallbackKind: "final-markdown",
+          reason: "process-card-update-failed",
+        }, "warn");
+        await this.sendTurnFallbackMarkdown(turn.chatId, reply, turn.inboundMessageId);
+      }
       queue.replaceActive(transitionTurn({ ...turn, sessionId }, "done"));
       logEvent(this.context.logger, "bridge/queue", "turn.completed", {
         chatType: turn.chatType,
