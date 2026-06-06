@@ -20,6 +20,7 @@ import {
   toInteractiveCardContent,
   type FeishuPostPayload,
 } from "../feishu/shared-primitives.js";
+import { buildScheduleNoticeCardPayload } from "../feishu/scheduler-cards.js";
 import { createTextPreview, getLogContext, logEvent, type LogContext, type Logger, type TranscriptType } from "../logging/logger.js";
 import {
   type KnowledgeBasePort,
@@ -40,7 +41,7 @@ import type { WhitelistStore } from "../store/whitelist.js";
 import type { AppConfig } from "../config/schema.js";
 import { SchedulerRuntime } from "../scheduler/runtime.js";
 import { ScheduledRunner } from "../scheduler/runner.js";
-import { ScheduleCommands, type SchedulerCommandRuntimePort } from "../scheduler/commands.js";
+import { ScheduleCommands, type ScheduleCommandResult, type SchedulerCommandRuntimePort } from "../scheduler/commands.js";
 import type { ScheduledJob } from "../scheduler/types.js";
 import { SUPPORTED_MATERIAL_EXTENSIONS } from "../document-pipeline/material-support.js";
 import {
@@ -488,6 +489,10 @@ export class BridgeApp {
   ): Promise<Record<string, unknown>> {
     if (value.kind === "schedule-delete-confirm" && typeof value.shortId === "string") {
       const result = await this.schedulerCommands?.handleDeleteConfirm(actorOpenId, value.shortId);
+      const payload = buildSchedulerCardActionPayload(result);
+      if (payload) {
+        return payload as unknown as Record<string, unknown>;
+      }
       return {
         toast: {
           type: result?.ok ? "success" : "warning",
@@ -513,6 +518,10 @@ export class BridgeApp {
         };
       }
       const result = await this.schedulerCommands?.handleNlConfirm(actorOpenId, value.pendingKey);
+      const payload = buildSchedulerCardActionPayload(result);
+      if (payload) {
+        return payload as unknown as Record<string, unknown>;
+      }
       return {
         toast: {
           type: result?.ok ? "success" : "warning",
@@ -2224,6 +2233,16 @@ function formatUploadedFileSize(sizeBytes: number | undefined): string {
   }
   const sizeMb = sizeKb / 1024;
   return `${sizeMb.toFixed(sizeMb >= 10 ? 0 : 1)} MB`;
+}
+
+function buildSchedulerCardActionPayload(result: ScheduleCommandResult | undefined): FeishuPostPayload | null {
+  if (!result?.ok || result.card !== "notice" || !result.data) {
+    return null;
+  }
+  return buildScheduleNoticeCardPayload(result.data as {
+    job: ScheduledJob;
+    action: "created" | "deleted" | "triggered";
+  });
 }
 
 type PermissionTextResolution = "once" | "always" | "deny";

@@ -241,7 +241,7 @@ describe("buildPostPayload", () => {
     expect(output).not.toContain("```bash");
   });
 
-  it("renders markdown tables as code blocks in turn output so Feishu keeps rows aligned", () => {
+  it("renders markdown tables as card rows in turn output", () => {
     const payload = buildTurnStatusCardPayload({
       title: "已完成",
       status: "已完成",
@@ -263,9 +263,12 @@ describe("buildPostPayload", () => {
     const content = JSON.parse(payload.content) as any;
     const serialized = JSON.stringify(content);
 
-    expect(serialized).toContain("```\\n| 项目 | 结论 |");
-    expect(serialized).toContain("| --- | --- |");
-    expect(serialized).toContain("| 劳动关系 | 证据较强 |");
+    expect(serialized).toContain("\"tag\":\"column_set\"");
+    expect(serialized).toContain("**项目**");
+    expect(serialized).toContain("**结论**");
+    expect(serialized).toContain("劳动关系");
+    expect(serialized).toContain("证据较强");
+    expect(serialized).not.toContain("| --- | --- |");
     expect(serialized).not.toContain("- 项目 ｜ 结论");
   });
 

@@ -171,14 +171,14 @@ export class TurnCardManager {
   }
 
   /** 立即把当前文本刷新到卡片。 */
-  async flushStreamUpdate(turnId: string, text: string, force: boolean): Promise<void> {
+  async flushStreamUpdate(turnId: string, text: string, force: boolean): Promise<boolean> {
     const state = this.streamFlushStates.get(turnId);
     if (state?.timer) {
       clearTimeout(state.timer);
       state.timer = null;
     }
 
-    await this.updateTurnCard(turnId, { update: text, sanitize: false, target: "final" });
+    const updated = await this.updateTurnCard(turnId, { update: text, sanitize: false, target: "final" });
     const nextState = state ?? { flushedLength: 0, lastFlushedAt: 0, timer: null };
     nextState.flushedLength = text.length;
     nextState.lastFlushedAt = Date.now();
@@ -187,12 +187,13 @@ export class TurnCardManager {
     if (force) {
       this.clearStreamFlushState(turnId);
     }
+    return updated;
   }
 
   /** 更新 turn 卡片中的状态、步骤、工具或最终输出。 */
-  async updateTurnCard(turnId: string, update: { status?: string; sessionId?: string; update?: string; sanitize?: boolean; target?: "step" | "tool" | "final"; toolKey?: string; costSummary?: string }): Promise<void> {
+  async updateTurnCard(turnId: string, update: { status?: string; sessionId?: string; update?: string; sanitize?: boolean; target?: "step" | "tool" | "final"; toolKey?: string; costSummary?: string }): Promise<boolean> {
     const card = this.turnCards.get(turnId);
-    if (!card) return;
+    if (!card) return false;
 
     if (update.status) card.status = update.status;
     if (update.sessionId) card.sessionId = update.sessionId;
@@ -237,6 +238,7 @@ export class TurnCardManager {
           },
         });
       }
+      return true;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       logEvent(this.logger, "feishu/reply", "transport.failed", {
@@ -248,6 +250,7 @@ export class TurnCardManager {
         errorKind: error instanceof Error ? error.name : "unknown",
         detail,
       }, "warn");
+      return false;
     }
   }
 

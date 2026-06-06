@@ -93,7 +93,7 @@ describe("TurnExecutor text buffering", () => {
   it("keeps reasoning deltas out of the final answer until the part type is known", async () => {
     const context = createContext();
     const appendReasoning = vi.fn();
-    const updateTurnCard = vi.fn(async () => {});
+    const updateTurnCard = vi.fn(async () => true);
     context.turnCardManager.appendReasoning = appendReasoning;
     context.turnCardManager.updateTurnCard = updateTurnCard;
     const executor = new TurnExecutor(context) as unknown as {
@@ -317,6 +317,7 @@ describe("TurnExecutor text buffering", () => {
     });
     context.turnCardManager.updateTurnCard = vi.fn(async (_turnId, update) => {
       if (update.sessionId) order.push(`card-session:${update.sessionId}`);
+      return true;
     });
     context.ensureSession = vi.fn(async () => {
       order.push("ensure-session");
@@ -332,6 +333,35 @@ describe("TurnExecutor text buffering", () => {
 
     expect(order.slice(0, 3)).toEqual(["card:准备中", "ensure-session", "card-session:ses_created"]);
     expect(replaceActive).toHaveBeenCalledWith(expect.objectContaining({ processMessageId: "om_card" }));
+  });
+
+  it("sends a fallback final reply when final card update exceeds Feishu limits", async () => {
+    const context = createContext();
+    const sendPayload = vi.fn(async () => ({ messageId: "om_fallback" }));
+    context.sendPayload = sendPayload;
+    context.queues.get = () => ({
+      peek: () => createTurn(),
+      replaceActive() {},
+      current: () => createTurn(),
+      finishActive() {},
+    });
+    context.turnCardManager.createTurnCard = vi.fn(async () => ({ messageId: "om_card" }));
+    context.turnCardManager.flushStreamUpdate = vi.fn(async () => false);
+    context.turnCardManager.updateTurnCard = vi.fn(async () => false);
+    const executor = new TurnExecutor(context) as unknown as {
+      runTurn: (queueKey: string) => Promise<void>;
+      executeTurn: () => Promise<string>;
+    };
+    executor.executeTurn = vi.fn(async () => "很长的最终回复");
+
+    await executor.runTurn("queue-1");
+
+    expect(sendPayload).toHaveBeenCalledWith(
+      "oc_p2p_1",
+      expect.any(Object),
+      expect.objectContaining({ event: "fallback final message sent" }),
+      { replyToMessageId: "om_1" },
+    );
   });
 
   it("cleans turn-owned resources after a failed run", async () => {
@@ -436,7 +466,7 @@ describe("TurnExecutor text buffering", () => {
 
   it("surfaces OpenCode session errors with actionable model guidance", async () => {
     const context = createContext();
-    const updateTurnCard = vi.fn(async () => {});
+    const updateTurnCard = vi.fn(async () => true);
     context.turnCardManager.createTurnCard = vi.fn(async () => ({ messageId: "om_card" }));
     context.turnCardManager.updateTurnCard = updateTurnCard;
     context.queues.get = () => ({
@@ -487,7 +517,7 @@ describe("TurnExecutor text buffering", () => {
 
   it("normalizes generic model-not-found errors from OpenCode", async () => {
     const context = createContext();
-    const updateTurnCard = vi.fn(async () => {});
+    const updateTurnCard = vi.fn(async () => true);
     context.turnCardManager.createTurnCard = vi.fn(async () => ({ messageId: "om_card" }));
     context.turnCardManager.updateTurnCard = updateTurnCard;
     context.queues.get = () => ({
@@ -575,8 +605,8 @@ function createContext(): TurnExecutorContext {
     sessionStatuses: new Map(),
     turnCardManager: {
       async createTurnCard() { return null; },
-      async flushStreamUpdate() {},
-      async updateTurnCard() {},
+      async flushStreamUpdate() { return true; },
+      async updateTurnCard() { return true; },
       async scheduleStreamUpdate() {},
       appendReasoning() {},
       cleanup() {},

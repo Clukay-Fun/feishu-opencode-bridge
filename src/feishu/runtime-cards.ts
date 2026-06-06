@@ -920,7 +920,7 @@ function buildOutputElements(output: OutputView, state: CardState): Array<Record
   const elements: Array<Record<string, unknown>> = [];
 
   if (output.text) {
-    elements.push(markdown(formatOutputText(output.text), { size: "normal_v2" }));
+    elements.push(...buildOutputTextElements(output.text));
   }
 
   if (output.paths.length > 0 || output.commands.length > 0) {
@@ -973,6 +973,21 @@ function formatOutputText(text: string): string {
     .join("");
 }
 
+function buildOutputTextElements(text: string): Array<Record<string, unknown>> {
+  if (!containsMarkdownTable(text)) {
+    return [markdown(formatOutputText(text), { size: "normal_v2" })];
+  }
+  return splitMarkdownByCodeFence(normalizeAssistantMarkdown(text))
+    .flatMap((segment) => segment.kind === "code"
+      ? [markdown(segment.content, { size: "normal_v2" })]
+      : buildEscapedMarkdownSegmentElements(segment.content));
+}
+
+function containsMarkdownTable(text: string): boolean {
+  const lines = normalizeAssistantMarkdown(text).split("\n");
+  return lines.some((line, index) => isMarkdownTableRow(line) && isMarkdownTableSeparator(lines[index + 1] ?? ""));
+}
+
 function formatOutputLine(line: string): string {
   const trimmed = line.trim();
   if (!trimmed) return line;
@@ -989,34 +1004,66 @@ function formatOutputLine(line: string): string {
 }
 
 function formatEscapedMarkdownSegment(text: string): string {
-  return neutralizeMarkdownTables(escapeText(text))
+  return escapeText(text)
     .split("\n")
     .map((line) => formatOutputLine(line))
     .join("\n");
 }
 
-function neutralizeMarkdownTables(text: string): string {
+function buildEscapedMarkdownSegmentElements(text: string): Array<Record<string, unknown>> {
+  return splitMarkdownTables(text).flatMap((segment) => {
+    if (segment.kind === "table") {
+      return buildMarkdownTableElements(segment.rows);
+    }
+    const content = formatEscapedMarkdownSegment(segment.content).trim();
+    return content ? [markdown(content, { size: "normal_v2" })] : [];
+  });
+}
+
+function splitMarkdownTables(text: string): Array<{ kind: "text"; content: string } | { kind: "table"; rows: string[][] }> {
   const lines = text.split("\n");
-  const output: string[] = [];
+  const segments: Array<{ kind: "text"; content: string } | { kind: "table"; rows: string[][] }> = [];
+  const pendingText: string[] = [];
+  const flushText = () => {
+    if (pendingText.length === 0) return;
+    segments.push({ kind: "text", content: pendingText.join("\n") });
+    pendingText.length = 0;
+  };
+
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index] ?? "";
     const nextLine = lines[index + 1] ?? "";
     if (!isMarkdownTableRow(line) || !isMarkdownTableSeparator(nextLine)) {
-      output.push(line);
+      pendingText.push(line);
       continue;
     }
 
-    const tableLines = [line, nextLine];
+    flushText();
+    const rows = [splitMarkdownTableCells(line)];
     index += 2;
     while (index < lines.length && isMarkdownTableRow(lines[index] ?? "")) {
-      tableLines.push(lines[index] ?? "");
+      rows.push(splitMarkdownTableCells(lines[index] ?? ""));
       index += 1;
     }
-    output.push(formatMarkdownTableAsCodeBlock(tableLines));
+    segments.push({ kind: "table", rows });
     index -= 1;
   }
 
-  return output.join("\n");
+  flushText();
+  return segments;
+}
+
+function buildMarkdownTableElements(rows: readonly string[][]): Array<Record<string, unknown>> {
+  if (rows.length === 0) {
+    return [];
+  }
+  const columnCount = Math.max(...rows.map((row) => row.length));
+  return rows.map((row, rowIndex) => columnSet(Array.from({ length: columnCount }, (_unused, columnIndex) => column([
+    markdown(formatTableCell(row[columnIndex] ?? "", rowIndex === 0), { size: "notation" }),
+  ], {
+    bg: rowIndex === 0 ? "grey-100" : "bg-white",
+    weight: 1,
+  }))));
 }
 
 function isMarkdownTableRow(line: string): boolean {
@@ -1041,8 +1088,9 @@ function splitMarkdownTableCells(line: string): string[] {
     .filter((cell) => cell.length > 0);
 }
 
-function formatMarkdownTableAsCodeBlock(lines: readonly string[]): string {
-  return ["```", ...lines, "```"].join("\n");
+function formatTableCell(value: string, header: boolean): string {
+  const text = escapeText(value || "-");
+  return header ? `**${text}**` : text;
 }
 
 function splitMarkdownByCodeFence(text: string): Array<{ kind: "text" | "code"; content: string }> {
