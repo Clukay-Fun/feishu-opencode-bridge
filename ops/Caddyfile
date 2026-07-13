@@ -1,4 +1,10 @@
-bridge.example.com {
+ominiagent.online, www.ominiagent.online {
+  encode zstd gzip
+  root * /srv
+  file_server
+}
+
+bridge.ominiagent.online {
   encode zstd gzip
   reverse_proxy 127.0.0.1:3000
 }

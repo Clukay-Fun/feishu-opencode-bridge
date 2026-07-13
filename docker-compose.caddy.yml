@@ -1,0 +1,15 @@
+services:
+  caddy:
+    image: docker.m.daocloud.io/library/caddy:2-alpine
+    container_name: feishu-opencode-bridge-caddy
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./ops/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./ops/site:/srv:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

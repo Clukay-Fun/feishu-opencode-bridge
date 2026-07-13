@@ -20,6 +20,7 @@ rsync -az --delete \
   --include "/Dockerfile" \
   --include "/docker-compose.yml" \
   --include "/docker-compose.tunnel.yml" \
+  --include "/docker-compose.caddy.yml" \
   --include "/.dockerignore" \
   --include "/package.json" \
   --include "/package-lock.json" \
