@@ -7,9 +7,13 @@
 ## 当前内容
 
 - `Caddyfile`
-  - 一个最小可用的 Caddy 反向代理样例
-  - 把公网域名流量转发到本地 bridge HTTP 服务
-  - 适合配合 `server.publicBaseUrl` 和飞书卡片回调一起使用
+  - 阿里云服务器直连入口配置
+  - 根域名提供备案展示页，`bridge.ominiagent.online` 反向代理本地 bridge
+- `site/index.html`
+  - `ominiagent.online` 的最小备案展示页
+- `../docker-compose.caddy.yml`
+  - 使用 host 网络监听服务器 `80/443`
+  - Caddy 自动申请和续期 HTTPS 证书
 - `deploy-server.sh`
   - 当前服务器的 rsync + Docker 部署脚本
   - 不覆盖服务器侧 `config.json`、`.env`、`.env.tunnel`、`data/`、`logs/`、`vault/`
